@@ -1,0 +1,182 @@
+# Trainings- und Orchestrierungssystem — Funktionale Anforderungen
+
+**Status:** Entwurf
+**Gesetzt:** SkyPilot (Orchestrierung), PyTorch (Training), Java 25 + aktuelles Spring Boot (Backend)
+**Alles Übrige:** offen
+
+---
+
+## 1. Zielsetzung
+
+Eine Python-Bibliothek plus Konventionen, die es erlaubt, dieselbe Trainingsdefinition unverändert auf lokaler Hardware und auf wechselnden Cloud-Anbietern auszuführen, mit vorhersehbarem Verhalten bei Preemption und kontrollierten Kosten. Jedes neue Experiment soll mit Modellcode und Konfiguration starten können, nicht mit Infrastrukturarbeit.
+
+Darüber liegt eine Web-Oberfläche mit Java-Backend als zentraler Einstiegspunkt für Beobachtung und Steuerung — bewusst als *Sicht* auf bestehende Systeme, nicht als eigenes System of Record.
+
+**Abgrenzung (vorerst kein Ziel):** Inference/Serving, Hyperparameter-Suche, Multi-Node-Distributed-Training, eigener Scheduler neben SkyPilot.
+
+---
+
+## 2. Rollenverteilung
+
+| Ebene | Verantwortung |
+|---|---|
+| **Projekt** | Modellarchitektur, Loss, Hyperparameter, Datensemantik |
+| **Bibliothek** | Run-Definition, Datenzugriff, Checkpoint-Kontrakt, Resume, Metrik-Erfassung, Target-Auswahl |
+| **SkyPilot** | Provisionierung, Job-Queue, Preemption-Recovery, Logs |
+| **Backend** (Java 25 / Spring Boot) | Aggregation und Vermittlung zwischen Quellen, Weiterleitung steuernder Aktionen, Auslieferung an die UI |
+| **Web-UI** | Darstellung, Navigation, Auslösen von Aktionen |
+
+**Leitprinzip:** Keine Ebene besitzt Zustand, den eine darunterliegende bereits besitzt. Die Bibliothek dupliziert nicht, was SkyPilot hält; das Backend dupliziert nicht, was Bibliothek, SkyPilot oder Objektspeicher halten. Daten werden zum Zeitpunkt der Anfrage aus der Originalquelle bezogen.
+
+---
+
+## 3. Funktionale Anforderungen
+
+### T — Targets und Portabilität
+
+- **T1** Ein Run wird target-unabhängig definiert; die Zielumgebung ist ein austauschbarer Parameter.
+- **T2** Unterstützte Target-Klassen: lokale Einzel-GPU, lokale Multi-GPU, Cloud-On-Demand, Cloud-Spot.
+- **T3** Ressourcenbedarf wird in fähigkeitsbezogenen Begriffen ausgedrückt (VRAM, GPU-Anzahl, Mindestdurchsatz), nicht als Gerätename.
+- **T4** Identischer Trainingscode auf ROCm (lokal) und CUDA (Cloud); die Bibliothek wählt Image und Backend-spezifische Einstellungen.
+- **T5** Ein Smoke-Test-Modus führt denselben Code mit reduziertem Budget aus (wenige Steps, Mini-Dataset), um Cloud-Starts vor teuren Läufen abzusichern.
+- **T6** Fehlt ein Target (Hardware belegt, keine Kapazität), meldet das System das explizit, statt still auf ein anderes auszuweichen.
+
+### D — Daten
+
+- **D1** Datasets werden unter einer stabilen Kennung inklusive Version registriert und referenziert; die Referenz ist ortsunabhängig.
+- **D2** Für ein Dataset können mehrere physische Ablageorte existieren; die Bibliothek wählt den für das Target günstigsten.
+- **D3** Der Trainingscode sieht eine einheitliche Dataset-Schnittstelle, unabhängig davon, ob Daten lokal oder gestreamt vorliegen.
+- **D4** Datenzugriff über Objektspeicher muss ohne vorherige vollständige Materialisierung funktionieren.
+- **D5** Die Sample-Reihenfolge ist aus Seed und Epoche reproduzierbar und nach Wiederaufnahme fortsetzbar.
+- **D6** Der lokale Cache ist in seiner Größe begrenzbar und überlebt einen Neustart auf demselben Host.
+- **D7** Es existiert ein definierter Weg, ein lokal vorbereitetes Dataset in einen Remote-Ablageort zu überführen, mit Integritätsprüfung.
+
+### R — Run-Lebenszyklus
+
+- **R1** Ein Run ist ein benanntes, wiederholbares Artefakt aus Code-Referenz, Datenreferenz, Konfiguration und Ressourcenbedarf.
+- **R2** Mehrere Runs können eingereiht werden und laufen ab, sobald Kapazität vorhanden ist.
+- **R3** Der aktuelle Zustand aller Runs (wartend, laufend, unterbrochen, fertig, fehlgeschlagen) ist jederzeit abfragbar.
+- **R4** Ein Run kann abgebrochen werden, ohne verwaiste Ressourcen zu hinterlassen.
+- **R5** Ein abgeschlossener Run kann mit geänderter Konfiguration oder anderem Target geklont werden.
+- **R6** Unterbrechung durch Preemption wird von einem echten Programmfehler unterschieden; nur Erstere führt zu automatischer Wiederaufnahme.
+
+### C — Checkpointing und Wiederaufnahme
+
+- **C1** Ein Run nimmt nach Unterbrechung ohne manuellen Eingriff die Arbeit wieder auf.
+- **C2** Der Checkpoint umfasst alles, was für semantisch korrekte Fortsetzung nötig ist — mindestens Modell, Optimizer, Scheduler, Datenposition, Zufallszustand, Schrittzähler.
+- **C3** Checkpoints liegen an einem Ort, der den Verlust der Recheninstanz überlebt.
+- **C4** Checkpoint-Frequenz ist konfigurierbar und gegen Kosten für erneutes Rechnen abwägbar.
+- **C5** Ein unvollständig geschriebener Checkpoint macht den Run nicht unbrauchbar.
+- **C6** Die Anzahl aufbewahrter Checkpoints ist begrenzt; ältere werden nach Regel entfernt.
+
+### O — Beobachtbarkeit
+
+- **O1** Trainingsmetriken werden einheitlich erfasst, unabhängig vom Target.
+- **O2** Metriken überleben den Verlust der Instanz und werden nach Wiederaufnahme lückenlos fortgesetzt.
+- **O3** Laufende Runs sind mit vertretbarer Verzögerung einsehbar, ohne sich auf die Maschine einzuloggen.
+- **O4** Systemseitige Kennzahlen (GPU-Auslastung, Durchsatz, Datenlade-Wartezeit) werden neben den Trainingsmetriken erfasst, um Engpässe zuzuordnen.
+- **O5** Fehlgeschlagene Runs hinterlassen genug Kontext für nachträgliche Diagnose.
+- **O6** Runs sind über Läufe und Targets hinweg vergleichbar.
+
+### K — Kosten
+
+- **K1** Vor dem Start eines Cloud-Runs sind die voraussichtlichen Kosten sichtbar.
+- **K2** Laufende und kumulierte Kosten sind je Run nachvollziehbar.
+- **K3** Ein Run kann eine Obergrenze für Laufzeit oder Kosten haben, bei deren Erreichen er kontrolliert beendet wird.
+- **K4** Ungenutzte kostenverursachende Ressourcen (Instanzen, Volumes) werden erkannt und nach Regel freigegeben.
+- **K5** Lokale Targets verursachen keine wiederkehrenden Kosten und keine Cloud-Abhängigkeit zur Laufzeit.
+- **K6** Automatische Freigabe von Ressourcen mit Datenverlustpotenzial erfolgt nur nach explizit konfigurierter Regel.
+
+### U — Oberfläche und Backend
+
+- **U1** Übersicht aller Runs mit Status, Target, Laufzeit, Fortschritt und Anzahl der Wiederaufnahmen.
+- **U2** Die Warteschlange ist einsehbar; Runs können daraus eingereiht, umgeordnet und abgebrochen werden.
+- **U3** Logs eines laufenden Runs sind live verfolgbar, Logs abgeschlossener Runs bleiben abrufbar.
+- **U4** Metriken und Trainingsfortschritt sind je Run darstellbar und über Runs hinweg vergleichbar.
+- **U5** Für einen Run ist eine TensorBoard-Sicht erreichbar; deren Lebenszyklus ist an tatsächliche Nutzung gebunden und verursacht im Leerlauf keine Kosten.
+- **U6** Ein Run kann aus der Oberfläche gestartet, geklont oder mit geändertem Target erneut eingereiht werden.
+- **U7** Kosten sind je Run und aggregiert einsehbar, mit Unterscheidung zwischen laufenden und abgeschlossenen Beträgen.
+- **U8** Verfügbarkeit und Auslastung aller Targets — lokal wie Cloud — sind sichtbar.
+- **U9** Registrierte Datasets und ihre Ablageorte sind einsehbar, inklusive belegtem Speicher und letzter Nutzung.
+- **U10** Fehlgeschlagene Runs sind ohne Zugriff auf die Maschine diagnostizierbar.
+- **U11** Steuernde Aktionen sind in ihrer Wirkung vor Ausführung erkennbar; irreversible Aktionen erfordern Bestätigung.
+- **U12** Die Oberfläche bleibt bedienbar, wenn einzelne Quellen nicht erreichbar sind; betroffene Bereiche werden als nicht verfügbar gekennzeichnet.
+
+### Q — Datenherkunft
+
+- **Q1** Das Backend führt keine autoritative Zweitkopie von Daten, für die eine Quelle existiert.
+- **Q2** Wo aus Performance- oder Kostengründen zwischengespeichert wird, ist das Ergebnis als Zwischenstand mit Alter erkennbar.
+- **Q3** Eine nicht erreichbare Quelle wird als solche gemeldet und nicht durch veraltete Daten verdeckt.
+- **Q4** Steuernde Aktionen wirken auf die Quelle; das Backend leitet weiter und interpretiert deren Ergebnis, statt eigenen Zustand fortzuschreiben.
+- **Q5** Daten ohne dauerhafte Quelle (z. B. Historie nach Abbau der ausführenden Infrastruktur) sind namentlich benannt; für sie wird eine Quelle *bestimmt*, statt sie beiläufig im Backend zu persistieren.
+- **Q6** Das Backend ist jederzeit ersetzbar oder neu aufsetzbar, ohne dass Informationen verloren gehen.
+
+### B — Bibliotheks-Ergonomie
+
+- **B1** Ein neues Projekt ist mit Modelldefinition, Datenreferenz und Konfiguration lauffähig, ohne Orchestrierungscode zu schreiben.
+- **B2** Jeder von der Bibliothek getroffene Standard ist projektseitig überschreibbar.
+- **B3** Das Trainingsskript ist ohne die Orchestrierungsebene direkt ausführbar (Debugging, Profiler, IDE).
+- **B4** Der Vertrag zwischen Bibliothek und Projekt ist explizit und prüfbar — falsche Nutzung scheitert früh und mit klarer Meldung.
+- **B5** Konfiguration ist typisiert und wird vor dem Start validiert, nicht erst auf der Cloud-Instanz.
+- **B6** Die Bibliothek erzwingt keine bestimmte Modellarchitektur oder Trainingsschleifen-Struktur über das für C2 und O1 Notwendige hinaus.
+
+---
+
+## 4. Offene Fragen
+
+### Zuschnitt
+- Framework oder Toolkit? Gibt die Bibliothek eine Trainingsschleife mit Callbacks vor, oder liefert sie Bausteine, die das Projekt selbst verdrahtet? Ersteres nimmt mehr ab, verhindert aber ungewöhnliche Architekturen (foveated diffusion, RL, custom Discriminatoren).
+- Was passiert mit Trainingsformen, die nicht in „Epoche über Dataset" passen — RL-Rollouts, Replay-Buffer, Curriculum? Erst-Scope oder von Anfang an mitgedacht?
+- Ist Multi-Node wirklich außerhalb des Scopes, oder soll der Vertrag es zumindest nicht ausschließen?
+
+### Daten
+- Ein Datenpfad oder zwei? Immer streamen (auch lokal, mit Overhead) oder lokal Dateisystem und remote Streaming (zwei Pfade, zwei Fehlerbilder)?
+- Wer besitzt den Dataset-Katalog — die Bibliothek, ein bestehendes Werkzeug, oder eine reine Konvention über Bucket-Layout und Manifest?
+- Wie wird Dataset-Preprocessing behandelt: außerhalb des Systems, oder als eigener Run-Typ mit denselben Garantien?
+- Wie granular muss D5 sein — bit-genaue Fortsetzung oder statistische Äquivalenz? Das entscheidet über den Aufwand erheblich.
+
+### Zustand und Wahrheit
+- Wo lebt der Run-Zustand? SkyPilot als alleinige Quelle (einfach, aber an dessen Lebensdauer gebunden) oder eigene Persistenz daneben (robuster, Synchronisationsproblem)?
+- Deklarativ oder programmatisch? Run-Definition als Datei oder als Python-Objekt — oder beides mit einer Richtung als Primärform?
+- Wie werden Code-Versionen referenziert: Git-Commit, Image-Digest, oder beides gekoppelt?
+
+### Betrieb
+- Wie wird R6 praktisch entschieden? Woran erkennt das System zuverlässig eine Preemption gegenüber einem OOM oder einem NaN-Loss?
+- Wie viele Wiederaufnahmen sind sinnvoll, bevor ein Run als hoffnungslos gilt?
+- Wie werden Zugangsdaten für Speicher und Anbieter zu Runs transportiert?
+- Was ist die Antwort auf T4 konkret: getrennte Images pro Backend, oder ein Image für beide?
+
+### Beobachtbarkeit
+- Eigene Metrik-Persistenz oder Anbindung an einen bestehenden Tracker? Letzteres spart viel, wirft aber die Frage auf, was bei Netzwerkverlust während eines Spot-Laufs passiert.
+- Ist O3 ein Pull- oder Push-Modell? Beeinflusst, ob eine dauerhaft erreichbare Komponente nötig ist.
+
+### Kosten
+- Woher kommen die Preisdaten für K1/K2 — SkyPilots Katalog, Anbieter-APIs, oder manuell gepflegt?
+- Wie autonom darf K4 handeln? Vorschlagen, mit Bestätigung ausführen, oder eigenständig?
+
+### Backend und Oberfläche
+- **Die zentrale Frage:** Wie erreicht ein Java-Backend SkyPilot? Dessen primäre Schnittstelle ist Python. Denkbar sind ein REST-Zugang zum SkyPilot-API-Server, ein Python-Dienst auf Basis der neuen Bibliothek als einzige Brücke, oder Aufrufe der CLI. Die Wahl bestimmt, wie stabil der Vertrag ist und wie viel Logik doppelt existiert.
+- Ist die Python-Bibliothek selbst eine Schnittstelle des Backends — also stellt sie eine aufrufbare Fassade bereit — oder greift das Backend an ihr vorbei direkt auf SkyPilot und Objektspeicher zu?
+- Welche Daten fallen tatsächlich unter Q5? Kandidaten: Kostenhistorie, Metriken abgeschlossener Runs, Run-Historie nach Abbau des SkyPilot-Controllers. Für jeden Kandidaten ist zu klären, ob eine bestehende Quelle dauerhaft genug ist oder eine benannt werden muss.
+- Wie verträgt sich Q1 mit O6 (Vergleichbarkeit über Runs hinweg)? Vergleiche über viele Läufe erfordern entweder eine abfragbare Quelle oder Aggregation zur Laufzeit — mit entsprechender Latenz.
+- Wie werden Live-Logs und Live-Metriken transportiert? Polling gegen die Quelle oder eine gehaltene Verbindung — und was passiert mit dieser bei einer Preemption?
+- Wo läuft TensorBoard: auf der Trainingsinstanz, beim Backend, oder bedarfsweise gestartet? Woraus liest es — lokalem Verzeichnis oder Objektspeicher? Wer beendet es?
+- Welche Latenz ist beim Durchgriff auf Quellen akzeptabel, und wo greifen Rate-Limits der Anbieter-APIs?
+- Muss das Backend dauerhaft laufen, oder nur bei Bedarf? Beeinflusst, ob es Ereignisse entgegennehmen kann oder ausschließlich abfragt.
+- Zugriffsschutz für die Oberfläche und Umgang mit Anbieter-Zugangsdaten — auch bei einem einzelnen Nutzer, sobald sie nicht nur im Heimnetz erreichbar ist.
+- Ist Fernzugriff von außerhalb des Heimnetzes eine Anforderung? Das entscheidet über Deployment-Form und Q6.
+
+---
+
+## 5. Vorgeschlagene Reihenfolge
+
+1. **B3 + C1/C2** — ein Trainingsskript, das lokal läuft und einen absichtlich getöteten Prozess korrekt fortsetzt. Ohne das trägt nichts darüber.
+2. **T1/T4** — derselbe Run lokal und in der Cloud.
+3. **D3/D4** — einheitlicher Datenzugriff, gemessen gegen den lokalen Pfad.
+4. **O1–O3, R2/R3** — Sichtbarkeit und Queue, zunächst ohne Oberfläche.
+5. **Q1–Q4 als Durchstich** — eine einzige Ansicht (Run-Liste, U1) vollständig lesend über das Backend, um den Schnittstellenvertrag zu SkyPilot früh zu prüfen. Diese Stufe entscheidet über den Zuschnitt des gesamten Backends.
+6. **U2/U3/U10** — Steuerung und Diagnose, also die Funktionen, die den täglichen Wechsel zwischen UI und Terminal überflüssig machen.
+7. **U4/U5** — Metriken und TensorBoard.
+8. **K1–K4 und U7** — Kostensteuerung, sobald genug Läufe existieren, um sie sinnvoll zu kalibrieren.
+
+Jede Stufe soll ein benutzbares System hinterlassen.
