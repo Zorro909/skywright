@@ -28,6 +28,14 @@ _Avoid_: Trainer, callback host, global context
 A validated description of a durable input corpus's stable identity, version, locations, access requirements, and shared loading configuration; payload semantics such as image, text, or video remain with the Training Project.
 _Avoid_: Dataset object, data path, replay buffer
 
+**Dataset Location**:
+A concrete, content-equivalent storage location for one Dataset Definition version. Skywright selects a location for an execution without exposing its storage protocol to Training Project code.
+_Avoid_: Data path, project-selected location
+
+**Dataset Cache**:
+A bounded, non-authoritative local copy of Dataset content used only to accelerate access. It may survive a same-host restart but never replaces a durable Dataset Location.
+_Avoid_: Dataset replica, dataset source
+
 **Generated Experience**:
 Training data produced during a run, such as RL rollouts or replay-buffer entries. It is project-owned run state rather than a Dataset, though it may be persisted for inspection or later promoted into one.
 _Avoid_: Dataset
