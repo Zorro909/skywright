@@ -8,6 +8,14 @@ Skywright provides a portable contract for defining and running machine-learning
 A consumer of Skywright that owns model and data semantics, training control flow, and project-specific configuration.
 _Avoid_: Plugin, managed trainer
 
+**Training Project Version**:
+An immutable, identifiable version of a Training Project together with the Project Configuration Contract that its code expects.
+_Avoid_: Latest project, floating project version
+
+**Project Configuration Contract**:
+The version-bound definition of a Training Project's configuration shape and defaults. It belongs to exactly one Training Project Version and cannot be mixed with another version's code.
+_Avoid_: Project config template, arbitrary parameters
+
 **Training Contract**:
 The library-owned, validated standards a Training Project must follow for configuration, datasets, checkpointing, metrics, and resume behavior. It does not prescribe the project's training loop.
 _Avoid_: Training framework, callback framework
@@ -25,8 +33,20 @@ Training data produced during a run, such as RL rollouts or replay-buffer entrie
 _Avoid_: Dataset
 
 **Run Configuration**:
-The complete typed configuration for a run, composed from library-defined common options and project-defined options.
+The fully resolved configuration within a Run Definition, composed from library-defined common options and project-defined options. Every default is materialized before the run is accepted.
 _Avoid_: Config file, parameters
+
+**Run Submission**:
+A request to create a run from a specific Training Project Version, configuration overrides, and requested target capabilities. It is intent awaiting resolution, not the repeatable run artifact.
+_Avoid_: Run Definition, job
+
+**Run Definition**:
+The immutable, fully resolved description of what should run, including its Training Project Version, Run Configuration, and requested target capabilities. Changing any of those creates a new Run Definition.
+_Avoid_: Run Submission, Run Record, mutable job configuration
+
+**Run Record**:
+The execution-specific history and lifecycle state associated with one Run Definition, including the infrastructure selected to execute it. A clone receives a new Run Record.
+_Avoid_: Run Definition, Run Store
 
 **Environment Profile**:
 The library-owned selection of accelerator-compatible runtime dependencies inferred from a run's target capabilities. A Training Project does not choose between CUDA and ROCm dependencies itself.
