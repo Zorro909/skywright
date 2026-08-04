@@ -24,16 +24,32 @@ _Avoid_: Training framework, callback framework
 The explicit library-provided runtime boundary through which a Training Project accesses resolved datasets, metrics, persistence, and resume state while retaining ownership of its training loop.
 _Avoid_: Trainer, callback host, global context
 
+**Dataset**:
+A stable, versioned lineage of immutable Dataset Definitions with a mutable pointer to the definition currently preferred for catalog display and lifecycle recommendations. Run Definitions never follow this pointer; they pin an exact Dataset Definition version.
+_Avoid_: Dataset Definition, latest dataset version
+
 **Dataset Definition**:
-A validated description of a durable input corpus's stable identity, version, locations, access requirements, and shared loading configuration; payload semantics such as image, text, or video remain with the Training Project.
+A validated, immutable snapshot of a durable input corpus, identified by a stable dataset identity and version, with its integrity manifest and shared loading configuration; payload semantics such as image, text, or video remain with the Training Project. Its version is a human-assigned label plus a mandatory content fingerprint, or an abbreviated fingerprint when no label is supplied; any content transformation creates a new definition.
 _Avoid_: Dataset object, data path, replay buffer
 
+**Dataset Catalog Record**:
+Skywright-owned mutable metadata for one Dataset Definition, designating exactly one authoritative Dataset Location and identifying currently known Dataset Replicas and Dataset Caches together with their verification, storage, and usage facts. A verified replica may replace the authority without changing the Dataset Definition; changed content requires a new version.
+_Avoid_: Dataset Definition, dataset manifest
+
 **Dataset Location**:
-A concrete, content-equivalent storage location for one Dataset Definition version. Skywright selects a location for an execution without exposing its storage protocol to Training Project code.
+A concrete storage location whose content exactly matches one Dataset Definition version. Skywright selects a location for an execution without exposing its storage protocol to Training Project code; an older copy remains a location of the older version rather than becoming a stale location of a newer one.
 _Avoid_: Data path, project-selected location
 
+**Dataset Replica**:
+A verified, durable, byte-preserving, non-authoritative Dataset Location with its own stable catalog identity and generations, independent of the Dataset Definition version. Refresh creates a new verified generation; deprecation prevents new leases, replacement waits for existing leases to end, and the old generation is deleted only after its replacement is published.
+_Avoid_: Dataset Cache, backup, stale copy
+
+**Dataset Lease**:
+A Run Record's explicit claim on an exact Dataset Replica generation selected for a scheduled, running, or resumable execution. A generation is unused only when deprecation has prevented new leases and every existing lease has ended.
+_Avoid_: Last-used timestamp, storage lock
+
 **Dataset Cache**:
-A bounded, non-authoritative local copy of Dataset content used only to accelerate access. It may survive a same-host restart but never replaces a durable Dataset Location.
+A bounded, non-authoritative local copy of Dataset content used only to accelerate access. Skywright tracks its host or run ownership, storage use, verification age, and last use, but it never replaces an authoritative Dataset Location or verified Dataset Replica.
 _Avoid_: Dataset replica, dataset source
 
 **Generated Experience**:
