@@ -69,8 +69,20 @@ The immutable, fully resolved description of what should run, including its Trai
 _Avoid_: Run Submission, Run Record, mutable job configuration
 
 **Run Record**:
-The execution-specific history and lifecycle state associated with one Run Definition, including the infrastructure selected to execute it. A clone receives a new Run Record.
-_Avoid_: Run Definition, Run Store
+The Skywright-originated durable record of one Run Definition's execution, carrying the immutable run identity that names its orchestrator job and the submission attempt that started it. It holds no orchestrator-sourced fact and no stored status: lifecycle state is derived, and the infrastructure actually selected is a Retained SkyPilot Fact. A clone receives a new Run Record.
+_Avoid_: Run Definition, Run Store, status field
+
+**Run Lifecycle State**:
+A run's waiting, running, interrupted, finished, or failed condition, computed per read from Retained SkyPilot Facts, the Run Definition, and the Run Termination Report. It is never stored, so a corrected mapping corrects every past run. Whether a source could be reached is a separate fact, not a sixth state.
+_Avoid_: Run status column, unknown state, SkyPilot job status
+
+**Retained SkyPilot Fact**:
+An immutable orchestrator-sourced fact Skywright appends to outlive SkyPilot's retention policy, kept in storage of that provenance alone and joined to a run only by run identity. The source wins while it still answers; retained rows supplement only what it has purged.
+_Avoid_: Mirrored state, run status cache, Skywright-originated fact
+
+**Run Termination Report**:
+The record a Training Project's process writes to its Run Store when it terminates of its own accord, naming the cause SkyPilot cannot supply. Its absence is not a diagnosis: it means the process did not get to speak.
+_Avoid_: Exit code, crash log, preemption signal
 
 **Environment Profile**:
 The library-owned selection of accelerator-compatible runtime dependencies inferred from a run's target capabilities. A Training Project does not choose between CUDA and ROCm dependencies itself.
