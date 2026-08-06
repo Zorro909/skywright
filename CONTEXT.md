@@ -96,9 +96,25 @@ _Avoid_: Project environment, device configuration, run-time dependency install
 A metric's declared identity and comparison semantics. Every recorded metric must have a definition established before the run begins.
 _Avoid_: Dynamic metric, log field
 
+**System Metric**:
+A machine or runtime measurement recorded under a reserved, library-owned namespace that a Training Project can neither declare into nor write to. Step-indexed kinds are derived in the Run Context from reported Steps; time-sampled kinds come from a background sampler on a wall-clock cadence.
+_Avoid_: Project metric, separate monitoring channel
+
+**Metric Segment**:
+An immutable TensorBoard event file holding part of one run's metric history. The open segment is replaced whole on each flush and sealed once it crosses a size or age threshold; every replacement extends its predecessor byte-for-byte, so a reader tracking an offset continues across it.
+_Avoid_: Metric row, appendable log, tracker run
+
+**Metric View**:
+The ephemeral, stateless TensorBoard instance serving exactly one run's Metric Segments, spun up on access through the backend's proxy and stopped when idle. It holds no data of its own, so stopping it loses nothing and respawning is transparent.
+_Avoid_: Metric store, dashboard service, retained instance
+
 **Run Store**:
-The mandatory durable home for a run's checkpoints, samples, and artifacts. Its storage target may differ between local and external execution without changing the Training Project's contract.
+The mandatory durable home for a run's checkpoints, samples, artifacts, and metrics. Its storage target may differ between local and external execution without changing the Training Project's contract. It is the determined source for a completed run's metrics, never a location something else copies them out of.
 _Avoid_: Bucket, output directory
+
+**Progress Record**:
+A small Skywright-originated object in the Run Store carrying a run's current step, target step, and the time it was written, overwritten on each flush. It is an aged intermediate result serving run-list progress — not a metric series, and not an index over one.
+_Avoid_: Metric index, run status, stored progress
 
 **Checkpoint State**:
 The complete set of standard and project-specific resumable state a Training Project registers before training begins. A checkpoint is a durable snapshot of this declared state.
