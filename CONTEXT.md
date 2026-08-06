@@ -5,12 +5,16 @@ Skywright provides a portable contract for defining and running machine-learning
 ## Language
 
 **Training Project**:
-A consumer of Skywright that owns model and data semantics, training control flow, and project-specific configuration.
+A consumer of Skywright that owns model and data semantics, training control flow, and project-specific configuration. Its identity is Skywright-owned and survives a change of registry or repository.
 _Avoid_: Plugin, managed trainer
 
 **Training Project Version**:
-An immutable, identifiable version of a Training Project together with the Project Configuration Contract that its code expects.
-_Avoid_: Latest project, floating project version
+An immutable, identifiable version of a Training Project, labelled by the commit and pipeline that produced it and resolving to one Training Project Image per accelerator backend it declares, together with the Project Configuration Contract that its code expects. It exists only once its build has published every image it declares and that contract.
+_Avoid_: Latest project, floating project version, working tree
+
+**Training Project Image**:
+The built container image carrying one Training Project Version's source and locked dependencies on top of an Environment Profile. One exists per accelerator backend that version declares, and its digest rather than its tag is what a Run Definition pins.
+_Avoid_: Project container, image tag, local build
 
 **Project Configuration Contract**:
 The version-bound definition of a Training Project's configuration shape and defaults. It belongs to exactly one Training Project Version and cannot be mixed with another version's code.
@@ -85,8 +89,8 @@ The record a Training Project's process writes to its Run Store when it terminat
 _Avoid_: Exit code, crash log, preemption signal
 
 **Environment Profile**:
-The library-owned selection of accelerator-compatible runtime dependencies inferred from a run's target capabilities. A Training Project does not choose between CUDA and ROCm dependencies itself.
-_Avoid_: Project environment, device configuration
+The library-owned base image for one accelerator backend, carrying the Skywright library and the accelerator-compatible runtime dependencies a Training Project must not choose between or replace. It is the base a Training Project Image is built on, not something a Run Definition pins.
+_Avoid_: Project environment, device configuration, run-time dependency install
 
 **Metric Definition**:
 A metric's declared identity and comparison semantics. Every recorded metric must have a definition established before the run begins.
