@@ -76,6 +76,10 @@ _Avoid_: Run Definition, job
 The immutable, fully resolved description of what should run, including its Training Project Version, Run Configuration, requested target capabilities, and the Target Storage its execution writes to. Changing any of those creates a new Run Definition.
 _Avoid_: Run Submission, Run Record, mutable job configuration
 
+**Orchestrator Task Specification**:
+A Run Definition projected into the orchestrator's own vocabulary, expressed against the orchestrator's documented task schema. It is a derived, throwaway description produced at submission, never a second authority on what should run.
+_Avoid_: Run Definition, task YAML, job spec
+
 **Run Record**:
 The Skywright-originated durable record of one Run Definition's execution, carrying the immutable run identity that names its orchestrator job and the submission attempt that started it. It holds no orchestrator-sourced fact and no stored status: lifecycle state is derived, and the infrastructure actually selected is a Retained SkyPilot Fact. It also holds its Run Store's current Storage Location, which changes when the store moves, and — when the run was seeded from an earlier one — that predecessor and the exact checkpoint. A clone receives a new Run Record.
 _Avoid_: Run Definition, Run Store, status field
@@ -87,6 +91,10 @@ _Avoid_: Run status column, unknown state, SkyPilot job status
 **Retained SkyPilot Fact**:
 An immutable orchestrator-sourced fact Skywright appends to outlive SkyPilot's retention policy, kept in storage of that provenance alone and joined to a run only by run identity. The source wins while it still answers; retained rows supplement only what it has purged.
 _Avoid_: Mirrored state, run status cache, Skywright-originated fact
+
+**Orchestrator Operation**:
+One control action the backend has handed to the orchestrator and is waiting on. It exists only while the process that started it lives: it is never persisted, so losing it loses the view of an action, never the action itself.
+_Avoid_: Request id, job handle, pending action, command
 
 **Run Termination Report**:
 The record a Training Project's process writes to its Run Store when it terminates of its own accord, naming the cause SkyPilot cannot supply. Its absence is not a diagnosis: it means the process did not get to speak.
