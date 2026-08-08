@@ -1,0 +1,65 @@
+
+=== 1. a read with JSON output — the good case
+  $ sky status --format json
+    | Usage: sky status [OPTIONS] [CLUSTERS]...
+    | Try 'sky status -h' for help.
+    | 
+    | Error: No such option: --format
+  (4 lines, exit=2)
+
+=== 2. a read WITHOUT machine output — the common case
+  $ sky check kubernetes
+    | Checking credentials to enable infra for SkyPilot.
+    |   Kubernetes: enabled [compute]
+    |     Allowed contexts:
+    |     └── kind-skypilot: enabled. Note: Could not detect GPU/TPU resources ('amd.com/gpu', 'nvidia.com/gpu' or 'google.com/tpu') in Kubernetes cluster. If this cl…
+    | 
+    | 🎉 Enabled infra 🎉
+    |   Kubernetes [compute]
+    |     Allowed contexts:
+    |     └── kind-skypilot
+    | 
+    | To enable a cloud, follow the hints above and rerun: sky check
+    | If any problems remain, refer to detailed docs at: https://docs.skypilot.co/en/latest/getting-started/installation.html
+    | 
+    | Using SkyPilot API server: http://127.0.0.1:46580
+  (14 lines, exit=0)
+
+=== 3. launch — the task still has to be a YAML FILE on disk
+  wrote /tmp/spike-jvm-cli7801182461973738897.yaml
+  $ sky launch -y -c spike-jvm-cli --fast /tmp/spike-jvm-cli7801182461973738897.yaml
+    | YAML to run: /tmp/spike-jvm-cli7801182461973738897.yaml
+    | Running on cluster: spike-jvm-cli
+    | Considered resources (1 node):
+    | --------------------------------------------------------------------------------------
+    |  INFRA                        INSTANCE   vCPUs   Mem(GB)   GPUS   COST ($)   CHOSEN   
+    | --------------------------------------------------------------------------------------
+    |  Kubernetes (kind-skypilot)   -          1       1         -      0.00          ✔     
+    | --------------------------------------------------------------------------------------
+    | ⚙︎ Launching on Kubernetes.
+    | └── Pod is up.
+    | ⨯ Failed to set up SkyPilot runtime on cluster.  View logs: sky api logs -l sky-2026-08-08-20-31-03-830312/provision.log
+    | RuntimeError: Failed to run setup commands on an instance. (exit code 1). Error: ===== stdout ===== 
+    | 
+    | ===== stderr =====error: cannot exec into a container in a completed pod; current phase is Failed
+    | 
+    | Pod spike-jvm-cli-9fc34560-head terminated: Error (exit code 1).
+  (16 lines, exit=1)
+  exit code = 1   <-- the only structured result of a mutation
+
+=== 4. logs — a subprocess whose stdout IS the stream
+  $ sky logs spike-jvm-cli 1 --no-follow
+    | Tailing logs of job 1 on cluster 'spike-jvm-cli'...
+    | sky.exceptions.ClusterNotUpError: Tailing logs: skipped for cluster 'spike-jvm-cli' (status: INIT). It is only allowed for UP and AUTOSTOPPING clusters. Wait fo…
+  (2 lines, exit=1)
+
+=== 5. teardown
+  $ sky down -y spike-jvm-cli
+    | 
+    | 
+    | 
+    | Terminating cluster spike-jvm-cli...done.
+    | Terminating 1 cluster ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
+  (5 lines, exit=0)
+
+=== DONE — see README.md for the verdict

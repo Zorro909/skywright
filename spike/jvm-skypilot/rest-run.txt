@@ -1,0 +1,49 @@
+
+=== 0. health — is the server reachable, and does it want auth?
+  status=200
+  body={"status":"healthy","api_version":"56","version":"0.13.0","version_on_disk":"0.13.0","commit":"b1431e52d97c22e9bb8fa8b67f162543754ddaf5","basic_auth_enabled":false,"user":null,"service_account_token_enabled":false,"ingress_basic_auth_enabled":false,"latest_version":null,"external_proxy_auth_enabled":true,"telemetry_enabled":true,"restrict_config_to_admins":false}
+
+=== 1. POST /launch — the request id comes back in a HEADER, not the body
+  http=200
+  body=null   <-- note: carries no id
+  x-skypilot-request-id=5a071e2b-0b43-4244-b8dd-8010f357ed73   <-- the ONLY handle on the operation
+
+=== 2. stream the launch's own log via GET /api/stream?request_id=...
+  (this is provisioning output — a held connection, plain text)
+  stream http=200 content-type=text/plain; charset=utf-8 transfer-encoding=chunked
+    | Waiting for 'sky.launch' request to be scheduled: 5a071e2b-0b43-4244-b8dd-8010f357ed73                                                                          …(+4022 chars)
+    | Considered resources (1 node):
+    | --------------------------------------------------------------------------------------
+    |  INFRA                        INSTANCE   vCPUs   Mem(GB)   GPUS   COST ($)   CHOSEN   
+    | --------------------------------------------------------------------------------------
+    |  Kubernetes (kind-skypilot)   -          1       1         -      0.00       [32m   ✔[0m     
+    | --------------------------------------------------------------------------------------
+    | [0m⚙︎ Launching on Kubernetes.
+    | [2m└── [0m[2mPod is up.[0m
+    | [0m[31m⨯[0m Failed to set up SkyPilot runtime on cluster.  [2mView logs: sky api logs -l sky-2026-08-08-20-29-19-295395/provision.log[0m
+  (stopped after 10 lines)
+
+=== 3. poll GET /api/get?request_id=... until terminal
+  poll http=500 -> TERMINAL FAILURE, payload nested under "detail"
+  final status = FAILED
+  return_value = null
+  error        = {"object":"gASVuBsAAAAAAAB9lCiMBHR5cGWUjAxSdW50aW1lRXJyb3KUjAdtZXNzYWdllIz3RmFpbGVkIHRvIHJ1biBzZXR1cCBjb21tYW5kcyBvbiBhbiBpbnN0YW5jZS4gKGV4aXQgY29kZSAxKS4gRXJyb3I6ID09PT09IHN0ZG91dCA9PT09PSAKCj09PT09IHN0ZGVyciA9PT09PWVycm9yOiBjYW5ub3QgZXhlYyBpbnRvIGEgY29udGFpbmVyIGluIGEgY29tcGxldGVkIHBvZDsgY3VycmVud…(+9479 chars)
+  entrypoint   = gASVHAAAAAAAAACMDXNreS5leGVjdXRpb26UjAZsYXVuY2iUk5Qu
+     ^ base64 of a PYTHON PICKLE. Opaque to a JVM. So is request_body.
+
+=== 4. POST /status — what does a read look like, and is its result typed?
+  status -> SUCCEEDED
+  return_value = [{"name":"spike-jvm","launched_at":1786213759,"handle":"gASV9xgAAAAAAACMIXNreS5iYWNrZW5kcy5jbG91ZF92bV9yYXlfYmFja2VuZJSMGENsb3VkVm1SYXlSZXNvdXJjZUhhbmRsZZSTlCmBlH2UKIwIX3ZlcnNpb26USw2MDGNsdXN0ZXJfbmFtZZSMCXNwaWtlLWp2bZSMFWNsdXN0ZXJfbmFtZV9vbl9jbG91ZJSMEnNwaWtlLWp2bS05ZmMzNDU2MJSMDV9jbHVzdGVyX3lhbWyUjCwvdmFyL2hvbWUvem9ycm8vLnNreS9nZW5lcmF0ZWQvc3Bpa2UtanZtLnltbJSMHHN0YWJsZV9pbnRlcm5hbF9leHRlcm5hbF9pcHOUTowQc3RhYmxlX3NzaF9wb3J0c5ROjBNjYWNoZWRfY2x1c3Rlcl9pbmZvlIwUc2t5LnByb3Zpc2lvbi5jb21tb26UjAtDbHVzdGVySW5mb5STlCmBlH2UKIwJaW5zdGFuY2VzlH2UjBdzcGlrZS1qdm0tOWZjMzQ1NjAtaGVhZJRdlGgPjAxJbnN0YW5jZUluZm+Uk5QpgZR9lCiMC2luc3RhbmNlX2lklGgWjAtpbnRlcm5hbF9pcJSMCzEwLjI0NC4wLjExlIwLZXh0ZXJuYWxfaXCUTowEdGFnc5R9lCiMCWNvbXBvbmVudJSMF3NwaWtlLWp2bS05ZmMzNDU2MC1oZWFklIwGcGFyZW50lIwIc2t5cGlsb3SUjBByYXktY2x1c3Rlci1uYW1llIwSc3Bpa2UtanZtLTlmYzM0NTYwlIwNcmF5LW5vZGUtdHlwZZSMBGhlYWSUjBBza3lwaWxvdC1jbHVzdGVylIwSc3Bpa2UtanZtLTlmYzM0NTYwlIwVc2t5cGlsb3QtY2x1c3Rlci1uYW1llIwSc3Bpa2UtanZtLTlmYzM0NTYwlIwSc2t5cGlsb3QtaGVhZC1ub2RllIwBMZSMDXNreXBpbG90LXVzZXKUjAV6b3Jyb5R1jAhzc2hfcG9ydJRLFowMaW50ZXJuYWxfc3ZjlIwxc3Bpa2UtanZtLTlmYzM0NTYwLWhlYWQuZGVmYXVsdC5zdmMuY2x1c3Rlci5sb2NhbJSMCW5vZGVfbmFtZZSMFnNreXBpbG90LWNvbnRyb2wtcGxhbmWU…(+22925 chars)
+     ^ JSON here, but /launch's was a bare int. No schema declares either.
+
+=== 5. POST /logs — can a JVM follow a RUNNING job's output?
+  http=200 request_id=ad2b85c4-d129-4b76-a2c8-9bd8fdcf6561
+  stream http=200 content-type=text/plain; charset=utf-8 transfer-encoding=chunked
+  (stopped after 0 lines)
+
+=== 6. teardown — POST /down, then confirm it completes
+  http=200 request_id=911f7d6a-25cb-420e-bfe3-2cc7c15b1fc2
+  status -> SUCCEEDED
+  final status = SUCCEEDED error=null
+
+=== DONE — see README.md for the verdict
