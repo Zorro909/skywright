@@ -30,7 +30,11 @@ Nothing at the source is synchronous — even reads are a request-id state machi
 
 An Orchestrator Operation is never durable. SkyPilot retains requests for one day, so persisting one would store a pointer that outlives its referent, and ADR 0005 already forbids storing what SkyPilot returns. A backend restart therefore loses the progress view of an in-flight operation but never its effect: correlation is a pure function of the run identity and the derived job name, and submission is idempotent on that name.
 
-Control calls share one long-lived GraalPy context served by a dedicated single-threaded executor. Serializing them costs little, since the API server rather than the context is where the work happens. Anything long-held — a followed log stream above all — must never run on that context, because it would starve every control action behind it; long-held work gets a context of its own. Whether live logs cross this boundary at all is a separate decision, and ADR 0005 has already placed job logs in the Run Store, which the backend now reads directly.
+Control calls share one long-lived GraalPy context served by a dedicated executor. Serializing them costs little, since the API server rather than the context is where the work happens. That executor must use platform threads: GraalPy documents native extension modules as incompatible with Java virtual threads, which a Spring Boot application would otherwise reach for.
+
+The binding rule is that **long-held work must never be able to block a control call**. A followed log stream is the case that matters. The mechanism is deliberately left open, because it is cheaper to measure than to reason about: GraalPy's GIL is per context but is released around blocking socket and SSL reads, so a second platform thread on the *shared* context may already satisfy the rule. A second context is the expensive answer — running native extensions in more than one context is Linux-only, requires the experimental `python.IsolateNativeModules` option on every context in the process, and is documented as still troublesome for many extensions — so it is a fallback rather than the design. Which arrangement holds is settled by the prototype, and this paragraph is amended by its result.
+
+Whether live logs cross this boundary at all is a separate decision, and ADR 0005 has already placed job logs in the Run Store, which the backend now reads directly.
 
 ## Deployment and versions
 
@@ -44,7 +48,7 @@ Availability follows ADR 0005 unchanged, with one addition: a failure to reach S
 
 The backend's deployable now embeds a Python runtime and SkyPilot's client. Its image is larger, its startup pays SkyPilot's import cost once, and its build is coupled to a Python dependency resolution it did not previously have.
 
-Control throughput is bounded by one executor thread. This is expected to be irrelevant against an API server that does the real work, but it is a real ceiling and a real failure mode if any call that should be short turns out to block.
+Control throughput is bounded by the width of that executor. This is expected to be irrelevant against an API server that does the real work, but it is a real ceiling and a real failure mode if any call that should be short turns out to block.
 
 Native-image is foreclosed while this stands. Should it ever become a requirement, GraalPy embedding is the thing that would have to be proven under it.
 
