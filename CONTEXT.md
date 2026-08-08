@@ -28,6 +28,14 @@ _Avoid_: Training framework, callback framework
 The explicit library-provided runtime boundary through which a Training Project accesses resolved datasets, metrics, persistence, and resume state while retaining ownership of its training loop.
 _Avoid_: Trainer, callback host, global context
 
+**Target Storage**:
+A pre-registered, credentialed storage destination that Skywright addresses but never creates. Many Storage Locations live within one; datasets and run outputs never share one.
+_Avoid_: Bucket, provider, storage backend
+
+**Storage Location**:
+A concrete path within one Target Storage, and the single addressing concept for durable content — whether that content is a Dataset's payload or one run's Run Store. Training Project code never sees its storage protocol.
+_Avoid_: Dataset Location, path, URL
+
 **Dataset**:
 A stable, versioned lineage of immutable Dataset Definitions with a mutable pointer to the definition currently preferred for catalog display and lifecycle recommendations. Run Definitions never follow this pointer; they pin an exact Dataset Definition version.
 _Avoid_: Dataset Definition, latest dataset version
@@ -37,15 +45,11 @@ A validated, immutable snapshot of a durable input corpus, identified by a stabl
 _Avoid_: Dataset object, data path, replay buffer
 
 **Dataset Catalog Record**:
-Skywright-owned mutable metadata for one Dataset Definition, designating exactly one authoritative Dataset Location and identifying currently known Dataset Replicas and Dataset Caches together with their verification, storage, and usage facts. A verified replica may replace the authority without changing the Dataset Definition; changed content requires a new version.
+Skywright-owned mutable metadata for one Dataset Definition, designating exactly one authoritative Storage Location and identifying currently known Dataset Replicas and Dataset Caches together with their verification, storage, and usage facts. A verified replica may replace the authority without changing the Dataset Definition; changed content requires a new version.
 _Avoid_: Dataset Definition, dataset manifest
 
-**Dataset Location**:
-A concrete storage location whose content exactly matches one Dataset Definition version. Skywright selects a location for an execution without exposing its storage protocol to Training Project code; an older copy remains a location of the older version rather than becoming a stale location of a newer one.
-_Avoid_: Data path, project-selected location
-
 **Dataset Replica**:
-A verified, durable, byte-preserving, non-authoritative Dataset Location with its own stable catalog identity and generations, independent of the Dataset Definition version. Refresh creates a new verified generation; deprecation prevents new leases, replacement waits for existing leases to end, and the old generation is deleted only after its replacement is published.
+A verified, durable, byte-preserving, non-authoritative Storage Location with its own stable catalog identity and generations, independent of the Dataset Definition version. Refresh creates a new verified generation; deprecation prevents new leases, replacement waits for existing leases to end, and the old generation is deleted only after its replacement is published.
 _Avoid_: Dataset Cache, backup, stale copy
 
 **Dataset Lease**:
@@ -53,7 +57,7 @@ A Run Record's explicit claim on an exact Dataset Replica generation selected fo
 _Avoid_: Last-used timestamp, storage lock
 
 **Dataset Cache**:
-A bounded, non-authoritative local copy of Dataset content used only to accelerate access. Skywright tracks its host or run ownership, storage use, verification age, and last use, but it never replaces an authoritative Dataset Location or verified Dataset Replica.
+A bounded, non-authoritative local copy of Dataset content used only to accelerate access. Skywright tracks its host or run ownership, storage use, verification age, and last use, but it never replaces an authoritative Storage Location or verified Dataset Replica.
 _Avoid_: Dataset replica, dataset source
 
 **Generated Experience**:
@@ -69,11 +73,11 @@ A request to create a run from a specific Training Project Version, configuratio
 _Avoid_: Run Definition, job
 
 **Run Definition**:
-The immutable, fully resolved description of what should run, including its Training Project Version, Run Configuration, and requested target capabilities. Changing any of those creates a new Run Definition.
+The immutable, fully resolved description of what should run, including its Training Project Version, Run Configuration, requested target capabilities, and the Target Storage its execution writes to. Changing any of those creates a new Run Definition.
 _Avoid_: Run Submission, Run Record, mutable job configuration
 
 **Run Record**:
-The Skywright-originated durable record of one Run Definition's execution, carrying the immutable run identity that names its orchestrator job and the submission attempt that started it. It holds no orchestrator-sourced fact and no stored status: lifecycle state is derived, and the infrastructure actually selected is a Retained SkyPilot Fact. A clone receives a new Run Record.
+The Skywright-originated durable record of one Run Definition's execution, carrying the immutable run identity that names its orchestrator job and the submission attempt that started it. It holds no orchestrator-sourced fact and no stored status: lifecycle state is derived, and the infrastructure actually selected is a Retained SkyPilot Fact. It also holds its Run Store's current Storage Location, which changes when the store moves, and — when the run was seeded from an earlier one — that predecessor and the exact checkpoint. A clone receives a new Run Record.
 _Avoid_: Run Definition, Run Store, status field
 
 **Run Lifecycle State**:
@@ -109,8 +113,16 @@ The ephemeral, stateless TensorBoard instance serving exactly one run's Metric S
 _Avoid_: Metric store, dashboard service, retained instance
 
 **Run Store**:
-The mandatory durable home for a run's checkpoints, samples, artifacts, and metrics. Its storage target may differ between local and external execution without changing the Training Project's contract. It is the determined source for a completed run's metrics, never a location something else copies them out of.
+The mandatory durable home for a run's checkpoints, samples, artifacts, and metrics: one Storage Location per run. Its Target Storage may differ between local and external execution and may change once the run is terminal, without changing the Training Project's contract — so readers resolve it through the Run Record rather than the Run Definition. It is the determined source for a completed run's metrics, never a location something else copies them out of.
 _Avoid_: Bucket, output directory
+
+**Repatriation**:
+The move of a terminal run's Run Store to a configured destination Target Storage, copying and verifying before anything is deleted. It is a no-op when the run already executed against that destination, and a failure leaves the store where it is rather than degrading the run.
+_Avoid_: Backup, archive, sync
+
+**Transfer Worker**:
+The role that copies content between two Storage Locations, verifies it, publishes it, and deletes the source only when asked. One protocol serves repatriation, seeding a resumed run, and dataset materialization; it never runs on a training instance.
+_Avoid_: Backend job, sync service, upload script
 
 **Progress Record**:
 A small Skywright-originated object in the Run Store carrying a run's current step, target step, and the time it was written, overwritten on each flush. It is an aged intermediate result serving run-list progress — not a metric series, and not an index over one.
