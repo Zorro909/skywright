@@ -44,6 +44,10 @@ _Avoid_: Dataset Definition, latest dataset version
 A validated, immutable snapshot of a durable input corpus, identified by a stable dataset identity and version, with its integrity manifest and shared loading configuration; payload semantics such as image, text, or video remain with the Training Project. Its version is a human-assigned label plus a mandatory content fingerprint, or an abbreviated fingerprint when no label is supplied; any content transformation creates a new definition.
 _Avoid_: Dataset object, data path, replay buffer
 
+**Dataset Publication**:
+The all-or-nothing creation of a Dataset Definition and its authoritative remote Storage Location from a storage-ready local corpus. Before publication succeeds, neither the definition nor staged content is visible as a Dataset.
+_Avoid_: Dataset preprocessing, dataset upload, materialization
+
 **Dataset Catalog Record**:
 Skywright-owned mutable metadata for one Dataset Definition, designating exactly one authoritative Storage Location and identifying currently known Dataset Replicas and Dataset Caches together with their verification, storage, and usage facts. A verified replica may replace the authority without changing the Dataset Definition; changed content requires a new version.
 _Avoid_: Dataset Definition, dataset manifest
