@@ -44,6 +44,22 @@ _Avoid_: Dataset Definition, latest dataset version
 A validated, immutable snapshot of a durable input corpus, identified by a stable dataset identity and version, with its integrity manifest and shared loading configuration; payload semantics such as image, text, or video remain with the Training Project. Its version is a human-assigned label plus a mandatory content fingerprint, or an abbreviated fingerprint when no label is supplied; any content transformation creates a new definition.
 _Avoid_: Dataset object, data path, replay buffer
 
+**Dataset Item**:
+One canonical member of a Dataset Definition, stably identified within that definition by its ordinal; its payload semantics remain with the Training Project.
+_Avoid_: Sample, input sample, record
+
+**Dataset Item Sequence**:
+The exact ordered sequence of Dataset Item identities committed by a Run, derived from its Dataset Definition and library-owned ordering inputs; the initial policy makes each epoch a deterministic permutation containing every item exactly once. Recovery, Storage Location, cache state, loader-worker count, accelerator count, and batch grouping may change retrieval or grouping but never this flattened logical order; identical decoded tensors, augmentations, or numerical results are not promised.
+_Avoid_: Sample order, statistically equivalent sampling, batch order
+
+**Dataset Cursor**:
+The checkpointed `(global epoch, item offset, epoch-local Step count)` locating the next uncommitted Dataset Item in a Dataset Item Sequence. It advances only when the enclosing Step completes, so prefetched items and items from an interrupted Step are replayed.
+_Avoid_: DataLoader cursor, batch cursor, items fetched
+
+**Ordering Reset**:
+An explicit Run Definition mode for a checkpoint-seeded Run that changes Dataset Definition and abandons exact sequence continuation. It restores global epoch and global Step, resets item offset and epoch-local Step count to zero, and is never inferred from changed inputs; changing the ordering seed or policy remains invalid.
+_Avoid_: Automatic reset, exact continuation, warm start
+
 **Dataset Publication**:
 The all-or-nothing creation of a Dataset Definition and its authoritative remote Storage Location from a storage-ready local corpus. Before publication succeeds, neither the definition nor staged content is visible as a Dataset.
 _Avoid_: Dataset preprocessing, dataset upload, materialization
@@ -141,11 +157,11 @@ A small Skywright-originated object in the Run Store carrying a run's current st
 _Avoid_: Metric index, run status, stored progress
 
 **Checkpoint State**:
-The complete set of standard and project-specific resumable state a Training Project registers before training begins. A checkpoint is a durable snapshot of this declared state.
+The complete set of library-owned and project-specific resumable state established before training begins, including the Dataset Cursor and the fingerprint of its ordering inputs. A checkpoint is a durable snapshot of this declared state.
 _Avoid_: State dictionary, model weights
 
 **Step**:
-A Training Project's monotonically numbered unit of committed progress and the safe boundary at which the Run Context may flush metrics, checkpoint state, or honor interruption. It need not correspond to a dataset batch or epoch.
+A Training Project's monotonically numbered unit of committed progress and the safe boundary at which the Run Context may flush metrics, checkpoint state, or honor interruption. It may contain any number of batches or Dataset Items but cannot span Dataset epochs.
 _Avoid_: Batch, iteration, epoch
 
 **Sample**:
