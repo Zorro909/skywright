@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           java-version: '25'
-          distribution: temurin
+          distribution: graalvm-community
           cache: maven
       - name: Check Google Java Format
         run: ./mvnw --batch-mode git-code-format:validate-code-format -Dgcf.globPattern='**/*'
