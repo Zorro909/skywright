@@ -8,6 +8,22 @@ Skywright provides a portable contract for defining and running machine-learning
 The stable authority under which Skywright accepts and attributes a request. In the initial deployment, every caller able to reach the backend receives one built-in Principal Identity; Skywright performs no authentication and cannot distinguish individual humans. A later access layer may supply distinct identities without changing action records.
 _Avoid_: User session, credential, authenticated human
 
+**Credential Authority**:
+The deployment-wide external source of truth for secret material consumed by managed Skywright roles and integrated systems. Skywright retains references to its entries rather than the secret values themselves; developer-local direct execution lies outside this authority.
+_Avoid_: Skywright secret store, database secret, shared credential
+
+**Credential Binding**:
+A non-secret deployment definition associating one external resource, consuming role, and access profile with an entry in the Credential Authority. It exposes enrollment, validation, expiry, rotation, and usage metadata without exposing secret material; operator-supplied candidates become active only after validation.
+_Avoid_: Credential, Vault path, database secret
+
+**Credential Projection**:
+A role-scoped runtime copy of a Credential Binding's secret material supplied to one managed process without making that process's source of configuration authoritative. A Run's projection remains fixed for its lifetime, including recovery, while later Runs receive later credential versions.
+_Avoid_: Credential Authority, persisted secret, Run Definition
+
+**Credential Projection Record**:
+The immutable, non-secret evidence that one Credential Binding revision was projected to a named role for a Run or operation, including when that use began and ended. It lets rotation and revocation account for active consumers without retaining secret material or replacing the Credential Authority's audit.
+_Avoid_: Credential, Vault lease, secret audit log
+
 **Training Project**:
 A consumer of Skywright that owns model and data semantics, training control flow, and project-specific configuration. Its identity is Skywright-owned and survives a change of registry or repository.
 _Avoid_: Plugin, managed trainer
@@ -29,12 +45,20 @@ A validation-only JSON document that fills, but never replaces, paths absent fro
 _Avoid_: Example configuration, fallback defaults
 
 **Training Contract**:
-The library-owned, validated standards a Training Project must follow for configuration, datasets, checkpointing, metrics, and resume behavior. It does not prescribe the project's training loop.
+The library-owned, validated standards a Training Project must follow for configuration, datasets, checkpointing, metrics, resume behavior, and handling its Credential Projection without disclosure. It does not prescribe the project's training loop.
 _Avoid_: Training framework, callback framework
 
 **Run Context**:
-The explicit library-provided runtime boundary through which a Training Project accesses resolved datasets, metrics, persistence, and resume state while retaining ownership of its training loop.
+The explicit library-provided runtime boundary through which a Training Project accesses resolved datasets, metrics, persistence, and resume state while retaining ownership of its training loop. Its first construction attempt irrevocably claims the training process, which can never attempt another; a later attempt is a Training Contract violation, and every direct run therefore begins in a fresh process. It exclusively owns the process's training-runtime setup and cooperative interruption handling, while accelerator access remains explicit and host logging remains outside its boundary.
 _Avoid_: Trainer, callback host, global context
+
+**Training Process Boundary**:
+The library-owned outer boundary that creates a training process's sole Run Context, invokes the Training Project's entry point, finalizes its Execution Termination Report, and exits with the corresponding orchestration outcome. It owns process lifecycle without owning the project's training loop.
+_Avoid_: Training framework, project entry point, Run Context
+
+**Training Process Outcome**:
+The success, recoverable-interruption, cancellation, or terminal-failure control result emitted by a Training Process Boundary. It controls orchestration rather than diagnosing termination: only a safely finalized interruption requests recovery, while the Execution Termination Report retains the exact cause and an abrupt loss may emit no outcome.
+_Avoid_: Execution Termination Cause, Run Lifecycle State, diagnostic exit code
 
 **Target Storage**:
 A pre-registered, credentialed storage destination that Skywright addresses but never creates. Many Storage Locations live within one; datasets and run outputs never share one.
@@ -132,9 +156,49 @@ _Avoid_: Run, clone, submission attempt, retry
 The immutable Run Store record establishing an Execution Attempt's identity and the checkpoint from which it starts. Its missing Execution Termination Report means only that the attempt did not report a cause.
 _Avoid_: Run Record, recovery count, termination report
 
+**Recovery Debt**:
+A Run's progress-decayed count of infrastructure recoveries: each recovery adds one and each newly published Durable Safe Point removes one, never below zero. The initial Execution Attempt adds no debt; exceeding the finite maximum fixed in the Run Definition ends automatic recovery.
+_Avoid_: Recovery count, lifetime retry count, time-window retry limit
+
+**Recovery Exhaustion Record**:
+The immutable, run-level Run Store fact that a prospective recovery was refused because it would exceed the Run Definition's maximum Recovery Debt. It records the policy and evidence used by the runtime startup gate and makes the Run terminal without creating an Execution Attempt or claiming a process termination cause.
+_Avoid_: Execution Termination Report, retry failure, inferred preemption
+
 **Run Lifecycle State**:
-A run's waiting, running, interrupted, finished, failed, or cancelled condition, computed per read from Retained SkyPilot Facts, the Run Definition, and its Execution Termination Reports. It is never stored, so a corrected mapping corrects every past run. Whether a source could be reached is a separate fact, not another state.
+A run's waiting, running, interrupted, finished, failed, or cancelled condition, computed per read from Retained SkyPilot Facts, the Run Definition, its Execution Termination Reports, and any Recovery Exhaustion Record. It is never stored, so a corrected mapping corrects every past run. Whether a source could be reached is a separate fact, not another state.
 _Avoid_: Run status column, unknown state, aborted, SkyPilot job status
+
+**Run Notice**:
+An immutable observation concerning a Run that a Principal Identity should be able to learn about independently of whether or how it is delivered. Every newly observed terminal Run transition and every automatic resolution of an Attention Item creates one, except that successful Run deletion leaves only its Run Deletion Receipt. Later evidence corrects a Notice by appending a linked Notice rather than rewriting what Skywright observed; a Run Notice may open or refer to an Attention Item, but an informational occurrence needs none.
+_Avoid_: Notification, delivery attempt, Attention Item
+
+**Attention Item**:
+A durable, addressable representation of one unresolved condition episode concerning a Run that may require human action. Reobservation updates the same open item; a condition that clears and later recurs opens a linked new item rather than reopening its predecessor. It resolves automatically when a recoverable underlying condition clears and otherwise requires an Attention Disposition; acknowledging it records awareness without resolving it.
+_Avoid_: Run Notice, alert message, Run Lifecycle State
+
+**Attention Disposition**:
+An explicit Principal Identity's durable conclusion that a permanent Attention Item was remediated, accepted, or requires no action. It resolves the item without altering the Run fact that caused it.
+_Avoid_: Acknowledgement, condition recovery, Run outcome
+
+**Attention Acknowledgement**:
+A Principal Identity's durable statement that it has seen an Attention Item. It stops that identity's reminders but neither resolves the item nor claims that its underlying condition changed.
+_Avoid_: Attention Disposition, delivery receipt, resolution
+
+**Attention Inbox**:
+The authoritative pull-based view of durable Run Notices and Attention Items for a Principal Identity. Configured push delivery may draw attention to its contents but never replaces or removes them.
+_Avoid_: Notification channel, activity feed, delivery history
+
+**Attention Routing Policy**:
+A Principal Identity's mutable selection of named push channels and unacknowledged-item reminder behavior for each kind of Run Notice and Attention Item. It is evaluated when an occurrence is recorded, independently of every Run Definition; the resulting delivery intentions do not change when the policy later changes.
+_Avoid_: Run Configuration, Run Definition, channel credentials
+
+**Attention Channel**:
+A named, outbound-only destination to which Skywright can send a minimal non-sensitive attention envelope. It neither speaks for a Principal Identity nor accepts acknowledgement, disposition, retry, or Run-control commands.
+_Avoid_: Attention Inbox, interactive integration, authenticated principal
+
+**Attention Delivery**:
+A durable, non-authoritative intention to project a Run Notice or Attention Item to one configured push channel. Skywright attempts it at least once under a stable identity, permits duplicate receipt, and retains exhausted failure for manual retry unless a later related occurrence has already been delivered. Related deliveries remain causally ordered within that channel; success means only that the channel accepted the payload, never that a human saw it. Delivery outcome changes neither the source occurrence nor the Attention Inbox and never creates recursive attention.
+_Avoid_: Run Notice, Attention Item, authoritative notification
 
 **Capability Availability**:
 The current ability to perform one named observation, control, or enforcement capability from its required sources and services. It is reported independently of Run Lifecycle State: losing a dependency makes only affected capabilities explicitly unavailable and never invents a lifecycle value or stops a Run merely because Skywright lost visibility.
@@ -143,6 +207,46 @@ _Avoid_: Run Lifecycle State, stale fallback, global health status
 **Runtime Ceiling**:
 An optional Run Definition duration evaluated against the union of that Run's attributable compute-allocation intervals, including setup and every recovery but excluding queueing and gaps without an allocation. It is a terminal-stop trigger observed by the backend, not a guaranteed maximum duration.
 _Avoid_: Execution Attempt timeout, queue deadline, hard runtime cap
+
+**Metered Resource**:
+A compute allocation, durable-storage occupancy, data transfer, or dedicated auxiliary resource whose consumption is attributable to one Run. Shared services, account-level discounts and credits, and taxes are not Metered Resources.
+_Avoid_: Shared infrastructure, provider invoice line
+
+**Metered Usage**:
+The durably observed quantity of a Metered Resource consumed by one Run, expressed in the resource's pricing unit and retaining the observation's provenance. Missing usage remains an explicit gap rather than becoming zero.
+_Avoid_: Cost total, estimated usage, billing line
+
+**Price Source**:
+The explicitly selected authority for one target and Metered Resource family's rates, carrying its provenance and freshness. It may be a provider surface, SkyPilot's catalog, or an operator-maintained schedule; an operator override is always deliberate rather than an automatic fallback.
+_Avoid_: First available price, provider invoice
+
+**Applied Rate**:
+The immutable, sourced unit price and billing rules selected for a Metered Usage interval. Later source or operator changes create a new rate for later usage and never revalue historical usage.
+_Avoid_: Current price, mutable rate, billed amount
+
+**Reporting Currency**:
+The deployment-wide currency in which Run Cost Estimates and their aggregates are presented. An Applied Rate retains its native currency and the frozen, sourced conversion used to express it in the Reporting Currency.
+_Avoid_: Provider currency, current exchange rate
+
+**Eligible GPU Offering**:
+A configured cloud provider's instance offering whose GPU model, GPU count, and purchase mode satisfy a Run Submission's requested target capabilities. Eligibility does not assert that the provider has immediate live capacity.
+_Avoid_: Available instance, selected infrastructure, live capacity
+
+**Target Support Tier**:
+The deployment's explicit support promise for one named target and purchase-mode pairing, so one mode may be demoted without changing another. A First-class Target is release-gated by documented credentials and end-to-end evidence; a Compatible Target is a finite, operator-configured allowlist entry with no release guarantee; a Deferred Target is unavailable until promoted.
+_Avoid_: Any SkyPilot provider, adapter maturity, presumed compatibility
+
+**Cost Quote**:
+The immutable pre-run minimum-to-maximum GPU-compute price across a Run Submission's Eligible GPU Offerings, expressed per hour, 24-hour day, and 168-hour week. It does not forecast storage, transfer, or auxiliary-resource cost, assert live capacity, or estimate the resources ultimately selected for execution.
+_Avoid_: Run Cost Estimate, price guarantee, provider bill
+
+**Cost Component**:
+The valuation of one Metered Resource's usage within a Run Cost Estimate. It is ongoing while that resource still accrues and completed once its usage closes; whether its usage and pricing are complete is a separate property.
+_Avoid_: Run cost total, invoice line
+
+**Run Cost Estimate**:
+The non-invoice monetary estimate derived from Metered Usage and Applied Rates for one Run, including every recovery Execution Attempt in that Run. A checkpoint-seeded clone owns a separate estimate, and missing usage or pricing leaves the estimate explicitly incomplete rather than treating the component as free.
+_Avoid_: Actual spend, provider bill, GPU cost
 
 **Cost Ceiling**:
 An optional Run Definition amount in the Reporting Currency evaluated against the available Run Cost Estimate. It is a best-effort terminal-stop trigger rather than a guaranteed spend maximum; incomplete estimate inputs make it visibly unenforceable without stopping the Run.
@@ -159,6 +263,22 @@ _Avoid_: Cancellation Request, Interruption Request, Ceiling Stop Decision
 **Retained SkyPilot Fact**:
 An immutable orchestrator-sourced fact Skywright appends to outlive SkyPilot's retention policy, kept in storage of that provenance alone and joined to a run only by run identity. The source wins while it still answers; retained rows supplement only what it has purged.
 _Avoid_: Mirrored state, run status cache, Skywright-originated fact
+
+**Run Log Archive**:
+The immutable, SkyPilot-provenance post-hoc log source inside a Run Store, containing separate ordered raw terminal-byte streams for task output and controller output. The task stream is indexed by Setup Log Segment and Execution Attempt without rewriting its chronology; its terminal manifest records each stream as complete or partial. Until that manifest is published, SkyPilot remains authoritative.
+_Avoid_: Live log, Retained SkyPilot Fact, Execution Termination Report, Artifact
+
+**Live Log View**:
+A non-authoritative, offset-followed rendering of terminal bytes already captured in a staging Run Log Archive while SkyPilot remains authoritative. It continues across preemption and Execution Attempts; source loss leaves captured bytes visible with explicit freshness, while Run Store loss makes the view unavailable. It interprets terminal control sequences rather than inventing log records, timestamps, or line boundaries.
+_Avoid_: Live log source, held SkyPilot stream, normalized log feed
+
+**Archive Cursor**:
+A stable position between bytes in one Run Log Archive stream, used to page history and resume a Live Log View without depending on storage chunks or the Run Store's current Storage Location.
+_Avoid_: SkyPilot log offset, line number, object key
+
+**Setup Log Segment**:
+The ordered task-log output produced before an Execution Attempt begins. It may be linked to the following attempt as its preparation, but never belongs to that attempt; a setup failure may leave it unlinked at Run level.
+_Avoid_: Execution Attempt log, controller log, setup attempt
 
 **Orchestrator Operation**:
 One control action the backend has handed to the orchestrator and is waiting on. It exists only while the process that started it lives: it is never persisted, so losing it loses the view of an action, never the action itself.
@@ -221,7 +341,7 @@ The ephemeral, stateless TensorBoard instance serving exactly one run's Metric S
 _Avoid_: Metric store, dashboard service, retained instance
 
 **Run Store**:
-The mandatory durable home for a run's checkpoints, samples, artifacts, and metrics: one Storage Location per run. Its Target Storage may differ between local and external execution and may change once the run is terminal, without changing the Training Project's contract — so readers resolve it through the Run Record rather than the Run Definition. It is the determined source for a completed run's metrics, never a location something else copies them out of.
+The mandatory durable home for a run's checkpoints, samples, artifacts, metrics, and retained logs: one Storage Location per run. Its Target Storage may differ between local and external execution and may change once the run is terminal, without changing the Training Project's contract — so readers resolve it through the Run Record rather than the Run Definition. It is the determined source for a completed run's metrics and retained logs, with SkyPilot-sourced logs kept provenance-distinct from process-authored outputs.
 _Avoid_: Bucket, output directory
 
 **Repatriation**:
@@ -253,11 +373,11 @@ A Safe Point whose checkpoint has been confirmed published in the Run Store, mak
 _Avoid_: Safe Point, local snapshot, pending checkpoint
 
 **Interruption Request**:
-A request for a running Training Project to stop at its next Safe Point. Receiving one does not itself commit progress or make state durable.
+A request for a running Training Project to stop at its next Safe Point. An unqualified first `SIGINT` or `SIGTERM` creates one unless a Cancellation Request already exists, but the signal never proves preemption; receiving the request does not itself commit progress or make state durable.
 _Avoid_: Preemption, Safe Point, immediate termination
 
 **Cancellation Request**:
-A user-directed request to end a Run terminally at its next Safe Point without creating a checkpoint for the cancellation. It escalates to forced orchestrator cancellation after bounded grace, and retry starts a new Run from an existing Durable Safe Point.
+A user-directed request through Skywright's explicit cancellation surface to end a Run terminally at its next Safe Point without creating a checkpoint for the cancellation. It is never inferred from a process signal, escalates to forced orchestrator cancellation after bounded grace, and retry starts a new Run from an existing Durable Safe Point.
 _Avoid_: Interruption Request, aborted, pause
 
 **Sample**:

@@ -34,7 +34,7 @@ Control calls share one long-lived GraalPy context served by a dedicated executo
 
 The binding rule is that **long-held work must never be able to block a control call**. A followed log stream is the case that matters. The mechanism is deliberately left open, because it is cheaper to measure than to reason about: GraalPy's GIL is per context but is released around blocking socket and SSL reads, so a second platform thread on the *shared* context may already satisfy the rule. A second context is the expensive answer — running native extensions in more than one context is Linux-only, requires the experimental `python.IsolateNativeModules` option on every context in the process, and is documented as still troublesome for many extensions — so it is a fallback rather than the design. Which arrangement holds is settled by the prototype, and this paragraph is amended by its result.
 
-Whether live logs cross this boundary at all is a separate decision, and ADR 0005 has already placed job logs in the Run Store, which the backend now reads directly.
+Whether live logs cross this boundary at all is a separate decision. ADR 0018 places the terminal Run Log Archive in the Run Store, which the backend reads directly; ADR 0005 had deliberately deferred that choice.
 
 ## Deployment and versions
 
