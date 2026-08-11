@@ -24,11 +24,44 @@
   </modules>
 
   <properties>
+    <git-code-format-maven-plugin.version>5.3</git-code-format-maven-plugin.version>
+    <google-java-format.version>1.36.1</google-java-format.version>
     <java.version>25</java.version>
   </properties>
 
   <build>
     <plugins>
+      <plugin>
+        <groupId>com.cosium.code</groupId>
+        <artifactId>git-code-format-maven-plugin</artifactId>
+        <version>${git-code-format-maven-plugin.version}</version>
+        <executions>
+          <execution>
+            <id>install-formatter-hook</id>
+            <goals>
+              <goal>install-hooks</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>validate-code-format</id>
+            <goals>
+              <goal>validate-code-format</goal>
+            </goals>
+          </execution>
+        </executions>
+        <dependencies>
+          <dependency>
+            <groupId>com.cosium.code</groupId>
+            <artifactId>google-java-format</artifactId>
+            <version>${git-code-format-maven-plugin.version}</version>
+          </dependency>
+          <dependency>
+            <groupId>com.google.googlejavaformat</groupId>
+            <artifactId>google-java-format</artifactId>
+            <version>${google-java-format.version}</version>
+          </dependency>
+        </dependencies>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-toolchains-plugin</artifactId>

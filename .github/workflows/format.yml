@@ -1,0 +1,23 @@
+name: Format
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  java:
+    name: Java
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25.0.4'
+          distribution: graalvm-community
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+      - name: Check Google Java Format
+        run: ./mvnw --batch-mode git-code-format:validate-code-format -Dgcf.globPattern='**/*'
