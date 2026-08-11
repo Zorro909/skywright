@@ -9,7 +9,7 @@ A consumer of Skywright that owns model and data semantics, training control flo
 _Avoid_: Plugin, managed trainer
 
 **Training Project Version**:
-An immutable, identifiable version of a Training Project, labelled by the commit and pipeline that produced it and resolving to one Training Project Image per accelerator backend it declares, together with the Project Configuration Contract that its code expects. It exists only once its build has published every image it declares and that contract.
+An immutable, identifiable version of a Training Project, labelled by the commit and pipeline that produced it and resolving to one Training Project Image per accelerator backend it declares, together with the Project Configuration Contract and Project Metric Contract that its code expects. It exists only once its build has published every image it declares and both contracts.
 _Avoid_: Latest project, floating project version, working tree
 
 **Training Project Image**:
@@ -101,7 +101,7 @@ A request to create a run from a specific Training Project Version, configuratio
 _Avoid_: Run Definition, job
 
 **Run Definition**:
-The immutable, fully resolved description of what should run, including its Training Project Version, Run Configuration, requested target capabilities, and the Target Storage its execution writes to. Changing any of those creates a new Run Definition.
+The immutable, fully resolved description of what should run, including its Training Project Version, Run Configuration, the exact Skywright Metric Schema identity, requested target capabilities, and the Target Storage its execution writes to. Changing any of those creates a new Run Definition.
 _Avoid_: Run Submission, Run Record, mutable job configuration
 
 **Orchestrator Task Specification**:
@@ -145,11 +145,39 @@ The library-owned base image for one accelerator backend, carrying the Skywright
 _Avoid_: Project environment, device configuration, run-time dependency install
 
 **Metric Definition**:
-A metric's declared identity and comparison semantics. Every recorded metric must have a definition established before the run begins.
+A metric's declared identity and recording semantics: canonical name, numeric kind, controlled unit, Recording Basis, comparison direction, optional bounds, and a Step Reduction when Step-based. A project metric is comparable only within one Training Project identity and when every semantic field of its definitions matches; presentation-only display name and description do not break comparability, and comparison direction never implies a run-level summary.
 _Avoid_: Dynamic metric, log field
 
+**Project Metric Contract**:
+The canonical, content-addressed, version-bound set of project-owned Metric Definitions published with a Training Project Version after both project CI and the backend validate it against the exact Skywright Metric Schema it names. A Run Submission can neither add to nor alter it.
+_Avoid_: Run metrics, dynamic registry
+
+**Skywright Metric Schema**:
+The versioned, content-addressed definition format, library-owned Metric Definitions, Metric Unit registry, and naming rules with which a Project Metric Contract composes. Each Project Metric Contract and Run Definition pin its exact identity.
+_Avoid_: Project Metric Contract, Metric Catalog, TensorBoard schema
+
+**Metric Catalog**:
+The immutable set of Metric Definitions deterministically composed at runtime from a Run Definition's pinned Project Metric Contract and exact Skywright Metric Schema. Names are unique and `skywright/` is reserved for library definitions; the catalog is not persisted separately, and TensorBoard observations do not contain its semantics.
+_Avoid_: Project Metric Contract, observed tags, metric index
+
+**Metric Observation**:
+A provisional project-reported finite scalar value for a declared Step-based metric, associated by the Run Context with the next Step to commit rather than with a caller-supplied Step number. All observations for that metric are combined by its Step Reduction when the Step commits and discarded if the Step does not commit; a definition permits observations but does not require any, while returning with pending observations is a contract violation.
+_Avoid_: Metric point, committed metric
+
+**Metric Unit**:
+A stable identifier from Skywright's versioned registry describing a Metric Definition's quantity, including an explicit dimensionless identifier. Free-form display strings are not Metric Units; later registry additions do not change existing definitions.
+_Avoid_: Unit label, description
+
+**Recording Basis**:
+The declared primary axis on which a metric is recorded: a committed Step or wall-clock time. Training Projects may declare only Step-based metrics; Skywright may define either kind.
+_Avoid_: TensorBoard axis, sampling interval
+
+**Step Reduction**:
+The declared `mean`, `sum`, `min`, `max`, or `last` rule that combines one or more Metric Observations for a metric within a committed Step into exactly one recorded value. `mean` requires a real-valued metric; optional bounds constrain the reduced value.
+_Avoid_: TensorBoard smoothing, cross-run aggregation
+
 **System Metric**:
-A machine or runtime measurement recorded under a reserved, library-owned namespace that a Training Project can neither declare into nor write to. Step-indexed kinds are derived in the Run Context from reported Steps; time-sampled kinds come from a background sampler on a wall-clock cadence.
+A library-owned Metric Definition under `skywright/system/` that a Training Project can neither declare nor write. Step-based kinds are derived in the Run Context from reported Steps; wall-time kinds come from a background sampler on a wall-clock cadence.
 _Avoid_: Project metric, separate monitoring channel
 
 **Metric Segment**:
