@@ -4,6 +4,10 @@ Skywright provides a portable contract for defining and running machine-learning
 
 ## Language
 
+**Principal Identity**:
+The stable authority under which Skywright accepts and attributes a request. In the initial deployment, every caller able to reach the backend receives one built-in Principal Identity; Skywright performs no authentication and cannot distinguish individual humans. A later access layer may supply distinct identities without changing action records.
+_Avoid_: User session, credential, authenticated human
+
 **Training Project**:
 A consumer of Skywright that owns model and data semantics, training control flow, and project-specific configuration. Its identity is Skywright-owned and survives a change of registry or repository.
 _Avoid_: Plugin, managed trainer
@@ -131,6 +135,10 @@ _Avoid_: Run Record, recovery count, termination report
 **Run Lifecycle State**:
 A run's waiting, running, interrupted, finished, failed, or cancelled condition, computed per read from Retained SkyPilot Facts, the Run Definition, and its Execution Termination Reports. It is never stored, so a corrected mapping corrects every past run. Whether a source could be reached is a separate fact, not another state.
 _Avoid_: Run status column, unknown state, aborted, SkyPilot job status
+
+**Capability Availability**:
+The current ability to perform one named observation, control, or enforcement capability from its required sources and services. It is reported independently of Run Lifecycle State: losing a dependency makes only affected capabilities explicitly unavailable and never invents a lifecycle value or stops a Run merely because Skywright lost visibility.
+_Avoid_: Run Lifecycle State, stale fallback, global health status
 
 **Runtime Ceiling**:
 An optional Run Definition duration evaluated against the union of that Run's attributable compute-allocation intervals, including setup and every recovery but excluding queueing and gaps without an allocation. It is a terminal-stop trigger observed by the backend, not a guaranteed maximum duration.
