@@ -109,8 +109,16 @@ A Run Definition projected into the orchestrator's own vocabulary, expressed aga
 _Avoid_: Run Definition, task YAML, job spec
 
 **Run Record**:
-The Skywright-originated durable record of one Run Definition's execution, carrying the immutable run identity that names its orchestrator job and the submission attempt that started it. It holds no orchestrator-sourced fact and no stored status: lifecycle state is derived, and the infrastructure actually selected is a Retained SkyPilot Fact. It also holds its Run Store's current Storage Location, which changes when the store moves, and — when the run was seeded from an earlier one — that predecessor and the exact checkpoint. A clone receives a new Run Record.
+The Skywright-originated durable record of one Run Definition's execution, carrying the immutable run identity that names its orchestrator job and the submission attempt that started it. It holds no orchestrator-sourced fact and no stored status: lifecycle state is derived, and the infrastructure actually selected is a Retained SkyPilot Fact. It also holds its Run Store's current Storage Location, which changes when the store moves, and — when the run was seeded from an earlier one — that predecessor and the exact checkpoint. A clone receives a new Run Record; only a terminal Run may enter deletion, which also deletes its Run Store.
 _Avoid_: Run Definition, Run Store, status field
+
+**Run Deletion Operation**:
+The durable, addressable progress of the sole confirmed request to irreversibly remove a terminal Run Record and every state exclusively owned by or attributed to it. It is separate from Run Lifecycle State, fences new work, and advances monotonically through retryable partial failure; it becomes a Run Deletion Receipt only after every known external object is absent and the Run's database state is removed.
+_Avoid_: Deleting lifecycle state, synchronous delete, cancellation
+
+**Run Deletion Receipt**:
+The permanent minimal evidence that a Run Deletion Operation completed: Run and operation identities, requesting principal, request and completion times, protocol version, and successful outcome. It remains a resolvable lineage endpoint but retains no Run definition, outcome, storage address, outputs, costs, failure history, or other operational metadata, and never causes deletion to cascade into descendant Runs.
+_Avoid_: Soft-deleted Run Record, Run archive, deletion operation
 
 **Execution Attempt**:
 One lifetime of the Training Project process within a Run, beginning only once its Execution Attempt Record is durable. Infrastructure recovery starts a new Execution Attempt in the same Run, while retrying a terminal Run creates a new Run rather than another attempt.
