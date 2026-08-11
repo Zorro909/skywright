@@ -8,7 +8,7 @@ Skywright is a contract-enforcing toolkit, not a training framework. A Training 
 
 ## Contract boundary
 
-- Run Configuration composes library-defined common options with project-defined options and is validated before execution.
+- Run Configuration is one semantic tree with exclusively owned properties and is validated before execution; [ADR 0012](0012-compose-one-owned-configuration-tree.md) defines its library/project boundary and composition contract.
 - Durable Datasets use MosaicML Streaming; their payload semantics remain project-owned. Live-generated experience is not a Dataset and is outside the initial scope, though it can be persisted for inspection or later reuse.
 - Multi-node execution and compatibility are not design goals.
 - Every run has a mandatory Run Store. Its target may vary between local and external execution, but its project-facing contract does not.

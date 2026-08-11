@@ -4,7 +4,7 @@ status: accepted
 
 # Use declarative JSON run definitions
 
-Skywright represents a run with an immutable, fully resolved JSON Run Definition rather than a Python-owned object or executable configuration. A Run Submission names an exact Training Project Version and supplies partial configuration overrides and target constraints; Skywright resolves every default and validates the result before creating the Run Definition. The version's project-owned JSON Schema and default document form its Project Configuration Contract and may not be paired with code from another version.
+Skywright represents a run with an immutable, fully resolved JSON Run Definition rather than a Python-owned object or executable configuration. A Run Submission names an exact Training Project Version and supplies partial configuration overrides and target constraints; Skywright resolves every default and validates the result before creating the Run Definition. The version's project-owned schema contribution and defaults document form its Project Configuration Contract, pin the exact Skywright Configuration Schema they extend, and may not be paired with code from another version.
 
 ## Contract boundaries
 
@@ -19,4 +19,4 @@ A Python object as the primary definition was rejected because the Java backend 
 
 ## Consequences
 
-Each Training Project Version must carry a version-bound JSON Schema and defaults document. JSON Schema's `default` annotation is not relied upon to mutate instances; Skywright deterministically combines a submission's overrides with the version's defaults, validates the resolved configuration, and persists all resulting values explicitly. The exact mechanism used to pin a Training Project Version remains a downstream decision.
+Each Training Project Version must carry a version-bound project schema contribution, defaults document, and the Skywright library version and configuration-schema digest against which CI validated them. The backend independently composes and validates the same whole-document schema. JSON Schema's `default` annotation is not relied upon to mutate instances; Skywright deterministically combines library defaults, version defaults and a submission's overrides, validates the resolved configuration, and persists all resulting values explicitly. [ADR 0012](0012-compose-one-owned-configuration-tree.md) defines ownership and precedence; exact merge and `null` semantics remain downstream. The exact mechanism used to pin a Training Project Version remains a downstream decision.

@@ -17,7 +17,7 @@ The built container image carrying one Training Project Version's source and loc
 _Avoid_: Project container, image tag, local build
 
 **Project Configuration Contract**:
-The version-bound definition of a Training Project's configuration shape and defaults. It belongs to exactly one Training Project Version and cannot be mixed with another version's code.
+The version-bound schema contribution and defaults supplied by a Training Project, pinned to the exact Skywright Configuration Schema against which they were checked. Its schema defines only project-owned properties within the shared Run Configuration tree, while its defaults may choose values for both project- and library-owned properties without redefining the latter; it belongs to exactly one Training Project Version and cannot be mixed with another version's code.
 _Avoid_: Project config template, arbitrary parameters
 
 **Training Contract**:
@@ -85,8 +85,12 @@ Training data produced during a run, such as RL rollouts or replay-buffer entrie
 _Avoid_: Dataset
 
 **Run Configuration**:
-The fully resolved configuration within a Run Definition, composed from library-defined common options and project-defined options. Every default is materialized before the run is accepted.
+The fully resolved, immutable, single semantic configuration tree governing the Training Contract inside a training process; orchestration and backend choices remain separate in the Run Definition. Library and project ownership do not create parallel namespaces: an option is library-owned when Skywright interprets it to provide or enforce the Training Contract, and project-owned only when its meaning belongs entirely to the Training Project. A project may choose and read a library-owned value for its own purposes but cannot redefine the property's meaning or constraints; every default is materialized before the run is accepted.
 _Avoid_: Config file, parameters
+
+**Skywright Configuration Schema**:
+The versioned, content-addressed definition and property catalogue for the library-owned part of Run Configuration. A Project Configuration Contract contributes project-owned properties to it, while both project CI and the backend independently validate the resulting whole-document contract.
+_Avoid_: Project schema, handwritten configuration reference
 
 **Run Submission**:
 A request to create a run from a specific Training Project Version, configuration overrides, and requested target capabilities. It is intent awaiting resolution, not the repeatable run artifact.
