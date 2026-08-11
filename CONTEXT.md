@@ -101,7 +101,7 @@ A request to create a run from a specific Training Project Version, configuratio
 _Avoid_: Run Definition, job
 
 **Run Definition**:
-The immutable, fully resolved description of what should run, including its Training Project Version, Run Configuration, the exact Skywright Metric Schema identity, requested target capabilities, and the Target Storage its execution writes to. Changing any of those creates a new Run Definition.
+The immutable, fully resolved description of what should run, including its Training Project Version, Run Configuration, the exact Skywright Metric Schema identity, requested target capabilities, the Target Storage its execution writes to, and any runtime or cost ceiling. Changing any of those creates a new Run Definition.
 _Avoid_: Run Submission, Run Record, mutable job configuration
 
 **Orchestrator Task Specification**:
@@ -124,6 +124,22 @@ _Avoid_: Run Record, recovery count, termination report
 A run's waiting, running, interrupted, finished, failed, or cancelled condition, computed per read from Retained SkyPilot Facts, the Run Definition, and its Execution Termination Reports. It is never stored, so a corrected mapping corrects every past run. Whether a source could be reached is a separate fact, not another state.
 _Avoid_: Run status column, unknown state, aborted, SkyPilot job status
 
+**Runtime Ceiling**:
+An optional Run Definition duration evaluated against the union of that Run's attributable compute-allocation intervals, including setup and every recovery but excluding queueing and gaps without an allocation. It is a terminal-stop trigger observed by the backend, not a guaranteed maximum duration.
+_Avoid_: Execution Attempt timeout, queue deadline, hard runtime cap
+
+**Cost Ceiling**:
+An optional Run Definition amount in the Reporting Currency evaluated against the available Run Cost Estimate. It is a best-effort terminal-stop trigger rather than a guaranteed spend maximum; incomplete estimate inputs make it visibly unenforceable without stopping the Run.
+_Avoid_: Budget guarantee, provider spending limit, actual-cost cap
+
+**Ceiling Stop Decision**:
+The immutable backend decision that one or both of a Run's observed ceiling exposures reached their configured values, carrying the triggering observations and their freshness. It is the sole authority for a ceiling stop and may be projected for delivery without making that projection another evaluator.
+_Avoid_: Policy Stop Request, billing alert, stored Run status
+
+**Policy Stop Request**:
+The Run Store projection of a Ceiling Stop Decision that asks the Training Process Boundary to stop terminally at its next Safe Point after making that point durable. It authorizes no independent ceiling calculation and never requests recovery.
+_Avoid_: Cancellation Request, Interruption Request, Ceiling Stop Decision
+
 **Retained SkyPilot Fact**:
 An immutable orchestrator-sourced fact Skywright appends to outlive SkyPilot's retention policy, kept in storage of that provenance alone and joined to a run only by run identity. The source wins while it still answers; retained rows supplement only what it has purged.
 _Avoid_: Mirrored state, run status cache, Skywright-originated fact
@@ -137,7 +153,7 @@ The atomic, immutable final record an Execution Attempt writes to its Run Store 
 _Avoid_: Exit code, crash log, preemption signal
 
 **Execution Termination Cause**:
-The canonical process-known reason named by an Execution Termination Report: completed, cancelled, interrupted, contract violation, Training Project failure, or Skywright failure. It is not stored on the Run Record, and its absence does not imply a cause.
+The canonical process-known reason named by an Execution Termination Report: completed, cancelled, interrupted, policy stopped, contract violation, Training Project failure, or Skywright failure. It is not stored on the Run Record, and its absence does not imply a cause.
 _Avoid_: Stop reason, Run status, exit code
 
 **Environment Profile**:
