@@ -18,7 +18,7 @@ The deciding argument is not ergonomics but ownership. Mapping a Run Definition 
 
 In-process under GraalPy, in JVM mode. Native-image is out of scope for this map: nothing in the requirements asks for fast startup or low resident memory, and admitting it would force the arrangement to be proven twice.
 
-Whether GraalPy can carry SkyPilot's client dependency tree is not yet established, so the fallback is fixed in advance: an out-of-process Python service speaking the same SDK. It is explicitly **not** a return to REST or the CLI, because everything that disqualified them concerns speaking HTTP instead of Python and is untouched by where the Python runs. That is what confines the open question to deployment — no other decision here varies with its answer. Under the fallback the service's entry point is a transport shim, not a home for domain logic.
+[Prototype #32](https://github.com/Zorro909/skywright/issues/32) established that GraalPy 25.2.4 can carry SkyPilot 0.13.0's client dependency tree: `import sky`, a real launch, a held operation, typed status and cluster-handle traversal, and a Run-Definition-shaped Java record crossing as a task all succeeded. The in-process arrangement is therefore selected. The fixed fallback remains an out-of-process Python service speaking the same SDK. It is explicitly **not** a return to REST or the CLI, because everything that disqualified them concerns speaking HTTP instead of Python and is untouched by where the Python runs. Under the fallback the service's entry point is a transport shim, not a home for domain logic.
 
 ## The seam
 
@@ -30,9 +30,9 @@ Nothing at the source is synchronous — even reads are a request-id state machi
 
 An Orchestrator Operation is never durable. SkyPilot retains requests for one day, so persisting one would store a pointer that outlives its referent, and ADR 0005 already forbids storing what SkyPilot returns. A backend restart therefore loses the progress view of an in-flight operation but never its effect: correlation is a pure function of the run identity and the derived job name, and submission is idempotent on that name.
 
-Control calls share one long-lived GraalPy context served by a dedicated executor. Serializing them costs little, since the API server rather than the context is where the work happens. That executor must use platform threads: GraalPy documents native extension modules as incompatible with Java virtual threads, which a Spring Boot application would otherwise reach for.
+Control calls share one long-lived GraalPy context served by a dedicated platform-thread executor. GraalPy documents native extension modules as incompatible with Java virtual threads, which a Spring Boot application would otherwise reach for.
 
-The binding rule is that **long-held work must never be able to block a control call**. A followed log stream is the case that matters. The mechanism is deliberately left open, because it is cheaper to measure than to reason about: GraalPy's GIL is per context but is released around blocking socket and SSL reads, so a second platform thread on the *shared* context may already satisfy the rule. A second context is the expensive answer — running native extensions in more than one context is Linux-only, requires the experimental `python.IsolateNativeModules` option on every context in the process, and is documented as still troublesome for many extensions — so it is a fallback rather than the design. Which arrangement holds is settled by the prototype, and this paragraph is amended by its result.
+The binding rule is that **long-held work must never be able to block a control call**. The prototype settled the mechanism: two platform threads share the one Context. While one thread held `sky.stream_and_get()` for a launch, the other completed `sky.status()` in 1,491 ms; the held stream finished after 21,624 ms. A second Context is neither required nor part of the design. This avoids the Linux-only, experimental `python.IsolateNativeModules` path and its native-extension compatibility risk.
 
 Whether live logs cross this boundary at all is a separate decision, and ADR 0005 has already placed job logs in the Run Store, which the backend now reads directly.
 
@@ -42,11 +42,15 @@ The API server is long-lived and Skywright-operated. A per-call server auto-star
 
 Because the SkyPilot client is now a dependency of the backend's own build while the API server deploys separately, the two can drift apart in a way `sky` and its server never can. They are therefore built from one pinned SkyPilot version and identified by digest, as ADR 0006 already does for training images, and upgrading SkyPilot is a deliberate paired deployment. The alternative is owning a compatibility matrix for a protocol whose version guarantees are undocumented.
 
+The proven embedding uses an external Maven-plugin-managed environment, the native POSIX backend, a 16 MiB JVM thread stack, and a generic `Context.Builder` configured with `GraalPyResources.forExternalDirectory(...)`. The resource adapter connects `${root}/venv` and `${root}/src`; it is not a separate builder type, and the older `GraalPyResources.contextBuilder(Path)` convenience method is deprecated in 25.2.4. Implementation owns the remaining host, I/O, native, thread, and polyglot access policy explicitly.
+
+The prototype's calls to no-argument `Context.close()` crashed in native thread-local teardown. This is an implementation risk, not a failed mechanism criterion: the spike did not test the first-party Spring lifecycle, which calls `context.close(true)` from `@PreDestroy`. Implementation uses that lifecycle and verifies shutdown after quiescing its executor. Native teardown is investigated further only if the crash recurs; the out-of-process service remains the deployment fallback if it becomes an implementation blocker.
+
 Availability follows ADR 0005 unchanged, with one addition: a failure to reach SkyPilot is a single condition regardless of where it occurred. A user can do nothing differently on learning that a bridging process rather than the API server is down, and keeping the two indistinct is what stops the GraalPy-versus-service fork from leaking out of deployment and into the domain model.
 
 ## Consequences
 
-The backend's deployable now embeds a Python runtime and SkyPilot's client. Its image is larger, its startup pays SkyPilot's import cost once, and its build is coupled to a Python dependency resolution it did not previously have.
+The backend's deployable now embeds a Python runtime and SkyPilot's client. The prototype measured a 21.254-second `import sky`, a 154 MiB executable-JAR delta, and a 223 MiB external GraalPy/SkyPilot environment. Its startup pays that import cost once, and its build is coupled to a 96-package Python dependency resolution that it did not previously have.
 
 Control throughput is bounded by the width of that executor. This is expected to be irrelevant against an API server that does the real work, but it is a real ceiling and a real failure mode if any call that should be short turns out to block.
 

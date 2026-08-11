@@ -1,6 +1,8 @@
-# Spike result: the boundary works, but use the fallback
+# Spike result: use the in-process GraalPy boundary
 
-All six requested mechanism checks passed on GraalPy 25.2.4, including a real launch and a typed cluster handle. However, every normal Context teardown crashed the JVM with `SIGSEGV`; the successful end-to-end run could exit cleanly only by calling `Runtime.halt()`. That is not an acceptable Spring Boot lifecycle, so the recommendation remains the out-of-process Python SDK service.
+All six requested mechanism checks passed on GraalPy 25.2.4, including a real launch and a typed cluster handle. This selects the in-process arrangement from ADR 0009; the out-of-process Python SDK service remains the fallback.
+
+The spike also found a teardown risk, but did not test the relevant first-party Spring lifecycle. Calls to the no-argument `Context.close()` crashed the JVM with `SIGSEGV`, so the recorded end-to-end run used `Runtime.halt()` after completing its checks. GraalPy's official Spring Boot example instead calls `context.close(true)` from an `@PreDestroy` method. Because that path was not tested here, the crash does not overturn the successful mechanism result. Implementation must use and verify the supported lifecycle, and investigate the native teardown only if it recurs.
 
 ## Environment
 
@@ -82,12 +84,27 @@ The locked 96-package graph is in `graalpy.lock`.
 
 The final executable JAR is 170,142,168 bytes versus 9,104,336 bytes for an otherwise equivalent Spring Boot 4.1.0 baseline: a 161,037,832-byte (154 MiB) JAR delta. The external GraalPy/SkyPilot environment is 233,341,216 bytes (223 MiB), for a combined 394,379,048-byte (377 MiB) delta.
 
-## Internals and lifecycle failure
+## Internals and lifecycle qualification
 
 The spike calls `Task.to_yaml_config()` only to expose the exact mapped specification; SkyPilot documents that method as internal-facing. The status model itself documents `handle` as an internally facing `Any` field, though the SDK promises it in its return contract.
 
-More importantly, every run that closed the native-POSIX Context crashed in glibc's `__GI___nptl_deallocate_tsd`, on both the original and matching GraalVM runtimes, after success and failure alike. The end-to-end run uses `Runtime.halt()` to bypass native teardown. That skips Spring shutdown hooks and is only acceptable in a throwaway probe.
+Every run that called the no-argument `Context.close()` on the native-POSIX Context crashed in glibc's `__GI___nptl_deallocate_tsd`, on both the original and matching GraalVM runtimes, after success and failure alike. The recorded end-to-end run therefore used `Runtime.halt()` after the exercise completed. That bypass is acceptable only in this throwaway probe and is not the lifecycle recommendation.
+
+The spike did **not** test `Context.close(true)`. GraalVM documents that overload as closing the Context while cancelling any execution that is still running, and GraalPy's first-party Spring Boot example invokes it from `@PreDestroy`. The implementation should follow that pattern and verify shutdown under its real executor lifecycle before treating the observed no-argument-close crash as a persistent defect. See [BUILDER-SOURCES.md](BUILDER-SOURCES.md#spring-lifecycle-and-the-untested-close-path) for the primary sources and the precise evidence boundary.
+
+## Embedding API qualification
+
+The spike source uses `GraalPyResources.contextBuilder(resources)`, following the published embedding guidance. In the exact 25.2.4 API that convenience method still returns the generic `Context.Builder`, but it has been deprecated since 25.1.0. Production implementation should use the current composition form:
+
+```java
+Context.newBuilder()
+    .apply(GraalPyResources.forExternalDirectory(resources))
+```
+
+`GraalPyResources` is not a separate builder abstraction. It attaches the Maven-plugin-managed external virtual environment and source directory to the generic builder. A bare `Context.newBuilder("python")` is valid, but would not by itself point GraalPy at `target/graalpy-resources/venv`. The source trail and configured options are recorded in [BUILDER-SOURCES.md](BUILDER-SOURCES.md).
+
+Unlike the deprecated convenience builder, `forExternalDirectory(...)` deliberately applies only resource-related I/O and Python path options. The implementation must configure its required host, thread, native, polyglot, and broader I/O access explicitly on the generic builder rather than inheriting the convenience method's broad defaults.
 
 ## Decision
 
-**Fallback.** The in-process boundary, one-Context concurrency, operation model, real launch, typed handle, and Java-record mapping all work. The normal JVM lifecycle does not. Until GraalPy can close this native-extension-heavy Context without crashing—and without the Java POSIX backend's missing socket support—the out-of-process Python SDK service is the operationally sound mechanism.
+**In-process.** The boundary, one-Context concurrency on platform threads, operation model, real launch, typed handle, and Java-record mapping all work. Use one GraalPy Context with the native POSIX backend and a dedicated platform-thread executor. Use the current external-resource builder composition and close the Context with `close(true)` from Spring lifecycle management, verifying teardown during implementation. The out-of-process Python SDK service remains the fixed fallback if an implementation blocker resurfaces.
