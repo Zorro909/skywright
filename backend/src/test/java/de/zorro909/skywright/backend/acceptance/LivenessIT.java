@@ -1,14 +1,14 @@
-package dev.skywright.backend.acceptance;
+package de.zorro909.skywright.backend.acceptance;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
 
-final class ReadinessIT {
+final class LivenessIT {
   @Test
-  void runningBackendIsReadyToAcceptHttpTraffic() throws Exception {
+  void runningBackendIsLive() throws Exception {
     try (var backend = BackendFixture.start()) {
-      var response = backend.get("/readyz");
+      var response = backend.get("/livez");
 
       assertThat(response.statusCode()).isEqualTo(200);
       assertThat(response.body()).contains("\"status\":\"UP\"");

@@ -1,4 +1,4 @@
-package dev.skywright.backend.acceptance;
+package de.zorro909.skywright.backend.acceptance;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

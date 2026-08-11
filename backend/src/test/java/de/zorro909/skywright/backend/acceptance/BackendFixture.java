@@ -1,6 +1,6 @@
-package dev.skywright.backend.acceptance;
+package de.zorro909.skywright.backend.acceptance;
 
-import dev.skywright.backend.SkywrightBackendApplication;
+import de.zorro909.skywright.backend.SkywrightBackendApplication;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
