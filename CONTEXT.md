@@ -17,8 +17,12 @@ The built container image carrying one Training Project Version's source and loc
 _Avoid_: Project container, image tag, local build
 
 **Project Configuration Contract**:
-The version-bound schema contribution and defaults supplied by a Training Project, pinned to the exact Skywright Configuration Schema against which they were checked. Its schema defines only project-owned properties within the shared Run Configuration tree, while its defaults may choose values for both project- and library-owned properties without redefining the latter; it belongs to exactly one Training Project Version and cannot be mixed with another version's code.
+The version-bound schema contribution, defaults, and Defaults Completion Witness supplied by a Training Project, pinned to the exact Skywright Configuration Schema against which they were checked. Its schema defines only project-owned properties within the shared Run Configuration tree, while its defaults may choose values for both project- and library-owned properties without redefining the latter; it belongs to exactly one Training Project Version and cannot be mixed with another version's code.
 _Avoid_: Project config template, arbitrary parameters
+
+**Defaults Completion Witness**:
+A validation-only JSON document that fills, but never replaces, paths absent from the combined library and project defaults, proving that those possibly incomplete defaults can produce at least one valid Run Configuration. It belongs to a Project Configuration Contract and never becomes a default or enters a Run Definition.
+_Avoid_: Example configuration, fallback defaults
 
 **Training Contract**:
 The library-owned, validated standards a Training Project must follow for configuration, datasets, checkpointing, metrics, and resume behavior. It does not prescribe the project's training loop.

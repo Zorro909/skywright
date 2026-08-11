@@ -20,7 +20,7 @@ The initial library-owned paths are:
 - `metrics.segmentRoll`
 - `metrics.systemSamplingInterval`
 
-This is deliberately the smallest set required by accepted decisions. Learning rate, batch size, model and optimizer choices, augmentations and stopping criteria remain project-owned. A future property becomes library-owned only when Skywright begins interpreting it under the rule above; broad usefulness alone is insufficient. The inner shapes of checkpoint policy and the exact merge, array and `null` semantics are separate decisions.
+This is deliberately the smallest set required by accepted decisions. Learning rate, batch size, model and optimizer choices, augmentations and stopping criteria remain project-owned. A future property becomes library-owned only when Skywright begins interpreting it under the rule above; broad usefulness alone is insufficient. The inner shapes of checkpoint policy remain a separate decision; [ADR 0013](0013-resolve-configuration-with-structural-overlays.md) fixes merge, array and `null` semantics.
 
 ## Schema composition and values
 
@@ -28,7 +28,7 @@ The Skywright Configuration Schema owns and documents the library paths. A Proje
 
 Choosing a value does not transfer definition ownership. A project may add a sibling beneath an object shared with Skywright, but it may not restate or constrain a library-owned property, change the type of a shared parent, or apply an object-wide constraint that changes which library properties are valid. Every property path therefore has exactly one definition owner. Project compilation and CI must compose the schemas and reject a collision with its JSON Pointer and both owners; the backend independently repeats the check and treats a conflicting Training Project Version as not runnable.
 
-Default precedence is library, then Training Project Version, then Run Submission. This fixes authority without fixing how documents merge: recursive object behavior, arrays, `null`, unknown properties and cross-language conformance examples remain with the separate override-semantics decision.
+Default precedence is library, then Training Project Version, then Run Submission. [ADR 0013](0013-resolve-configuration-with-structural-overlays.md) defines the structural overlay that applies that precedence and the Defaults Completion Witness that validates an incomplete baseline without weakening the complete-instance schema.
 
 ## Versioning and documentation
 
