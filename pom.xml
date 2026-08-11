@@ -73,8 +73,7 @@
               <goal>select-jdk-toolchain</goal>
             </goals>
             <configuration>
-              <version>[25.0.4,25.0.5)</version>
-              <runtimeVersion>25.0.4+7-jvmci-25.2-b20</runtimeVersion>
+              <version>[25,26)</version>
               <vendor>GraalVM Community</vendor>
               <useJdk>Never</useJdk>
             </configuration>
@@ -98,25 +97,15 @@
                   <message>Build Skywright with the checked-in Maven Wrapper (Maven 3.9.16).</message>
                 </requireMavenVersion>
                 <requireJavaVersion>
-                  <version>[25.0.4,25.0.5)</version>
-                  <message>Build Skywright with OpenJDK 25.0.4 from GraalVM Community 25.2.4.</message>
+                  <version>[25,26)</version>
+                  <message>Build Skywright with Java 25 from GraalVM Community.</message>
                 </requireJavaVersion>
                 <requireJavaVendor>
                   <includes>
                     <include>GraalVM Community</include>
                   </includes>
-                  <message>Build Skywright with GraalVM Community 25.2.4.</message>
+                  <message>Build Skywright with Java 25 from GraalVM Community.</message>
                 </requireJavaVendor>
-                <requireProperty>
-                  <property>java.vendor.version</property>
-                  <regex>GraalVM CE 25\.2\.4\+7\.1</regex>
-                  <message>Build Skywright with GraalVM Community 25.2.4.</message>
-                </requireProperty>
-                <requireProperty>
-                  <property>java.runtime.version</property>
-                  <regex>25\.0\.4\+7-jvmci-25\.2-b20</regex>
-                  <message>Build Skywright with the supported OpenJDK 25.0.4+7 runtime.</message>
-                </requireProperty>
               </rules>
             </configuration>
           </execution>
