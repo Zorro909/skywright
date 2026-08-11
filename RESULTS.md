@@ -1,45 +1,93 @@
-# Spike result: use the out-of-process fallback
+# Spike result: the boundary works, but use the fallback
 
-`import sky` does not complete under GraalPy 25.2.4. Criterion 1 is negative, so criteria 2–6 were not attempted, as the ticket requires.
+All six requested mechanism checks passed on GraalPy 25.2.4, including a real launch and a typed cluster handle. However, every normal Context teardown crashed the JVM with `SIGSEGV`; the successful end-to-end run could exit cleanly only by calling `Runtime.halt()`. That is not an acceptable Spring Boot lifecycle, so the recommendation remains the out-of-process Python SDK service.
 
-## Canonical run
-
-The final run used:
+## Environment
 
 - GraalVM CE 25.2.4, JDK 25.0.4, with runtime compilation enabled
 - GraalPy 25.2.4 (Python 3.12.8)
-- SkyPilot 0.13.0
+- SkyPilot client and API server 0.13.0
 - Spring Boot 4.1.0
-- GraalPy's native POSIX backend on the Spring Boot main platform thread (`virtual=false`)
+- one GraalPy Context using the native POSIX backend
+- two explicit platform threads for concurrent SDK work
+- a real CPython SkyPilot API server at `127.0.0.1:46580`
+- a disposable, CPU-only kind 0.32.0 cluster on Podman, context `kind-skywright-graalpy-spike`
 
-After supplying the guest `argv[0]` that an embedded Context lacks and raising `sys.setrecursionlimit()` from 1,000 to 10,000, the import reached 1,571 loaded modules. It still threw `RecursionError: maximum recursion depth exceeded` while FastAPI imported Pydantic and Pydantic generated its OpenAPI model schemas. On the final clean run, the Python import took 17.426 seconds; Context construction took 407 ms and the whole evaluation took 18.989 seconds.
+The machine's original GraalVM 25.0.2 was too old for the 25.2.4 polyglot artifacts. The final results use the matching GraalVM distribution, eliminating the earlier interpreter-only version warning.
 
-Closing the Context then crashed the JVM with `SIGSEGV` in glibc's `__GI___nptl_deallocate_tsd`. The same teardown crash occurred on every failed import in both POSIX modes.
+## Criteria
 
-This was rerun on the matching GraalVM CE 25.2.4 distribution because the machine's original GraalVM 25.0.2 was too old for the 25.2.4 polyglot artifacts. The supported runtime removed the interpreter-only version warning but reproduced both the recursion failure and teardown crash.
+### 1. Import: passed with constraints
 
-The default Java POSIX backend fails earlier: SkyPilot's dependency graph imports code that expects `socket.AF_UNIX`, which that backend does not expose. Native POSIX is itself flagged by GraalPy as not fully supported for embedding.
+`import sky` completed in 21.254 seconds and loaded 1,853 modules. Context construction took 409 ms. The complete exercise initialized the import and bridge functions in 22.694 seconds.
 
-No individual distribution failed to install. The terminal import failure is the interaction between GraalPy's execution stack and Pydantic's recursive schema generation. The nearest distributions on the failing path are FastAPI 0.141.1, Pydantic 2.13.4, and pydantic-core 2.46.4.
+Three embedding constraints were necessary:
 
-## Installation and maintenance cost
+- the Context must supply `argv[0]`, which GraalPy embedding otherwise leaves absent and SkyPilot indexes unconditionally;
+- the native POSIX backend is required because the Java backend lacks `socket.AF_UNIX`; and
+- the JVM thread stack must be raised to 16 MiB. With the default JVM stack, GraalPy raised `RecursionError` during Pydantic schema generation even after Python's recursion limit was raised to 10,000.
 
-SkyPilot's complete dependency graph did install, including its native extensions, but only after:
+### 2–3. One-Context concurrency on platform threads: passed
 
-- pinning Pandas 2.2.3 because Pandas 3.0.2 failed its Cython build probe;
-- pinning Setuptools 80.9.0 because uvloop 0.22.1 imports `pkg_resources` while preparing its wheel;
-- providing C and C++ compilers, Rust, GNU patch, and PostgreSQL client headers plus `pg_config`;
+The first arrangement tested was two platform threads sharing one Context. No second Context was needed.
+
+While thread `graalpy-platform-0` held `sky.stream_and_get()` for the launch, thread `graalpy-platform-1` submitted and awaited `sky.status()`. The status call returned in 1,491 ms while the launch stream was still held; the stream completed after 21,624 ms. Both threads reported `virtual=false`.
+
+The concurrent status already exposed an `INIT` cluster and its typed handle. This confirms that the HTTP stream releases enough guest execution capacity for control calls and amends ADR 0009's second-Context premise: use one Context if this mechanism were ever retained.
+
+### 4. Real launch and held Operation: passed
+
+The Java side retained the guest `RequestId` as an `Operation`:
+
+```text
+Operation[kind=launch, requestId=c3a4f6a2-25c7-4842-a16b-e6bcc563b5ff, guestType=RequestId]
+```
+
+SkyPilot selected `k8s/kind-skywright-graalpy-spike`, created cluster `skywright-graalpy-32c`, and returned job ID 1. The operation was streamed until the job was submitted. Cleanup then awaited `sky.down()` and removed the unique cluster.
+
+### 5. Typed status and cluster handle: passed
+
+SkyPilot returned a concrete Pydantic `StatusResponse`, not a dictionary. GraalPy preserved that model and its raw `CloudVmRayResourceHandle`, allowing Java to traverse members directly. The final typed snapshot was:
+
+```text
+status=UP
+handle.type=CloudVmRayResourceHandle
+handle.clusterName=skywright-graalpy-32c
+handle.clusterNameOnCloud=skywright-graalpy-32c-9fc34560
+handle.launchedNodes=1
+handle.launchedResources=Kubernetes(1CPU--1GB, cpus=1, mem=1)
+```
+
+This is exactly the object fidelity the earlier REST arm lost.
+
+### 6. Java record to Task Specification: passed
+
+A nested Java `RunDefinition`/`ResourceDefinition` record tree crossed the polyglot boundary as a host object. Python read its typed accessors, constructed `sky.Resources` and `sky.Task`, and submitted this server-side specification:
+
+```json
+{"file_mounts": {}, "name": "graalpy-boundary", "num_nodes": 1, "resources": {"cpus": "1", "disk_size": 256, "infra": "kubernetes/kind-skywright-graalpy-spike", "memory": "1"}, "run": "python -c \"print('graalpy boundary reached')\"", "volumes": {}}
+```
+
+## Build and artifact cost
+
+SkyPilot's complete dependency graph installed, including its native extensions, but required:
+
+- Pandas 2.2.3 because Pandas 3.x failed its Cython build probe;
+- Setuptools 80.9.0 because uvloop 0.22.1 imports `pkg_resources` while preparing its wheel;
+- C and C++ compilers, Rust, GNU patch, and PostgreSQL client headers plus `pg_config`;
 - compiling GraalPy-specific wheels for the native dependency set; and
 - tolerating stale GraalPy patch hunks for setproctitle 1.3.7 and greenlet 3.5.5, although both wheels eventually built.
 
-The locked graph is in `graalpy.lock`. Nothing reached into SkyPilot internals; the only embedding accommodations were the documented Context arguments/POSIX options and Python's public recursion-limit API.
+The locked 96-package graph is in `graalpy.lock`.
 
-## Size
+The final executable JAR is 170,142,168 bytes versus 9,104,336 bytes for an otherwise equivalent Spring Boot 4.1.0 baseline: a 161,037,832-byte (154 MiB) JAR delta. The external GraalPy/SkyPilot environment is 233,341,216 bytes (223 MiB), for a combined 394,379,048-byte (377 MiB) delta.
 
-The executable Spring Boot JAR is 170,128,811 bytes (163 MiB). An otherwise equivalent Spring Boot 4.1.0 baseline JAR is 9,104,336 bytes (8.7 MiB), so GraalPy adds 161,024,475 bytes (154 MiB) to the JAR. The external GraalPy/SkyPilot environment is another 233,341,216 bytes (223 MiB).
+## Internals and lifecycle failure
 
-Combined, the in-process arrangement adds 394,365,691 bytes (377 MiB) over the Spring Boot baseline before application code or model artifacts.
+The spike calls `Task.to_yaml_config()` only to expose the exact mapped specification; SkyPilot documents that method as internal-facing. The status model itself documents `handle` as an internally facing `Any` field, though the SDK promises it in its return contract.
+
+More importantly, every run that closed the native-POSIX Context crashed in glibc's `__GI___nptl_deallocate_tsd`, on both the original and matching GraalVM runtimes, after success and failure alike. The end-to-end run uses `Runtime.halt()` to bypass native teardown. That skips Spring shutdown hooks and is only acceptable in a throwaway probe.
 
 ## Decision
 
-**Fallback.** Use the fixed out-of-process Python SDK service. The in-process mechanism fails its first gate and also exhibits a repeatable native teardown crash; its concurrency, launch, handle-decoding, and DTO-boundary criteria therefore do not earn further prototype effort.
+**Fallback.** The in-process boundary, one-Context concurrency, operation model, real launch, typed handle, and Java-record mapping all work. The normal JVM lifecycle does not. Until GraalPy can close this native-extension-heavy Context without crashing—and without the Java POSIX backend's missing socket support—the out-of-process Python SDK service is the operationally sound mechanism.
