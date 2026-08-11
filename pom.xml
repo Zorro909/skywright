@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.1.0</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>de.zorro909.skywright</groupId>
+  <artifactId>skywright-parent</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>Skywright reactor</name>
+  <description>Aggregator and shared build parent for Skywright project parts.</description>
+
+  <modules>
+    <module>backend</module>
+  </modules>
+
+  <properties>
+    <git-code-format-maven-plugin.version>5.3</git-code-format-maven-plugin.version>
+    <google-java-format.version>1.36.1</google-java-format.version>
+    <java.version>25</java.version>
+  </properties>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>com.cosium.code</groupId>
+        <artifactId>git-code-format-maven-plugin</artifactId>
+        <version>${git-code-format-maven-plugin.version}</version>
+        <executions>
+          <execution>
+            <id>install-formatter-hook</id>
+            <goals>
+              <goal>install-hooks</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>validate-code-format</id>
+            <goals>
+              <goal>validate-code-format</goal>
+            </goals>
+          </execution>
+        </executions>
+        <dependencies>
+          <dependency>
+            <groupId>com.cosium.code</groupId>
+            <artifactId>google-java-format</artifactId>
+            <version>${git-code-format-maven-plugin.version}</version>
+          </dependency>
+          <dependency>
+            <groupId>com.google.googlejavaformat</groupId>
+            <artifactId>google-java-format</artifactId>
+            <version>${google-java-format.version}</version>
+          </dependency>
+        </dependencies>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-toolchains-plugin</artifactId>
+        <version>3.3.0</version>
+        <executions>
+          <execution>
+            <id>select-supported-jdk</id>
+            <goals>
+              <goal>select-jdk-toolchain</goal>
+            </goals>
+            <configuration>
+              <version>[25,26)</version>
+              <vendor>GraalVM Community</vendor>
+              <useJdk>Never</useJdk>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>enforce-supported-build-runtime</id>
+            <phase>validate</phase>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireMavenVersion>
+                  <version>[3.9.16]</version>
+                  <message>Build Skywright with the checked-in Maven Wrapper (Maven 3.9.16).</message>
+                </requireMavenVersion>
+                <requireJavaVersion>
+                  <version>[25,26)</version>
+                  <message>Build Skywright with Java 25 from GraalVM Community.</message>
+                </requireJavaVersion>
+                <requireJavaVendor>
+                  <includes>
+                    <include>GraalVM Community</include>
+                  </includes>
+                  <message>Build Skywright with Java 25 from GraalVM Community.</message>
+                </requireJavaVendor>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
