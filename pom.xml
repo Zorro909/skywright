@@ -27,6 +27,7 @@
     <git-code-format-maven-plugin.version>5.3</git-code-format-maven-plugin.version>
     <google-java-format.version>1.36.1</google-java-format.version>
     <java.version>25</java.version>
+    <openapi-generator.version>7.24.0</openapi-generator.version>
   </properties>
 
   <build>

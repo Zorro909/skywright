@@ -1,0 +1,108 @@
+openapi: 3.1.0
+info:
+  title: Skywright Product API
+  version: 1.0.0
+  description: |
+    The design-first HTTP contract for Skywright product operations.
+
+    Product operations use the `/api/v1` base path and JSON request and response bodies.
+    Schema properties use lower camel case. Every object schema lists required properties
+    explicitly; a property accepts null only when its schema explicitly includes the null type.
+    Identifiers are textual UUIDs, instants are UTC RFC 3339 date-times, and durations use the
+    ISO 8601 duration representation.
+
+    Generated types from this contract are boundary DTOs. Handwritten HTTP adapters implement
+    generated server interfaces and map boundary DTOs explicitly to and from internal types.
+servers:
+  - url: /api/v1
+    description: Version 1 product API
+paths: {}
+components:
+  schemas:
+    SkywrightId:
+      type: string
+      format: uuid
+      description: A textual UUID.
+    UtcInstant:
+      type: string
+      format: date-time
+      pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$'
+      description: An RFC 3339 instant in UTC, represented with a trailing Z.
+    Duration:
+      type: string
+      format: duration
+      description: An ISO 8601 duration.
+    CorrelationId:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+      description: A request-correlation identifier, not a Principal Identity or idempotency key.
+    FieldViolation:
+      type: object
+      additionalProperties: false
+      required:
+        - field
+        - code
+        - message
+      properties:
+        field:
+          type: string
+          description: The lower-camel-case request field path.
+        code:
+          type: string
+          description: A stable machine-readable validation code.
+        message:
+          type: string
+          description: A safe description of the violation.
+    Problem:
+      type: object
+      additionalProperties: false
+      description: An RFC 9457 problem detail with stable Skywright extensions.
+      required:
+        - type
+        - title
+        - status
+        - detail
+        - instance
+        - errorCode
+        - correlationId
+        - fieldViolations
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        errorCode:
+          type: string
+          pattern: '^SKYWRIGHT_[A-Z0-9_]+$'
+          description: A stable Skywright error code.
+        correlationId:
+          $ref: '#/components/schemas/CorrelationId'
+        fieldViolations:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldViolation'
+  responses:
+    Problem:
+      description: The request failed safely.
+      headers:
+        X-Correlation-ID:
+          description: The effective request-correlation identifier.
+          schema:
+            $ref: '#/components/schemas/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
