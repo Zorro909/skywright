@@ -112,9 +112,17 @@ _Avoid_: Run Definition, task YAML, job spec
 The Skywright-originated durable record of one Run Definition's execution, carrying the immutable run identity that names its orchestrator job and the submission attempt that started it. It holds no orchestrator-sourced fact and no stored status: lifecycle state is derived, and the infrastructure actually selected is a Retained SkyPilot Fact. It also holds its Run Store's current Storage Location, which changes when the store moves, and — when the run was seeded from an earlier one — that predecessor and the exact checkpoint. A clone receives a new Run Record.
 _Avoid_: Run Definition, Run Store, status field
 
+**Execution Attempt**:
+One lifetime of the Training Project process within a Run, beginning only once its Execution Attempt Record is durable. Infrastructure recovery starts a new Execution Attempt in the same Run, while retrying a terminal Run creates a new Run rather than another attempt.
+_Avoid_: Run, clone, submission attempt, retry
+
+**Execution Attempt Record**:
+The immutable Run Store record establishing an Execution Attempt's identity and the checkpoint from which it starts. Its missing Execution Termination Report means only that the attempt did not report a cause.
+_Avoid_: Run Record, recovery count, termination report
+
 **Run Lifecycle State**:
-A run's waiting, running, interrupted, finished, or failed condition, computed per read from Retained SkyPilot Facts, the Run Definition, and the Run Termination Report. It is never stored, so a corrected mapping corrects every past run. Whether a source could be reached is a separate fact, not a sixth state.
-_Avoid_: Run status column, unknown state, SkyPilot job status
+A run's waiting, running, interrupted, finished, failed, or cancelled condition, computed per read from Retained SkyPilot Facts, the Run Definition, and its Execution Termination Reports. It is never stored, so a corrected mapping corrects every past run. Whether a source could be reached is a separate fact, not another state.
+_Avoid_: Run status column, unknown state, aborted, SkyPilot job status
 
 **Retained SkyPilot Fact**:
 An immutable orchestrator-sourced fact Skywright appends to outlive SkyPilot's retention policy, kept in storage of that provenance alone and joined to a run only by run identity. The source wins while it still answers; retained rows supplement only what it has purged.
@@ -124,9 +132,13 @@ _Avoid_: Mirrored state, run status cache, Skywright-originated fact
 One control action the backend has handed to the orchestrator and is waiting on. It exists only while the process that started it lives: it is never persisted, so losing it loses the view of an action, never the action itself.
 _Avoid_: Request id, job handle, pending action, command
 
-**Run Termination Report**:
-The record a Training Project's process writes to its Run Store when it terminates of its own accord, naming the cause SkyPilot cannot supply. Its absence is not a diagnosis: it means the process did not get to speak.
+**Execution Termination Report**:
+The atomic, immutable final record an Execution Attempt writes to its Run Store when it terminates of its own accord, naming the Execution Termination Cause, last committed Step, and latest Durable Safe Point. Its absence is not a diagnosis: it means the attempt did not get to speak.
 _Avoid_: Exit code, crash log, preemption signal
+
+**Execution Termination Cause**:
+The canonical process-known reason named by an Execution Termination Report: completed, cancelled, interrupted, contract violation, Training Project failure, or Skywright failure. It is not stored on the Run Record, and its absence does not imply a cause.
+_Avoid_: Stop reason, Run status, exit code
 
 **Environment Profile**:
 The library-owned base image for one accelerator backend, carrying the Skywright library and the accelerator-compatible runtime dependencies a Training Project must not choose between or replace. It is the base a Training Project Image is built on, not something a Run Definition pins.
@@ -161,7 +173,7 @@ The role that copies content between two Storage Locations, verifies it, publish
 _Avoid_: Backend job, sync service, upload script
 
 **Progress Record**:
-A small Skywright-originated object in the Run Store carrying a run's current step, target step, and the time it was written, overwritten on each flush. It is an aged intermediate result serving run-list progress — not a metric series, and not an index over one.
+A small Skywright-originated object in the Run Store carrying a run's current step, latest Durable Safe Point, target step, and the time it was written, overwritten on each flush. It is an aged intermediate result serving run-list progress and exposing checkpoint durability lag — not a metric series, and not an index over one.
 _Avoid_: Metric index, run status, stored progress
 
 **Checkpoint State**:
@@ -169,8 +181,24 @@ The complete set of library-owned and project-specific resumable state establish
 _Avoid_: State dictionary, model weights
 
 **Step**:
-A Training Project's monotonically numbered unit of committed progress and the safe boundary at which the Run Context may flush metrics, checkpoint state, or honor interruption. It may contain any number of batches or Dataset Items but cannot span Dataset epochs.
+A Training Project's monotonically numbered unit of committed progress and the safe boundary at which the Run Context may flush metrics, checkpoint state, or honor interruption. Step-scoped observations remain provisional until it commits; it may contain any number of batches or Dataset Items but cannot span Dataset epochs, and a Run must commit at least one Step to complete successfully.
 _Avoid_: Batch, iteration, epoch
+
+**Safe Point**:
+The boundary after a Step commits at which the Run Context may safely snapshot Checkpoint State, flush buffered observations, persist progress, and honor a pending Interruption Request. It commits logical progress but is not durable unless a checkpoint for it becomes a Durable Safe Point; a signal or termination path is not itself a Safe Point.
+_Avoid_: Signal handler, process exit, checkpoint cadence
+
+**Durable Safe Point**:
+A Safe Point whose checkpoint has been confirmed published in the Run Store, making its committed progress recoverable after loss of the compute instance. Merely capturing a snapshot or starting its upload does not make it durable.
+_Avoid_: Safe Point, local snapshot, pending checkpoint
+
+**Interruption Request**:
+A request for a running Training Project to stop at its next Safe Point. Receiving one does not itself commit progress or make state durable.
+_Avoid_: Preemption, Safe Point, immediate termination
+
+**Cancellation Request**:
+A user-directed request to end a Run terminally at its next Safe Point without creating a checkpoint for the cancellation. It escalates to forced orchestrator cancellation after bounded grace, and retry starts a new Run from an existing Durable Safe Point.
+_Avoid_: Interruption Request, aborted, pause
 
 **Sample**:
 A typed, inspectable training output in a common media form such as text, image, audio, or video, saved through the Run Store with library-understood metadata.
