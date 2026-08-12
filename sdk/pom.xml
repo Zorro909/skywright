@@ -87,8 +87,8 @@
                 <argument>--locked</argument>
                 <argument>pytest</argument>
                 <argument>tests/system</argument>
-                <argument>--wheel</argument>
-                <argument>${project.build.directory}/dist/skywright-0.1.0-py3-none-any.whl</argument>
+                <argument>--wheel-dir</argument>
+                <argument>${project.build.directory}/dist</argument>
               </arguments>
             </configuration>
           </execution>

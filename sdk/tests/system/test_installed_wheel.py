@@ -1,5 +1,6 @@
 import subprocess
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 
@@ -33,7 +34,7 @@ from importlib.resources import files
 
 import skywright
 
-assert version("skywright") == "0.1.0" == skywright.__version__
+assert version("skywright") == skywright.__version__
 assert metadata("skywright").get_all("Requires-Dist") is None
 assert files(skywright).joinpath("py.typed").is_file()
 assert importlib.util.find_spec("torch") is None
@@ -47,4 +48,4 @@ print(skywright.__version__)
         capture_output=True,
     )
 
-    assert completed.stdout == "0.1.0\n"
+    assert completed.stdout == f"{version('skywright')}\n"

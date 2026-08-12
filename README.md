@@ -70,9 +70,9 @@ they require a Docker-compatible daemon:
 
 The executable artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`.
 
-The SDK artifacts are `sdk/target/dist/skywright-0.1.0-py3-none-any.whl` and
-`sdk/target/dist/skywright-0.1.0.tar.gz`. See the [SDK contributor guide](sdk/README.md) for the
-native install/build commands, supported Python and platform policy, and PyTorch ownership.
+The SDK wheel and source distribution are written to `sdk/target/dist/`. See the
+[SDK contributor guide](sdk/README.md) for the native install/build commands, supported Python and
+platform policy, and PyTorch ownership.
 
 ## HTTP APIs
 

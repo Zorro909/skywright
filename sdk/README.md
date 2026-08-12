@@ -24,13 +24,13 @@ Install uv 0.8.8, then work from this directory:
 uv sync --locked
 
 # Run the current fast package checks.
-uv run --locked pytest
+uv run --locked pytest tests/test_package.py
 
 # Build the universal wheel and source distribution into dist/.
 uv build
 
 # Install the wheel into a fresh external environment and verify consumer behavior.
-uv run --locked pytest tests/system --wheel dist/skywright-0.1.0-py3-none-any.whl
+uv run --locked pytest tests/system --wheel-dir dist
 ```
 
 The separate `ml-test` dependency group locks a CPU-only PyTorch and NumPy stack for future ML
