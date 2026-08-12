@@ -25,27 +25,16 @@ HTTP failures use `application/problem+json` with the RFC 9457 fields plus `erro
 
 ## Deployment configuration
 
-Deployment configuration is operational input to the backend process. It is separate from a
-Training Project's immutable Run Configuration and never makes Skywright a Credential Authority.
-The required `skywright.deployment.environment` setting is a non-secret lowercase identifier of
-1–32 ASCII letters, digits, or hyphens, beginning with a letter.
+Set the required, non-secret `skywright.deployment.environment` to a lowercase identifier such as
+`production`. Spring applies its normal precedence across `application.properties`, the
+`SKYWRIGHT_DEPLOYMENT_ENVIRONMENT` environment variable, the
+`-Dskywright.deployment.environment` system property, and the
+`--skywright.deployment.environment` command-line option.
 
-Use any ordinary Spring configuration source. Later sources override earlier ones, including:
-
-- configuration files: `skywright.deployment.environment=production`
-- environment variables: `SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=production`
-- JVM system properties: `-Dskywright.deployment.environment=production`
-- command-line arguments: `--skywright.deployment.environment=production`
-
-The setting binds to an immutable typed configuration record. Bean Validation rejects missing or
-invalid identifiers, and strict binding rejects unknown properties beneath
-`skywright.deployment`. Startup fails before readiness in all three cases. Failure diagnostics name
-the property and validation rule but omit supplied values. The generated configuration metadata is
-packaged in the executable for editor and operator tooling.
-
-Do not place credentials, tokens, connection strings, or other secrets in this configuration. No
-committed setting is secret or specific to one deployment. Actuator exposes build information and
-health only; it does not expose configuration values.
+The immutable validated configuration rejects missing, invalid, and unknown deployment properties
+before readiness. Diagnostics omit supplied values, generated metadata ships in the executable,
+and Actuator does not expose configuration. This process setting is not Run Configuration and must
+never contain credentials or make Skywright a Credential Authority.
 
 ## Logging
 
