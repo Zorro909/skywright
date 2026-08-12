@@ -18,5 +18,5 @@ jobs:
           java-version: '25'
           distribution: graalvm-community
           cache: maven
-      - name: Check Google Java Format
-        run: ./mvnw --batch-mode git-code-format:validate-code-format -Dgcf.globPattern='**/*'
+      - name: Check Spring Java Format
+        run: ./mvnw --batch-mode spring-javaformat:validate

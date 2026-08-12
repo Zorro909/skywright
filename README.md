@@ -1,7 +1,8 @@
 # Skywright
 
 Skywright is built as a Maven reactor. The repository root is its packaging-only aggregator and
-shared build parent; `backend` is the single Spring Boot backend module.
+shared build parent; `api/skywright-api` publishes the reusable product contract, and `backend` is
+the Spring Boot application module.
 
 ## Required toolchain
 
@@ -52,6 +53,10 @@ From the repository root:
 ```
 
 The executable artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`.
+
+## HTTP APIs
+
+- [Skywright product API](api/skywright-api/README.md) — product operations under `/api/v1`.
 
 ## Run locally
 
