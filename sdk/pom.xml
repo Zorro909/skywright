@@ -57,11 +57,24 @@
               <goal>exec</goal>
             </goals>
             <configuration>
-              <executable>uv</executable>
+              <executable>${project.basedir}/scripts/build-distributions</executable>
               <workingDirectory>${project.basedir}</workingDirectory>
               <arguments>
-                <argument>build</argument>
-                <argument>--out-dir</argument>
+                <argument>${project.build.directory}/dist</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <id>check-sdk-distribution-metadata</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <configuration>
+              <skip>${skipTests}</skip>
+              <executable>${project.basedir}/scripts/check-distributions</executable>
+              <workingDirectory>${project.basedir}</workingDirectory>
+              <arguments>
                 <argument>${project.build.directory}/dist</argument>
               </arguments>
             </configuration>
@@ -83,7 +96,7 @@
                 <argument>tests/system</argument>
                 <argument>-m</argument>
                 <argument>system</argument>
-                <argument>--wheel-dir</argument>
+                <argument>--artifact-dir</argument>
                 <argument>${project.build.directory}/dist</argument>
               </arguments>
             </configuration>
