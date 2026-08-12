@@ -8,3 +8,7 @@ __pycache__/
 .idea/
 *.iml
 .mvn/wrapper/maven-wrapper.jar
+node_modules/
+frontend/dist/
+frontend/playwright-report/
+frontend/test-results/

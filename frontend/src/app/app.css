@@ -1,0 +1,91 @@
+:host {
+  display: grid;
+  min-height: 100svh;
+  grid-template-rows: auto 1fr auto;
+}
+
+.skip-link {
+  position: fixed;
+  inset: 0 auto auto 1rem;
+  z-index: 10;
+  padding: 0.75rem 1rem;
+  border-radius: 0 0 0.5rem 0.5rem;
+  background: var(--focus-surface);
+  color: var(--focus-text);
+  transform: translateY(-120%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 1.25rem clamp(1.25rem, 5vw, 5rem);
+  border-bottom: 1px solid var(--border);
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.mark {
+  display: grid;
+  width: 2.4rem;
+  height: 2.4rem;
+  place-items: center;
+  border-radius: 0.7rem;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 800;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.2rem;
+  letter-spacing: -0.02em;
+}
+nav {
+  display: flex;
+  gap: 0.25rem;
+}
+
+nav a {
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.5rem;
+  color: var(--muted-text);
+  text-decoration: none;
+}
+
+nav a:hover,
+nav a.active {
+  background: var(--soft-surface);
+  color: var(--text);
+}
+
+main {
+  width: min(100% - 2.5rem, 68rem);
+  margin-inline: auto;
+  padding-block: clamp(3rem, 9vw, 8rem);
+}
+
+footer {
+  padding: 1rem clamp(1.25rem, 5vw, 5rem);
+  color: var(--muted-text);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 35rem) {
+  header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1rem;
+  }
+}

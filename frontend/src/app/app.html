@@ -1,0 +1,20 @@
+<a class="skip-link" href="#content">Skip to main content</a>
+<header>
+  <a class="identity" routerLink="/" aria-label="Skywright overview">
+    <span class="mark" aria-hidden="true">S</span>
+    <h1>Skywright</h1>
+  </a>
+  <nav aria-label="Primary">
+    <a
+      routerLink="/"
+      routerLinkActive="active"
+      [routerLinkActiveOptions]="{ exact: true }"
+      >Overview</a
+    >
+    <a routerLink="/about" routerLinkActive="active">About</a>
+  </nav>
+</header>
+<main id="content" tabindex="-1">
+  <router-outlet />
+</main>
+<footer><p>Portable training, deliberate control.</p></footer>

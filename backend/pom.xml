@@ -17,6 +17,12 @@
   <dependencies>
     <dependency>
       <groupId>de.zorro909.skywright</groupId>
+      <artifactId>skywright-web</artifactId>
+      <version>${project.version}</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>de.zorro909.skywright</groupId>
       <artifactId>skywright-api</artifactId>
       <version>${project.version}</version>
       <scope>provided</scope>
