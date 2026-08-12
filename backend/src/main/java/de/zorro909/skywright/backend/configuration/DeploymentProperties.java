@@ -1,0 +1,16 @@
+package de.zorro909.skywright.backend.configuration;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
+
+/** Skywright-owned settings that identify this backend deployment. */
+@ConfigurationProperties(prefix = "skywright.deployment", ignoreUnknownFields = false)
+@Validated
+public record DeploymentProperties(
+		/** Stable, non-secret name for the environment served by this process. */
+		@NotBlank(message = "must be configured") @Pattern(regexp = "[a-z][a-z0-9-]{0,31}",
+				message = "must be a lowercase deployment identifier") String environment) {
+
+}

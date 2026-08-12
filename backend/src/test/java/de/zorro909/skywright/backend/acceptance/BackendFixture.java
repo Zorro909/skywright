@@ -28,7 +28,7 @@ final class BackendFixture implements AutoCloseable {
 	static BackendFixture start() {
 		var application = new SpringApplicationBuilder(SkywrightBackendApplication.class)
 			.web(WebApplicationType.SERVLET)
-			.properties("server.port=0")
+			.properties("server.port=0", "skywright.deployment.environment=test")
 			.run();
 		return new BackendFixture(application);
 	}
