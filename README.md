@@ -1,8 +1,9 @@
 # Skywright
 
 Skywright is built as a Maven reactor. The repository root is its packaging-only aggregator and
-shared build parent; `api/skywright-api` publishes the reusable product contract, and `backend` is
-the Spring Boot application module.
+shared build parent; `api/skywright-api` publishes the reusable product contract, `backend` is the
+Spring Boot application module, and `backend-deployment` packages that application as its production
+OCI artifact.
 
 ## Required toolchain
 
@@ -33,7 +34,8 @@ On Windows, set `JAVA_HOME`, add `%JAVA_HOME%\bin` to `PATH`, and use `mvnw.cmd`
 
 ## Build and test
 
-From the repository root:
+From the repository root. Full-reactor `package` and `verify` also build the production image, so
+they require a Docker-compatible daemon:
 
 ```bash
 # Compile, run unit tests with Surefire, run *IT acceptance tests with Failsafe, and package all modules
@@ -50,6 +52,12 @@ From the repository root:
 
 # Build the executable backend JAR without running tests
 ./mvnw -pl backend -am -DskipTests package
+
+# Build the executable JAR and production OCI image
+./mvnw -pl backend-deployment -am package
+
+# Build and smoke-test the production OCI image
+./mvnw -pl backend-deployment -am verify
 ```
 
 The executable artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`.
@@ -92,15 +100,15 @@ java -jar backend/target/skywright-backend-0.1.0-SNAPSHOT.jar \
 
 ## Build and smoke-test the production image
 
-The backend module packages that executable layered JAR into a Linux amd64 OCI image based on the
-immutable GraalVM Community 25.2.4 runtime manifest. Docker-compatible tooling is required for the
-container profile:
+The `backend-deployment` module packages that executable layered JAR into a Linux amd64 OCI image
+based on the immutable GraalVM Community 25.2.4 runtime manifest. Its normal Maven package phase
+builds the image; verify also runs its operator-facing smoke test:
 
 ```bash
-./mvnw -pl backend -am -Pcontainer-smoke verify
+./mvnw -pl backend-deployment -am verify
 ```
 
-See the [backend production artifact and image guide](backend/README.md#production-artifact-and-image)
+See the [backend deployment guide](backend-deployment/README.md)
 for exact standalone image construction, external configuration, read-only-root operation, JVM
 option injection, build-identity inspection, graceful termination, and local container debugging
 commands.

@@ -74,50 +74,6 @@
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-antrun-plugin</artifactId>
-        <version>${maven-antrun.version}</version>
-        <executions>
-          <execution>
-            <id>capture-source-revision</id>
-            <phase>initialize</phase>
-            <goals>
-              <goal>run</goal>
-            </goals>
-            <configuration>
-              <target>
-                <mkdir dir="${project.build.directory}"/>
-                <exec executable="git" dir="${maven.multiModuleProjectDirectory}" failonerror="true"
-                      output="${project.build.directory}/source-revision.properties">
-                  <arg value="log"/>
-                  <arg value="-1"/>
-                  <arg value="--format=git.commit.id.full=%H"/>
-                </exec>
-              </target>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-      <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>properties-maven-plugin</artifactId>
-        <version>${properties-maven.version}</version>
-        <executions>
-          <execution>
-            <id>load-source-revision</id>
-            <phase>initialize</phase>
-            <goals>
-              <goal>read-project-properties</goal>
-            </goals>
-            <configuration>
-              <files>
-                <file>${project.build.directory}/source-revision.properties</file>
-              </files>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-dependency-plugin</artifactId>
         <executions>
           <execution>
@@ -202,14 +158,6 @@
         <configuration>
           <systemPropertyVariables>
             <backend.executable>${project.build.directory}/${project.build.finalName}.jar</backend.executable>
-            <backend.container.buildTime>${maven.build.timestamp}</backend.container.buildTime>
-            <backend.container.enabled>${backend.container.enabled}</backend.container.enabled>
-            <backend.container.image>${backend.container.image}</backend.container.image>
-            <backend.container.runtime>${backend.container.runtime}</backend.container.runtime>
-            <backend.moduleDirectory>${project.basedir}</backend.moduleDirectory>
-            <backend.reactorDirectory>${maven.multiModuleProjectDirectory}</backend.reactorDirectory>
-            <backend.sourceRevision>${git.commit.id.full}</backend.sourceRevision>
-            <backend.version>${project.version}</backend.version>
           </systemPropertyVariables>
         </configuration>
       </plugin>
@@ -244,12 +192,4 @@
     </plugins>
   </build>
 
-  <profiles>
-    <profile>
-      <id>container-smoke</id>
-      <properties>
-        <backend.container.enabled>true</backend.container.enabled>
-      </properties>
-    </profile>
-  </profiles>
 </project>

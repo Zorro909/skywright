@@ -1,4 +1,4 @@
-package de.zorro909.skywright.backend.acceptance;
+package de.zorro909.skywright.deployment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -6,6 +6,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URI;
+import java.net.ServerSocket;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -25,16 +26,17 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+/**
+ * Smoke-verifies the Maven-built production OCI artifact through runtime and HTTP
+ * boundaries.
+ */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@EnabledIfSystemProperty(named = "backend.container.enabled", matches = "true")
-final class ContainerSmokeIT {
+final class BackendImageSmokeIT {
 
 	private static final Duration COMMAND_TIMEOUT = Duration.ofMinutes(2);
 
@@ -44,8 +46,7 @@ final class ContainerSmokeIT {
 
 	private final String runtime = System.getProperty("backend.container.runtime");
 
-	private final String image = System.getProperty("backend.container.image") + "-smoke-"
-			+ UUID.randomUUID().toString().substring(0, 8);
+	private final String image = System.getProperty("backend.container.image");
 
 	private final String container = "skywright-backend-smoke-" + UUID.randomUUID().toString().substring(0, 8);
 
@@ -63,35 +64,23 @@ final class ContainerSmokeIT {
 
 	private Thread standardErrorReader;
 
-	@BeforeAll
-	void buildProductionImage() throws Exception {
-		var result = command(COMMAND_TIMEOUT, "build", "--file", "src/main/docker/Dockerfile", "--tag", image,
-				"--build-arg", "JAR_FILE=target/skywright-backend-" + System.getProperty("backend.version") + ".jar",
-				"--build-arg", "APPLICATION_VERSION=" + System.getProperty("backend.version"), "--build-arg",
-				"SOURCE_REVISION=" + System.getProperty("backend.sourceRevision"), "--build-arg",
-				"BUILD_CREATED=" + System.getProperty("backend.container.buildTime"), ".");
-
-		assertThat(result.exitCode()).as(result.output()).isZero();
-	}
-
 	@AfterAll
 	void removeSmokeArtifacts() throws Exception {
 		if (runningContainer != null) {
 			command(Duration.ofSeconds(20), "rm", "--force", runningContainer);
 		}
-		command(Duration.ofSeconds(20), "image", "rm", "--force", image);
 	}
 
 	@Test
 	void productionImageRunsThroughItsOperatorBoundary() throws Exception {
 		assertImageConfiguration();
-		var port = BackendProcess.availablePort();
+		var port = availablePort();
 		startAttachedContainer("--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "--env",
 				"SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=acceptance", "--env", "JAVA_TOOL_OPTIONS=-Xss2m", "--env",
 				"SERVER_TOMCAT_THREADS_MAX=1", "--env", "SPRING_LIFECYCLE_TIMEOUT_PER_SHUTDOWN_PHASE=5s", "--publish",
 				"127.0.0.1:" + port + ":8080");
 		runningContainer = container;
-		BackendProcess.awaitReadiness(port, STARTUP_TIMEOUT);
+		awaitReadiness(port, STARTUP_TIMEOUT);
 
 		assertRuntimeIdentity();
 		assertHttpBoundary(port);
@@ -103,7 +92,7 @@ final class ContainerSmokeIT {
 	void invalidExternalConfigurationStopsTheContainerWithASanitizedDiagnostic() throws Exception {
 		var sensitiveValue = "production-private-container-token!";
 		var invalidContainer = container + "-invalid";
-		var port = BackendProcess.availablePort();
+		var port = availablePort();
 		var start = command(COMMAND_TIMEOUT, "run", "--detach", "--name", invalidContainer, "--read-only", "--tmpfs",
 				"/tmp:rw,noexec,nosuid,size=64m", "--env", "SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=" + sensitiveValue,
 				"--publish", "127.0.0.1:" + port + ":8080", image);
@@ -143,8 +132,7 @@ final class ContainerSmokeIT {
 		assertThat(Instant.parse(inspect("{{index .Config.Labels \"org.opencontainers.image.created\"}}"))).isNotNull();
 		assertThat(inspect("{{json .Config.Env}}")).doesNotContain("SKYWRIGHT_DEPLOYMENT");
 
-		var executable = moduleDirectory
-			.resolve("target/skywright-backend-" + System.getProperty("backend.version") + ".jar");
+		var executable = Path.of(System.getProperty("backend.executable"));
 		var expectedDigest = HexFormat.of()
 			.formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(executable)));
 		assertThat(success("run", "--rm", "--entrypoint", "sha256sum", image, "/opt/skywright/application.jar"))
@@ -332,6 +320,31 @@ final class ContainerSmokeIT {
 	private HttpResponse<String> get(int port, String path) throws IOException, InterruptedException {
 		var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path)).GET().build();
 		return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+	}
+
+	private static int availablePort() throws IOException {
+		try (var socket = new ServerSocket(0)) {
+			return socket.getLocalPort();
+		}
+	}
+
+	private static void awaitReadiness(int port, Duration timeout) throws InterruptedException {
+		var client = HttpClient.newHttpClient();
+		var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/readyz")).GET().build();
+		var deadline = Instant.now().plus(timeout);
+		while (Instant.now().isBefore(deadline)) {
+			try {
+				var response = client.send(request, HttpResponse.BodyHandlers.discarding());
+				if (response.statusCode() == 200) {
+					return;
+				}
+			}
+			catch (IOException ignored) {
+				// The container has not bound its published HTTP socket yet.
+			}
+			Thread.sleep(Duration.ofMillis(50));
+		}
+		throw new AssertionError("Backend image did not become ready within " + timeout);
 	}
 
 	private String inspect(String format) throws Exception {
