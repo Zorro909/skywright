@@ -20,6 +20,7 @@
   <description>Aggregator and shared build parent for Skywright project parts.</description>
 
   <modules>
+    <module>api/skywright-api</module>
     <module>backend</module>
   </modules>
 

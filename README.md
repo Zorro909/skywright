@@ -1,7 +1,8 @@
 # Skywright
 
 Skywright is built as a Maven reactor. The repository root is its packaging-only aggregator and
-shared build parent; `backend` is the single Spring Boot backend module.
+shared build parent; `api/skywright-api` publishes the reusable product contract, and `backend` is
+the Spring Boot application module.
 
 ## Required toolchain
 
@@ -56,10 +57,12 @@ The executable artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`
 ## Product HTTP boundary
 
 The canonical OpenAPI 3.1 contract is
-`backend/src/main/resources/static/openapi/skywright-api.yaml`. It is the design source for all
-product HTTP operations under `/api/v1`; it intentionally contains no product path until a real
-feature endpoint is introduced. The normal Maven build validates this document and uses the pinned
-OpenAPI Generator to create Spring Boot 4/Jackson 3 server interfaces and boundary DTOs under
+`api/skywright-api/src/main/resources/META-INF/openapi/skywright-api.yaml`. The dedicated
+`skywright-api` Maven module publishes that contract as a reusable dependency for every consumer.
+It is the design source for all product HTTP operations under `/api/v1`; it intentionally contains
+no product path until a real feature endpoint is introduced. The backend depends on the contract
+artifact, then its normal Maven build validates the extracted document and uses the pinned OpenAPI
+Generator to create Spring Boot 4/Jackson 3 server interfaces and boundary DTOs under
 `backend/target/generated-sources/openapi`. This generated directory is disposable build output.
 
 Handwritten HTTP adapters implement the generated interfaces. They must map explicitly between

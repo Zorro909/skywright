@@ -16,7 +16,8 @@ final class OpenApiBoundaryIT {
   @Test
   void canonicalContractIsPackagedAndAvailableUnchangedForDiscovery() throws Exception {
     var canonicalContract =
-        Files.readAllBytes(Path.of("src/main/resources/static/openapi/skywright-api.yaml"));
+        Files.readAllBytes(
+            Path.of("../api/skywright-api/src/main/resources/META-INF/openapi/skywright-api.yaml"));
 
     try (var backendJar = new JarFile("target/skywright-backend-0.1.0-SNAPSHOT.jar")) {
       var packagedContract =
