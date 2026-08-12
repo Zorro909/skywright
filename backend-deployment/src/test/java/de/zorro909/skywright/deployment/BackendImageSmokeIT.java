@@ -141,6 +141,10 @@ final class BackendImageSmokeIT {
 
 	private void assertRuntimeIdentity() throws Exception {
 		assertThat(success("exec", container, "id", "-u")).isEqualTo("10001");
+		assertThat(success("exec", container, "stat", "--format=%u:%g:%A", "/opt/skywright"))
+			.isEqualTo("0:0:drwxr-xr-x");
+		assertThat(success("exec", container, "stat", "--format=%u:%g:%A", "/opt/skywright/application.jar"))
+			.isEqualTo("0:0:-rw-r--r--");
 		assertThat(success("exec", container, "java", "-version"))
 			.contains("OpenJDK Runtime Environment GraalVM CE 25.2.4+7.1", "build 25.0.4+7-jvmci-25.2-b20");
 		assertThat(success("exec", container, "jcmd", "1", "VM.flags")).contains("ThreadStackSize=2048");

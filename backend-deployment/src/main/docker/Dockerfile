@@ -12,9 +12,9 @@ LABEL org.opencontainers.image.created="${BUILD_CREATED}" \
 RUN groupadd --gid 10001 skywright \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent \
         --shell /sbin/nologin skywright \
-    && install --directory --owner 10001 --group 10001 /opt/skywright
+    && install --directory --owner 0 --group 0 --mode 0755 /opt/skywright
 
-COPY --chown=10001:10001 maven/application.jar /opt/skywright/application.jar
+COPY --chown=0:0 maven/application.jar /opt/skywright/application.jar
 
 USER 10001:10001
 WORKDIR /opt/skywright
