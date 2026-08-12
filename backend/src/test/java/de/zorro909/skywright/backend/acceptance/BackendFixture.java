@@ -36,21 +36,6 @@ final class BackendFixture implements AutoCloseable {
     return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
   }
 
-  HttpResponse<String> get(String path, String headerName, String headerValue)
-      throws IOException, InterruptedException {
-    return request("GET", path, headerName, headerValue);
-  }
-
-  HttpResponse<String> request(String method, String path, String headerName, String headerValue)
-      throws IOException, InterruptedException {
-    var request =
-        HttpRequest.newBuilder(baseUri.resolve(path))
-            .header(headerName, headerValue)
-            .method(method, HttpRequest.BodyPublishers.noBody())
-            .build();
-    return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-  }
-
   @Override
   public void close() {
     application.close();
