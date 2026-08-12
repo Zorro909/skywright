@@ -8,6 +8,20 @@ permissions:
   contents: read
 
 jobs:
+  sdk:
+    name: Python SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.8.8'
+          enable-cache: true
+      - name: Check SDK
+        run: sdk/scripts/check
+
   java:
     name: Java
     runs-on: ubuntu-latest

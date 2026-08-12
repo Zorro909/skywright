@@ -2,6 +2,7 @@
 
 from importlib.metadata import version as _distribution_version
 
-__all__ = ("__version__",)
+__all__ = ("__version__", "version")
 
-__version__ = _distribution_version("skywright")
+__version__: str = _distribution_version("skywright")
+version: str = __version__

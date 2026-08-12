@@ -6,6 +6,12 @@ from typing import cast
 import pytest
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    system = pytest.mark.system
+    for item in items:
+        item.add_marker(system)
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--wheel-dir",

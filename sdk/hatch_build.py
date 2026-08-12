@@ -7,10 +7,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from hatchling.builders.config import BuilderConfig
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
-class CustomBuildHook(BuildHookInterface):
+class CustomBuildHook(BuildHookInterface[BuilderConfig]):
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         del version
         frozen_source_revision = self._frozen_source_revision()
@@ -33,8 +34,9 @@ class CustomBuildHook(BuildHookInterface):
             prefix="skywright-build-information-"
         )
         generated_file = Path(self._temporary_directory.name) / "_build_info.py"
+        package_version = self.metadata.version  # pyright: ignore[reportUnknownMemberType]
         generated_file.write_text(
-            f"PACKAGE_VERSION = {json.dumps(self.metadata.version)}\n"
+            f"PACKAGE_VERSION = {json.dumps(package_version)}\n"
             f"SOURCE_REVISION = {json.dumps(source_revision or 'unknown')}\n",
             encoding="utf-8",
         )

@@ -15,6 +15,27 @@ CUDA, or ROCm build. Environment Profiles supply the compatible PyTorch stack fo
 execution. Direct-execution developers own that choice in their project environment and should use
 PyTorch's installation guidance for their accelerator backend.
 
+## Public API and compatibility
+
+The package root is the complete Training Project authoring API. Only names imported from
+`skywright` and listed in `skywright.__all__` are public:
+
+- `skywright.version` is the typed SDK version string.
+- `skywright.__version__` is its conventional alias.
+
+Modules and names beginning with an underscore, including the operational launcher and generated
+build information, are private implementation details. They may move or change without a
+compatibility promise. No unfinished Training Contract types are exposed as placeholders.
+
+The SDK has its own [Semantic Version](https://semver.org/), independent of the Maven reactor
+version. While the SDK is pre-1.0, a breaking change to the declared public API requires a new minor
+version and release notes. Patch releases remain backward compatible with the public API of their
+minor release.
+
+SDK releases are tagged `sdk-v<version>`, for example `sdk-v0.1.0`. The compatibility check compares
+the declared public API against the latest such tag. Before the first SDK release tag exists, it
+prints an explicit skip; it never falls back to an unrelated repository tag.
+
 ## Operational runtime command
 
 Installing the SDK registers one private operational bootstrap for Environment Profiles:
@@ -44,14 +65,15 @@ Install uv 0.8.8, then work from this directory:
 # Install the SDK and the locked contributor toolchain; the ML test group stays inactive.
 uv sync --locked
 
-# Run the current fast package checks.
-uv run --locked pytest tests/test_package.py
+# Run formatting, linting, strict typing, installed-package type completeness,
+# fast public-behavior tests, and public API compatibility.
+scripts/check
 
 # Build the universal wheel and source distribution into dist/.
 uv build
 
 # Install the wheel into a fresh external environment and verify consumer behavior.
-uv run --locked pytest tests/system --wheel-dir dist
+uv run --locked pytest tests/system -m system --wheel-dir dist
 ```
 
 The separate `ml-test` dependency group locks a CPU-only PyTorch and NumPy stack for future ML
@@ -93,8 +115,9 @@ No build timestamp is recorded, so rebuilding does not manufacture a different s
 
 ## Build through the repository reactor
 
-The Maven project-part delegates lock validation, tests, and artifact construction to the native uv
-commands. From the repository root, with the repository's required Java and Maven toolchain:
+The Maven project-part invokes the same `scripts/check` contributor workflow during its test phase,
+then delegates artifact construction and installed-artifact system tests to uv. From the repository
+root, with the repository's required Java and Maven toolchain:
 
 ```bash
 # Run the SDK checks without building unrelated backend project parts.

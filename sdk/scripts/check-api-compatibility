@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+
+baseline=$(git tag --list 'sdk-v[0-9]*' --sort=-version:refname | head -n 1)
+if [[ -z "$baseline" ]]; then
+  echo "No SDK release baseline exists; skipping public API compatibility check."
+  exit 0
+fi
+
+echo "Comparing the declared public API with $baseline."
+uv run --project sdk --locked griffe check skywright \
+  --search sdk/src \
+  --against "$baseline"
