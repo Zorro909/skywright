@@ -11,10 +11,6 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 final class HttpProblemDetails {
   private HttpProblemDetails() {}
 
-  static Problem from(HttpStatusCode status, HttpServletRequest request) {
-    return from(null, status, request);
-  }
-
   static Problem from(Exception exception, HttpStatusCode status, HttpServletRequest request) {
     var metadata = metadata(status);
     return new Problem(
