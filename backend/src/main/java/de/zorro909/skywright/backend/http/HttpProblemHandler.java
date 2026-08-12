@@ -13,35 +13,28 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 
 @RestControllerAdvice
 public final class HttpProblemHandler extends ResponseEntityExceptionHandler {
-  @Override
-  protected ResponseEntity<Object> handleExceptionInternal(
-      Exception exception,
-      Object ignoredBody,
-      HttpHeaders headers,
-      HttpStatusCode status,
-      WebRequest request) {
-    return problemResponse(exception, headers, status, (ServletWebRequest) request);
-  }
 
-  @ExceptionHandler(Exception.class)
-  ResponseEntity<Object> handleUnexpectedException(Exception exception, ServletWebRequest request) {
-    logger.error(
-        "Unhandled HTTP failure with correlation ID "
-            + RequestCorrelationFilter.correlationIdFrom(request.getRequest()),
-        exception);
-    return problemResponse(exception, new HttpHeaders(), HttpStatus.INTERNAL_SERVER_ERROR, request);
-  }
+	@Override
+	protected ResponseEntity<Object> handleExceptionInternal(Exception exception, Object ignoredBody,
+			HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+		return problemResponse(exception, headers, status, (ServletWebRequest) request);
+	}
 
-  private ResponseEntity<Object> problemResponse(
-      Exception exception,
-      HttpHeaders sourceHeaders,
-      HttpStatusCode status,
-      ServletWebRequest webRequest) {
-    var request = webRequest.getRequest();
-    var responseHeaders = new HttpHeaders();
-    responseHeaders.putAll(sourceHeaders);
-    responseHeaders.setContentType(MediaType.APPLICATION_PROBLEM_JSON);
-    var problem = HttpProblemDetails.from(exception, status, request);
-    return new ResponseEntity<>(problem, responseHeaders, status);
-  }
+	@ExceptionHandler(Exception.class)
+	ResponseEntity<Object> handleUnexpectedException(Exception exception, ServletWebRequest request) {
+		logger.error("Unhandled HTTP failure with correlation ID "
+				+ RequestCorrelationFilter.correlationIdFrom(request.getRequest()), exception);
+		return problemResponse(exception, new HttpHeaders(), HttpStatus.INTERNAL_SERVER_ERROR, request);
+	}
+
+	private ResponseEntity<Object> problemResponse(Exception exception, HttpHeaders sourceHeaders,
+			HttpStatusCode status, ServletWebRequest webRequest) {
+		var request = webRequest.getRequest();
+		var responseHeaders = new HttpHeaders();
+		responseHeaders.putAll(sourceHeaders);
+		responseHeaders.setContentType(MediaType.APPLICATION_PROBLEM_JSON);
+		var problem = HttpProblemDetails.from(exception, status, request);
+		return new ResponseEntity<>(problem, responseHeaders, status);
+	}
+
 }

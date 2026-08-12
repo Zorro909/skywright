@@ -14,76 +14,56 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.context.request.ServletWebRequest;
 
 final class HttpProblemHandlerTest {
-  private HttpProblemHandler classUnderTest;
 
-  @BeforeEach
-  void setUp() {
-    classUnderTest = new HttpProblemHandler();
-  }
+	private HttpProblemHandler classUnderTest;
 
-  @Test
-  void handledFailureUsesSafeCorrelatedProblem() {
-    var request = correlatedRequest("/api/v1/missing", "request-92");
+	@BeforeEach
+	void setUp() {
+		classUnderTest = new HttpProblemHandler();
+	}
 
-    var response =
-        classUnderTest.handleExceptionInternal(
-            new IllegalArgumentException("secret"),
-            null,
-            new HttpHeaders(),
-            HttpStatus.NOT_FOUND,
-            new ServletWebRequest(request));
+	@Test
+	void handledFailureUsesSafeCorrelatedProblem() {
+		var request = correlatedRequest("/api/v1/missing", "request-92");
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-    assertThat(response.getHeaders().getContentType().toString())
-        .isEqualTo("application/problem+json");
-    assertThat(response.getBody())
-        .isEqualTo(
-            new Problem(
-                "about:blank",
-                "Not Found",
-                404,
-                "No HTTP resource exists at this path.",
-                "/api/v1/missing",
-                "SKYWRIGHT_HTTP_NOT_FOUND",
-                "request-92",
-                java.util.List.of()));
-  }
+		var response = classUnderTest.handleExceptionInternal(new IllegalArgumentException("secret"), null,
+				new HttpHeaders(), HttpStatus.NOT_FOUND, new ServletWebRequest(request));
 
-  @Test
-  void validationFailureContainsOnlySanitizedFieldViolation() throws Exception {
-    var bindingResult = new BeanPropertyBindingResult(new Object(), "request");
-    bindingResult.addError(new FieldError("request", "name", "secret rejection"));
-    var method = HttpProblemHandlerTest.class.getDeclaredMethod("validatedParameter", String.class);
-    var exception =
-        new MethodArgumentNotValidException(
-            new org.springframework.core.MethodParameter(method, 0), bindingResult);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+		assertThat(response.getHeaders().getContentType().toString()).isEqualTo("application/problem+json");
+		assertThat(response.getBody())
+			.isEqualTo(new Problem("about:blank", "Not Found", 404, "No HTTP resource exists at this path.",
+					"/api/v1/missing", "SKYWRIGHT_HTTP_NOT_FOUND", "request-92", java.util.List.of()));
+	}
 
-    var response =
-        classUnderTest.handleExceptionInternal(
-            exception,
-            null,
-            new HttpHeaders(),
-            HttpStatus.BAD_REQUEST,
-            new ServletWebRequest(correlatedRequest("/api/v1/jobs", "request-validation")));
-    var problem = (Problem) response.getBody();
+	@Test
+	void validationFailureContainsOnlySanitizedFieldViolation() throws Exception {
+		var bindingResult = new BeanPropertyBindingResult(new Object(), "request");
+		bindingResult.addError(new FieldError("request", "name", "secret rejection"));
+		var method = HttpProblemHandlerTest.class.getDeclaredMethod("validatedParameter", String.class);
+		var exception = new MethodArgumentNotValidException(new org.springframework.core.MethodParameter(method, 0),
+				bindingResult);
 
-    assertThat(problem.getFieldViolations())
-        .singleElement()
-        .satisfies(
-            violation -> {
-              assertThat(violation.getField()).isEqualTo("name");
-              assertThat(violation.getCode()).isEqualTo("INVALID_VALUE");
-              assertThat(violation.getMessage()).isEqualTo("The field value is invalid.");
-            });
-  }
+		var response = classUnderTest.handleExceptionInternal(exception, null, new HttpHeaders(),
+				HttpStatus.BAD_REQUEST, new ServletWebRequest(correlatedRequest("/api/v1/jobs", "request-validation")));
+		var problem = (Problem) response.getBody();
 
-  private static MockHttpServletRequest correlatedRequest(String path, String correlationId) {
-    var request = new MockHttpServletRequest();
-    request.setRequestURI(path);
-    request.setAttribute(RequestCorrelationFilter.REQUEST_ATTRIBUTE, correlationId);
-    return request;
-  }
+		assertThat(problem.getFieldViolations()).singleElement().satisfies(violation -> {
+			assertThat(violation.getField()).isEqualTo("name");
+			assertThat(violation.getCode()).isEqualTo("INVALID_VALUE");
+			assertThat(violation.getMessage()).isEqualTo("The field value is invalid.");
+		});
+	}
 
-  @SuppressWarnings("unused")
-  private static void validatedParameter(String value) {}
+	private static MockHttpServletRequest correlatedRequest(String path, String correlationId) {
+		var request = new MockHttpServletRequest();
+		request.setRequestURI(path);
+		request.setAttribute(RequestCorrelationFilter.REQUEST_ATTRIBUTE, correlationId);
+		return request;
+	}
+
+	@SuppressWarnings("unused")
+	private static void validatedParameter(String value) {
+	}
+
 }
