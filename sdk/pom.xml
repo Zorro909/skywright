@@ -52,6 +52,7 @@
                 <argument>run</argument>
                 <argument>--locked</argument>
                 <argument>pytest</argument>
+                <argument>tests/test_package.py</argument>
               </arguments>
             </configuration>
           </execution>
@@ -71,9 +72,28 @@
               </arguments>
             </configuration>
           </execution>
+          <execution>
+            <id>test-installed-sdk</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <configuration>
+              <skip>${skipTests}</skip>
+              <executable>uv</executable>
+              <workingDirectory>${project.basedir}</workingDirectory>
+              <arguments>
+                <argument>run</argument>
+                <argument>--locked</argument>
+                <argument>pytest</argument>
+                <argument>tests/system</argument>
+                <argument>--wheel</argument>
+                <argument>${project.build.directory}/dist/skywright-0.1.0-py3-none-any.whl</argument>
+              </arguments>
+            </configuration>
+          </execution>
         </executions>
       </plugin>
     </plugins>
   </build>
 </project>
-

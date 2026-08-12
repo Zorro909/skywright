@@ -28,6 +28,9 @@ uv run --locked pytest
 
 # Build the universal wheel and source distribution into dist/.
 uv build
+
+# Install the wheel into a fresh external environment and verify consumer behavior.
+uv run --locked pytest tests/system --wheel dist/skywright-0.1.0-py3-none-any.whl
 ```
 
 The separate `ml-test` dependency group locks a CPU-only PyTorch and NumPy stack for future ML
@@ -61,6 +64,6 @@ commands. From the repository root, with the repository's required Java and Mave
 # Build the SDK wheel and source distribution under sdk/target/dist/.
 ./mvnw -pl sdk -am package
 
-# Run the equivalent verification lifecycle.
+# Build the artifacts, then verify the installed wheel in a fresh consumer environment.
 ./mvnw -pl sdk -am verify
 ```
