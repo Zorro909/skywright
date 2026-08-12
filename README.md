@@ -90,6 +90,21 @@ java -jar backend/target/skywright-backend-0.1.0-SNAPSHOT.jar \
   --skywright.deployment.environment=production
 ```
 
+## Build and smoke-test the production image
+
+The backend module packages that executable layered JAR into a Linux amd64 OCI image based on the
+immutable GraalVM Community 25.2.4 runtime manifest. Docker-compatible tooling is required for the
+container profile:
+
+```bash
+./mvnw -pl backend -am -Pcontainer-smoke verify
+```
+
+See the [backend production artifact and image guide](backend/README.md#production-artifact-and-image)
+for exact standalone image construction, external configuration, read-only-root operation, JVM
+option injection, build-identity inspection, graceful termination, and local container debugging
+commands.
+
 ## Remote debugging
 
 Start the local application with JDWP listening on port 5005, then attach a Java debugger to

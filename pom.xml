@@ -25,7 +25,11 @@
   </modules>
 
   <properties>
+    <backend.container.enabled>false</backend.container.enabled>
+    <backend.container.image>skywright-backend:local</backend.container.image>
+    <backend.container.runtime>docker</backend.container.runtime>
     <java.version>25</java.version>
+    <maven-antrun.version>3.2.0</maven-antrun.version>
     <openapi-generator.version>7.24.0</openapi-generator.version>
     <spring-javaformat.version>0.0.47</spring-javaformat.version>
   </properties>
