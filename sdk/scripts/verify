@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+verification_directory="$(mktemp -d)"
+trap 'rm -rf "$verification_directory"' EXIT
+
+uv lock --check
+scripts/check
+scripts/build-distributions "$verification_directory"
+scripts/check-distributions "$verification_directory"
+uv run --locked pytest tests/system -m system \
+  --artifact-dir "$verification_directory"

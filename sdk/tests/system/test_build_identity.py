@@ -43,9 +43,9 @@ def build_sdk(
 
 
 def test_local_wheel_build_information_matches_package_metadata(
-    wheel_path: Path,
+    direct_wheel_path: Path,
 ) -> None:
-    with ZipFile(wheel_path) as wheel:
+    with ZipFile(direct_wheel_path) as wheel:
         metadata_path = next(
             name for name in wheel.namelist() if name.endswith(".dist-info/METADATA")
         )
@@ -58,9 +58,9 @@ def test_local_wheel_build_information_matches_package_metadata(
 
 
 def test_local_sdist_contains_one_frozen_build_information_file(
-    wheel_path: Path,
+    direct_wheel_path: Path,
 ) -> None:
-    sdist_path = next(wheel_path.parent.glob("skywright-*.tar.gz"))
+    sdist_path = next(direct_wheel_path.parent.glob("skywright-*.tar.gz"))
     with tarfile.open(sdist_path) as sdist:
         build_information_members = [
             member

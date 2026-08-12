@@ -65,15 +65,20 @@ Install uv 0.8.8, then work from this directory:
 # Install the SDK and the locked contributor toolchain; the ML test group stays inactive.
 uv sync --locked
 
-# Run formatting, linting, strict typing, installed-package type completeness,
-# fast public-behavior tests, and public API compatibility.
+# Run the fast contributor checks: formatting, linting, strict typing,
+# installed-package type completeness, public behavior, and API compatibility.
 scripts/check
 
-# Build the universal wheel and source distribution into dist/.
-uv build
+# Run normal release-preparation verification. This validates the lock, runs the
+# fast checks, validates artifact metadata and deterministic content, rebuilds a
+# wheel in isolation from the source distribution, and tests both installed paths.
+scripts/verify
 
-# Install the wheel into a fresh external environment and verify consumer behavior.
-uv run --locked pytest tests/system -m system --wheel-dir dist
+# Build a wheel directly from the checkout and a source distribution into dist/.
+scripts/build-distributions dist
+
+# Re-run the installed-consumer harness against an existing artifact pair.
+uv run --locked pytest tests/system -m system --artifact-dir dist
 ```
 
 The separate `ml-test` dependency group locks a CPU-only PyTorch and NumPy stack for future ML
@@ -113,6 +118,28 @@ distribution freezes both identity fields; rebuilding a wheel from that source d
 the same version and revision even when the original repository and build environment are absent.
 No build timestamp is recorded, so rebuilding does not manufacture a different source identity.
 
+### Inspect and rebuild artifacts
+
+Validate the package metadata and rendered long description, then inspect the archive file sets:
+
+```bash
+uv run --locked twine check dist/*
+unzip -l dist/skywright-0.1.0-py3-none-any.whl
+tar -tzf dist/skywright-0.1.0.tar.gz
+```
+
+To reproduce the second distribution path manually, build a wheel from the source archive. uv uses
+an isolated PEP 517 build environment by default:
+
+```bash
+mkdir -p dist/from-sdist
+uv build dist/skywright-0.1.0.tar.gz --wheel --out-dir dist/from-sdist
+```
+
+The installed-consumer harness performs this rebuild outside the repository checkout and compares
+the direct and source-derived wheels by file content, package metadata, embedded build identity,
+and the same installed behavior. Compressed archive bytes are deliberately not compared.
+
 ## Build through the repository reactor
 
 The Maven project-part invokes the same `scripts/check` contributor workflow during its test phase,
@@ -126,6 +153,11 @@ root, with the repository's required Java and Maven toolchain:
 # Build the SDK wheel and source distribution under sdk/target/dist/.
 ./mvnw -pl sdk -am package
 
-# Build the artifacts, then verify the installed wheel in a fresh consumer environment.
+# Build both artifact paths, then verify each in a fresh consumer environment.
 ./mvnw -pl sdk -am verify
 ```
+
+Before handing artifacts to release automation, run `scripts/verify`, inspect the distributions,
+and perform the release-mode build with the immutable commit ID. Issue #78 owns CI matrices,
+publication credentials, release tags, signing, provenance attestations, artifact retention, and
+required status checks; this SDK workflow prepares and verifies the inputs but does not publish.

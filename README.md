@@ -66,6 +66,9 @@ they require a Docker-compatible daemon:
 
 # Build the SDK wheel and source distribution through the reactor
 ./mvnw -pl sdk -am package
+
+# Run the complete SDK verification, including both installed distribution paths
+./mvnw -pl sdk -am verify
 ```
 
 The executable artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`.

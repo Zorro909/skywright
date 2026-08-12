@@ -2,12 +2,27 @@ import subprocess
 import sys
 from importlib.metadata import version
 from pathlib import Path
+from zipfile import ZipFile
 
 SDK_ROOT = Path(__file__).parents[2]
 
 
+def test_distribution_paths_expose_equivalent_wheel_contents(
+    distribution_wheels: tuple[Path, Path],
+) -> None:
+    direct_wheel, source_derived_wheel = distribution_wheels
+
+    with ZipFile(direct_wheel) as direct, ZipFile(source_derived_wheel) as rebuilt:
+        direct_contents = {name: direct.read(name) for name in direct.namelist()}
+        rebuilt_contents = {name: rebuilt.read(name) for name in rebuilt.namelist()}
+
+    assert rebuilt_contents == direct_contents
+
+
 def test_wheel_is_a_complete_dependency_free_install(
-    installed_sdk: Path, tmp_path: Path
+    installed_sdk: Path,
+    tmp_path: Path,
+    isolated_process_environment: dict[str, str],
 ) -> None:
     consumer_python = installed_sdk / "bin" / "python"
 
@@ -28,6 +43,7 @@ print(skywright.__version__)
         [consumer_python, "-I", "-c", consumer_check],
         check=True,
         cwd=tmp_path,
+        env=isolated_process_environment,
         text=True,
         capture_output=True,
     )
@@ -36,7 +52,9 @@ print(skywright.__version__)
 
 
 def test_installed_package_is_complete_for_a_strict_typed_consumer(
-    installed_sdk: Path, tmp_path: Path
+    installed_sdk: Path,
+    tmp_path: Path,
+    isolated_process_environment: dict[str, str],
 ) -> None:
     consumer = tmp_path / "consumer.py"
     consumer.write_text(
@@ -56,6 +74,7 @@ def test_installed_package_is_complete_for_a_strict_typed_consumer(
         ],
         check=True,
         cwd=tmp_path,
+        env=isolated_process_environment,
     )
     subprocess.run(
         [
@@ -69,15 +88,20 @@ def test_installed_package_is_complete_for_a_strict_typed_consumer(
         ],
         check=True,
         cwd=tmp_path,
+        env=isolated_process_environment,
     )
 
 
 def test_runtime_command_help_is_available_without_runtime_services(
     installed_sdk: Path,
+    tmp_path: Path,
+    isolated_process_environment: dict[str, str],
 ) -> None:
     completed = subprocess.run(
         [installed_sdk / "bin" / "skywright-runtime", "--help"],
         check=True,
+        cwd=tmp_path,
+        env=isolated_process_environment,
         text=True,
         capture_output=True,
     )
@@ -88,10 +112,14 @@ def test_runtime_command_help_is_available_without_runtime_services(
 
 def test_runtime_command_reports_version_and_source_revision(
     installed_sdk: Path,
+    tmp_path: Path,
+    isolated_process_environment: dict[str, str],
 ) -> None:
     completed = subprocess.run(
         [installed_sdk / "bin" / "skywright-runtime", "--version"],
         check=True,
+        cwd=tmp_path,
+        env=isolated_process_environment,
         text=True,
         capture_output=True,
     )
@@ -103,10 +131,14 @@ def test_runtime_command_reports_version_and_source_revision(
 
 def test_runtime_command_rejects_training_until_the_process_boundary_exists(
     installed_sdk: Path,
+    tmp_path: Path,
+    isolated_process_environment: dict[str, str],
 ) -> None:
     completed = subprocess.run(
         [installed_sdk / "bin" / "skywright-runtime"],
         check=False,
+        cwd=tmp_path,
+        env=isolated_process_environment,
         text=True,
         capture_output=True,
     )
@@ -117,3 +149,7 @@ def test_runtime_command_rejects_training_until_the_process_boundary_exists(
         "training execution is unavailable until the Training Process Boundary "
         "is implemented" in completed.stderr
     )
+    assert "Run Context" not in completed.stderr
+    assert "Execution Attempt" not in completed.stderr
+    assert "Execution Termination Report" not in completed.stderr
+    assert "Training Process Outcome" not in completed.stderr

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+artifact_directory="${1:-dist}"
+shopt -s nullglob
+wheel_artifacts=("$artifact_directory"/skywright-*.whl)
+source_artifacts=("$artifact_directory"/skywright-*.tar.gz)
+if [[ "${#wheel_artifacts[@]}" -ne 1 || "${#source_artifacts[@]}" -ne 1 ]]; then
+  echo "expected one Skywright wheel and one source distribution in $artifact_directory" >&2
+  exit 2
+fi
+
+uv run --locked twine check "${wheel_artifacts[@]}" "${source_artifacts[@]}"
