@@ -1,6 +1,9 @@
 import subprocess
+import sys
 from importlib.metadata import version
 from pathlib import Path
+
+SDK_ROOT = Path(__file__).parents[2]
 
 
 def test_wheel_is_a_complete_dependency_free_install(
@@ -30,6 +33,43 @@ print(skywright.__version__)
     )
 
     assert completed.stdout == f"{version('skywright')}\n"
+
+
+def test_installed_package_is_complete_for_a_strict_typed_consumer(
+    installed_sdk: Path, tmp_path: Path
+) -> None:
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text(
+        (SDK_ROOT / "tests" / "consumer" / "consumer.py").read_text(),
+        encoding="utf-8",
+    )
+    consumer_python = installed_sdk / "bin" / "python"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pyright",
+            "--pythonpath",
+            consumer_python,
+            consumer,
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pyright",
+            "--pythonpath",
+            consumer_python,
+            "--verifytypes",
+            "skywright",
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
 
 
 def test_runtime_command_help_is_available_without_runtime_services(

@@ -39,21 +39,15 @@
             </configuration>
           </execution>
           <execution>
-            <id>test-sdk</id>
+            <id>check-sdk</id>
             <phase>test</phase>
             <goals>
               <goal>exec</goal>
             </goals>
             <configuration>
               <skip>${skipTests}</skip>
-              <executable>uv</executable>
+              <executable>${project.basedir}/scripts/check</executable>
               <workingDirectory>${project.basedir}</workingDirectory>
-              <arguments>
-                <argument>run</argument>
-                <argument>--locked</argument>
-                <argument>pytest</argument>
-                <argument>tests/test_package.py</argument>
-              </arguments>
             </configuration>
           </execution>
           <execution>
@@ -87,6 +81,8 @@
                 <argument>--locked</argument>
                 <argument>pytest</argument>
                 <argument>tests/system</argument>
+                <argument>-m</argument>
+                <argument>system</argument>
                 <argument>--wheel-dir</argument>
                 <argument>${project.build.directory}/dist</argument>
               </arguments>
