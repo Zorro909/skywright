@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "skywright"
+version = "0.1.0"
+description = "Runtime SDK for portable machine-learning training projects"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Zorro909" },
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/Zorro909/skywright"
+
+[dependency-groups]
+dev = [
+  "griffe>=1.9,<2",
+  "hatchling==1.27.0",
+  "pyright>=1.1.403,<2",
+  "pytest>=8.4,<10",
+  "ruff>=0.12,<1",
+]
+ml-test = [
+  "numpy>=2.2,<3",
+  "torch>=2.8,<3",
+]
+
+[tool.uv]
+required-version = "==0.8.8"
+
+[tool.uv.dependency-groups]
+ml-test = { requires-python = ">=3.10,<3.15" }
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/skywright"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/LICENSE",
+  "/README.md",
+  "/pyproject.toml",
+  "/src/skywright",
+]
+
