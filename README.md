@@ -72,7 +72,8 @@ The executable artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`
 
 The SDK wheel and source distribution are written to `sdk/target/dist/`. See the
 [SDK contributor guide](sdk/README.md) for the native install/build commands, supported Python and
-platform policy, and PyTorch ownership.
+platform policy, operational `skywright-runtime` seam, release identity inputs, and PyTorch
+ownership.
 
 ## HTTP APIs
 

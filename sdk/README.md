@@ -15,6 +15,27 @@ CUDA, or ROCm build. Environment Profiles supply the compatible PyTorch stack fo
 execution. Direct-execution developers own that choice in their project environment and should use
 PyTorch's installation guidance for their accelerator backend.
 
+## Operational runtime command
+
+Installing the SDK registers one private operational bootstrap for Environment Profiles:
+
+```bash
+skywright-runtime --help
+skywright-runtime --version
+```
+
+This command is infrastructure-facing and is not a Training Project authoring API. Help and version
+load only the Python standard library and installed Skywright package metadata; they do not import
+or locate PyTorch, SkyPilot, the backend, Vault, Kubernetes, or an Environment Profile. The version
+diagnostic prints the canonical installed SDK Semantic Version and the separately frozen source
+revision.
+
+Issue #47 will provide the Training Process Boundary that eventually executes a Training Project.
+Until that boundary exists, invoking `skywright-runtime` for training exits non-zero with a clear
+limitation diagnostic. It does not create or imply a Run, Execution Attempt, Run Context, Execution
+Termination Report, or Training Process Outcome. PyTorch discovery belongs only to future runtime
+behavior that actually needs it.
+
 ## Install and build natively
 
 Install uv 0.8.8, then work from this directory:
@@ -51,6 +72,24 @@ python -c 'import skywright; from importlib.metadata import version; print(versi
 The distribution and import package are both named `skywright`. Package metadata is the canonical
 source of version `0.1.0`; `skywright.__version__` mirrors that installed metadata. The package also
 ships `py.typed` so consumers can recognize its inline typing contract.
+
+### Build identity
+
+Every wheel and source distribution contains timestamp-free build information with the package
+version and source revision. Ordinary local builds use the honest revision `unknown` unless one is
+supplied. Release automation must opt into release mode and provide an explicit immutable source
+revision, normally the full commit ID:
+
+```bash
+SKYWRIGHT_BUILD_MODE=release \
+SKYWRIGHT_SOURCE_REVISION=<full-commit-id> \
+uv build
+```
+
+`SKYWRIGHT_BUILD_MODE=release` without `SKYWRIGHT_SOURCE_REVISION` fails the build. The source
+distribution freezes both identity fields; rebuilding a wheel from that source distribution keeps
+the same version and revision even when the original repository and build environment are absent.
+No build timestamp is recorded, so rebuilding does not manufacture a different source identity.
 
 ## Build through the repository reactor
 
