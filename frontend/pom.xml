@@ -102,4 +102,34 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <profile>
+      <id>packaged-acceptance</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <version>${exec-maven.version}</version>
+            <executions>
+              <execution>
+                <id>accept-packaged-web</id>
+                <phase>integration-test</phase>
+                <goals><goal>exec</goal></goals>
+                <configuration>
+                  <skip>${skipITs}</skip>
+                  <executable>pnpm</executable>
+                  <arguments><argument>run</argument><argument>test:acceptance</argument></arguments>
+                  <environmentVariables>
+                    <SKYWRIGHT_BACKEND_EXECUTABLE>${maven.multiModuleProjectDirectory}/backend/target/skywright-backend-${project.version}.jar</SKYWRIGHT_BACKEND_EXECUTABLE>
+                  </environmentVariables>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

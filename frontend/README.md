@@ -58,10 +58,11 @@ and Maven toolchain:
 ./mvnw -pl frontend exec:exec@build-web-artifact
 ./mvnw -pl frontend -am test       # combined fast verification
 ./mvnw -pl frontend -am package    # optimized frontend JAR
-./mvnw -pl frontend-acceptance -am verify
+./mvnw -pl backend -am package
+./mvnw -pl frontend -Ppackaged-acceptance verify
 ```
 
-The last command builds the frontend JAR, embeds it in the executable Spring JAR, starts that
-packaged application, and drives the shell in Chromium. The frontend artifact is written to
+The final two commands build the frontend JAR, embed it in the executable Spring JAR, then start
+that packaged application and drive the shell in Chromium. The frontend artifact is written to
 `frontend/target/skywright-web-0.1.0-SNAPSHOT.jar`; the packaged entry point is
 `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`.

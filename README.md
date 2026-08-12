@@ -58,7 +58,8 @@ they require a Docker-compatible daemon:
 ./mvnw -pl backend -am -DskipTests package
 
 # Verify the frontend and the packaged Spring/Chromium acceptance seam
-./mvnw -pl frontend-acceptance -am verify
+./mvnw -pl backend -am package
+./mvnw -pl frontend -Ppackaged-acceptance verify
 
 # Build the executable JAR and production OCI image
 ./mvnw -pl backend-deployment -am package
