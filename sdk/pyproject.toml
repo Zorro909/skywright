@@ -27,6 +27,9 @@ classifiers = [
 ]
 dependencies = []
 
+[project.scripts]
+skywright-runtime = "skywright._runtime:main"
+
 [project.urls]
 Repository = "https://github.com/Zorro909/skywright"
 
@@ -67,6 +70,9 @@ include = [
   "/pyproject.toml",
   "/src/skywright",
 ]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/test_package.py"]
