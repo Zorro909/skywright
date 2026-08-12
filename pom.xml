@@ -21,6 +21,7 @@
 
   <modules>
     <module>api/skywright-api</module>
+    <module>frontend</module>
     <module>backend</module>
     <module>backend-deployment</module>
     <module>sdk</module>

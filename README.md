@@ -1,10 +1,11 @@
 # Skywright
 
 Skywright is built as a Maven reactor. The repository root is its packaging-only aggregator and
-shared build parent; `api/skywright-api` publishes the reusable product contract, `backend` is the
-Spring Boot application module, and `backend-deployment` packages that application as its production
-OCI artifact. The sibling [`sdk`](sdk/README.md) project-part is the independently buildable
-pure-Python runtime SDK for Training Projects.
+shared build parent; `api/skywright-api` publishes the reusable product contract,
+[`frontend`](frontend/README.md) publishes the optimized browser application as classpath resources,
+`backend` is the Spring Boot application module, and `backend-deployment` packages that application
+as its production OCI artifact. The sibling [`sdk`](sdk/README.md) project-part is the independently
+buildable pure-Python runtime SDK for Training Projects.
 
 ## Required toolchain
 
@@ -13,6 +14,7 @@ Builds require all of the following exact versions:
 - GraalVM Community 25.2.4 (`GraalVM CE 25.2.4+7.1`), based on OpenJDK `25.0.4+7`
 - Maven Wrapper 3.3.4, which downloads Maven 3.9.16
 - uv 0.8.8 for the Python SDK project-part
+- Node 26.7.0 and pnpm 11.21.0 for the web project-part
 
 Download the matching GraalVM Community archive from the
 [GraalVM 25.2.4 release](https://github.com/graalvm/graalvm-ce-builds/releases/tag/graal-25.2.4),
@@ -55,6 +57,10 @@ they require a Docker-compatible daemon:
 # Build the executable backend JAR without running tests
 ./mvnw -pl backend -am -DskipTests package
 
+# Verify the frontend and the packaged Spring/Chromium acceptance seam
+./mvnw -pl backend -am package
+./mvnw -pl frontend -Ppackaged-acceptance verify
+
 # Build the executable JAR and production OCI image
 ./mvnw -pl backend-deployment -am package
 
@@ -71,7 +77,8 @@ they require a Docker-compatible daemon:
 ./mvnw -pl sdk -am verify
 ```
 
-The executable artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`.
+The executable artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`. It serves the web
+application at `/`; direct application routes such as `/about` use the same packaged entry point.
 
 The SDK wheel and source distribution are written to `sdk/target/dist/`. See the
 [SDK contributor guide](sdk/README.md) for the native install/build commands, supported Python and
