@@ -110,14 +110,16 @@ docker run --rm \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --env SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=production \
   --env JAVA_TOOL_OPTIONS=-Xss2m \
-  --publish 8080:8080 \
+  --publish 127.0.0.1:8080:8080 \
   skywright-backend:0.1.0-SNAPSHOT
 ```
 
 The image contains no deployment-specific setting or secret, runs as fixed UID/GID `10001:10001`,
-and writes application logs only to standard output. Stop it with `docker stop --time 20
+and writes application logs only to standard output. The example binds the application to loopback;
+expose it remotely only through the operator-controlled private network path. Stop it with `docker stop --time 30
 skywright-backend`; Docker sends SIGTERM directly to the JVM, readiness is withdrawn, and Spring
-allows up to 20 seconds for in-flight HTTP work before exit.
+allows up to 20 seconds for in-flight HTTP work before exit. The longer container timeout leaves
+the JVM time to finish exiting after that bounded application-shutdown phase.
 
 Build the production image and run the complete operator-facing smoke verification with:
 

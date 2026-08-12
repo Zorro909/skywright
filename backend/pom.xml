@@ -84,20 +84,34 @@
               <goal>run</goal>
             </goals>
             <configuration>
-              <exportAntProperties>true</exportAntProperties>
               <target>
                 <mkdir dir="${project.build.directory}"/>
                 <exec executable="git" dir="${maven.multiModuleProjectDirectory}" failonerror="true"
-                      output="${project.build.directory}/source-revision.txt">
-                  <arg value="rev-parse"/>
-                  <arg value="HEAD"/>
+                      output="${project.build.directory}/source-revision.properties">
+                  <arg value="log"/>
+                  <arg value="-1"/>
+                  <arg value="--format=git.commit.id.full=%H"/>
                 </exec>
-                <loadfile property="git.commit.id.full" srcFile="${project.build.directory}/source-revision.txt">
-                  <filterchain>
-                    <striplinebreaks/>
-                  </filterchain>
-                </loadfile>
               </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>properties-maven-plugin</artifactId>
+        <version>${properties-maven.version}</version>
+        <executions>
+          <execution>
+            <id>load-source-revision</id>
+            <phase>initialize</phase>
+            <goals>
+              <goal>read-project-properties</goal>
+            </goals>
+            <configuration>
+              <files>
+                <file>${project.build.directory}/source-revision.properties</file>
+              </files>
             </configuration>
           </execution>
         </executions>
