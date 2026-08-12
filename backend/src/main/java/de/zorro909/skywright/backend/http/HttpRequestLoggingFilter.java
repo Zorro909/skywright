@@ -44,7 +44,7 @@ public final class HttpRequestLoggingFilter extends OncePerRequestFilter {
 		var event = failure == null ? logger.atInfo() : logger.atError();
 		event.addKeyValue("event.duration", Math.max(0, System.nanoTime() - startedAt))
 			.addKeyValue("http.request.method", request.getMethod())
-			.addKeyValue("http.response.status_code", failure == null ? response.getStatus() : 500);
+			.addKeyValue("http.response.status_code", responseStatus(response, failure));
 		var route = request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
 		if (route != null) {
 			event.addKeyValue("http.route", route.toString());
@@ -54,6 +54,13 @@ public final class HttpRequestLoggingFilter extends OncePerRequestFilter {
 				.addKeyValue("error.stack_trace", safeStackTrace(failure));
 		}
 		event.log("HTTP request completed");
+	}
+
+	private static int responseStatus(HttpServletResponse response, Throwable failure) {
+		if (failure != null && response.getStatus() == HttpServletResponse.SC_OK && !response.isCommitted()) {
+			return HttpServletResponse.SC_INTERNAL_SERVER_ERROR;
+		}
+		return response.getStatus();
 	}
 
 	private static String safeStackTrace(Throwable failure) {

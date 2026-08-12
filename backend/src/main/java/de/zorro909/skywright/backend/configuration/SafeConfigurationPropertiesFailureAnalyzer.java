@@ -18,6 +18,9 @@ public final class SafeConfigurationPropertiesFailureAnalyzer
 
 	@Override
 	protected FailureAnalysis analyze(Throwable rootFailure, ConfigurationPropertiesBindException failure) {
+		if (failure.getBeanType() != DeploymentProperties.class) {
+			return null;
+		}
 		var description = validationDescription(failure);
 		return new FailureAnalysis(description,
 				"Correct the named Skywright deployment setting; supplied values are omitted from this diagnostic.",

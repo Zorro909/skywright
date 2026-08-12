@@ -45,6 +45,17 @@ final class DeploymentConfigurationIT {
 	}
 
 	@Test
+	void unrelatedConfigurationFailuresUseTheirOwnDiagnostics() throws Exception {
+		try (var backend = BackendProcess.start("--skywright.deployment.environment=test",
+				"--server.port=not-a-port")) {
+			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
+
+			assertThat(exitCode).isNotZero();
+			assertThat(backend.output()).contains("server.port").doesNotContain("Skywright deployment setting");
+		}
+	}
+
+	@Test
 	void missingRequiredDeploymentConfigurationStopsStartupBeforeReadiness() throws Exception {
 		try (var backend = BackendProcess.start("--server.port=0")) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
