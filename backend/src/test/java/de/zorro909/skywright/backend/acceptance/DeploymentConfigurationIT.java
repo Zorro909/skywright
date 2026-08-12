@@ -58,7 +58,7 @@ final class DeploymentConfigurationIT {
 	@Test
 	void invalidDeploymentConfigurationIsDiagnosedWithoutEchoingItsValue() throws Exception {
 		var sensitiveValue = "production-private-token!";
-		try (var backend = BackendProcess.start("--server.port=0",
+		try (var backend = BackendProcess.start("--debug", "--server.port=0",
 				"--skywright.deployment.environment=" + sensitiveValue)) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
 

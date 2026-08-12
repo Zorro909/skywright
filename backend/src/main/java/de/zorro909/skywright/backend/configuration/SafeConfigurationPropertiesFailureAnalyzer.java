@@ -21,7 +21,7 @@ public final class SafeConfigurationPropertiesFailureAnalyzer
 		var description = validationDescription(failure);
 		return new FailureAnalysis(description,
 				"Correct the named Skywright deployment setting; supplied values are omitted from this diagnostic.",
-				failure);
+				new IllegalStateException("Invalid Skywright deployment configuration"));
 	}
 
 	private String validationDescription(ConfigurationPropertiesBindException failure) {

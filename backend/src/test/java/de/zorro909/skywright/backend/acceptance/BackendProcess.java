@@ -54,6 +54,7 @@ final class BackendProcess implements AutoCloseable {
 		if (workingDirectory != null) {
 			processBuilder.directory(workingDirectory.toFile());
 		}
+		processBuilder.environment().remove("SKYWRIGHT_DEPLOYMENT_ENVIRONMENT");
 		processBuilder.environment().putAll(environment);
 		var process = processBuilder.start();
 		return new BackendProcess(process);
