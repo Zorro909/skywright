@@ -22,3 +22,38 @@ request context, not a Principal Identity or idempotency key.
 
 HTTP failures use `application/problem+json` with the RFC 9457 fields plus `errorCode`,
 `correlationId`, and `fieldViolations`. Details never expose exception messages or stack traces.
+
+## Deployment configuration
+
+Set the required, non-secret `skywright.deployment.environment` to a lowercase identifier such as
+`production`. Spring applies its normal precedence across `application.properties`, the
+`SKYWRIGHT_DEPLOYMENT_ENVIRONMENT` environment variable, the
+`-Dskywright.deployment.environment` system property, and the
+`--skywright.deployment.environment` command-line option.
+
+The immutable validated configuration rejects missing, invalid, and unknown deployment properties
+before readiness. Diagnostics omit supplied values, generated metadata ships in the executable,
+and Actuator does not expose configuration. This process setting is not Run Configuration and must
+never contain credentials or make Skywright a Credential Authority.
+
+## Logging
+
+The production default writes Elastic Common Schema JSON to standard output, one event per line,
+and configures no application log file. Each event includes a UTC `@timestamp`, `log.level`,
+`service.name`, known `service.version`, `log.logger`, `process.thread.name`, and `message`.
+Exceptions add structured `error.type` and bounded stack-frame details without rendering the
+exception message in the request event.
+
+Each completed HTTP request adds `http.request.method`, the matched `http.route` template,
+`http.response.status_code`, and nanosecond `event.duration`. When present, the effective
+`correlationId` from the API boundary is included. Request and response bodies, query values, and
+headers are never logged; the route template is used instead of the requested path.
+
+For readable contributor output, explicitly activate the `local` profile. It changes only the
+console rendering; log levels and application behavior remain unchanged:
+
+```bash
+SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=local \
+SPRING_PROFILES_ACTIVE=local \
+./mvnw -pl backend spring-boot:run
+```

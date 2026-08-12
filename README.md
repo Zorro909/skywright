@@ -43,7 +43,7 @@ From the repository root:
 ./mvnw -pl backend -am verify
 
 # Run the backend's fast unit-test convention (*Test)
-./mvnw -pl backend test
+./mvnw -pl backend -am test
 
 # Run one backend integration test through Failsafe
 ./mvnw -pl backend -am -Dit.test=LivenessIT verify
@@ -61,11 +61,17 @@ The executable artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`
 ## Run locally
 
 The backend has no database, SkyPilot, GraalPy, object-storage, Vault, or other feature-service
-prerequisite. Start it directly with:
+prerequisite. It does require a non-secret deployment environment identifier. Start it directly
+with readable local logs using:
 
 ```bash
+export SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=local
+export SPRING_PROFILES_ACTIVE=local
 ./mvnw -pl backend spring-boot:run
 ```
+
+See the [backend deployment configuration and logging guide](backend/README.md) for configuration
+sources, strict validation, production JSON fields, and safe request-logging limits.
 
 The main application port defaults to `8080`. Its operational HTTP surface is:
 
@@ -80,7 +86,8 @@ native-image.
 After packaging, the same application can be started with:
 
 ```bash
-java -jar backend/target/skywright-backend-0.1.0-SNAPSHOT.jar
+java -jar backend/target/skywright-backend-0.1.0-SNAPSHOT.jar \
+  --skywright.deployment.environment=production
 ```
 
 ## Remote debugging
@@ -90,5 +97,6 @@ Start the local application with JDWP listening on port 5005, then attach a Java
 
 ```bash
 ./mvnw -pl backend spring-boot:run \
-  -Dspring-boot.run.jvmArguments='-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005'
+  -Dspring-boot.run.jvmArguments='-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005' \
+  -Dspring-boot.run.arguments='--skywright.deployment.environment=local'
 ```

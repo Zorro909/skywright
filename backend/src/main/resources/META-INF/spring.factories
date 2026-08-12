@@ -1,0 +1,2 @@
+org.springframework.boot.diagnostics.FailureAnalyzer=\
+de.zorro909.skywright.backend.configuration.SafeConfigurationPropertiesFailureAnalyzer
