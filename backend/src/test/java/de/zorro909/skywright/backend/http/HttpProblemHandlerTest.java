@@ -3,6 +3,7 @@ package de.zorro909.skywright.backend.http;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import de.zorro909.skywright.backend.boundary.generated.model.Problem;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -13,18 +14,24 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.context.request.ServletWebRequest;
 
 final class HttpProblemHandlerTest {
+  private HttpProblemHandler classUnderTest;
+
+  @BeforeEach
+  void setUp() {
+    classUnderTest = new HttpProblemHandler();
+  }
+
   @Test
   void handledFailureUsesSafeCorrelatedProblem() {
     var request = correlatedRequest("/api/v1/missing", "request-92");
 
     var response =
-        new HttpProblemHandler()
-            .handleExceptionInternal(
-                new IllegalArgumentException("secret"),
-                null,
-                new HttpHeaders(),
-                HttpStatus.NOT_FOUND,
-                new ServletWebRequest(request));
+        classUnderTest.handleExceptionInternal(
+            new IllegalArgumentException("secret"),
+            null,
+            new HttpHeaders(),
+            HttpStatus.NOT_FOUND,
+            new ServletWebRequest(request));
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     assertThat(response.getHeaders().getContentType().toString())
@@ -52,13 +59,12 @@ final class HttpProblemHandlerTest {
             new org.springframework.core.MethodParameter(method, 0), bindingResult);
 
     var response =
-        new HttpProblemHandler()
-            .handleExceptionInternal(
-                exception,
-                null,
-                new HttpHeaders(),
-                HttpStatus.BAD_REQUEST,
-                new ServletWebRequest(correlatedRequest("/api/v1/jobs", "request-validation")));
+        classUnderTest.handleExceptionInternal(
+            exception,
+            null,
+            new HttpHeaders(),
+            HttpStatus.BAD_REQUEST,
+            new ServletWebRequest(correlatedRequest("/api/v1/jobs", "request-validation")));
     var problem = (Problem) response.getBody();
 
     assertThat(problem.getFieldViolations())
