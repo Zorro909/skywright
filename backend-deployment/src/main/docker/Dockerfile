@@ -1,0 +1,24 @@
+FROM ghcr.io/graalvm/jdk-community:25i2-25.0.4-ol9@sha256:be43f73571b4617dba3653c5a19dfa1ec45ac61a822db877763129ca8e7c3540
+
+ARG BUILD_CREATED
+
+LABEL org.opencontainers.image.created="${BUILD_CREATED}" \
+      org.opencontainers.image.description="Always-on Skywright control-plane backend" \
+      org.opencontainers.image.revision="@git.commit.id.full@" \
+      org.opencontainers.image.source="https://github.com/Zorro909/skywright" \
+      org.opencontainers.image.title="Skywright backend" \
+      org.opencontainers.image.version="@project.version@"
+
+RUN groupadd --gid 10001 skywright \
+    && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent \
+        --shell /sbin/nologin skywright \
+    && install --directory --owner 0 --group 0 --mode 0755 /opt/skywright
+
+COPY --chown=0:0 maven/application.jar /opt/skywright/application.jar
+
+USER 10001:10001
+WORKDIR /opt/skywright
+EXPOSE 8080
+STOPSIGNAL SIGTERM
+
+ENTRYPOINT ["java", "-jar", "/opt/skywright/application.jar"]

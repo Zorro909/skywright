@@ -13,3 +13,7 @@ The five canonical triage roles map to labels of the same name (`needs-triage`, 
 ### Domain docs
 
 Single-context — `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+## Testing
+
+Test actual application code with unit tests and system tests.

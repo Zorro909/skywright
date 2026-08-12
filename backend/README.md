@@ -57,3 +57,18 @@ SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=local \
 SPRING_PROFILES_ACTIVE=local \
 ./mvnw -pl backend spring-boot:run
 ```
+
+## Production artifact
+
+Package the executable layered JAR from the repository root:
+
+```bash
+./mvnw -pl backend -am -DskipTests package
+```
+
+The artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`. It contains version, build
+time, and the full source revision in `META-INF/build-info.properties`; the same non-sensitive
+identity is available from `GET /actuator/info` while it is running.
+
+The separate [backend deployment module](../backend-deployment/README.md) consumes this exact JAR
+to build the production OCI image.

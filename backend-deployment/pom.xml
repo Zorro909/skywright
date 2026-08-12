@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>de.zorro909.skywright</groupId>
+    <artifactId>skywright-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>skywright-backend-deployment</artifactId>
+  <packaging>pom</packaging>
+  <name>Skywright backend deployment</name>
+  <description>Production OCI packaging for the backend.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>de.zorro909.skywright</groupId>
+      <artifactId>skywright-backend</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>io.fabric8</groupId>
+        <artifactId>docker-maven-plugin</artifactId>
+        <version>${docker-maven.version}</version>
+        <executions>
+          <execution>
+            <id>build-backend-image</id>
+            <phase>package</phase>
+            <goals>
+              <goal>build</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <images>
+            <image>
+              <name>${backend.container.image}</name>
+              <build>
+                <args>
+                  <BUILD_CREATED>${maven.build.timestamp}</BUILD_CREATED>
+                </args>
+                <contextDir>${project.basedir}/src/main/docker</contextDir>
+                <dockerFile>${project.basedir}/src/main/docker/Dockerfile</dockerFile>
+                <filter>@</filter>
+                <assembly>
+                  <inline>
+                    <dependencySets>
+                      <dependencySet>
+                        <includes>
+                          <include>de.zorro909.skywright:skywright-backend</include>
+                        </includes>
+                        <outputDirectory>.</outputDirectory>
+                        <outputFileNameMapping>application.jar</outputFileNameMapping>
+                        <useTransitiveDependencies>false</useTransitiveDependencies>
+                      </dependencySet>
+                    </dependencySets>
+                  </inline>
+                </assembly>
+              </build>
+            </image>
+          </images>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

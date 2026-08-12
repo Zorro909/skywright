@@ -171,6 +171,9 @@
               <artifactId>skywright-api</artifactId>
             </exclude>
           </excludes>
+          <layers>
+            <enabled>true</enabled>
+          </layers>
         </configuration>
         <executions>
           <execution>
@@ -178,9 +181,15 @@
             <goals>
               <goal>build-info</goal>
             </goals>
+            <configuration>
+              <additionalProperties>
+                <sourceRevision>${git.commit.id.full}</sourceRevision>
+              </additionalProperties>
+            </configuration>
           </execution>
         </executions>
       </plugin>
     </plugins>
   </build>
+
 </project>
