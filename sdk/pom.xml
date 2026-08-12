@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>de.zorro909.skywright</groupId>
+    <artifactId>skywright-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>skywright-sdk</artifactId>
+  <packaging>pom</packaging>
+
+  <name>Skywright Python SDK</name>
+  <description>Pure-Python runtime SDK for Skywright Training Projects.</description>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>${exec-maven.version}</version>
+        <executions>
+          <execution>
+            <id>validate-sdk-lock</id>
+            <phase>validate</phase>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <configuration>
+              <executable>uv</executable>
+              <workingDirectory>${project.basedir}</workingDirectory>
+              <arguments>
+                <argument>lock</argument>
+                <argument>--check</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <id>test-sdk</id>
+            <phase>test</phase>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <configuration>
+              <skip>${skipTests}</skip>
+              <executable>uv</executable>
+              <workingDirectory>${project.basedir}</workingDirectory>
+              <arguments>
+                <argument>run</argument>
+                <argument>--locked</argument>
+                <argument>pytest</argument>
+                <argument>tests/test_package.py</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <id>build-sdk-distributions</id>
+            <phase>package</phase>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <configuration>
+              <executable>uv</executable>
+              <workingDirectory>${project.basedir}</workingDirectory>
+              <arguments>
+                <argument>build</argument>
+                <argument>--out-dir</argument>
+                <argument>${project.build.directory}/dist</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <id>test-installed-sdk</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <configuration>
+              <skip>${skipTests}</skip>
+              <executable>uv</executable>
+              <workingDirectory>${project.basedir}</workingDirectory>
+              <arguments>
+                <argument>run</argument>
+                <argument>--locked</argument>
+                <argument>pytest</argument>
+                <argument>tests/system</argument>
+                <argument>--wheel-dir</argument>
+                <argument>${project.build.directory}/dist</argument>
+              </arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

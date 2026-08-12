@@ -3,7 +3,8 @@
 Skywright is built as a Maven reactor. The repository root is its packaging-only aggregator and
 shared build parent; `api/skywright-api` publishes the reusable product contract, `backend` is the
 Spring Boot application module, and `backend-deployment` packages that application as its production
-OCI artifact.
+OCI artifact. The sibling [`sdk`](sdk/README.md) project-part is the independently buildable
+pure-Python runtime SDK for Training Projects.
 
 ## Required toolchain
 
@@ -11,6 +12,7 @@ Builds require all of the following exact versions:
 
 - GraalVM Community 25.2.4 (`GraalVM CE 25.2.4+7.1`), based on OpenJDK `25.0.4+7`
 - Maven Wrapper 3.3.4, which downloads Maven 3.9.16
+- uv 0.8.8 for the Python SDK project-part
 
 Download the matching GraalVM Community archive from the
 [GraalVM 25.2.4 release](https://github.com/graalvm/graalvm-ce-builds/releases/tag/graal-25.2.4),
@@ -58,9 +60,19 @@ they require a Docker-compatible daemon:
 
 # Build the executable JAR and production OCI image through verification
 ./mvnw -pl backend-deployment -am verify
+
+# Test the Python SDK through its delegated native uv workflow
+./mvnw -pl sdk -am test
+
+# Build the SDK wheel and source distribution through the reactor
+./mvnw -pl sdk -am package
 ```
 
 The executable artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`.
+
+The SDK wheel and source distribution are written to `sdk/target/dist/`. See the
+[SDK contributor guide](sdk/README.md) for the native install/build commands, supported Python and
+platform policy, and PyTorch ownership.
 
 ## HTTP APIs
 
