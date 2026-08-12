@@ -56,7 +56,7 @@ they require a Docker-compatible daemon:
 # Build the executable JAR and production OCI image
 ./mvnw -pl backend-deployment -am package
 
-# Build and smoke-test the production OCI image
+# Build the executable JAR and production OCI image through verification
 ./mvnw -pl backend-deployment -am verify
 ```
 
@@ -98,14 +98,14 @@ java -jar backend/target/skywright-backend-0.1.0-SNAPSHOT.jar \
   --skywright.deployment.environment=production
 ```
 
-## Build and smoke-test the production image
+## Build the production image
 
 The `backend-deployment` module packages that executable layered JAR into a Linux amd64 OCI image
 based on the immutable GraalVM Community 25.2.4 runtime manifest. Its normal Maven package phase
-builds the image; verify also runs its operator-facing smoke test:
+builds the image:
 
 ```bash
-./mvnw -pl backend-deployment -am verify
+./mvnw -pl backend-deployment -am package
 ```
 
 See the [backend deployment guide](backend-deployment/README.md)

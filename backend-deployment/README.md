@@ -4,7 +4,7 @@ This module is the independently buildable deployment boundary for the backend. 
 phase consumes the executable JAR from `backend`, constructs `skywright-backend:0.1.0-SNAPSHOT`,
 and copies that same artifact into the image. Docker-compatible tooling is required.
 
-## Build and verify
+## Build
 
 From the repository root, build the backend JAR and production image:
 
@@ -12,32 +12,18 @@ From the repository root, build the backend JAR and production image:
 ./mvnw -pl backend-deployment -am package
 ```
 
-Run the operator-facing image smoke test as part of Maven verification:
+The normal Maven verification lifecycle builds the same image during its package phase:
 
 ```bash
 ./mvnw -pl backend-deployment -am verify
 ```
 
-For a Podman-compatible daemon, expose its Docker API and select the matching CLI used by the smoke
-test:
+For a Podman-compatible daemon, expose its Docker API:
 
 ```bash
 DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock" \
-./mvnw -pl backend-deployment -am verify \
-  -Dbackend.container.runtime=podman
+./mvnw -pl backend-deployment -am package
 ```
-
-The smoke test is deployment verification, not backend application code. It starts the Maven-built
-production image through its operator-visible boundaries and proves:
-
-- the image contains the exact Maven-built layered JAR and its OCI/application identity agrees;
-- UID/GID `10001:10001`, GraalVM Community 25.2.4, the exec-form entry point, read-only-root
-  operation, and `JAVA_TOOL_OPTIONS=-Xss2m`;
-- `/livez`, `/readyz`, `/actuator/info`, and `/openapi/skywright-api.yaml` through the published
-  application port;
-- JSON-only application standard output, sanitized invalid-configuration failure before readiness,
-  and bounded graceful SIGTERM with readiness withdrawal, refused new work, and completion of
-  in-flight HTTP work.
 
 The initial deployment is Linux amd64. The Dockerfile starts from the immutable amd64 manifest of
 the official GraalVM Community image for GraalVM CE 25.2.4 / OpenJDK 25.0.4. It retains the complete

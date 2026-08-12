@@ -71,4 +71,4 @@ time, and the full source revision in `META-INF/build-info.properties`; the same
 identity is available from `GET /actuator/info` while it is running.
 
 The separate [backend deployment module](../backend-deployment/README.md) consumes this exact JAR
-to build and smoke-test the production OCI image.
+to build the production OCI image.

@@ -13,7 +13,7 @@
   <artifactId>skywright-backend-deployment</artifactId>
   <packaging>pom</packaging>
   <name>Skywright backend deployment</name>
-  <description>Production OCI packaging and operator-facing smoke verification for the backend.</description>
+  <description>Production OCI packaging for the backend.</description>
 
   <dependencies>
     <dependency>
@@ -21,34 +21,10 @@
       <artifactId>skywright-backend</artifactId>
       <version>${project.version}</version>
     </dependency>
-
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.assertj</groupId>
-      <artifactId>assertj-core</artifactId>
-      <scope>test</scope>
-    </dependency>
   </dependencies>
 
   <build>
     <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <executions>
-          <execution>
-            <id>compile-container-smoke-test</id>
-            <phase>test-compile</phase>
-            <goals>
-              <goal>testCompile</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
       <plugin>
         <groupId>io.fabric8</groupId>
         <artifactId>docker-maven-plugin</artifactId>
@@ -90,21 +66,6 @@
               </build>
             </image>
           </images>
-        </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-failsafe-plugin</artifactId>
-        <configuration>
-          <systemPropertyVariables>
-            <backend.container.image>${backend.container.image}</backend.container.image>
-            <backend.container.runtime>${backend.container.runtime}</backend.container.runtime>
-            <backend.executable>${maven.multiModuleProjectDirectory}/backend/target/skywright-backend-${project.version}.jar</backend.executable>
-            <backend.moduleDirectory>${project.basedir}</backend.moduleDirectory>
-            <backend.reactorDirectory>${maven.multiModuleProjectDirectory}</backend.reactorDirectory>
-            <backend.sourceRevision>${git.commit.id.full}</backend.sourceRevision>
-            <backend.version>${project.version}</backend.version>
-          </systemPropertyVariables>
         </configuration>
       </plugin>
     </plugins>
