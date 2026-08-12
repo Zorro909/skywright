@@ -54,33 +54,9 @@ From the repository root:
 
 The executable artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`.
 
-## Product HTTP boundary
+## HTTP APIs
 
-The canonical OpenAPI 3.1 contract is
-`api/skywright-api/src/main/resources/META-INF/openapi/skywright-api.yaml`. The dedicated
-`skywright-api` Maven module publishes that contract as a reusable dependency for every consumer.
-It is the design source for all product HTTP operations under `/api/v1`; it intentionally contains
-no product path until a real feature endpoint is introduced. The backend depends on the contract
-artifact, then its normal Maven build validates the extracted document and uses the pinned OpenAPI
-Generator to create Spring Boot 4/Jackson 3 server interfaces and boundary DTOs under
-`backend/target/generated-sources/openapi`. This generated directory is disposable build output.
-
-Handwritten HTTP adapters implement the generated interfaces. They must map explicitly between
-generated boundary DTOs and internal domain or persistence types; generated DTOs do not become
-internal models.
-
-The executable application packages the canonical bytes and serves them read-only at
-`GET /openapi/skywright-api.yaml`. Swagger UI is not enabled. Operational Actuator endpoints remain
-outside the product contract.
-
-Every HTTP response carries an `X-Correlation-ID`. An incoming identifier is retained when it is 1
-to 64 characters, starts with an ASCII letter or digit, and otherwise contains only ASCII letters,
-digits, `.`, `_`, `:`, or `-`; a UUID is generated otherwise. The effective value is request-scoped
-for diagnostics only. It is neither a Principal Identity nor an idempotency key.
-
-HTTP failures use `application/problem+json` with the RFC 9457 fields plus `errorCode`,
-`correlationId`, and `fieldViolations`. Failure details are safe boundary messages and never expose
-internal exception messages or stack traces.
+- [Skywright product API](api/skywright-api/README.md) — product operations under `/api/v1`.
 
 ## Run locally
 

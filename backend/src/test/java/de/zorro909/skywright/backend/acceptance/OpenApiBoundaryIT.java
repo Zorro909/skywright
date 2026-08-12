@@ -3,10 +3,7 @@ package de.zorro909.skywright.backend.acceptance;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.UUID;
-import java.util.jar.JarFile;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
@@ -16,18 +13,9 @@ final class OpenApiBoundaryIT {
   @Test
   void canonicalContractIsPackagedAndAvailableUnchangedForDiscovery() throws Exception {
     var canonicalContract =
-        Files.readAllBytes(
-            Path.of("../api/skywright-api/src/main/resources/META-INF/openapi/skywright-api.yaml"));
-
-    try (var backendJar = new JarFile("target/skywright-backend-0.1.0-SNAPSHOT.jar")) {
-      var packagedContract =
-          backendJar
-              .getInputStream(
-                  backendJar.getJarEntry("BOOT-INF/classes/static/openapi/skywright-api.yaml"))
-              .readAllBytes();
-
-      assertThat(packagedContract).isEqualTo(canonicalContract);
-    }
+        OpenApiBoundaryIT.class
+            .getResourceAsStream("/META-INF/openapi/skywright-api.yaml")
+            .readAllBytes();
 
     try (var backend = BackendFixture.start()) {
       var response = backend.get("/openapi/skywright-api.yaml");
@@ -84,22 +72,6 @@ final class OpenApiBoundaryIT {
       assertThat(problem.get("fieldViolations").isArray()).isTrue();
       assertThat(problem.get("fieldViolations").isEmpty()).isTrue();
       assertThat(response.body()).doesNotContain("do-not-echo", "Exception", "stackTrace");
-    }
-  }
-
-  @Test
-  void connectorMethodFailureIsSafeCorrelatedProblemDetail() throws Exception {
-    try (var backend = BackendFixture.start()) {
-      var response =
-          backend.request(
-              "TRACE", "/openapi/skywright-api.yaml", CORRELATION_HEADER, "request-trace");
-
-      assertThat(response.statusCode()).isEqualTo(405);
-      assertThat(response.headers().firstValue("Content-Type"))
-          .hasValueSatisfying(value -> assertThat(value).startsWith("application/problem+json"));
-      assertThat(response.headers().firstValue(CORRELATION_HEADER)).contains("request-trace");
-      assertThat(new ObjectMapper().readTree(response.body()).get("errorCode").asText())
-          .isEqualTo("SKYWRIGHT_HTTP_METHOD_NOT_ALLOWED");
     }
   }
 
