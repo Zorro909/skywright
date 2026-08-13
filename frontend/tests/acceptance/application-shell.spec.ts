@@ -19,7 +19,13 @@ test('user can navigate the packaged Skywright shell', async ({ page }) => {
     page.getByRole('link', { name: 'Overview', exact: true }),
   ).toHaveAttribute('aria-current', 'page');
 
+  const systemInformationResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/v1/system-information') &&
+      response.request().method() === 'GET',
+  );
   await page.getByRole('link', { name: 'About' }).click();
+  const systemInformation = await (await systemInformationResponse).json();
   await expect(page).toHaveURL(/\/about$/u);
   await expect(page.getByRole('link', { name: 'About' })).toHaveAttribute(
     'aria-current',
@@ -31,6 +37,22 @@ test('user can navigate the packaged Skywright shell', async ({ page }) => {
   await expect(
     page.getByText(/portable contract for machine-learning training/u),
   ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { level: 3, name: 'System Information' }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(`API version ${systemInformation.apiVersion}`),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      `Application version ${systemInformation.applicationVersion}`,
+    ),
+  ).toBeVisible();
+  if (systemInformation.sourceRevision) {
+    await expect(
+      page.getByText(`Source revision ${systemInformation.sourceRevision}`),
+    ).toBeVisible();
+  }
 
   for (const path of ['/', '/about', '/missing']) {
     await page.goto(path);

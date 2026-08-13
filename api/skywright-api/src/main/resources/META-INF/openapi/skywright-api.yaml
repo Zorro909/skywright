@@ -16,9 +16,47 @@ info:
 servers:
   - url: /api/v1
     description: Version 1 product API
-paths: {}
+paths:
+  /system-information:
+    get:
+      operationId: getSystemInformation
+      summary: Read the running backend's build identity.
+      description: |
+        Returns immutable, non-sensitive build metadata for the running process. This operation
+        does not inspect dependencies and is not a liveness, readiness, authentication, global
+        health, or Capability Availability signal.
+      responses:
+        '200':
+          description: The running backend's build identity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemInformation'
 components:
   schemas:
+    SystemInformation:
+      type: object
+      additionalProperties: false
+      required:
+        - apiVersion
+        - applicationVersion
+        - sourceRevision
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - 1.0.0
+          description: The version of the product API contract implemented by the backend.
+        applicationVersion:
+          type: string
+          minLength: 1
+          description: The backend application's build version.
+        sourceRevision:
+          type:
+            - string
+            - 'null'
+          minLength: 1
+          description: The source revision of the backend build, or null when build metadata is unavailable.
     SkywrightId:
       type: string
       format: uuid
