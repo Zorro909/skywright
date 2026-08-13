@@ -9,6 +9,8 @@ __pycache__/
 *.iml
 .mvn/wrapper/maven-wrapper.jar
 node_modules/
+.angular/
 frontend/dist/
 frontend/playwright-report/
 frontend/test-results/
+docs/research/codex-session-*.md
