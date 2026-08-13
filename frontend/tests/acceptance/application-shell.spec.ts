@@ -38,7 +38,11 @@ test('user can navigate the packaged Skywright shell', async ({ page }) => {
     page.getByText(/portable contract for machine-learning training/u),
   ).toBeVisible();
   await expect(
-    page.getByRole('heading', { level: 3, name: 'System Information' }),
+    page.getByRole('heading', {
+      level: 3,
+      name: 'System Information',
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
     page.getByText(`API version ${systemInformation.apiVersion}`),
@@ -80,6 +84,50 @@ test('keyboard users can bypass navigation and open a destination', async ({
   await expect(aboutLink).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/about$/u);
+});
+
+test('backend loss degrades and recovers only System Information', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.route('**/api/v1/system-information', async (route) => {
+    await route.abort('connectionrefused');
+  });
+
+  await page.getByRole('link', { name: 'About' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'System Information unavailable' }),
+  ).toBeVisible();
+  await expect(
+    page.getByText('The server could not be reached.'),
+  ).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
+  await expect(
+    page.getByRole('heading', {
+      level: 3,
+      name: 'System Information',
+      exact: true,
+    }),
+  ).toBeFocused();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+
+  await page.getByRole('link', { name: 'Overview', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { level: 2, name: 'Overview' }),
+  ).toBeVisible();
+  await page.getByRole('link', { name: 'About' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'System Information unavailable' }),
+  ).toBeVisible();
+
+  await page.unroute('**/api/v1/system-information');
+  await page.getByRole('button', { name: 'Retry' }).click();
+
+  await expect(page.getByText(/API version \S+/u)).toBeVisible();
+  await expect(page.getByText(/Application version \S+/u)).toBeVisible();
+  await expect(
+    page.getByRole('heading', { level: 3, name: 'System Information' }),
+  ).toBeFocused();
 });
 
 test('direct application routes boot without rewriting reserved backend URLs', async ({

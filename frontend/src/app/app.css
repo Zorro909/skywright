@@ -82,6 +82,17 @@ footer {
   font-size: 0.85rem;
 }
 
+.unexpected-failure {
+  padding: clamp(1.25rem, 4vw, 2rem);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--soft-surface);
+}
+
+.unexpected-failure h2 {
+  margin-top: 0;
+}
+
 @media (max-width: 35rem) {
   header {
     align-items: flex-start;

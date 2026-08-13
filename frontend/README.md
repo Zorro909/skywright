@@ -19,7 +19,7 @@ pnpm run preflight
 pnpm install --frozen-lockfile
 ```
 
-For packaged browser acceptance, install the pinned Playwright Chromium once:
+For browser component tests and packaged browser acceptance, install the pinned Playwright Chromium once:
 
 ```bash
 pnpm exec playwright install chromium
@@ -36,7 +36,7 @@ pnpm format         # apply Prettier formatting
 pnpm format:check   # verify formatting
 pnpm lint           # Angular ESLint correctness and template accessibility
 pnpm typecheck      # strict TypeScript and Angular template checking
-pnpm test           # fast Vitest tests
+pnpm test           # fast pure tests plus browser component tests
 pnpm verify         # preflight, formatting, linting, type checking, and fast tests
 pnpm build          # optimized, content-hashed production resources in dist/skywright-web/
 ```
