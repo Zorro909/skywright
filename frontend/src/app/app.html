@@ -21,6 +21,22 @@
   </nav>
 </header>
 <main id="content" tabindex="-1">
-  <router-outlet />
+  @if (unexpectedFailure.isActive()) {
+    <section
+      class="unexpected-failure"
+      aria-labelledby="unexpected-failure-heading"
+    >
+      <h2 id="unexpected-failure-heading">Something went wrong</h2>
+      <p>
+        This view encountered an unexpected application failure. No internal
+        details are shown.
+      </p>
+      <button type="button" (click)="returnToOverview()">
+        Return to Overview
+      </button>
+    </section>
+  } @else {
+    <router-outlet />
+  }
 </main>
 <footer><p>Portable training, deliberate control.</p></footer>
