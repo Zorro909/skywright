@@ -6,6 +6,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import org.springframework.boot.info.BuildProperties;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.web.server.context.WebServerApplicationContext;
@@ -26,8 +27,17 @@ final class BackendFixture implements AutoCloseable {
 	}
 
 	static BackendFixture start() {
-		var application = new SpringApplicationBuilder(SkywrightBackendApplication.class)
-			.web(WebApplicationType.SERVLET)
+		return start(new SpringApplicationBuilder(SkywrightBackendApplication.class));
+	}
+
+	static BackendFixture start(BuildProperties buildProperties) {
+		var builder = new SpringApplicationBuilder(SkywrightBackendApplication.class).initializers(
+				application -> application.getBeanFactory().registerSingleton("buildProperties", buildProperties));
+		return start(builder);
+	}
+
+	private static BackendFixture start(SpringApplicationBuilder builder) {
+		var application = builder.web(WebApplicationType.SERVLET)
 			.properties("server.port=0", "skywright.deployment.environment=test")
 			.run();
 		return new BackendFixture(application);

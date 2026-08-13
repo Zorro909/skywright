@@ -14,8 +14,34 @@
   <name>Skywright web application</name>
   <description>Optimized client application packaged as Spring classpath web resources.</description>
 
+  <dependencies>
+    <dependency>
+      <groupId>de.zorro909.skywright</groupId>
+      <artifactId>skywright-api</artifactId>
+      <version>${project.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>unpack-http-contract</id>
+            <phase>generate-resources</phase>
+            <goals><goal>unpack-dependencies</goal></goals>
+            <configuration>
+              <includeArtifactIds>skywright-api</includeArtifactIds>
+              <includeGroupIds>de.zorro909.skywright</includeGroupIds>
+              <includes>META-INF/openapi/skywright-api.yaml</includes>
+              <outputDirectory>${project.build.directory}/openapi-contract</outputDirectory>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
@@ -40,13 +66,22 @@
             </configuration>
           </execution>
           <execution>
+            <id>generate-web-http-boundary</id>
+            <phase>generate-resources</phase>
+            <goals><goal>exec</goal></goals>
+            <configuration>
+              <executable>pnpm</executable>
+              <arguments><argument>run</argument><argument>generate:api:maven</argument></arguments>
+            </configuration>
+          </execution>
+          <execution>
             <id>verify-web</id>
             <phase>test</phase>
             <goals><goal>exec</goal></goals>
             <configuration>
               <skip>${skipTests}</skip>
               <executable>pnpm</executable>
-              <arguments><argument>run</argument><argument>verify</argument></arguments>
+              <arguments><argument>run</argument><argument>verify:generated</argument></arguments>
             </configuration>
           </execution>
           <execution>
