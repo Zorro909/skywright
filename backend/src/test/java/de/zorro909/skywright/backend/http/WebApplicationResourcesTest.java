@@ -15,7 +15,8 @@ final class WebApplicationResourcesTest {
 
 	@ParameterizedTest
 	@ValueSource(strings = { "/api/v1/missing", "/openapi/missing", "/livez", "/readyz", "/actuator/missing",
-			"/assets/missing", "/proxy/missing", "/missing.js", "/nested/file.json" })
+			"/assets/missing", "/proxy/missing", "/missing.js", "/nested/file.json",
+			"/downloads/archive.tar.gz/checksum" })
 	void backendNamespacesAndFileRequestsKeepTheirNormalHandling(String path) {
 		assertThat(WebApplicationResources.isApplicationRoute(path)).isFalse();
 	}
