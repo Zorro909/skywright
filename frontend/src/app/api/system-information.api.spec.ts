@@ -77,6 +77,33 @@ describe('System Information API', () => {
     expect(globalThis.fetch).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    { applicationVersion: '0.1.0', sourceRevision: null },
+    { apiVersion: '2.0.0', applicationVersion: '0.1.0', sourceRevision: null },
+    { apiVersion: '1.0.0', applicationVersion: '', sourceRevision: null },
+    { apiVersion: '1.0.0', applicationVersion: '0.1.0' },
+    { apiVersion: '1.0.0', applicationVersion: '0.1.0', sourceRevision: '' },
+    {
+      apiVersion: '1.0.0',
+      applicationVersion: '0.1.0',
+      sourceRevision: null,
+      unexpected: true,
+    },
+  ])(
+    'rejects a success body outside the generated contract: %o',
+    async (body) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(body));
+
+      const error = await loadSystemInformation(
+        new AbortController().signal,
+      ).catch((failure: unknown) => failure);
+
+      expect(apiFailureFrom(error)).toMatchObject({
+        kind: 'malformed-response',
+      });
+    },
+  );
+
   it('keeps network loss and abortion distinct', async () => {
     vi.spyOn(globalThis, 'fetch')
       .mockRejectedValueOnce(new TypeError('network internals'))

@@ -1,4 +1,11 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  afterRenderEffect,
+  inject,
+  viewChild,
+} from '@angular/core';
 import {
   Router,
   RouterLink,
@@ -17,7 +24,18 @@ import { UnexpectedApplicationFailure } from './unexpected-application-failure';
 })
 export class App {
   private readonly router = inject(Router);
+  private readonly unexpectedFailureRegion = viewChild<ElementRef<HTMLElement>>(
+    'unexpectedFailureRegion',
+  );
   protected readonly unexpectedFailure = inject(UnexpectedApplicationFailure);
+
+  constructor() {
+    afterRenderEffect(() => {
+      if (this.unexpectedFailure.isActive()) {
+        this.unexpectedFailureRegion()?.nativeElement.focus();
+      }
+    });
+  }
 
   protected async returnToOverview(): Promise<void> {
     this.unexpectedFailure.clear();

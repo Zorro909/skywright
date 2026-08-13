@@ -62,6 +62,7 @@ describe('unexpected application failure boundary', () => {
       'unsafe implementation stack detail',
     );
     expect(view.querySelector('nav[aria-label="Primary"]')).not.toBeNull();
+    expect(view.querySelector('[role="alert"]')).toBe(document.activeElement);
     expect(consoleError).toHaveBeenCalled();
     expect((await axe.run(view)).violations).toEqual([]);
 

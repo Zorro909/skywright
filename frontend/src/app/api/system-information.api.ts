@@ -56,15 +56,17 @@ function parseSystemInformation(
   try {
     const value: unknown = body ? JSON.parse(body) : undefined;
     if (
-      typeof value === 'object' &&
-      value !== null &&
-      'apiVersion' in value &&
-      typeof value.apiVersion === 'string' &&
-      'applicationVersion' in value &&
-      typeof value.applicationVersion === 'string' &&
-      (!('sourceRevision' in value) ||
-        value.sourceRevision === null ||
-        typeof value.sourceRevision === 'string')
+      isRecord(value) &&
+      Object.keys(value).every((key) =>
+        ['apiVersion', 'applicationVersion', 'sourceRevision'].includes(key),
+      ) &&
+      value['apiVersion'] === '1.0.0' &&
+      typeof value['applicationVersion'] === 'string' &&
+      value['applicationVersion'].length > 0 &&
+      'sourceRevision' in value &&
+      (value['sourceRevision'] === null ||
+        (typeof value['sourceRevision'] === 'string' &&
+          value['sourceRevision'].length > 0))
     ) {
       return value as SystemInformation;
     }
@@ -72,4 +74,8 @@ function parseSystemInformation(
     // The caller maps invalid JSON to the safe malformed-response outcome.
   }
   return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -1,5 +1,7 @@
 import {
+  apiFailureFrom,
   classifyRequestFailure,
+  isApiFailure,
   normalizeProblemResponse,
 } from './api-failure';
 
@@ -73,5 +75,16 @@ describe('API failure normalization', () => {
     expect(malformed.kind).toBe('malformed-response');
     expect(network).toEqual({ kind: 'network' });
     expect(aborted).toEqual({ kind: 'aborted' });
+  });
+
+  it('rejects incomplete failures and terminates cyclic cause traversal', () => {
+    expect(isApiFailure({ kind: 'problem' })).toBe(false);
+    expect(isApiFailure({ kind: 'malformed-response' })).toBe(false);
+
+    const first = new Error('first');
+    const second = new Error('second', { cause: first });
+    Object.defineProperty(first, 'cause', { value: second });
+
+    expect(apiFailureFrom(first)).toBeUndefined();
   });
 });

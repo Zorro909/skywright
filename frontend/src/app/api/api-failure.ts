@@ -84,25 +84,42 @@ export function classifyRequestFailure(error: unknown): ApiFailure {
 }
 
 export function isApiFailure(value: unknown): value is ApiFailure {
-  return (
-    isRecord(value) &&
-    (value['kind'] === 'problem' ||
-      value['kind'] === 'malformed-response' ||
-      value['kind'] === 'network' ||
-      value['kind'] === 'aborted')
-  );
+  if (!isRecord(value)) {
+    return false;
+  }
+  switch (value['kind']) {
+    case 'problem':
+      return (
+        value['response'] instanceof Response &&
+        isRecord(value['problem']) &&
+        isSafeProblem(value['problem'])
+      );
+    case 'malformed-response':
+      return value['response'] instanceof Response;
+    case 'network':
+    case 'aborted':
+      return true;
+    default:
+      return false;
+  }
 }
 
 export function apiFailureFrom(value: unknown): ApiFailure | undefined {
-  if (value instanceof ApiRequestFailure) {
-    return value.outcome;
+  const visited = new Set<Error>();
+  let current = value;
+  while (true) {
+    if (current instanceof ApiRequestFailure && isApiFailure(current.outcome)) {
+      return current.outcome;
+    }
+    if (isApiFailure(current)) {
+      return current;
+    }
+    if (!(current instanceof Error) || visited.has(current)) {
+      return undefined;
+    }
+    visited.add(current);
+    current = current.cause;
   }
-  if (isApiFailure(value)) {
-    return value;
-  }
-  return value instanceof Error && value.cause !== value
-    ? apiFailureFrom(value.cause)
-    : undefined;
 }
 
 function isProblemContentType(contentType: string | null): boolean {

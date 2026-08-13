@@ -23,8 +23,11 @@
 <main id="content" tabindex="-1">
   @if (unexpectedFailure.isActive()) {
     <section
+      #unexpectedFailureRegion
       class="unexpected-failure"
       aria-labelledby="unexpected-failure-heading"
+      role="alert"
+      tabindex="-1"
     >
       <h2 id="unexpected-failure-heading">Something went wrong</h2>
       <p>
