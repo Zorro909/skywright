@@ -20,7 +20,7 @@ public class WebApplicationResources implements WebMvcConfigurer {
 	private static final Set<String> RESERVED_NAMESPACES = Set.of("api", "openapi", "livez", "readyz", "actuator",
 			"assets", "proxy");
 
-	private static final Pattern FILE_NAME = Pattern.compile("(?:^|/)[^/]+\\.[^/]+$");
+	private static final Pattern DOTTED_PATH_SEGMENT = Pattern.compile("(?:^|/)[^/]*\\.[^/]*(?:/|$)");
 
 	@Override
 	public void addResourceHandlers(ResourceHandlerRegistry registry) {
@@ -42,7 +42,7 @@ public class WebApplicationResources implements WebMvcConfigurer {
 			return true;
 		}
 		var firstSegment = normalized.split("/", 2)[0];
-		return !RESERVED_NAMESPACES.contains(firstSegment) && !FILE_NAME.matcher(normalized).find();
+		return !RESERVED_NAMESPACES.contains(firstSegment) && !DOTTED_PATH_SEGMENT.matcher(normalized).find();
 	}
 
 	private static final class ApplicationRouteResolver extends PathResourceResolver {

@@ -5,7 +5,9 @@ test('user can navigate the packaged Skywright shell', async ({ page }) => {
   await page.goto('/');
 
   await expect(page.getByRole('banner')).toBeVisible();
-  await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
+  const navigation = page.getByRole('navigation', { name: 'Primary' });
+  await expect(navigation).toBeVisible();
+  await expect(navigation.getByRole('link')).toHaveText(['Overview', 'About']);
   await expect(page.getByRole('main')).toBeVisible();
   await expect(
     page.getByRole('heading', { level: 1, name: 'Skywright' }),
@@ -13,9 +15,16 @@ test('user can navigate the packaged Skywright shell', async ({ page }) => {
   await expect(
     page.getByRole('heading', { level: 2, name: 'Overview' }),
   ).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: 'Overview', exact: true }),
+  ).toHaveAttribute('aria-current', 'page');
 
   await page.getByRole('link', { name: 'About' }).click();
   await expect(page).toHaveURL(/\/about$/u);
+  await expect(page.getByRole('link', { name: 'About' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
   await expect(
     page.getByRole('heading', { level: 2, name: 'About Skywright' }),
   ).toBeVisible();
@@ -23,8 +32,32 @@ test('user can navigate the packaged Skywright shell', async ({ page }) => {
     page.getByText(/portable contract for machine-learning training/u),
   ).toBeVisible();
 
-  const accessibility = await new AxeBuilder({ page }).analyze();
-  expect(accessibility.violations).toEqual([]);
+  for (const path of ['/', '/about', '/missing']) {
+    await page.goto(path);
+    const accessibility = await new AxeBuilder({ page }).analyze();
+    expect(accessibility.violations).toEqual([]);
+  }
+});
+
+test('keyboard users can bypass navigation and open a destination', async ({
+  page,
+}) => {
+  await page.goto('/');
+
+  const skipLink = page.getByRole('link', { name: 'Skip to main content' });
+  await page.keyboard.press('Tab');
+  await expect(skipLink).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('main')).toBeFocused();
+
+  await page.goto('/');
+  for (let tab = 0; tab < 4; tab += 1) {
+    await page.keyboard.press('Tab');
+  }
+  const aboutLink = page.getByRole('link', { name: 'About' });
+  await expect(aboutLink).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/about$/u);
 });
 
 test('direct application routes boot without rewriting reserved backend URLs', async ({
@@ -32,6 +65,10 @@ test('direct application routes boot without rewriting reserved backend URLs', a
   request,
 }) => {
   await page.goto('/about');
+  await expect(
+    page.getByRole('heading', { level: 2, name: 'About Skywright' }),
+  ).toBeVisible();
+  await page.reload();
   await expect(
     page.getByRole('heading', { level: 2, name: 'About Skywright' }),
   ).toBeVisible();
@@ -43,8 +80,13 @@ test('direct application routes boot without rewriting reserved backend URLs', a
 
   for (const path of [
     '/api/v1/not-an-operation',
+    '/openapi/not-a-contract',
+    '/livez/not-an-endpoint',
+    '/readyz/not-an-endpoint',
     '/actuator/not-an-endpoint',
     '/assets/not-an-asset.js',
+    '/proxy/not-an-endpoint',
+    '/downloads/archive.tar.gz/checksum',
   ]) {
     const response = await request.get(path);
     expect(response.status()).toBe(404);
@@ -55,6 +97,12 @@ test('direct application routes boot without rewriting reserved backend URLs', a
   expect(openApi.status()).toBe(200);
   expect(openApi.headers()['content-type'] ?? '').not.toContain('text/html');
   expect(await openApi.text()).toContain('openapi: 3.1.0');
+
+  for (const path of ['/livez', '/readyz', '/actuator/health']) {
+    const response = await request.get(path);
+    expect(response.status()).toBe(200);
+    expect(response.headers()['content-type'] ?? '').not.toContain('text/html');
+  }
 });
 
 test('packaged resources use version-safe caching', async ({ request }) => {
