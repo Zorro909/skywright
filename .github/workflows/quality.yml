@@ -27,6 +27,8 @@ jobs:
       java: ${{ steps.plan.outputs.java }}
       sdk: ${{ steps.plan.outputs.sdk }}
       security: ${{ steps.plan.outputs.security }}
+      java_archive_sha256: ${{ steps.plan.outputs.java_archive_sha256 }}
+      java_archive_url: ${{ steps.plan.outputs.java_archive_url }}
       java_version: ${{ steps.plan.outputs.java_version }}
       node_version: ${{ steps.plan.outputs.node_version }}
       pnpm_version: ${{ steps.plan.outputs.pnpm_version }}
@@ -85,10 +87,21 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
+      - name: Download exact GraalVM Community archive
+        env:
+          JAVA_ARCHIVE_SHA256: ${{ needs.plan.outputs.java_archive_sha256 }}
+          JAVA_ARCHIVE_URL: ${{ needs.plan.outputs.java_archive_url }}
+        run: |
+          curl --fail --location --silent --show-error \
+            --output "${RUNNER_TEMP}/graalvm-community.tar.gz" \
+            "$JAVA_ARCHIVE_URL"
+          echo "${JAVA_ARCHIVE_SHA256}  ${RUNNER_TEMP}/graalvm-community.tar.gz" \
+            | sha256sum --check --strict
       - name: Set up GraalVM Community
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
-          distribution: graalvm-community
+          distribution: jdkfile
+          jdk-file: ${{ runner.temp }}/graalvm-community.tar.gz
           java-version: ${{ needs.plan.outputs.java_version }}
           cache: maven
       - name: Set up frontend prerequisites
