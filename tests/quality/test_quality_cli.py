@@ -392,20 +392,20 @@ class SecurityPolicyTest(unittest.TestCase):
                 "most_recent_instance": {"location": {"path": "backend/src/App.java"}},
             }
         ]
-        secret_scope = (
+        alert_scope = (
             "https://api.github.com/repos/Zorro909/skywright/"
             "secret-scanning/alerts/8/locations"
         )
-        secret_comment = (
+        resolution_comment = (
             f"Issue: {issue_url}\nOwner: {owner}\nDecision: {decision}\n"
-            f"Expires: {expiry}\nScope: {secret_scope}"
+            f"Expires: {expiry}\nScope: {alert_scope}"
         )
-        secret_alerts = [
+        resolved_alerts = [
             {
                 "number": 8,
                 "resolution": "false_positive",
-                "resolution_comment": secret_comment,
-                "locations_url": secret_scope,
+                "resolution_comment": resolution_comment,
+                "locations_url": alert_scope,
             },
             {"number": 9, "resolution": "revoked"},
         ]
@@ -419,7 +419,7 @@ class SecurityPolicyTest(unittest.TestCase):
             fixtures = {}
             for name, value in (
                 ("code", code_alerts),
-                ("secret", secret_alerts),
+                ("resolved", resolved_alerts),
                 ("issues", issues),
             ):
                 path = Path(temporary_directory) / f"{name}.json"
@@ -430,7 +430,7 @@ class SecurityPolicyTest(unittest.TestCase):
                 "--code-alerts",
                 str(fixtures["code"]),
                 "--secret-alerts",
-                str(fixtures["secret"]),
+                str(fixtures["resolved"]),
                 "--issues",
                 str(fixtures["issues"]),
             )
@@ -443,7 +443,7 @@ class SecurityPolicyTest(unittest.TestCase):
                 "--code-alerts",
                 str(fixtures["code"]),
                 "--secret-alerts",
-                str(fixtures["secret"]),
+                str(fixtures["resolved"]),
                 "--issues",
                 str(fixtures["issues"]),
                 check=False,
@@ -472,7 +472,7 @@ class SecurityPolicyTest(unittest.TestCase):
                 "--code-alerts",
                 str(fixtures["code"]),
                 "--secret-alerts",
-                str(fixtures["secret"]),
+                str(fixtures["resolved"]),
                 "--issues",
                 str(fixtures["issues"]),
                 check=False,
