@@ -268,11 +268,46 @@ class SecurityPolicyTest(unittest.TestCase):
                 datetime.now(tz=timezone.utc).date() + timedelta(days=30)
             ).isoformat(),
             "reason": "Waiting for an upstream compatible fix.",
+            "owner": "@maintainer",
+            "decision": "Accept temporarily while upgrading the framework.",
         }
         with tempfile.TemporaryDirectory() as temporary_directory:
             policy = self.write_policy(temporary_directory, valid)
-            completed = run_quality("security-policy", "--policy", str(policy))
+            issues = Path(temporary_directory) / "issues.json"
+            issues.write_text(
+                json.dumps(
+                    {
+                        valid["issue"]: {
+                            "state": "open",
+                            "body": f"Owner: {valid['owner']}\nDecision: {valid['decision']}",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            completed = run_quality(
+                "security-policy",
+                "--policy",
+                str(policy),
+                "--issues",
+                str(issues),
+            )
             self.assertIn("1 valid suppression", completed.stdout)
+
+            issues.write_text(
+                json.dumps({valid["issue"]: {"state": "closed", "body": ""}}),
+                encoding="utf-8",
+            )
+            closed = run_quality(
+                "security-policy",
+                "--policy",
+                str(policy),
+                "--issues",
+                str(issues),
+                check=False,
+            )
+            self.assertNotEqual(closed.returncode, 0)
+            self.assertIn("remain open", closed.stderr)
 
             invalid_cases = {
                 "package_url": {**valid, "package_url": "*"},

@@ -81,5 +81,7 @@ the scanner outside this policy. Dependency-review exceptions live in
 `security/suppressions.json`; `scripts/quality security-policy` rejects an invalid identifier,
 wildcard scope, missing repository issue, expired exception, or expiry beyond 90 days. The CI
 dependency policy applies a valid exception only to its exact manifest, package URL, and advisory.
+Each entry records the exact risk owner and decision; CI resolves its linked issue, requires the
+issue to remain open, and requires its body to contain both pieces of evidence.
 CodeQL and secret-scanning dismissals must carry the same evidence in their GitHub alert record;
 repository-wide source exclusions are not permitted.

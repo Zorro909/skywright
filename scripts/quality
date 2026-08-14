@@ -10,16 +10,47 @@ import re
 import shutil
 import subprocess
 import sys
-import urllib.request
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-REPOSITORY = Path(__file__).resolve().parent.parent
-TOOLCHAIN = json.loads(
-    (REPOSITORY / "quality" / "toolchain.json").read_text(encoding="utf-8")
+import tomllib
+from quality_support.security_policy import (
+    SecurityPolicyError,
+    enforce_dependency_policy,
+    load_suppressions,
 )
+
+REPOSITORY = Path(__file__).resolve().parent.parent
+
+
+def load_toolchain() -> dict[str, str]:
+    toolchain = json.loads(
+        (REPOSITORY / "quality" / "toolchain.json").read_text(encoding="utf-8")
+    )
+    frontend = json.loads(
+        (REPOSITORY / "frontend" / "package.json").read_text(encoding="utf-8")
+    )
+    with (REPOSITORY / "sdk" / "pyproject.toml").open("rb") as source:
+        sdk = tomllib.load(source)
+    wrapper = (REPOSITORY / ".mvn" / "wrapper" / "maven-wrapper.properties").read_text(
+        encoding="utf-8"
+    )
+    maven_match = re.search(r"/apache-maven/([^/]+)/", wrapper)
+    if maven_match is None:
+        raise RuntimeError("Maven Wrapper distribution URL has no version")
+    toolchain.update(
+        {
+            "maven_version": maven_match.group(1),
+            "node_version": frontend["engines"]["node"],
+            "pnpm_version": frontend["packageManager"].removeprefix("pnpm@"),
+            "uv_version": sdk["tool"]["uv"]["required-version"].removeprefix("=="),
+        }
+    )
+    return toolchain
+
+
+TOOLCHAIN = load_toolchain()
 LOCAL_CHECKS = ("java", "frontend", "sdk")
 CHECKS = (*LOCAL_CHECKS, "security")
 ALL_CHECKS = frozenset(CHECKS)
@@ -384,155 +415,29 @@ def identity_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def load_suppressions(path: Path) -> list[dict[str, str]]:
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-        if document["version"] != 1 or not isinstance(document["suppressions"], list):
-            raise ValueError
-    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
-        raise PrerequisiteError(
-            f"invalid security suppression document: {path}"
-        ) from error
-
-    today = datetime.now(tz=timezone.utc).date()
-    latest_expiry = today + timedelta(days=90)
-    validated: list[dict[str, str]] = []
-    required_fields = ("id", "manifest", "package_url", "issue", "expires", "reason")
-    for index, candidate in enumerate(document["suppressions"]):
-        if not isinstance(candidate, dict) or any(
-            not isinstance(candidate.get(field), str) or not candidate[field].strip()
-            for field in required_fields
-        ):
-            raise PrerequisiteError(
-                f"suppression {index} requires non-empty {', '.join(required_fields)} fields"
-            )
-        suppression = {field: candidate[field].strip() for field in required_fields}
-        if not re.fullmatch(
-            r"GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}",
-            suppression["id"],
-            re.IGNORECASE,
-        ):
-            raise PrerequisiteError(
-                f"suppression {index} id must be one GHSA identifier"
-            )
-        if any(character in suppression["manifest"] for character in "*?"):
-            raise PrerequisiteError(
-                f"suppression {index} manifest must be one exact path"
-            )
-        if not suppression["package_url"].startswith("pkg:") or any(
-            character in suppression["package_url"] for character in "*?"
-        ):
-            raise PrerequisiteError(
-                f"suppression {index} package_url must be one exact unversioned package URL"
-            )
-        if not re.fullmatch(
-            r"https://github\.com/Zorro909/skywright/issues/[1-9][0-9]*",
-            suppression["issue"],
-        ):
-            raise PrerequisiteError(
-                f"suppression {index} issue must link one skywright GitHub issue"
-            )
-        try:
-            expiry = date.fromisoformat(suppression["expires"])
-        except ValueError as error:
-            raise PrerequisiteError(
-                f"suppression {index} expires must be an ISO date"
-            ) from error
-        if expiry <= today or expiry > latest_expiry:
-            raise PrerequisiteError(
-                f"suppression {index} expires must be within the next 90 days"
-            )
-        validated.append(suppression)
-    return validated
-
-
 def security_policy_command(arguments: argparse.Namespace) -> int:
-    suppressions = load_suppressions(Path(arguments.policy))
+    issue_cache = (
+        json.loads(Path(arguments.issues).read_text(encoding="utf-8"))
+        if arguments.issues
+        else None
+    )
+    suppressions = load_suppressions(
+        Path(arguments.policy),
+        verify_issues=arguments.verify_issues or arguments.issues is not None,
+        issue_cache=issue_cache,
+    )
     suffix = "suppression" if len(suppressions) == 1 else "suppressions"
     print(f"Security policy: {len(suppressions)} valid {suffix}")
     return 0
 
 
-def fetch_advisory(identifier: str) -> dict[str, object]:
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "skywright-quality-gate",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    token = os.environ.get("GITHUB_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    request = urllib.request.Request(
-        f"https://api.github.com/advisories/{identifier}", headers=headers
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.load(response)
-    except (OSError, json.JSONDecodeError) as error:
-        raise PrerequisiteError(f"could not resolve advisory {identifier}") from error
-
-
-def dependency_has_fix(
-    advisory: dict[str, object], ecosystem: str, package_name: str
-) -> bool:
-    return any(
-        vulnerability.get("package", {}).get("ecosystem", "").lower()
-        == ecosystem.lower()
-        and vulnerability.get("package", {}).get("name") == package_name
-        and vulnerability.get("first_patched_version") is not None
-        for vulnerability in advisory.get("vulnerabilities", [])
-    )
-
-
 def dependency_policy_command(arguments: argparse.Namespace) -> int:
-    try:
-        changes = json.loads(arguments.changes or "[]")
-        if not isinstance(changes, list):
-            raise TypeError
-    except (json.JSONDecodeError, TypeError) as error:
-        raise PrerequisiteError("dependency changes must be a JSON array") from error
-    suppressions = load_suppressions(Path(arguments.policy))
-    advisory_cache = (
-        json.loads(Path(arguments.advisories).read_text(encoding="utf-8"))
-        if arguments.advisories
-        else {}
+    return enforce_dependency_policy(
+        arguments.changes,
+        Path(arguments.policy),
+        advisories_path=Path(arguments.advisories) if arguments.advisories else None,
+        report_path=Path(arguments.report) if arguments.report else None,
     )
-    if arguments.report:
-        report = Path(arguments.report)
-        report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(
-            f"{json.dumps(changes, indent=2, sort_keys=True)}\n", encoding="utf-8"
-        )
-
-    blocked = False
-    for change in changes:
-        for vulnerability in change.get("vulnerabilities", []):
-            severity = vulnerability.get("severity", "").lower()
-            if severity not in {"high", "critical"}:
-                continue
-            identifier = vulnerability.get("advisory_ghsa_id", "")
-            package_url = change.get("package_url", "")
-            suppressed = any(
-                suppression["id"].lower() == identifier.lower()
-                and suppression["manifest"] == change.get("manifest")
-                and (
-                    package_url == suppression["package_url"]
-                    or package_url.startswith(f"{suppression['package_url']}@")
-                )
-                for suppression in suppressions
-            )
-            if suppressed:
-                print(f"SUPPRESSED {identifier} ({change.get('name')})")
-                continue
-            advisory = advisory_cache.get(identifier) or fetch_advisory(identifier)
-            if dependency_has_fix(
-                advisory, change.get("ecosystem", ""), change.get("name", "")
-            ):
-                blocked = True
-                print(f"BLOCKED {identifier} ({severity}, available fix)")
-            else:
-                print(f"VISIBLE {identifier} (no available fix)")
-    return 1 if blocked else 0
 
 
 def parser() -> argparse.ArgumentParser:
@@ -584,6 +489,12 @@ def parser() -> argparse.ArgumentParser:
     policy_parser.add_argument(
         "--policy", default=REPOSITORY / "security" / "suppressions.json"
     )
+    policy_parser.add_argument(
+        "--verify-issues",
+        action="store_true",
+        help="verify linked GitHub issue evidence",
+    )
+    policy_parser.add_argument("--issues", help="issue-evidence JSON fixture")
     policy_parser.set_defaults(handler=security_policy_command)
 
     dependency_parser = subcommands.add_parser(
@@ -607,7 +518,7 @@ def main() -> int:
         return 2
     try:
         return arguments.handler(arguments)
-    except PrerequisiteError as error:
+    except (PrerequisiteError, SecurityPolicyError) as error:
         command_parser.error(str(error))
         return 2
 

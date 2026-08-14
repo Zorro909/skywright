@@ -1,9 +1,5 @@
 {
   "java_version": "25.0.4",
   "java_vendor": "GraalVM Community",
-  "java_runtime_prefix": "25.0.4+7",
-  "maven_version": "3.9.16",
-  "node_version": "26.7.0",
-  "pnpm_version": "11.21.0",
-  "uv_version": "0.8.8"
+  "java_runtime_prefix": "25.0.4+7"
 }

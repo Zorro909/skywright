@@ -190,7 +190,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Validate security suppressions
-        run: scripts/quality security-policy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/quality security-policy --verify-issues
       - name: Review dependency changes
         id: dependency-review
         if: github.event_name == 'pull_request'
