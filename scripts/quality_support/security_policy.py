@@ -38,7 +38,16 @@ class Suppression:
         )
 
 
-def _request_json(url: str) -> dict[str, object]:
+@dataclass(frozen=True)
+class DismissalEvidence:
+    issue: str
+    owner: str
+    decision: str
+    expires: date
+    scope: str
+
+
+def _request_json(url: str) -> object:
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "skywright-quality-gate",
@@ -57,23 +66,28 @@ def _request_json(url: str) -> dict[str, object]:
         ) from error
 
 
-def _validate_issue(
-    suppression: Suppression, issue_cache: dict[str, dict[str, object]]
+def _validate_issue_evidence(
+    *,
+    identifier: str,
+    issue_url: str,
+    owner: str,
+    decision: str,
+    issue_cache: dict[str, dict[str, object]],
 ) -> None:
-    issue = issue_cache.get(suppression.issue)
+    issue = issue_cache.get(issue_url)
     if issue is None:
-        issue_number = suppression.issue.rsplit("/", maxsplit=1)[-1]
+        issue_number = issue_url.rsplit("/", maxsplit=1)[-1]
         issue = _request_json(
             f"https://api.github.com/repos/Zorro909/skywright/issues/{issue_number}"
         )
+        if not isinstance(issue, dict):
+            raise SecurityPolicyError(f"{identifier} issue response is invalid")
     body = str(issue.get("body") or "")
     if issue.get("state") != "open":
+        raise SecurityPolicyError(f"{identifier} issue must exist and remain open")
+    if owner not in body or decision not in body:
         raise SecurityPolicyError(
-            f"suppression {suppression.identifier} issue must exist and remain open"
-        )
-    if suppression.owner not in body or suppression.decision not in body:
-        raise SecurityPolicyError(
-            f"suppression {suppression.identifier} issue must contain its owner and decision"
+            f"{identifier} issue must contain its owner and decision"
         )
 
 
@@ -160,7 +174,13 @@ def load_suppressions(
             decision=values["decision"],
         )
         if verify_issues:
-            _validate_issue(suppression, issue_cache or {})
+            _validate_issue_evidence(
+                identifier=f"suppression {suppression.identifier}",
+                issue_url=suppression.issue,
+                owner=suppression.owner,
+                decision=suppression.decision,
+                issue_cache=issue_cache or {},
+            )
         validated.append(suppression)
     return validated
 
@@ -218,6 +238,8 @@ def enforce_dependency_policy(
             advisory = advisory_cache.get(identifier) or _request_json(
                 f"https://api.github.com/advisories/{identifier}"
             )
+            if not isinstance(advisory, dict):
+                raise SecurityPolicyError(f"advisory {identifier} response is invalid")
             if dependency_has_fix(
                 advisory, change.get("ecosystem", ""), change.get("name", "")
             ):
@@ -226,3 +248,141 @@ def enforce_dependency_policy(
             else:
                 print(f"VISIBLE {identifier} (no available fix)")
     return 1 if blocked else 0
+
+
+def _load_alerts(path: Path | None, endpoint: str) -> list[dict[str, object]]:
+    if path:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, list):
+            raise SecurityPolicyError(f"alert fixture must be a JSON array: {path}")
+        return value
+    separator = "&" if "?" in endpoint else "?"
+    value = _request_json(f"https://api.github.com{endpoint}{separator}per_page=100")
+    if not isinstance(value, list):
+        raise SecurityPolicyError(f"alert response must be a JSON array: {endpoint}")
+    if len(value) == 100:
+        raise SecurityPolicyError(
+            f"alert response reached the pagination limit and cannot be audited: {endpoint}"
+        )
+    return value
+
+
+def _dismissal_evidence(comment: object, identifier: str) -> DismissalEvidence:
+    if not isinstance(comment, str):
+        raise SecurityPolicyError(
+            f"{identifier} dismissal requires structured evidence"
+        )
+    evidence = {
+        match.group("key").lower(): match.group("value").strip()
+        for match in re.finditer(
+            r"^(?P<key>Issue|Owner|Decision|Expires|Scope):\s*(?P<value>.+)$",
+            comment,
+            re.MULTILINE,
+        )
+    }
+    missing = {"issue", "owner", "decision", "expires", "scope"}.difference(evidence)
+    if missing:
+        raise SecurityPolicyError(
+            f"{identifier} dismissal is missing: {', '.join(sorted(missing))}"
+        )
+    if not re.fullmatch(
+        r"https://github\.com/Zorro909/skywright/issues/[1-9][0-9]*",
+        evidence["issue"],
+    ):
+        raise SecurityPolicyError(f"{identifier} dismissal issue is invalid")
+    if any(character in evidence["scope"] for character in "*?"):
+        raise SecurityPolicyError(f"{identifier} dismissal scope must be exact")
+    try:
+        expiry = date.fromisoformat(evidence["expires"])
+    except ValueError as error:
+        raise SecurityPolicyError(
+            f"{identifier} dismissal expiry is invalid"
+        ) from error
+    today = datetime.now(tz=timezone.utc).date()
+    if expiry <= today or expiry > today + timedelta(days=90):
+        raise SecurityPolicyError(
+            f"{identifier} dismissal expiry must be within the next 90 days"
+        )
+    return DismissalEvidence(
+        issue=evidence["issue"],
+        owner=evidence["owner"],
+        decision=evidence["decision"],
+        expires=expiry,
+        scope=evidence["scope"],
+    )
+
+
+def _audit_dismissal(
+    alert: dict[str, object],
+    *,
+    identifier: str,
+    comment_field: str,
+    expected_scope: object,
+    scope_description: str,
+    issue_cache: dict[str, dict[str, object]],
+) -> None:
+    evidence = _dismissal_evidence(alert.get(comment_field), identifier)
+    if evidence.scope != expected_scope:
+        raise SecurityPolicyError(
+            f"{identifier} dismissal scope does not match its {scope_description}"
+        )
+    _validate_issue_evidence(
+        identifier=identifier,
+        issue_url=evidence.issue,
+        owner=evidence.owner,
+        decision=evidence.decision,
+        issue_cache=issue_cache,
+    )
+
+
+def enforce_github_dismissal_policy(
+    *,
+    scanner: str = "all",
+    code_alerts_path: Path | None = None,
+    secret_alerts_path: Path | None = None,
+    issues_path: Path | None = None,
+) -> None:
+    code_alerts = (
+        _load_alerts(
+            code_alerts_path,
+            "/repos/Zorro909/skywright/code-scanning/alerts?state=dismissed",
+        )
+        if scanner in {"all", "codeql"}
+        else []
+    )
+    secret_alerts = (
+        _load_alerts(
+            secret_alerts_path,
+            "/repos/Zorro909/skywright/secret-scanning/alerts?state=resolved",
+        )
+        if scanner in {"all", "secret-scanning"}
+        else []
+    )
+    issue_cache = (
+        json.loads(issues_path.read_text(encoding="utf-8")) if issues_path else {}
+    )
+    for alert in code_alerts:
+        identifier = f"CodeQL alert {alert.get('number', 'unknown')}"
+        expected_scope = (
+            alert.get("most_recent_instance", {}).get("location", {}).get("path")
+        )
+        _audit_dismissal(
+            alert,
+            identifier=identifier,
+            comment_field="dismissed_comment",
+            expected_scope=expected_scope,
+            scope_description="path",
+            issue_cache=issue_cache,
+        )
+    for alert in secret_alerts:
+        if alert.get("resolution") == "revoked":
+            continue
+        identifier = f"secret-scanning alert {alert.get('number', 'unknown')}"
+        _audit_dismissal(
+            alert,
+            identifier=identifier,
+            comment_field="resolution_comment",
+            expected_scope=alert.get("locations_url"),
+            scope_description="locations",
+            issue_cache=issue_cache,
+        )

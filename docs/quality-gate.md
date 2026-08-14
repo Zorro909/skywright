@@ -84,4 +84,13 @@ dependency policy applies a valid exception only to its exact manifest, package 
 Each entry records the exact risk owner and decision; CI resolves its linked issue, requires the
 issue to remain open, and requires its body to contain both pieces of evidence.
 CodeQL and secret-scanning dismissals must carry the same evidence in their GitHub alert record;
-repository-wide source exclusions are not permitted.
+repository-wide source exclusions are not permitted. Their comments must use `Issue:`, `Owner:`,
+`Decision:`, `Expires:`, and `Scope:` lines; scope must equal the CodeQL path or secret alert
+locations URL, and the linked open issue must contain the owner and decision. Trusted CI audits
+every dismissed CodeQL alert after analysis. GitHub does not grant Actions' `GITHUB_TOKEN` access
+to secret-scanning alerts, so the daily `Security Governance` workflow audits every non-remediation
+secret resolution with `scripts/quality github-dismissal-policy --scanner secret-scanning`. Its
+`SECURITY_AUDIT_TOKEN` is a dedicated GitHub App installation token or fine-grained token with
+read-only secret-scanning-alert permission; it has no publication or infrastructure access and is
+not available to ordinary verification jobs. A missing credential fails the scheduled control
+visibly. Fork pull requests need no permission to read base-repository alerts.

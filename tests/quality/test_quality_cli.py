@@ -374,6 +374,97 @@ class SecurityPolicyTest(unittest.TestCase):
             "VISIBLE GHSA-wwww-2345-6789 (no available fix)", completed.stdout
         )
 
+    def test_github_dismissals_require_exact_scope_and_live_issue_evidence(
+        self,
+    ) -> None:
+        issue_url = "https://github.com/Zorro909/skywright/issues/123"
+        owner = "@maintainer"
+        decision = "Accept this false positive while the query is corrected."
+        expiry = (datetime.now(tz=timezone.utc).date() + timedelta(days=30)).isoformat()
+        comment = (
+            f"Issue: {issue_url}\nOwner: {owner}\nDecision: {decision}\n"
+            f"Expires: {expiry}\nScope: backend/src/App.java"
+        )
+        code_alerts = [
+            {
+                "number": 7,
+                "dismissed_comment": comment,
+                "most_recent_instance": {"location": {"path": "backend/src/App.java"}},
+            }
+        ]
+        secret_scope = (
+            "https://api.github.com/repos/Zorro909/skywright/"
+            "secret-scanning/alerts/8/locations"
+        )
+        secret_comment = (
+            f"Issue: {issue_url}\nOwner: {owner}\nDecision: {decision}\n"
+            f"Expires: {expiry}\nScope: {secret_scope}"
+        )
+        secret_alerts = [
+            {
+                "number": 8,
+                "resolution": "false_positive",
+                "resolution_comment": secret_comment,
+                "locations_url": secret_scope,
+            },
+            {"number": 9, "resolution": "revoked"},
+        ]
+        issues = {
+            issue_url: {
+                "state": "open",
+                "body": f"Owner: {owner}\nDecision: {decision}",
+            }
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fixtures = {}
+            for name, value in (
+                ("code", code_alerts),
+                ("secret", secret_alerts),
+                ("issues", issues),
+            ):
+                path = Path(temporary_directory) / f"{name}.json"
+                path.write_text(json.dumps(value), encoding="utf-8")
+                fixtures[name] = path
+            completed = run_quality(
+                "github-dismissal-policy",
+                "--code-alerts",
+                str(fixtures["code"]),
+                "--secret-alerts",
+                str(fixtures["secret"]),
+                "--issues",
+                str(fixtures["issues"]),
+            )
+            self.assertIn("dismissal policy: valid", completed.stdout)
+
+            code_only = run_quality(
+                "github-dismissal-policy",
+                "--scanner",
+                "codeql",
+                "--code-alerts",
+                str(fixtures["code"]),
+                "--issues",
+                str(fixtures["issues"]),
+            )
+            self.assertIn("dismissal policy: valid", code_only.stdout)
+
+            code_alerts[0]["dismissed_comment"] = comment.replace(
+                "backend/src/App.java", "*"
+            )
+            fixtures["code"].write_text(json.dumps(code_alerts), encoding="utf-8")
+            invalid = run_quality(
+                "github-dismissal-policy",
+                "--code-alerts",
+                str(fixtures["code"]),
+                "--secret-alerts",
+                str(fixtures["secret"]),
+                "--issues",
+                str(fixtures["issues"]),
+                check=False,
+            )
+
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn("scope must be exact", invalid.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -219,12 +219,21 @@ jobs:
           languages: java-kotlin,javascript-typescript,python
           build-mode: none
       - name: Analyze supported source languages
+        id: codeql-analyze
         if: always() && steps.codeql-init.outcome == 'success'
         uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           category: /language:multi-language
           output: security-results/codeql
           upload: always
+      - name: Audit CodeQL alert dismissals
+        if: >-
+          always() &&
+          steps.codeql-analyze.outcome == 'success' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/quality github-dismissal-policy --scanner codeql
       - name: Retain security reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

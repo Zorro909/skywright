@@ -18,6 +18,7 @@ import tomllib
 from quality_support.security_policy import (
     SecurityPolicyError,
     enforce_dependency_policy,
+    enforce_github_dismissal_policy,
     load_suppressions,
 )
 
@@ -440,6 +441,19 @@ def dependency_policy_command(arguments: argparse.Namespace) -> int:
     )
 
 
+def github_dismissal_policy_command(arguments: argparse.Namespace) -> int:
+    enforce_github_dismissal_policy(
+        scanner=arguments.scanner,
+        code_alerts_path=Path(arguments.code_alerts) if arguments.code_alerts else None,
+        secret_alerts_path=(
+            Path(arguments.secret_alerts) if arguments.secret_alerts else None
+        ),
+        issues_path=Path(arguments.issues) if arguments.issues else None,
+    )
+    print("GitHub alert dismissal policy: valid")
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     command_parser = argparse.ArgumentParser(description=__doc__)
     subcommands = command_parser.add_subparsers(dest="command")
@@ -507,6 +521,21 @@ def parser() -> argparse.ArgumentParser:
     dependency_parser.add_argument("--advisories")
     dependency_parser.add_argument("--report")
     dependency_parser.set_defaults(handler=dependency_policy_command)
+
+    dismissal_parser = subcommands.add_parser(
+        "github-dismissal-policy",
+        help="enforce CodeQL and secret-scanning dismissal evidence",
+    )
+    dismissal_parser.add_argument("--code-alerts")
+    dismissal_parser.add_argument("--secret-alerts")
+    dismissal_parser.add_argument("--issues")
+    dismissal_parser.add_argument(
+        "--scanner",
+        choices=("all", "codeql", "secret-scanning"),
+        default="all",
+        help="audit both scanners by default, or one scanner when token permissions differ",
+    )
+    dismissal_parser.set_defaults(handler=github_dismissal_policy_command)
     return command_parser
 
 
