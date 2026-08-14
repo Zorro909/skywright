@@ -17,6 +17,9 @@ updates:
       maven:
         patterns:
           - '*'
+        exclude-patterns:
+          - 'org.springframework*'
+          - 'org.springframework.boot*'
 
   - package-ecosystem: pip
     directory: /sdk
@@ -35,3 +38,6 @@ updates:
       pnpm:
         patterns:
           - '*'
+        exclude-patterns:
+          - '@angular/*'
+          - 'rxjs'

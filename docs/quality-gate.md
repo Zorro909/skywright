@@ -77,4 +77,9 @@ A suppression is exceptional and must be:
 
 Do not use wildcard, repository-wide, unbounded, or undocumented suppressions. A suppression's
 expiry is a failing condition, not an automatic extension. Reviewers must reject changes that mute
-the scanner outside this policy.
+the scanner outside this policy. Dependency-review exceptions live in
+`security/suppressions.json`; `scripts/quality security-policy` rejects an invalid identifier,
+wildcard scope, missing repository issue, expired exception, or expiry beyond 90 days. The CI
+dependency policy applies a valid exception only to its exact manifest, package URL, and advisory.
+CodeQL and secret-scanning dismissals must carry the same evidence in their GitHub alert record;
+repository-wide source exclusions are not permitted.

@@ -27,6 +27,10 @@ jobs:
       java: ${{ steps.plan.outputs.java }}
       sdk: ${{ steps.plan.outputs.sdk }}
       security: ${{ steps.plan.outputs.security }}
+      java_version: ${{ steps.plan.outputs.java_version }}
+      node_version: ${{ steps.plan.outputs.node_version }}
+      pnpm_version: ${{ steps.plan.outputs.pnpm_version }}
+      uv_version: ${{ steps.plan.outputs.uv_version }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -85,18 +89,13 @@ jobs:
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: graalvm-community
-          java-version: 25.0.4
+          java-version: ${{ needs.plan.outputs.java_version }}
           cache: maven
-      - name: Set up Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - name: Set up frontend prerequisites
+        uses: ./.github/actions/setup-frontend
         with:
-          node-version: 26.7.0
-      - name: Set up pnpm
-        run: npm install --global pnpm@11.21.0
-      - name: Install browser prerequisite
-        run: |
-          pnpm --dir frontend install --frozen-lockfile
-          pnpm --dir frontend exec playwright install --with-deps chromium
+          node-version: ${{ needs.plan.outputs.node_version }}
+          pnpm-version: ${{ needs.plan.outputs.pnpm_version }}
       - name: Run Java verification
         run: scripts/quality run java
       - name: Retain Java test and diagnostic reports
@@ -107,6 +106,10 @@ jobs:
           path: |
             **/target/surefire-reports/**
             **/target/failsafe-reports/**
+            **/target/site/jacoco/**
+            **/target/site/jacoco-it/**
+            frontend/coverage/**
+            frontend/target/test-results/**
             frontend/test-results/**
             frontend/playwright-report/**
           if-no-files-found: ignore
@@ -120,16 +123,11 @@ jobs:
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - name: Set up Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - name: Set up frontend prerequisites
+        uses: ./.github/actions/setup-frontend
         with:
-          node-version: 26.7.0
-      - name: Set up pnpm
-        run: npm install --global pnpm@11.21.0
-      - name: Install browser prerequisite
-        run: |
-          pnpm --dir frontend install --frozen-lockfile
-          pnpm --dir frontend exec playwright install --with-deps chromium
+          node-version: ${{ needs.plan.outputs.node_version }}
+          pnpm-version: ${{ needs.plan.outputs.pnpm_version }}
       - name: Run frontend verification
         run: scripts/quality run frontend
       - name: Retain frontend test and diagnostic reports
@@ -139,6 +137,7 @@ jobs:
           name: frontend-reports
           path: |
             frontend/coverage/**
+            frontend/target/test-results/**
             frontend/test-results/**
             frontend/playwright-report/**
           if-no-files-found: ignore
@@ -161,7 +160,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
-          version: 0.8.8
+          version: ${{ needs.plan.outputs.uv_version }}
           enable-cache: true
           cache-dependency-glob: sdk/uv.lock
       - name: Run SDK verification
@@ -190,21 +189,48 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
+      - name: Validate security suppressions
+        run: scripts/quality security-policy
       - name: Review dependency changes
+        id: dependency-review
         if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
+          warn-only: true
+          show-patched-versions: true
           comment-summary-in-pr: never
+      - name: Enforce fixable dependency findings
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VULNERABLE_CHANGES: ${{ steps.dependency-review.outputs.vulnerable-changes }}
+        run: |
+          scripts/quality dependency-policy \
+            --changes "${VULNERABLE_CHANGES:-[]}" \
+            --report security-results/dependency-review.json
       - name: Initialize CodeQL
+        id: codeql-init
+        if: always()
         uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           languages: java-kotlin,javascript-typescript,python
           build-mode: none
       - name: Analyze supported source languages
+        if: always() && steps.codeql-init.outcome == 'success'
         uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           category: /language:multi-language
+          output: security-results/codeql
+          upload: always
+      - name: Retain security reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: security-reports
+          path: security-results/**
+          if-no-files-found: ignore
+          retention-days: 90
 
   quality-gate:
     name: Quality Gate

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -246,6 +247,97 @@ class SourceIdentityTest(unittest.TestCase):
         )
         self.assertNotEqual(mismatch.returncode, 0)
         self.assertIn("tag commit", mismatch.stderr)
+
+
+class SecurityPolicyTest(unittest.TestCase):
+    def write_policy(self, directory: str, suppression: dict[str, object]) -> Path:
+        policy = Path(directory) / "suppressions.json"
+        policy.write_text(
+            json.dumps({"version": 1, "suppressions": [suppression]}),
+            encoding="utf-8",
+        )
+        return policy
+
+    def test_suppression_requires_narrow_scope_issue_and_near_expiry(self) -> None:
+        valid = {
+            "id": "GHSA-cfgh-2345-6789",
+            "manifest": "frontend/pnpm-lock.yaml",
+            "package_url": "pkg:npm/example",
+            "issue": "https://github.com/Zorro909/skywright/issues/123",
+            "expires": (
+                datetime.now(tz=timezone.utc).date() + timedelta(days=30)
+            ).isoformat(),
+            "reason": "Waiting for an upstream compatible fix.",
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            policy = self.write_policy(temporary_directory, valid)
+            completed = run_quality("security-policy", "--policy", str(policy))
+            self.assertIn("1 valid suppression", completed.stdout)
+
+            invalid_cases = {
+                "package_url": {**valid, "package_url": "*"},
+                "expires": {**valid, "expires": "2000-01-01"},
+                "issue": {**valid, "issue": "https://example.com/123"},
+            }
+            for expected_error, invalid in invalid_cases.items():
+                with self.subTest(expected_error=expected_error):
+                    policy = self.write_policy(temporary_directory, invalid)
+                    completed = run_quality(
+                        "security-policy", "--policy", str(policy), check=False
+                    )
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertIn(expected_error, completed.stderr)
+
+    def test_fixable_high_dependency_fails_but_unfixable_finding_is_visible(
+        self,
+    ) -> None:
+        changes = [
+            {
+                "manifest": "frontend/pnpm-lock.yaml",
+                "ecosystem": "npm",
+                "name": "example",
+                "package_url": "pkg:npm/example@1.0.0",
+                "vulnerabilities": [
+                    {"severity": "high", "advisory_ghsa_id": "GHSA-cfgh-2345-6789"},
+                    {"severity": "critical", "advisory_ghsa_id": "GHSA-wwww-2345-6789"},
+                ],
+            }
+        ]
+        advisories = {
+            "GHSA-cfgh-2345-6789": {
+                "vulnerabilities": [
+                    {
+                        "package": {"ecosystem": "npm", "name": "example"},
+                        "first_patched_version": {"identifier": "1.0.1"},
+                    }
+                ]
+            },
+            "GHSA-wwww-2345-6789": {
+                "vulnerabilities": [
+                    {
+                        "package": {"ecosystem": "npm", "name": "example"},
+                        "first_patched_version": None,
+                    }
+                ]
+            },
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            advisory_file = Path(temporary_directory) / "advisories.json"
+            advisory_file.write_text(json.dumps(advisories), encoding="utf-8")
+            completed = run_quality(
+                "dependency-policy",
+                "--changes",
+                json.dumps(changes),
+                "--advisories",
+                str(advisory_file),
+                check=False,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("BLOCKED GHSA-cfgh-2345-6789", completed.stdout)
+        self.assertIn(
+            "VISIBLE GHSA-wwww-2345-6789 (no available fix)", completed.stdout
+        )
 
 
 if __name__ == "__main__":
