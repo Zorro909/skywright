@@ -1,0 +1,556 @@
+#!/usr/bin/env python3
+"""Skywright's versioned Linux quality-plan entry point."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+
+import tomllib
+from quality_support.security_policy import (
+    SecurityPolicyError,
+    enforce_dependency_policy,
+    enforce_github_dismissal_policy,
+    load_suppressions,
+)
+
+REPOSITORY = Path(__file__).resolve().parent.parent
+
+
+def load_toolchain() -> dict[str, str]:
+    toolchain = json.loads(
+        (REPOSITORY / "quality" / "toolchain.json").read_text(encoding="utf-8")
+    )
+    frontend = json.loads(
+        (REPOSITORY / "frontend" / "package.json").read_text(encoding="utf-8")
+    )
+    with (REPOSITORY / "sdk" / "pyproject.toml").open("rb") as source:
+        sdk = tomllib.load(source)
+    wrapper = (REPOSITORY / ".mvn" / "wrapper" / "maven-wrapper.properties").read_text(
+        encoding="utf-8"
+    )
+    maven_match = re.search(r"/apache-maven/([^/]+)/", wrapper)
+    if maven_match is None:
+        raise RuntimeError("Maven Wrapper distribution URL has no version")
+    toolchain.update(
+        {
+            "maven_version": maven_match.group(1),
+            "node_version": frontend["engines"]["node"],
+            "pnpm_version": frontend["packageManager"].removeprefix("pnpm@"),
+            "uv_version": sdk["tool"]["uv"]["required-version"].removeprefix("=="),
+        }
+    )
+    return toolchain
+
+
+TOOLCHAIN = load_toolchain()
+LOCAL_CHECKS = ("java", "frontend", "sdk")
+CHECKS = (*LOCAL_CHECKS, "security")
+ALL_CHECKS = frozenset(CHECKS)
+CATEGORY_CHECKS = {
+    "api": frozenset(("java", "frontend", "security")),
+    "backend": frozenset(("java", "security")),
+    "documentation": frozenset(),
+    "fixture": frozenset(("java", "sdk", "security")),
+    "frontend": frozenset(("frontend", "security")),
+    "profile": frozenset(("sdk", "security")),
+    "sdk": frozenset(("sdk", "security")),
+    "shared-tooling": ALL_CHECKS,
+}
+COMMANDS = {
+    "java": (
+        ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
+        ("./mvnw", "--batch-mode", "-pl", "backend", "-am", "verify"),
+    ),
+    "frontend": (
+        ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
+        ("pnpm", "--dir", "frontend", "run", "verify"),
+    ),
+    "sdk": (("sdk/scripts/verify",),),
+}
+
+
+class PrerequisiteError(RuntimeError):
+    """A required local quality-gate prerequisite is unavailable or unsupported."""
+
+
+@dataclass(frozen=True)
+class PlannedCheck:
+    applicable: bool
+    reason: str
+
+    def as_json(self) -> dict[str, object]:
+        return {"applicable": self.applicable, "reason": self.reason}
+
+
+@dataclass(frozen=True)
+class QualityPlan:
+    changed_files: tuple[str, ...]
+    categories: tuple[str, ...]
+    checks: dict[str, PlannedCheck]
+    version: int = 1
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "version": self.version,
+            "changed_files": list(self.changed_files),
+            "categories": list(self.categories),
+            "checks": {name: check.as_json() for name, check in self.checks.items()},
+        }
+
+    @classmethod
+    def from_json(cls, serialized: str) -> QualityPlan:
+        try:
+            value = json.loads(serialized)
+            if value["version"] != 1:
+                raise ValueError
+            return cls(
+                version=value["version"],
+                changed_files=tuple(value["changed_files"]),
+                categories=tuple(value["categories"]),
+                checks={
+                    name: PlannedCheck(
+                        applicable=check["applicable"], reason=check["reason"]
+                    )
+                    for name, check in value["checks"].items()
+                },
+            )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+            raise PrerequisiteError(
+                "quality plan JSON does not match version 1"
+            ) from error
+
+
+def category_for(path: str) -> str:
+    normalized = path.removeprefix("./")
+    if (
+        normalized.startswith(("docs/", ".github/ISSUE_TEMPLATE/"))
+        or normalized
+        in {
+            "LICENSE",
+            "THIRD-PARTY-NOTICES.md",
+        }
+        or ("/" not in normalized and normalized.endswith(".md"))
+    ):
+        return "documentation"
+    if normalized.startswith("api/"):
+        return "api"
+    if normalized.startswith(("backend/", "backend-deployment/")):
+        return "backend"
+    if normalized.startswith("frontend/"):
+        return "frontend"
+    if normalized.startswith("sdk/"):
+        return "sdk"
+    if normalized.startswith(("fixtures/", "conformance/")):
+        return "fixture"
+    if normalized.startswith(("environment-profiles/", "profiles/")):
+        return "profile"
+    return "shared-tooling"
+
+
+def changed_files(base: str, head: str) -> list[str]:
+    completed = subprocess.run(
+        ("git", "diff", "--name-only", "--diff-filter=ACDMRTUXB", f"{base}...{head}"),
+        cwd=REPOSITORY,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return [line for line in completed.stdout.splitlines() if line]
+
+
+def make_plan(paths: Iterable[str]) -> QualityPlan:
+    materialized_paths = sorted(set(paths))
+    categories = sorted({category_for(path) for path in materialized_paths})
+    applicable = (
+        ALL_CHECKS
+        if not materialized_paths
+        else frozenset().union(*(CATEGORY_CHECKS[category] for category in categories))
+    )
+    return QualityPlan(
+        changed_files=tuple(materialized_paths),
+        categories=tuple(categories or ["complete"]),
+        checks={
+            check: PlannedCheck(
+                applicable=check in applicable,
+                reason=(
+                    "required by the selected change categories"
+                    if check in applicable
+                    else "irrelevant to the selected change categories"
+                ),
+            )
+            for check in CHECKS
+        },
+    )
+
+
+def plan_command(arguments: argparse.Namespace) -> int:
+    paths = arguments.changed_file
+    if arguments.base:
+        paths = [*paths, *changed_files(arguments.base, arguments.head)]
+    plan = make_plan(paths)
+    serialized = json.dumps(plan.as_json(), separators=(",", ":"), sort_keys=True)
+    if arguments.github_output:
+        with Path(arguments.github_output).open("a", encoding="utf-8") as output:
+            output.write(f"plan={serialized}\n")
+            output.writelines(
+                f"{name}={str(check.applicable).lower()}\n"
+                for name, check in plan.checks.items()
+            )
+            output.writelines(f"{name}={value}\n" for name, value in TOOLCHAIN.items())
+    if arguments.format == "json":
+        print(serialized)
+    else:
+        print_plan(plan)
+    return 0
+
+
+def print_plan(plan: QualityPlan) -> None:
+    print(f"Quality plan v{plan.version}: {', '.join(plan.categories)}")
+    for name, check in plan.checks.items():
+        disposition = "APPLICABLE" if check.applicable else "INAPPLICABLE"
+        print(f"{disposition:12} {name}: {check.reason}")
+
+
+def aggregate_command(arguments: argparse.Namespace) -> int:
+    plan = QualityPlan.from_json(arguments.plan)
+    results = dict(result.split("=", maxsplit=1) for result in arguments.result)
+    failed = False
+    for check, details in plan.checks.items():
+        outcome = results.get(check, "missing")
+        if details.applicable:
+            if outcome == "success":
+                print(f"PASSED {check}")
+            else:
+                failed = True
+                print(f"FAILED {check} ({outcome})")
+        else:
+            print(f"INAPPLICABLE {check} ({outcome})")
+    return 1 if failed else 0
+
+
+def executable(name: str) -> str:
+    resolved = shutil.which(name)
+    if resolved is None:
+        raise PrerequisiteError(f"required executable '{name}' is unavailable")
+    return resolved
+
+
+def output_of(*command: str, stderr: bool = False) -> str:
+    completed = subprocess.run(
+        command,
+        cwd=REPOSITORY,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stderr if stderr else completed.stdout
+
+
+def require_java() -> None:
+    java = executable("java")
+    details = output_of(java, "-XshowSettings:properties", "-version", stderr=True)
+    required = {
+        "java.version": TOOLCHAIN["java_version"],
+        "java.vendor": TOOLCHAIN["java_vendor"],
+    }
+    for property_name, expected in required.items():
+        match = re.search(
+            rf"^\s*{re.escape(property_name)} = (.+)$", details, re.MULTILINE
+        )
+        actual = match.group(1).strip() if match else "unknown"
+        if actual != expected:
+            raise PrerequisiteError(
+                f"requires {property_name} {expected}; received {actual}"
+            )
+    runtime_match = re.search(
+        r"^\s*java.runtime.version = (.+)$", details, re.MULTILINE
+    )
+    runtime = runtime_match.group(1).strip() if runtime_match else "unknown"
+    if not runtime.startswith(TOOLCHAIN["java_runtime_prefix"]):
+        raise PrerequisiteError(
+            "requires GraalVM Community runtime "
+            f"{TOOLCHAIN['java_runtime_prefix']}; received {runtime}"
+        )
+
+    maven = output_of(str(REPOSITORY / "mvnw"), "--version")
+    if f"Apache Maven {TOOLCHAIN['maven_version']}" not in maven:
+        first_line = maven.splitlines()[0] if maven else "unknown"
+        raise PrerequisiteError(
+            f"requires Maven Wrapper {TOOLCHAIN['maven_version']}; received {first_line}"
+        )
+
+
+def require_frontend() -> None:
+    node = executable("node")
+    pnpm = executable("pnpm")
+    node_version = output_of(node, "--version").strip().removeprefix("v")
+    if node_version != TOOLCHAIN["node_version"]:
+        raise PrerequisiteError(
+            f"requires Node {TOOLCHAIN['node_version']}; received Node {node_version or 'unknown'}"
+        )
+    pnpm_version = output_of(pnpm, "--version").strip()
+    if pnpm_version != TOOLCHAIN["pnpm_version"]:
+        raise PrerequisiteError(
+            f"requires pnpm {TOOLCHAIN['pnpm_version']}; received pnpm {pnpm_version or 'unknown'}"
+        )
+
+
+def require_uv() -> None:
+    uv = executable("uv")
+    version = output_of(uv, "--version").strip()
+    expected = f"uv {TOOLCHAIN['uv_version']}"
+    if version != expected:
+        raise PrerequisiteError(f"requires {expected}; received {version or 'unknown'}")
+
+
+def require_browser() -> None:
+    pnpm = executable("pnpm")
+    try:
+        browser_path = output_of(
+            pnpm,
+            "--dir",
+            "frontend",
+            "exec",
+            "node",
+            "--input-type=module",
+            "--eval",
+            "import { chromium } from '@playwright/test'; console.log(chromium.executablePath())",
+        ).strip()
+    except subprocess.CalledProcessError as error:
+        raise PrerequisiteError(
+            "required Playwright Chromium browser is unavailable; install frontend "
+            "dependencies and run 'pnpm --dir frontend exec playwright install chromium'"
+        ) from error
+    if not browser_path or not Path(browser_path).is_file():
+        raise PrerequisiteError(
+            "required Playwright Chromium browser is unavailable; run "
+            "'pnpm --dir frontend exec playwright install chromium'"
+        )
+
+
+def check_prerequisites(check: str) -> None:
+    if check == "java":
+        require_java()
+        require_frontend()
+    elif check == "frontend":
+        require_frontend()
+    elif check == "sdk":
+        require_uv()
+
+
+def run_command(arguments: argparse.Namespace) -> int:
+    selected = set(arguments.check or LOCAL_CHECKS)
+    unknown = selected.difference(LOCAL_CHECKS)
+    if unknown:
+        raise PrerequisiteError(f"unknown quality check: {', '.join(sorted(unknown))}")
+
+    failed = False
+    print("Quality plan v1: local verification")
+    for check in CHECKS:
+        if check == "security":
+            print(
+                "INAPPLICABLE security: enforced by GitHub dependency review, CodeQL, and secret scanning"
+            )
+            continue
+        if check not in selected:
+            print(f"INAPPLICABLE {check}: not selected")
+            continue
+        print(f"APPLICABLE {check}: selected for local verification")
+        try:
+            check_prerequisites(check)
+            if check in {"java", "frontend"}:
+                require_browser()
+            if arguments.dry_run:
+                print(f"PASSED {check}: prerequisites available (dry run)")
+                continue
+            commands = COMMANDS[check]
+            for index, command in enumerate(commands):
+                subprocess.run(
+                    command, cwd=REPOSITORY, check=True, env=os.environ.copy()
+                )
+                if check in {"java", "frontend"} and index == 0:
+                    require_browser()
+            print(f"PASSED {check}")
+        except (PrerequisiteError, subprocess.CalledProcessError) as error:
+            failed = True
+            if isinstance(error, subprocess.CalledProcessError):
+                reason = f"native command exited {error.returncode}"
+            else:
+                reason = str(error)
+            print(f"FAILED {check}: {reason}")
+    return 1 if failed else 0
+
+
+def identity_command(arguments: argparse.Namespace) -> int:
+    if arguments.event == "tag":
+        if not arguments.tag_commit:
+            raise PrerequisiteError("tag identity requires the exact tag commit")
+        if arguments.tested_revision != arguments.tag_commit:
+            raise PrerequisiteError(
+                "tested revision must equal the exact tag commit for a tag run"
+            )
+    identity = {
+        "event": arguments.event,
+        "tested_revision": arguments.tested_revision,
+    }
+    if arguments.head_revision:
+        identity["head_revision"] = arguments.head_revision
+    serialized = json.dumps(identity, separators=(",", ":"), sort_keys=True)
+    if arguments.output:
+        Path(arguments.output).write_text(f"{serialized}\n", encoding="utf-8")
+    if arguments.format == "json":
+        print(serialized)
+    else:
+        print(f"Tested revision: {identity['tested_revision']}")
+        if arguments.head_revision:
+            print(f"Head revision (diagnostic): {arguments.head_revision}")
+    return 0
+
+
+def security_policy_command(arguments: argparse.Namespace) -> int:
+    issue_cache = (
+        json.loads(Path(arguments.issues).read_text(encoding="utf-8"))
+        if arguments.issues
+        else None
+    )
+    suppressions = load_suppressions(
+        Path(arguments.policy),
+        verify_issues=arguments.verify_issues or arguments.issues is not None,
+        issue_cache=issue_cache,
+    )
+    suffix = "suppression" if len(suppressions) == 1 else "suppressions"
+    print(f"Security policy: {len(suppressions)} valid {suffix}")
+    return 0
+
+
+def dependency_policy_command(arguments: argparse.Namespace) -> int:
+    return enforce_dependency_policy(
+        arguments.changes,
+        Path(arguments.policy),
+        advisories_path=Path(arguments.advisories) if arguments.advisories else None,
+        report_path=Path(arguments.report) if arguments.report else None,
+    )
+
+
+def github_dismissal_policy_command(arguments: argparse.Namespace) -> int:
+    enforce_github_dismissal_policy(
+        scanner=arguments.scanner,
+        code_alerts_path=Path(arguments.code_alerts) if arguments.code_alerts else None,
+        secret_alerts_path=(
+            Path(arguments.secret_alerts) if arguments.secret_alerts else None
+        ),
+        issues_path=Path(arguments.issues) if arguments.issues else None,
+    )
+    print("GitHub alert dismissal policy: valid")
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    command_parser = argparse.ArgumentParser(description=__doc__)
+    subcommands = command_parser.add_subparsers(dest="command")
+
+    plan_parser = subcommands.add_parser("plan", help="plan checks for a change set")
+    plan_parser.add_argument("--base", help="base revision for a three-dot git diff")
+    plan_parser.add_argument(
+        "--head", default="HEAD", help="head revision (default: HEAD)"
+    )
+    plan_parser.add_argument("--changed-file", action="append", default=[])
+    plan_parser.add_argument("--format", choices=("text", "json"), default="text")
+    plan_parser.add_argument("--github-output")
+    plan_parser.set_defaults(handler=plan_command)
+
+    aggregate_parser = subcommands.add_parser(
+        "aggregate", help="evaluate observed CI outcomes against a plan"
+    )
+    aggregate_parser.add_argument("--plan", required=True)
+    aggregate_parser.add_argument("--result", action="append", default=[])
+    aggregate_parser.set_defaults(handler=aggregate_command)
+
+    run_parser = subcommands.add_parser(
+        "run", help="run the complete or selected local plan"
+    )
+    run_parser.add_argument("check", nargs="*", choices=LOCAL_CHECKS)
+    run_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate prerequisites without running checks",
+    )
+    run_parser.set_defaults(handler=run_command)
+
+    identity_parser = subcommands.add_parser(
+        "identity", help="record the exact source revision under verification"
+    )
+    identity_parser.add_argument("--event", required=True)
+    identity_parser.add_argument("--tested-revision", required=True)
+    identity_parser.add_argument("--head-revision")
+    identity_parser.add_argument("--tag-commit")
+    identity_parser.add_argument("--format", choices=("text", "json"), default="text")
+    identity_parser.add_argument("--output")
+    identity_parser.set_defaults(handler=identity_command)
+
+    policy_parser = subcommands.add_parser(
+        "security-policy", help="validate narrow, issue-linked, expiring suppressions"
+    )
+    policy_parser.add_argument(
+        "--policy", default=REPOSITORY / "security" / "suppressions.json"
+    )
+    policy_parser.add_argument(
+        "--verify-issues",
+        action="store_true",
+        help="verify linked GitHub issue evidence",
+    )
+    policy_parser.add_argument("--issues", help="issue-evidence JSON fixture")
+    policy_parser.set_defaults(handler=security_policy_command)
+
+    dependency_parser = subcommands.add_parser(
+        "dependency-policy", help="enforce fixable dependency vulnerability policy"
+    )
+    dependency_parser.add_argument("--changes", required=True)
+    dependency_parser.add_argument(
+        "--policy", default=REPOSITORY / "security" / "suppressions.json"
+    )
+    dependency_parser.add_argument("--advisories")
+    dependency_parser.add_argument("--report")
+    dependency_parser.set_defaults(handler=dependency_policy_command)
+
+    dismissal_parser = subcommands.add_parser(
+        "github-dismissal-policy",
+        help="enforce CodeQL and secret-scanning dismissal evidence",
+    )
+    dismissal_parser.add_argument("--code-alerts")
+    dismissal_parser.add_argument("--secret-alerts")
+    dismissal_parser.add_argument("--issues")
+    dismissal_parser.add_argument(
+        "--scanner",
+        choices=("all", "codeql", "secret-scanning"),
+        default="all",
+        help="audit both scanners by default, or one scanner when token permissions differ",
+    )
+    dismissal_parser.set_defaults(handler=github_dismissal_policy_command)
+    return command_parser
+
+
+def main() -> int:
+    command_parser = parser()
+    arguments = command_parser.parse_args()
+    if not hasattr(arguments, "handler"):
+        command_parser.print_help(sys.stderr)
+        return 2
+    try:
+        return arguments.handler(arguments)
+    except (PrerequisiteError, SecurityPolicyError) as error:
+        command_parser.error(str(error))
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

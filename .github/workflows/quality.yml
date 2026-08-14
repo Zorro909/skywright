@@ -1,0 +1,293 @@
+name: Repository Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  merge_group:
+
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{
+      github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id
+    }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+      frontend: ${{ steps.plan.outputs.frontend }}
+      java: ${{ steps.plan.outputs.java }}
+      sdk: ${{ steps.plan.outputs.sdk }}
+      security: ${{ steps.plan.outputs.security }}
+      java_archive_sha256: ${{ steps.plan.outputs.java_archive_sha256 }}
+      java_archive_url: ${{ steps.plan.outputs.java_archive_url }}
+      java_version: ${{ steps.plan.outputs.java_version }}
+      node_version: ${{ steps.plan.outputs.node_version }}
+      pnpm_version: ${{ steps.plan.outputs.pnpm_version }}
+      uv_version: ${{ steps.plan.outputs.uv_version }}
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Record source identity
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REVISION: ${{ github.event.pull_request.head.sha }}
+          TESTED_REVISION: ${{ github.sha }}
+        run: |
+          arguments=(
+            identity
+            --event "$EVENT_NAME"
+            --tested-revision "$TESTED_REVISION"
+            --format json
+            --output quality-metadata.json
+          )
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            arguments+=(--head-revision "$HEAD_REVISION")
+          fi
+          scripts/quality "${arguments[@]}"
+      - name: Plan applicable checks
+        id: plan
+        env:
+          BASE_REVISION: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          base_revision="$BASE_REVISION"
+          if [[ -z "$base_revision" || "$base_revision" =~ ^0+$ ]]; then
+            base_revision="HEAD^"
+          fi
+          scripts/quality plan \
+            --base "$base_revision" \
+            --format text \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Retain source identity
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: quality-source-identity
+          path: quality-metadata.json
+          if-no-files-found: error
+          retention-days: 90
+
+  java:
+    name: Java and backend
+    needs: plan
+    if: needs.plan.outputs.java == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Download exact GraalVM Community archive
+        env:
+          JAVA_ARCHIVE_SHA256: ${{ needs.plan.outputs.java_archive_sha256 }}
+          JAVA_ARCHIVE_URL: ${{ needs.plan.outputs.java_archive_url }}
+        run: |
+          curl --fail --location --silent --show-error \
+            --output "${RUNNER_TEMP}/graalvm-community.tar.gz" \
+            "$JAVA_ARCHIVE_URL"
+          echo "${JAVA_ARCHIVE_SHA256}  ${RUNNER_TEMP}/graalvm-community.tar.gz" \
+            | sha256sum --check --strict
+      - name: Set up GraalVM Community
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: jdkfile
+          jdk-file: ${{ runner.temp }}/graalvm-community.tar.gz
+          java-version: ${{ needs.plan.outputs.java_version }}
+          cache: maven
+      - name: Set up frontend prerequisites
+        uses: ./.github/actions/setup-frontend
+        with:
+          node-version: ${{ needs.plan.outputs.node_version }}
+          pnpm-version: ${{ needs.plan.outputs.pnpm_version }}
+      - name: Run Java verification
+        run: scripts/quality run java
+      - name: Retain Java test and diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: java-reports
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+            **/target/site/jacoco/**
+            **/target/site/jacoco-it/**
+            frontend/coverage/**
+            frontend/target/test-results/**
+            frontend/test-results/**
+            frontend/playwright-report/**
+          if-no-files-found: ignore
+          retention-days: 90
+
+  frontend:
+    name: Frontend
+    needs: plan
+    if: needs.plan.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Set up frontend prerequisites
+        uses: ./.github/actions/setup-frontend
+        with:
+          node-version: ${{ needs.plan.outputs.node_version }}
+          pnpm-version: ${{ needs.plan.outputs.pnpm_version }}
+      - name: Run frontend verification
+        run: scripts/quality run frontend
+      - name: Retain frontend test and diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: frontend-reports
+          path: |
+            frontend/coverage/**
+            frontend/target/test-results/**
+            frontend/test-results/**
+            frontend/playwright-report/**
+          if-no-files-found: ignore
+          retention-days: 90
+
+  sdk:
+    name: Python SDK
+    needs: plan
+    if: needs.plan.outputs.sdk == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.14'
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: ${{ needs.plan.outputs.uv_version }}
+          enable-cache: true
+          cache-dependency-glob: sdk/uv.lock
+      - name: Run SDK verification
+        run: scripts/quality run sdk
+      - name: Retain SDK test and diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sdk-reports
+          path: |
+            sdk/target/test-results/**
+            sdk/target/coverage/**
+          if-no-files-found: ignore
+          retention-days: 90
+
+  security:
+    name: Security
+    needs: plan
+    if: needs.plan.outputs.security == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Validate security suppressions
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/quality security-policy --verify-issues
+      - name: Review dependency changes
+        id: dependency-review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          warn-only: true
+          show-patched-versions: true
+          comment-summary-in-pr: never
+      - name: Enforce fixable dependency findings
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VULNERABLE_CHANGES: ${{ steps.dependency-review.outputs.vulnerable-changes }}
+        run: |
+          scripts/quality dependency-policy \
+            --changes "${VULNERABLE_CHANGES:-[]}" \
+            --report security-results/dependency-review.json
+      - name: Initialize CodeQL
+        id: codeql-init
+        if: always()
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          languages: java-kotlin,javascript-typescript,python
+          build-mode: none
+      - name: Analyze supported source languages
+        id: codeql-analyze
+        if: always() && steps.codeql-init.outcome == 'success'
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          category: /language:multi-language
+          output: security-results/codeql
+          upload: always
+      - name: Audit CodeQL alert dismissals
+        if: >-
+          always() &&
+          steps.codeql-analyze.outcome == 'success' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/quality github-dismissal-policy --scanner codeql
+      - name: Retain security reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: security-reports
+          path: security-results/**
+          if-no-files-found: ignore
+          retention-days: 90
+
+  quality-gate:
+    name: Quality Gate
+    if: always()
+    needs:
+      - plan
+      - java
+      - frontend
+      - sdk
+      - security
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Require a valid plan
+        if: needs.plan.result != 'success'
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+        run: |
+          echo "The quality plan did not succeed: $PLAN_RESULT" >&2
+          exit 1
+      - name: Aggregate required outcomes
+        if: needs.plan.result == 'success'
+        env:
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          JAVA_RESULT: ${{ needs.java.result }}
+          PLAN: ${{ needs.plan.outputs.plan }}
+          SDK_RESULT: ${{ needs.sdk.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+        run: |
+          scripts/quality aggregate \
+            --plan "$PLAN" \
+            --result "frontend=$FRONTEND_RESULT" \
+            --result "java=$JAVA_RESULT" \
+            --result "sdk=$SDK_RESULT" \
+            --result "security=$SECURITY_RESULT"

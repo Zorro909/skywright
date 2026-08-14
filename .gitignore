@@ -4,6 +4,8 @@ dist/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.coverage
+coverage/
 .ruff_cache/
 .idea/
 *.iml

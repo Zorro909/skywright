@@ -11,4 +11,5 @@ scripts/check
 scripts/build-distributions "$verification_directory"
 scripts/check-distributions "$verification_directory"
 uv run --locked pytest tests/system -m system \
+  --junitxml target/test-results/system.xml \
   --artifact-dir "$verification_directory"

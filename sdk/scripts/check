@@ -3,9 +3,15 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+mkdir -p target/test-results target/coverage
+
 uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked pyright
 uv run --locked pyright --verifytypes skywright
-uv run --locked pytest tests/test_package.py
+uv run --locked pytest tests/test_package.py \
+  --junitxml target/test-results/unit.xml \
+  --cov skywright \
+  --cov-report xml:target/coverage/coverage.xml \
+  --cov-report html:target/coverage/html
 scripts/check-api-compatibility

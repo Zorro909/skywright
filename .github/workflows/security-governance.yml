@@ -1,0 +1,29 @@
+name: Security Governance
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scanning-dismissals:
+    name: Secret-scanning dismissal policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the governed revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Require the read-only alert credential
+        env:
+          SECURITY_AUDIT_TOKEN: ${{ secrets.SECURITY_AUDIT_TOKEN }}
+        run: |
+          if [ -z "$SECURITY_AUDIT_TOKEN" ]; then
+            echo "SECURITY_AUDIT_TOKEN must read secret-scanning alerts and issues" >&2
+            exit 1
+          fi
+      - name: Audit secret-scanning dismissals
+        env:
+          GITHUB_TOKEN: ${{ secrets.SECURITY_AUDIT_TOKEN }}
+        run: scripts/quality github-dismissal-policy --scanner secret-scanning
