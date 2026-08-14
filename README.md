@@ -42,6 +42,13 @@ From the repository root. Full-reactor `package` and `verify` also build the pro
 they require a Docker-compatible daemon:
 
 ```bash
+# Run the complete current repository quality plan (recommended before a pull request)
+scripts/quality run
+
+# Run one or more focused component checks through their supported native commands
+scripts/quality run java
+scripts/quality run frontend sdk
+
 # Compile, run unit tests with Surefire, run *IT acceptance tests with Failsafe, and package all modules
 ./mvnw verify
 
@@ -76,6 +83,13 @@ they require a Docker-compatible daemon:
 # Run the complete SDK verification, including both installed distribution paths
 ./mvnw -pl sdk -am verify
 ```
+
+The quality command prints every check as applicable or inapplicable and validates exact local
+prerequisites before invoking Maven, pnpm, or the SDK's `uv` workflow. GitHub-managed dependency
+review, source analysis, and repository secret scanning are always reported as inapplicable to a
+local run; they remain required by the aggregate CI gate for relevant changes. See the
+[quality-gate policy](docs/quality-gate.md) for change planning, CI identity, retention, caches,
+security findings, and branch protection.
 
 The executable artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`. It serves the web
 application at `/`; direct application routes such as `/about` use the same packaged entry point.
