@@ -436,6 +436,22 @@ class SecurityPolicyTest(unittest.TestCase):
             )
             self.assertIn("dismissal policy: valid", completed.stdout)
 
+            issues[issue_url]["body"] = f"Unrelated words: {owner} {decision}"
+            fixtures["issues"].write_text(json.dumps(issues), encoding="utf-8")
+            unstructured = run_quality(
+                "github-dismissal-policy",
+                "--code-alerts",
+                str(fixtures["code"]),
+                "--secret-alerts",
+                str(fixtures["secret"]),
+                "--issues",
+                str(fixtures["issues"]),
+                check=False,
+            )
+            self.assertIn("exact Owner: and Decision: fields", unstructured.stderr)
+            issues[issue_url]["body"] = f"Owner: {owner}\nDecision: {decision}"
+            fixtures["issues"].write_text(json.dumps(issues), encoding="utf-8")
+
             code_only = run_quality(
                 "github-dismissal-policy",
                 "--scanner",

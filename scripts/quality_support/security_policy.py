@@ -85,9 +85,15 @@ def _validate_issue_evidence(
     body = str(issue.get("body") or "")
     if issue.get("state") != "open":
         raise SecurityPolicyError(f"{identifier} issue must exist and remain open")
-    if owner not in body or decision not in body:
+    fields = {
+        match.group("key").lower(): match.group("value").strip()
+        for match in re.finditer(
+            r"^(?P<key>Owner|Decision):\s*(?P<value>.+)$", body, re.MULTILINE
+        )
+    }
+    if fields.get("owner") != owner or fields.get("decision") != decision:
         raise SecurityPolicyError(
-            f"{identifier} issue must contain its owner and decision"
+            f"{identifier} issue must contain exact Owner: and Decision: fields"
         )
 
 

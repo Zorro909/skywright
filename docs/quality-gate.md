@@ -91,6 +91,6 @@ every dismissed CodeQL alert after analysis. GitHub does not grant Actions' `GIT
 to secret-scanning alerts, so the daily `Security Governance` workflow audits every non-remediation
 secret resolution with `scripts/quality github-dismissal-policy --scanner secret-scanning`. Its
 `SECURITY_AUDIT_TOKEN` is a dedicated GitHub App installation token or fine-grained token with
-read-only secret-scanning-alert permission; it has no publication or infrastructure access and is
-not available to ordinary verification jobs. A missing credential fails the scheduled control
-visibly. Fork pull requests need no permission to read base-repository alerts.
+read-only secret-scanning-alert and issue permissions; it has no publication or infrastructure
+access and is not available to ordinary verification jobs. A missing credential fails the
+scheduled control visibly. Fork pull requests need no permission to read base-repository alerts.

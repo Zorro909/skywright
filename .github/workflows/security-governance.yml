@@ -20,7 +20,7 @@ jobs:
           SECURITY_AUDIT_TOKEN: ${{ secrets.SECURITY_AUDIT_TOKEN }}
         run: |
           if [ -z "$SECURITY_AUDIT_TOKEN" ]; then
-            echo "SECURITY_AUDIT_TOKEN must be authorized to read secret-scanning alerts" >&2
+            echo "SECURITY_AUDIT_TOKEN must read secret-scanning alerts and issues" >&2
             exit 1
           fi
       - name: Audit secret-scanning dismissals
