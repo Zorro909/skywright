@@ -3,8 +3,12 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-verification_directory="$(mktemp -d)"
-trap 'rm -rf "$verification_directory"' EXIT
+if [[ "$#" -eq 0 ]]; then
+  verification_directory="$(mktemp -d)"
+  trap 'rm -rf "$verification_directory"' EXIT
+else
+  verification_directory="$1"
+fi
 
 uv lock --check
 scripts/check

@@ -32,9 +32,10 @@ version. While the SDK is pre-1.0, a breaking change to the declared public API 
 version and release notes. Patch releases remain backward compatible with the public API of their
 minor release.
 
-SDK releases are tagged `sdk-v<version>`, for example `sdk-v0.1.0`. The compatibility check compares
-the declared public API against the latest such tag. Before the first SDK release tag exists, it
-prints an explicit skip; it never falls back to an unrelated repository tag.
+SDK releases are tagged `sdk-v<version>`, for example `sdk-v0.1.0`. Only the strict stable
+`sdk-vMAJOR.MINOR.PATCH` form is accepted; prerelease tags are not supported. The compatibility
+check compares the declared public API against the latest such tag. Before the first SDK release
+tag exists, it prints an explicit skip; it never falls back to an unrelated repository tag.
 
 ## Operational runtime command
 
@@ -157,7 +158,31 @@ root, with the repository's required Java and Maven toolchain:
 ./mvnw -pl sdk -am verify
 ```
 
-Before handing artifacts to release automation, run `scripts/verify`, inspect the distributions,
-and perform the release-mode build with the immutable commit ID. Issue #78 owns CI matrices,
-publication credentials, release tags, signing, provenance attestations, artifact retention, and
-required status checks; this SDK workflow prepares and verifies the inputs but does not publish.
+## Release a version
+
+Release preparation is a source change. Set the exact version in `pyproject.toml`, add the matching
+`## MAJOR.MINOR.PATCH` section to `CHANGELOG.md`, pass the normal quality gate, and merge that commit
+to `main`. Create `sdk-vMAJOR.MINOR.PATCH` at that exact commit and push the tag. The release workflow
+rejects any tag that is not reachable from `main`, does not match the committed package version and
+release notes, or does not resolve to the checked-out commit.
+
+The protected `sdk-release` environment must require a maintainer approval, prevent self-approval,
+and allow deployments only from protected `sdk-v*` tags. PyPI must configure a Trusted Publisher
+for repository `Zorro909/skywright`, workflow `sdk-release.yml`, environment `sdk-release`, and the
+unchanged project name `skywright`. The repository tag ruleset must reject force-updates and
+deletion of `sdk-v*` tags. These settings are deliberately external prerequisites: the workflow
+cannot weaken or create its own protection boundary.
+
+The protected job checks the lock and all contributor checks, builds the wheel and source
+distribution once in release mode, validates both clean installed-consumer paths, and creates a
+manifest before publication. Collision checks compare the verified SHA-256 identities with PyPI
+and any matching GitHub Release. An identical rerun skips already published destinations; a changed
+file fails. A missing or unauthorized PyPI `skywright` project fails at Trusted Publishing—the
+workflow never chooses another package name.
+
+PyPI receives those exact distributions through short-lived OIDC Trusted Publishing, with PEP 740
+publish attestations enabled. The matching GitHub Release receives the same files, `SHA256SUMS`,
+SPDX JSON SBOMs, build-provenance and SBOM attestation bundles, and verification guidance. Published
+files, tags, checksums, SBOMs, attestations, and GitHub Releases are permanent records: do not delete,
+replace, or apply an expiration policy to them. Routine CI distributions remain diagnostic artifacts
+with seven-day retention and are never inputs to the release workflow.
