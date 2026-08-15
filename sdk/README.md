@@ -54,7 +54,14 @@ restore any checkpoint, and retains ownership of its loop:
 ```python
 from collections.abc import Mapping
 
-from skywright import MetricDefinition, RunContext, run_training_process
+from skywright import (
+    DatasetBatch,
+    DatasetCursor,
+    MetricCatalog,
+    MetricDefinition,
+    RunContext,
+    run_training_process,
+)
 
 
 class Counter:
@@ -73,10 +80,66 @@ def train(context: RunContext) -> None:
     context.register_checkpoint_state("counter", counter)
     context.start()
 
-    for _item in context.dataset:
+    for batch in context.dataset.batches(context.dataset_cursor):
         counter.value += 1
         context.observe("train/items", 1)
-        context.commit_step()
+        context.commit_step(batch)
+
+
+class LocalDataset:
+    ordering_fingerprint = "sha256:local-ordering"
+
+    def batches(self, cursor: DatasetCursor):
+        yield DatasetBatch(
+            ("item-0",),
+            DatasetCursor(
+                item_offset=1,
+                epoch_step=1,
+                ordering_fingerprint=self.ordering_fingerprint,
+            ),
+        )
+
+
+class LocalRecorder:
+    def publish_attempt(self, attempt):
+        pass
+
+    def publish_step(
+        self, step, dataset_cursor, observations, durable_step, durable_reference
+    ):
+        pass
+
+    def publish_artifact(self, artifact):
+        pass
+
+    def publish_sample(self, sample):
+        pass
+
+    def publish_report(self, report):
+        pass
+
+    def publish_checkpoint(self, checkpoint):
+        return f"local-checkpoint:{checkpoint.step}"
+
+
+class LocalMetricContracts:
+    def compose(self, project_version, schema_identity):
+        return MetricCatalog(
+            project_identity=project_version,
+            project_contract_digest="sha256:project-contract",
+            skywright_schema_identity=schema_identity,
+            skywright_schema_digest="sha256:skywright-schema",
+            units=frozenset(("count",)),
+            project_definitions=(
+                MetricDefinition(
+                    name="train/items",
+                    numeric_kind="integer",
+                    unit="count",
+                    comparison="maximize",
+                    step_reduction="sum",
+                ),
+            ),
+        )
 
 
 result = run_training_process(
@@ -84,16 +147,10 @@ result = run_training_process(
     run_id="local-smoke",
     project_version="example@abc123",
     configuration={"batch_size": 1},
-    dataset=("item-0",),
-    metric_definitions=(
-        MetricDefinition(
-            name="train/items",
-            numeric_kind="integer",
-            unit="count",
-            comparison="maximize",
-            step_reduction="sum",
-        ),
-    ),
+    dataset=LocalDataset(),
+    metric_contracts=LocalMetricContracts(),
+    skywright_metric_schema="skywright-metrics@1",
+    recorder=LocalRecorder(),
     seed=7,
 )
 assert result.outcome.value == "completed"
@@ -103,13 +160,18 @@ Every invocation requires a fresh process or notebook kernel. The first context-
 attempt claims the process permanently, including failed construction. Python, NumPy, and PyTorch
 RNGs and deterministic numerical behavior are library-owned; NumPy and PyTorch are configured when
 the Environment Profile supplies them, without becoming SDK runtime dependencies. The first
-`SIGINT` or `SIGTERM` requests interruption at the next Step; a repeated signal forces immediate
-termination. Cancellation wins when both requests are present.
+`SIGINT` or `SIGTERM` requests interruption at the next Step and starts the configured shutdown
+grace; grace expiry or a repeated signal forces immediate termination. Cancellation wins when both
+requests are present.
 
-This milestone keeps checkpoint, metric-event, Sample, Artifact, and Dataset transport behind the
-runtime seam: `TrainingProcessResult` carries the accepted records and final immutable checkpoint
-snapshot for those persistence implementations. It does not implement a concrete Run Store,
-TensorBoard writer, or MosaicML Streaming transport.
+This milestone keeps checkpoint, metric-event, Sample, Artifact, and Dataset transport behind
+explicit protocols. A `DatasetAccess` implementation supplies batches and their next cursor; the
+Run Context accepts only a context-issued batch. `commit_step()` advances its cursor while
+atomically publishing the Step's metrics and progress. A `TrainingProcessRecorder` synchronously
+confirms attempt, checkpoint, metric/progress, output, and
+termination-report publication. Completion and recoverable interruption are returned only after a
+checkpoint reference and the final report are durable. The SDK does not implement a concrete Run
+Store, TensorBoard writer, or MosaicML Streaming transport.
 
 ## Operational runtime command
 
@@ -122,11 +184,15 @@ skywright-runtime my_project:train --definition run.json
 ```
 
 This command is infrastructure-facing rather than a second authoring interface. Its JSON definition
-names `run_id`, `project_version`, resolved `configuration`, Dataset items, `metric_definitions`,
-`seed`, and the explicit `accelerator`. It emits the Execution Termination Report as JSON. Exit 0 is
-completion, 75 is safely finalized recoverable interruption, 64 is terminal cancellation, and 1 is
-terminal failure. Help and version load no runtime services and report the installed SDK version
-and frozen source revision separately.
+names `run_id`, `project_version`, resolved `configuration`, `dataset_factory` and
+`recorder_factory` references, an optional `resume_factory`, `metric_contract_factory`, the pinned
+`skywright_metric_schema`, `seed`, and the explicit `accelerator`. Adapter factories use
+`MODULE:CALLABLE` form and belong in runtime infrastructure modules that do not import the Training
+Project. The project entry point itself is
+imported inside the deterministic process boundary. The command emits the Execution Termination
+Report as JSON. Exit 0 is completion, 75 is safely finalized recoverable interruption, 64 is
+terminal cancellation, and 1 is terminal failure. Help and version load no runtime services and
+report the installed SDK version and frozen source revision separately.
 
 ## Install and build natively
 

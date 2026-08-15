@@ -13,7 +13,7 @@ import signal
 import threading
 import uuid
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from types import MappingProxyType
 from typing import Literal, NoReturn, Protocol, TypeAlias, cast
@@ -22,6 +22,8 @@ NumericKind: TypeAlias = Literal["real", "integer"]
 Comparison: TypeAlias = Literal["minimize", "maximize", "none"]
 StepReduction: TypeAlias = Literal["mean", "sum", "min", "max", "last"]
 AcceleratorKind: TypeAlias = Literal["cpu", "cuda", "rocm"]
+FailureStage: TypeAlias = Literal["construction", "project", "finalization"]
+RecordingBasis: TypeAlias = Literal["step", "wall_time"]
 
 
 class TrainingProcessOutcome(Enum):
@@ -73,7 +75,8 @@ class MetricDefinition:
     numeric_kind: NumericKind
     unit: str
     comparison: Comparison
-    step_reduction: StepReduction
+    recording_basis: RecordingBasis = "step"
+    step_reduction: StepReduction | None = "mean"
     minimum: int | float | None = None
     maximum: int | float | None = None
     display_name: str | None = None
@@ -87,6 +90,42 @@ class MetricObservation:
     name: str
     step: int
     value: int | float
+
+
+@dataclass(frozen=True)
+class MetricCatalog:
+    """Pinned composition of project and Skywright metric contracts."""
+
+    project_identity: str
+    project_contract_digest: str
+    skywright_schema_identity: str
+    skywright_schema_digest: str
+    units: frozenset[str]
+    project_definitions: tuple[MetricDefinition, ...]
+    system_definitions: tuple[MetricDefinition, ...] = ()
+
+    @property
+    def definitions(self) -> tuple[MetricDefinition, ...]:
+        return self.project_definitions + self.system_definitions
+
+
+@dataclass(frozen=True)
+class DatasetCursor:
+    """Location of the next uncommitted Dataset Item."""
+
+    epoch: int = 0
+    item_offset: int = 0
+    epoch_step: int = 0
+    ordering_fingerprint: str = ""
+
+
+@dataclass(frozen=True)
+class DatasetBatch:
+    """Project-facing payload and the cursor committed with that work."""
+
+    items: tuple[object, ...]
+    next_cursor: DatasetCursor
+    epoch: int = 0
 
 
 @dataclass(frozen=True)
@@ -115,6 +154,8 @@ class CheckpointSnapshot:
     step: int
     state: Mapping[str, object]
     runtime_state: Mapping[str, object] = field(default_factory=_empty_runtime_state)
+    dataset_cursor: DatasetCursor = DatasetCursor()
+    reference: str | None = None
     run_id: str = ""
     project_version: str = ""
 
@@ -151,6 +192,7 @@ class ExecutionTerminationReport:
     cause: ExecutionTerminationCause
     last_committed_step: int
     latest_durable_step: int | None
+    latest_durable_checkpoint: str | None
     diagnostics: Mapping[str, object]
 
 
@@ -181,6 +223,46 @@ class ScalarValue(Protocol):
     def item(self) -> object: ...
 
 
+class DatasetAccess(Protocol):
+    """Backend-neutral access to the exact Dataset Item Sequence."""
+
+    @property
+    def ordering_fingerprint(self) -> str: ...
+
+    def batches(self, cursor: DatasetCursor) -> Iterable[DatasetBatch]: ...
+
+
+class TrainingProcessRecorder(Protocol):
+    """Durability seam owned by the Training Process Boundary."""
+
+    def publish_attempt(self, attempt: ExecutionAttemptRecord) -> None: ...
+
+    def publish_checkpoint(self, checkpoint: CheckpointSnapshot) -> str: ...
+
+    def publish_step(
+        self,
+        step: int,
+        dataset_cursor: DatasetCursor,
+        observations: tuple[MetricObservation, ...],
+        latest_durable_step: int | None,
+        latest_durable_checkpoint: str | None,
+    ) -> None: ...
+
+    def publish_artifact(self, artifact: ArtifactRecord) -> None: ...
+
+    def publish_sample(self, sample: SampleRecord) -> None: ...
+
+    def publish_report(self, report: ExecutionTerminationReport) -> None: ...
+
+
+class MetricContractResolver(Protocol):
+    """Loads pinned contracts and composes their immutable Metric Catalog."""
+
+    def compose(
+        self, project_version: str, skywright_schema_identity: str
+    ) -> MetricCatalog: ...
+
+
 class RunContext(Protocol):
     """The sole project-facing interface for one training process."""
 
@@ -188,7 +270,10 @@ class RunContext(Protocol):
     def configuration(self) -> Mapping[str, object]: ...
 
     @property
-    def dataset(self) -> Iterable[object]: ...
+    def dataset(self) -> DatasetAccess: ...
+
+    @property
+    def dataset_cursor(self) -> DatasetCursor: ...
 
     @property
     def accelerator(self) -> Accelerator: ...
@@ -211,7 +296,7 @@ class RunContext(Protocol):
 
     def observe(self, name: str, value: int | float | ScalarValue) -> None: ...
 
-    def commit_step(self) -> None: ...
+    def commit_step(self, final_batch: DatasetBatch) -> None: ...
 
     def persist_artifact(self, name: str, data: bytes) -> None: ...
 
@@ -227,9 +312,18 @@ class _CooperativeStop(BaseException):
         self.cause = cause
 
 
+class _SkywrightFailure(BaseException):
+    def __init__(self, failure: Exception, stage: FailureStage) -> None:
+        super().__init__(str(failure))
+        self.failure = failure
+        self.stage: FailureStage = stage
+
+
 class _SignalRequests:
-    def __init__(self) -> None:
+    def __init__(self, shutdown_grace_seconds: float) -> None:
         self.interruption_requested = False
+        self._shutdown_grace_seconds = shutdown_grace_seconds
+        self._forced_exit: threading.Timer | None = None
 
     def install(self) -> None:
         signal.signal(signal.SIGINT, self._handle)
@@ -239,6 +333,15 @@ class _SignalRequests:
         if self.interruption_requested:
             os._exit(1)
         self.interruption_requested = True
+        self._forced_exit = threading.Timer(
+            self._shutdown_grace_seconds, os._exit, args=(1,)
+        )
+        self._forced_exit.daemon = True
+        self._forced_exit.start()
+
+    def finalize(self) -> None:
+        if self._forced_exit is not None:
+            self._forced_exit.cancel()
 
 
 class TrainingContractViolation(RuntimeError):
@@ -251,13 +354,99 @@ class TrainingContractViolation(RuntimeError):
         self.guidance = guidance
 
 
+class _TrackedDatasetAccess:
+    def __init__(
+        self,
+        dataset: DatasetAccess,
+        cursor: DatasetCursor,
+        violate: Callable[[str, str, str], NoReturn],
+    ) -> None:
+        self._dataset = dataset
+        self._cursor = cursor
+        self._violate = violate
+        self._issued: dict[int, DatasetBatch] = {}
+        self._latest_issued: DatasetBatch | None = None
+        self._commit_count = 0
+
+    @property
+    def ordering_fingerprint(self) -> str:
+        return self._dataset.ordering_fingerprint
+
+    def batches(self, cursor: DatasetCursor) -> Iterable[DatasetBatch]:
+        if cursor != self._cursor:
+            self._violate(
+                "dataset-cursor/stale",
+                f"Dataset access received {cursor!r} instead of current cursor {self._cursor!r}",
+                "request batches using context.dataset_cursor",
+            )
+        previous = cursor
+        step_epoch: int | None = None
+        observed_commit_count = self._commit_count
+        try:
+            for batch in self._dataset.batches(cursor):
+                if self._commit_count != observed_commit_count:
+                    step_epoch = None
+                    observed_commit_count = self._commit_count
+                _validate_cursor_advance(previous, batch.next_cursor, self._violate)
+                if type(batch.epoch) is not int or batch.epoch < 0:
+                    self._violate(
+                        "dataset-batch/epoch",
+                        f"Dataset batch has invalid item epoch {batch.epoch!r}",
+                        "issue batches with the global epoch containing their items",
+                    )
+                if batch.next_cursor.epoch not in (batch.epoch, batch.epoch + 1):
+                    self._violate(
+                        "dataset-cursor/epoch-transition",
+                        "the Dataset batch cursor does not remain in or finish its item epoch",
+                        "advance to the same epoch or the immediately following epoch",
+                    )
+                if batch.next_cursor.ordering_fingerprint != self.ordering_fingerprint:
+                    self._violate(
+                        "dataset-cursor/fingerprint",
+                        "the Dataset batch cursor has a different ordering fingerprint",
+                        "use batches issued by the configured Dataset ordering adapter",
+                    )
+                if step_epoch is None:
+                    step_epoch = batch.epoch
+                elif batch.epoch != step_epoch:
+                    self._violate(
+                        "dataset-cursor/epoch-boundary",
+                        "the pending Step spans a Dataset epoch boundary",
+                        "commit the final batch from one epoch before requesting the next epoch",
+                    )
+                self._issued[id(batch)] = batch
+                self._latest_issued = batch
+                previous = batch.next_cursor
+                yield batch
+        except (TrainingContractViolation, _SkywrightFailure):
+            raise
+        except Exception as failure:
+            raise _SkywrightFailure(failure, "project") from failure
+
+    def consume(self, batch: DatasetBatch) -> DatasetCursor:
+        issued = self._issued.get(id(batch))
+        if issued is not batch or self._latest_issued is not batch:
+            self._violate(
+                "dataset-cursor/not-issued",
+                "commit_step() received a batch that was not the latest issued by this Run Context",
+                "commit the final Dataset batch whose work completed in this Step",
+            )
+        self._issued.clear()
+        self._latest_issued = None
+        self._commit_count += 1
+        self._cursor = batch.next_cursor
+        return self._cursor
+
+
 class _DefaultRunContext:
     def __init__(
         self,
         *,
         configuration: Mapping[str, object],
-        dataset: Iterable[object],
-        metric_definitions: Iterable[MetricDefinition],
+        dataset: DatasetAccess,
+        metric_contracts: MetricContractResolver,
+        skywright_metric_schema: str,
+        recorder: TrainingProcessRecorder,
         resume_from: CheckpointSnapshot | None,
         accelerator: Accelerator,
         cancellation_requested: Callable[[], bool],
@@ -267,20 +456,61 @@ class _DefaultRunContext:
     ) -> None:
         frozen_configuration = _freeze(copy.deepcopy(dict(configuration)))
         self._configuration = cast(Mapping[str, object], frozen_configuration)
-        self._dataset = dataset
+        self._recorder = recorder
         self._accelerator = accelerator
         self._cancellation_requested = cancellation_requested
         self._interruption_requested = interruption_requested
         self._run_id = run_id
         self._project_version = project_version
-        self._definitions = _validate_metric_definitions(metric_definitions)
+        try:
+            metric_catalog = metric_contracts.compose(
+                project_version, skywright_metric_schema
+            )
+        except Exception as failure:
+            raise _SkywrightFailure(failure, "construction") from failure
+        self._definitions = _validate_metric_catalog(
+            metric_catalog, project_version, skywright_metric_schema
+        )
         self._resume_state = ResumeState(resume_from)
+        if resume_from is not None and not resume_from.reference:
+            raise TrainingContractViolation(
+                "resume/checkpoint-reference",
+                "the resume checkpoint has no durable reference",
+                "resume only from a checkpoint confirmed by the Run Store publisher",
+            )
         self._states: dict[str, CheckpointState] = {}
         self._pending: dict[str, list[int | float]] = {}
         self._observations: list[MetricObservation] = []
         self._artifacts: list[ArtifactRecord] = []
         self._samples: list[SampleRecord] = []
         self._step = resume_from.step if resume_from is not None else 0
+        fingerprint = dataset.ordering_fingerprint
+        if not fingerprint:
+            raise TrainingContractViolation(
+                "dataset-ordering/fingerprint",
+                "the Dataset ordering fingerprint is empty",
+                "identify the Dataset Definition, seed, ordering policy, and policy version",
+            )
+        self._dataset_cursor = (
+            resume_from.dataset_cursor
+            if resume_from is not None
+            else DatasetCursor(ordering_fingerprint=fingerprint)
+        )
+        if self._dataset_cursor.ordering_fingerprint != fingerprint:
+            raise TrainingContractViolation(
+                "dataset-ordering/fingerprint",
+                "the checkpoint and configured Dataset ordering fingerprints differ",
+                "resume with identical ordering inputs or an explicit Ordering Reset",
+            )
+        self._dataset = _TrackedDatasetAccess(
+            dataset, self._dataset_cursor, self._violate
+        )
+        self._latest_durable_step = (
+            resume_from.step if resume_from is not None else None
+        )
+        self._latest_durable_checkpoint = (
+            resume_from.reference if resume_from is not None else None
+        )
         self._started = False
         self._violated: TrainingContractViolation | None = None
 
@@ -289,8 +519,12 @@ class _DefaultRunContext:
         return self._configuration
 
     @property
-    def dataset(self) -> Iterable[object]:
+    def dataset(self) -> DatasetAccess:
         return self._dataset
+
+    @property
+    def dataset_cursor(self) -> DatasetCursor:
+        return self._dataset_cursor
 
     @property
     def accelerator(self) -> Accelerator:
@@ -306,11 +540,19 @@ class _DefaultRunContext:
 
     @property
     def cancellation_requested(self) -> bool:
-        return self._cancellation_requested()
+        try:
+            return self._cancellation_requested()
+        except Exception as failure:
+            raise _SkywrightFailure(failure, "project") from failure
 
     @property
     def interruption_requested(self) -> bool:
-        return not self.cancellation_requested and self._interruption_requested()
+        if self.cancellation_requested:
+            return False
+        try:
+            return self._interruption_requested()
+        except Exception as failure:
+            raise _SkywrightFailure(failure, "project") from failure
 
     @property
     def observations(self) -> tuple[MetricObservation, ...]:
@@ -386,7 +628,10 @@ class _DefaultRunContext:
                 state.load_state_dict(
                     copy.deepcopy(cast(Mapping[str, object], restored))
                 )
-            _restore_runtime_state(checkpoint.runtime_state)
+            try:
+                _restore_runtime_state(checkpoint.runtime_state)
+            except Exception as failure:
+                raise _SkywrightFailure(failure, "project") from failure
         self._started = True
         return self._resume_state
 
@@ -435,12 +680,21 @@ class _DefaultRunContext:
             )
         self._pending.setdefault(name, []).append(value)
 
-    def commit_step(self) -> None:
+    def commit_step(self, final_batch: DatasetBatch) -> None:
         self._require_running("commit a Step")
+        next_dataset_cursor = self._dataset.consume(final_batch)
         next_step = self._step + 1
+        committed: list[MetricObservation] = []
         for name, values in self._pending.items():
             definition = self._definitions[name]
-            reduced = _reduce(values, definition.step_reduction)
+            reduction = definition.step_reduction
+            if reduction is None:
+                self._violate(
+                    "metric/recording-basis",
+                    f"wall-time metric {name!r} cannot be observed at a Step",
+                    "record only project-owned Step metrics through observe()",
+                )
+            reduced = _reduce(values, reduction)
             if definition.minimum is not None and reduced < definition.minimum:
                 self._violate(
                     "metric/bounds",
@@ -453,9 +707,21 @@ class _DefaultRunContext:
                     f"metric {name!r} reduced to {reduced!r} above {definition.maximum!r}",
                     "record observations whose reduced value satisfies the Metric Definition",
                 )
-            self._observations.append(MetricObservation(name, next_step, reduced))
+            committed.append(MetricObservation(name, next_step, reduced))
+        try:
+            self._recorder.publish_step(
+                next_step,
+                next_dataset_cursor,
+                tuple(committed),
+                self._latest_durable_step,
+                self._latest_durable_checkpoint,
+            )
+        except Exception as failure:
+            raise _SkywrightFailure(failure, "project") from failure
+        self._observations.extend(committed)
         self._pending.clear()
         self._step = next_step
+        self._dataset_cursor = next_dataset_cursor
         if self.cancellation_requested:
             raise _CooperativeStop(ExecutionTerminationCause.CANCELLED)
         if self.interruption_requested:
@@ -464,7 +730,12 @@ class _DefaultRunContext:
     def persist_artifact(self, name: str, data: object) -> None:
         self._require_running(f"persist Artifact {name!r}")
         validated = _validate_output(name, data, "Artifact", self._violate)
-        self._artifacts.append(ArtifactRecord(name, validated, self._step))
+        artifact = ArtifactRecord(name, validated, self._step)
+        try:
+            self._recorder.publish_artifact(artifact)
+        except Exception as failure:
+            raise _SkywrightFailure(failure, "project") from failure
+        self._artifacts.append(artifact)
 
     def persist_sample(self, name: str, data: object, *, media_type: str) -> None:
         self._require_running(f"persist Sample {name!r}")
@@ -475,7 +746,12 @@ class _DefaultRunContext:
                 f"Sample {name!r} has invalid media type {media_type!r}",
                 "supply a concrete media type such as image/png or audio/wav",
             )
-        self._samples.append(SampleRecord(name, validated, media_type, self._step))
+        sample = SampleRecord(name, validated, media_type, self._step)
+        try:
+            self._recorder.publish_sample(sample)
+        except Exception as failure:
+            raise _SkywrightFailure(failure, "project") from failure
+        self._samples.append(sample)
 
     def snapshot(self) -> CheckpointSnapshot:
         state = {
@@ -486,6 +762,7 @@ class _DefaultRunContext:
             step=self._step,
             state=MappingProxyType(state),
             runtime_state=MappingProxyType(_capture_runtime_state()),
+            dataset_cursor=self._dataset_cursor,
             run_id=self._run_id,
             project_version=self._project_version,
         )
@@ -544,57 +821,109 @@ def _never_requested() -> bool:
 
 
 def run_training_process(
-    entry_point: TrainingProject,
+    entry_point: TrainingProject | str,
     *,
     run_id: str,
     project_version: str,
     configuration: Mapping[str, object],
-    dataset: Iterable[object],
-    metric_definitions: Iterable[MetricDefinition],
+    dataset: DatasetAccess | str,
+    metric_contracts: MetricContractResolver | str,
+    skywright_metric_schema: str,
+    recorder: TrainingProcessRecorder | str,
     seed: int,
-    resume_from: CheckpointSnapshot | None = None,
+    resume_from: CheckpointSnapshot | str | None = None,
     accelerator: Accelerator = _CPU_ACCELERATOR,
     cancellation_requested: Callable[[], bool] = _never_requested,
     interruption_requested: Callable[[], bool] = _never_requested,
+    shutdown_grace_seconds: float = 30.0,
 ) -> TrainingProcessResult:
     """Execute one Training Project through the process's sole Run Context."""
 
+    try:
+        _claim_process()
+    except TrainingContractViolation as violation:
+        attempt = ExecutionAttemptRecord(
+            attempt_id=str(uuid.uuid4()),
+            run_id=run_id,
+            project_version=project_version,
+            seed_checkpoint_step=None,
+        )
+        return _unpublished_failure(attempt, violation, "construction")
     attempt = ExecutionAttemptRecord(
         attempt_id=str(uuid.uuid4()),
         run_id=run_id,
         project_version=project_version,
-        seed_checkpoint_step=resume_from.step if resume_from is not None else None,
+        seed_checkpoint_step=(
+            resume_from.step if isinstance(resume_from, CheckpointSnapshot) else None
+        ),
     )
-    try:
-        _claim_process()
-    except TrainingContractViolation as violation:
-        return _failure_result(attempt, violation, None, resume_from, "construction")
     if not run_id or not project_version:
         violation = TrainingContractViolation(
             "training-process/identity",
             "the Run identity or Training Project Version is empty",
             "provide stable non-empty run_id and project_version values",
         )
-        return _failure_result(attempt, violation, None, resume_from, "construction")
-    signal_requests = _SignalRequests()
+        return _unpublished_failure(attempt, violation, "construction")
+    if shutdown_grace_seconds <= 0 or not math.isfinite(shutdown_grace_seconds):
+        violation = TrainingContractViolation(
+            "training-process/shutdown-grace",
+            f"shutdown grace {shutdown_grace_seconds!r} is not positive and finite",
+            "configure a positive finite shutdown grace in seconds",
+        )
+        return _unpublished_failure(attempt, violation, "construction")
+    signal_requests = _SignalRequests(shutdown_grace_seconds)
     try:
         signal_requests.install()
     except Exception as failure:
-        return _failure_result(attempt, failure, None, resume_from, "construction")
+        return _unpublished_failure(attempt, failure, "construction")
     try:
         _establish_determinism(seed)
     except Exception as failure:
-        return _failure_result(attempt, failure, None, resume_from, "construction")
+        return _unpublished_failure(attempt, failure, "construction")
+
+    def finish(result: TrainingProcessResult) -> TrainingProcessResult:
+        signal_requests.finalize()
+        return result
 
     def any_interruption_requested() -> bool:
         return signal_requests.interruption_requested or interruption_requested()
 
     try:
+        resolved_recorder = cast(
+            TrainingProcessRecorder, _resolve_component(recorder, "recorder")
+        )
+        resolved_resume = (
+            cast(
+                CheckpointSnapshot,
+                _resolve_component(resume_from, "resume checkpoint"),
+            )
+            if resume_from is not None
+            else None
+        )
+        attempt = replace(
+            attempt,
+            seed_checkpoint_step=(
+                resolved_resume.step if resolved_resume is not None else None
+            ),
+        )
+        resolved_recorder.publish_attempt(attempt)
+    except Exception as failure:
+        return finish(_unpublished_failure(attempt, failure, "construction"))
+    try:
+        resolved_dataset = cast(
+            DatasetAccess, _resolve_component(dataset, "Dataset access")
+        )
+        resolved_metric_contracts = cast(
+            MetricContractResolver,
+            _resolve_component(metric_contracts, "metric contract resolver"),
+        )
         context = _DefaultRunContext(
             configuration=configuration,
-            dataset=dataset,
-            metric_definitions=metric_definitions,
-            resume_from=resume_from,
+            dataset=resolved_dataset,
+            metric_contracts=resolved_metric_contracts,
+            skywright_metric_schema=skywright_metric_schema,
+            recorder=resolved_recorder,
+            resume_from=resolved_resume,
             accelerator=accelerator,
             cancellation_requested=cancellation_requested,
             interruption_requested=any_interruption_requested,
@@ -602,40 +931,102 @@ def run_training_process(
             project_version=project_version,
         )
     except TrainingContractViolation as violation:
-        return _failure_result(attempt, violation, None, resume_from, "construction")
+        return finish(
+            _failure_result(
+                attempt,
+                violation,
+                None,
+                resolved_resume,
+                "construction",
+                resolved_recorder,
+                True,
+            )
+        )
+    except _SkywrightFailure as failure:
+        return finish(
+            _failure_result(
+                attempt,
+                failure.failure,
+                None,
+                resolved_resume,
+                failure.stage,
+                resolved_recorder,
+                True,
+                skywright_failure=True,
+            )
+        )
     except Exception as failure:
-        return _failure_result(attempt, failure, None, resume_from, "construction")
+        return finish(
+            _failure_result(
+                attempt,
+                failure,
+                None,
+                resolved_resume,
+                "construction",
+                resolved_recorder,
+                True,
+            )
+        )
     try:
-        entry_point(context)
+        project = (
+            _load_training_project(entry_point)
+            if isinstance(entry_point, str)
+            else entry_point
+        )
+        project(context)
         context.validate_completion()
     except _CooperativeStop as stop:
-        return _stopped_result(attempt, stop.cause, context, resume_from)
+        return finish(
+            _stopped_result(
+                attempt, stop.cause, context, resolved_resume, resolved_recorder
+            )
+        )
+    except _SkywrightFailure as failure:
+        return finish(
+            _failure_result(
+                attempt,
+                failure.failure,
+                context,
+                resolved_resume,
+                failure.stage,
+                resolved_recorder,
+                True,
+                skywright_failure=True,
+            )
+        )
     except TrainingContractViolation as violation:
-        return _failure_result(attempt, violation, context, resume_from, "project")
+        return finish(
+            _failure_result(
+                attempt,
+                violation,
+                context,
+                resolved_resume,
+                "project",
+                resolved_recorder,
+                True,
+            )
+        )
     except Exception as failure:
-        return _failure_result(attempt, failure, context, resume_from, "project")
-    try:
-        checkpoint = context.snapshot()
-    except Exception as failure:
-        return _failure_result(attempt, failure, context, resume_from, "finalization")
-    report = ExecutionTerminationReport(
-        schema_version=1,
-        attempt_id=attempt.attempt_id,
-        run_id=attempt.run_id,
-        project_version=attempt.project_version,
-        cause=ExecutionTerminationCause.COMPLETED,
-        last_committed_step=context.step,
-        latest_durable_step=checkpoint.step,
-        diagnostics=MappingProxyType({}),
-    )
-    return TrainingProcessResult(
-        outcome=TrainingProcessOutcome.COMPLETED,
-        attempt=attempt,
-        report=report,
-        final_checkpoint=checkpoint,
-        metric_observations=context.observations,
-        artifacts=context.artifacts,
-        samples=context.samples,
+        return finish(
+            _failure_result(
+                attempt,
+                failure,
+                context,
+                resolved_resume,
+                "project",
+                resolved_recorder,
+                True,
+            )
+        )
+    return finish(
+        _durable_result(
+            attempt,
+            TrainingProcessOutcome.COMPLETED,
+            ExecutionTerminationCause.COMPLETED,
+            context,
+            resolved_resume,
+            resolved_recorder,
+        )
     )
 
 
@@ -644,44 +1035,63 @@ def _stopped_result(
     cause: ExecutionTerminationCause,
     context: _DefaultRunContext,
     resume_from: CheckpointSnapshot | None,
+    recorder: TrainingProcessRecorder,
 ) -> TrainingProcessResult:
-    checkpoint: CheckpointSnapshot | None = None
     if cause is ExecutionTerminationCause.INTERRUPTED:
-        try:
-            checkpoint = context.snapshot()
-        except Exception as failure:
-            return _failure_result(
-                attempt, failure, context, resume_from, "finalization"
-            )
-    durable_step = (
-        checkpoint.step
-        if checkpoint is not None
-        else (resume_from.step if resume_from is not None else None)
-    )
-    report = ExecutionTerminationReport(
-        schema_version=1,
-        attempt_id=attempt.attempt_id,
-        run_id=attempt.run_id,
-        project_version=attempt.project_version,
+        return _durable_result(
+            attempt,
+            TrainingProcessOutcome.INTERRUPTED,
+            cause,
+            context,
+            resume_from,
+            recorder,
+        )
+    result = _result(
+        attempt=attempt,
+        outcome=TrainingProcessOutcome.CANCELLED,
         cause=cause,
         last_committed_step=context.step,
-        latest_durable_step=durable_step,
-        diagnostics=MappingProxyType({}),
+        latest_durable_step=resume_from.step if resume_from is not None else None,
+        latest_durable_checkpoint=(
+            resume_from.reference if resume_from is not None else None
+        ),
+        final_checkpoint=None,
+        context=context,
+        diagnostics={},
     )
-    outcome = (
-        TrainingProcessOutcome.INTERRUPTED
-        if cause is ExecutionTerminationCause.INTERRUPTED
-        else TrainingProcessOutcome.CANCELLED
-    )
-    return TrainingProcessResult(
-        outcome=outcome,
+    return _publish_report(result, recorder)
+
+
+def _durable_result(
+    attempt: ExecutionAttemptRecord,
+    outcome: TrainingProcessOutcome,
+    cause: ExecutionTerminationCause,
+    context: _DefaultRunContext,
+    resume_from: CheckpointSnapshot | None,
+    recorder: TrainingProcessRecorder,
+) -> TrainingProcessResult:
+    try:
+        checkpoint = context.snapshot()
+        reference = recorder.publish_checkpoint(checkpoint)
+        if not reference:
+            raise ValueError("checkpoint publisher returned an empty reference")
+        checkpoint = replace(checkpoint, reference=reference)
+    except Exception as failure:
+        return _failure_result(
+            attempt, failure, context, resume_from, "finalization", recorder, True
+        )
+    result = _result(
         attempt=attempt,
-        report=report,
+        outcome=outcome,
+        cause=cause,
+        last_committed_step=context.step,
+        latest_durable_step=checkpoint.step,
+        latest_durable_checkpoint=reference,
         final_checkpoint=checkpoint,
-        metric_observations=context.observations,
-        artifacts=context.artifacts,
-        samples=context.samples,
+        context=context,
+        diagnostics={},
     )
+    return _publish_report(result, recorder)
 
 
 def _failure_result(
@@ -689,9 +1099,13 @@ def _failure_result(
     failure: Exception,
     context: _DefaultRunContext | None,
     resume_from: CheckpointSnapshot | None,
-    stage: str,
+    stage: FailureStage,
+    recorder: TrainingProcessRecorder,
+    attempt_published: bool,
+    *,
+    skywright_failure: bool = False,
 ) -> TrainingProcessResult:
-    if isinstance(failure, TrainingContractViolation):
+    if isinstance(failure, TrainingContractViolation) and not skywright_failure:
         cause = ExecutionTerminationCause.CONTRACT_VIOLATION
         diagnostics: dict[str, object] = {
             "rule": failure.rule,
@@ -699,7 +1113,7 @@ def _failure_result(
             "guidance": failure.guidance,
             "stage": stage,
         }
-    elif stage == "project":
+    elif stage == "project" and not skywright_failure:
         cause = ExecutionTerminationCause.TRAINING_PROJECT_FAILURE
         diagnostics = {
             "exception_type": type(failure).__name__,
@@ -715,25 +1129,139 @@ def _failure_result(
         }
     last_step = context.step if context is not None else 0
     durable_step = resume_from.step if resume_from is not None else None
+    result = _result(
+        attempt=attempt,
+        outcome=TrainingProcessOutcome.FAILED,
+        cause=cause,
+        last_committed_step=last_step,
+        latest_durable_step=durable_step,
+        latest_durable_checkpoint=(
+            resume_from.reference if resume_from is not None else None
+        ),
+        final_checkpoint=None,
+        context=context,
+        diagnostics=diagnostics,
+    )
+    return _publish_report(result, recorder) if attempt_published else result
+
+
+def _unpublished_failure(
+    attempt: ExecutionAttemptRecord, failure: Exception, stage: FailureStage
+) -> TrainingProcessResult:
+    if isinstance(failure, TrainingContractViolation):
+        cause = ExecutionTerminationCause.CONTRACT_VIOLATION
+        diagnostics: dict[str, object] = {
+            "rule": failure.rule,
+            "problem": failure.problem,
+            "guidance": failure.guidance,
+            "stage": stage,
+        }
+    else:
+        cause = ExecutionTerminationCause.SKYWRIGHT_FAILURE
+        diagnostics = {
+            "exception_type": type(failure).__name__,
+            "message": str(failure),
+            "stage": stage,
+        }
+    return _result(
+        attempt=attempt,
+        outcome=TrainingProcessOutcome.FAILED,
+        cause=cause,
+        last_committed_step=0,
+        latest_durable_step=None,
+        latest_durable_checkpoint=None,
+        final_checkpoint=None,
+        context=None,
+        diagnostics=diagnostics,
+    )
+
+
+def _result(
+    *,
+    attempt: ExecutionAttemptRecord,
+    outcome: TrainingProcessOutcome,
+    cause: ExecutionTerminationCause,
+    last_committed_step: int,
+    latest_durable_step: int | None,
+    latest_durable_checkpoint: str | None,
+    final_checkpoint: CheckpointSnapshot | None,
+    context: _DefaultRunContext | None,
+    diagnostics: Mapping[str, object],
+) -> TrainingProcessResult:
     report = ExecutionTerminationReport(
         schema_version=1,
         attempt_id=attempt.attempt_id,
         run_id=attempt.run_id,
         project_version=attempt.project_version,
         cause=cause,
-        last_committed_step=last_step,
-        latest_durable_step=durable_step,
-        diagnostics=MappingProxyType(diagnostics),
+        last_committed_step=last_committed_step,
+        latest_durable_step=latest_durable_step,
+        latest_durable_checkpoint=latest_durable_checkpoint,
+        diagnostics=MappingProxyType(dict(diagnostics)),
     )
     return TrainingProcessResult(
-        outcome=TrainingProcessOutcome.FAILED,
+        outcome=outcome,
         attempt=attempt,
         report=report,
-        final_checkpoint=None,
+        final_checkpoint=final_checkpoint,
         metric_observations=context.observations if context is not None else (),
         artifacts=context.artifacts if context is not None else (),
         samples=context.samples if context is not None else (),
     )
+
+
+def _publish_report(
+    result: TrainingProcessResult, recorder: TrainingProcessRecorder
+) -> TrainingProcessResult:
+    try:
+        recorder.publish_report(result.report)
+        return result
+    except Exception as failure:
+        diagnostics = dict(result.report.diagnostics)
+        diagnostics["report_publication_failure"] = {
+            "exception_type": type(failure).__name__,
+            "message": str(failure),
+        }
+        preserves_cause = result.report.cause in (
+            ExecutionTerminationCause.CONTRACT_VIOLATION,
+            ExecutionTerminationCause.TRAINING_PROJECT_FAILURE,
+            ExecutionTerminationCause.SKYWRIGHT_FAILURE,
+        )
+        return replace(
+            result,
+            outcome=TrainingProcessOutcome.FAILED,
+            report=replace(
+                result.report,
+                cause=(
+                    result.report.cause
+                    if preserves_cause
+                    else ExecutionTerminationCause.SKYWRIGHT_FAILURE
+                ),
+                diagnostics=MappingProxyType(diagnostics),
+            ),
+        )
+
+
+def _load_training_project(reference: str) -> TrainingProject:
+    module_name, separator, attribute_name = reference.partition(":")
+    if not separator or not module_name or not attribute_name:
+        raise ValueError("entry point must use MODULE:CALLABLE form")
+    project = getattr(importlib.import_module(module_name), attribute_name)
+    if not callable(project):
+        raise TypeError(f"entry point {reference!r} is not callable")
+    return cast(TrainingProject, project)
+
+
+def _resolve_component(component: object, kind: str) -> object:
+    if not isinstance(component, str):
+        return component
+    module_name, separator, attribute_name = component.partition(":")
+    if not separator or not module_name or not attribute_name:
+        raise ValueError(f"{kind} factory must use MODULE:CALLABLE form")
+    factory = getattr(importlib.import_module(module_name), attribute_name)
+    if not callable(factory):
+        raise TypeError(f"{kind} factory {component!r} is not callable")
+    return factory()
 
 
 def _claim_process() -> None:
@@ -803,16 +1331,104 @@ def _reduce(values: list[int | float], reduction: StepReduction) -> int | float:
     return sum(values) / len(values)
 
 
+def _validate_metric_catalog(
+    catalog: MetricCatalog,
+    project_version: str,
+    skywright_schema_identity: str,
+) -> dict[str, MetricDefinition]:
+    if not (catalog.project_identity and catalog.project_contract_digest):
+        raise TrainingContractViolation(
+            "metric-catalog/project-identity",
+            "the Metric Catalog is missing its project identity or contract digest",
+            "load the contract pinned by the exact Training Project Version",
+        )
+    if not (
+        catalog.skywright_schema_identity
+        and catalog.skywright_schema_digest
+        and catalog.units
+    ):
+        _raise_catalog_failure(
+            "metric-catalog/schema-identity",
+            "the composed catalog is missing its Skywright schema identity, digest, or unit registry",
+            "load the complete pinned Skywright Metric Schema",
+        )
+    if catalog.project_identity != project_version:
+        raise TrainingContractViolation(
+            "metric-catalog/project-identity",
+            f"Metric Catalog project {catalog.project_identity!r} does not match {project_version!r}",
+            "use the catalog composed for the exact Training Project Version",
+        )
+    if catalog.skywright_schema_identity != skywright_schema_identity:
+        _raise_catalog_failure(
+            "metric-catalog/schema-identity",
+            f"Metric Catalog schema {catalog.skywright_schema_identity!r} does not match {skywright_schema_identity!r}",
+            "compose with the exact Skywright Metric Schema pinned by the Run Definition",
+        )
+    project = _validate_metric_definitions(catalog.project_definitions, system=False)
+    try:
+        system = _validate_metric_definitions(catalog.system_definitions, system=True)
+    except TrainingContractViolation as failure:
+        raise _SkywrightFailure(failure, "construction") from failure
+    overlap = set(project).intersection(system)
+    if overlap:
+        _raise_catalog_failure(
+            "metric-catalog/duplicate",
+            f"Metric Catalog contains duplicate names {sorted(overlap)!r}",
+            "compose exactly one Metric Definition for each canonical name",
+        )
+    unknown_project_units = {
+        definition.unit
+        for definition in catalog.project_definitions
+        if definition.unit not in catalog.units
+    }
+    if unknown_project_units:
+        raise TrainingContractViolation(
+            "metric-catalog/unit-registry",
+            f"Project Metric Contract uses units outside the pinned registry {sorted(unknown_project_units)!r}",
+            "declare only units from the versioned Skywright Metric Schema",
+        )
+    unknown_system_units = {
+        definition.unit
+        for definition in catalog.system_definitions
+        if definition.unit not in catalog.units
+    }
+    if unknown_system_units:
+        failure = TrainingContractViolation(
+            "metric-catalog/system-unit-registry",
+            f"Skywright Metric Schema uses unknown units {sorted(unknown_system_units)!r}",
+            "publish a valid internally consistent Skywright Metric Schema",
+        )
+        raise _SkywrightFailure(failure, "construction")
+    return project
+
+
+def _raise_catalog_failure(rule: str, problem: str, guidance: str) -> NoReturn:
+    failure = TrainingContractViolation(rule, problem, guidance)
+    raise _SkywrightFailure(failure, "construction")
+
+
 def _validate_metric_definitions(
-    definitions: Iterable[MetricDefinition],
+    definitions: Iterable[MetricDefinition], *, system: bool
 ) -> dict[str, MetricDefinition]:
     catalog: dict[str, MetricDefinition] = {}
     for definition in definitions:
-        if definition.name.startswith("skywright/"):
+        if not system and definition.name.startswith("skywright/"):
             raise TrainingContractViolation(
                 "metric-definition/reserved-name",
                 f"project metric {definition.name!r} uses the skywright/ namespace",
                 "declare project metrics outside the library-owned namespace",
+            )
+        if system and not definition.name.startswith("skywright/system/"):
+            raise TrainingContractViolation(
+                "metric-definition/system-name",
+                f"system metric {definition.name!r} is outside the skywright/ namespace",
+                "declare library-owned metrics under skywright/system/",
+            )
+        if not system and definition.recording_basis != "step":
+            raise TrainingContractViolation(
+                "metric-definition/project-basis",
+                f"project metric {definition.name!r} is not Step-based",
+                "declare project metrics with the step Recording Basis",
             )
         if re.fullmatch(r"[a-z][a-z0-9_]*(/[a-z][a-z0-9_]*)+", definition.name) is None:
             raise TrainingContractViolation(
@@ -838,13 +1454,38 @@ def _validate_metric_definitions(
                 f"metric {definition.name!r} has unknown comparison {definition.comparison!r}",
                 "use minimize, maximize, or none",
             )
-        if definition.step_reduction not in ("mean", "sum", "min", "max", "last"):
+        if definition.recording_basis not in ("step", "wall_time"):
+            raise TrainingContractViolation(
+                "metric-definition/recording-basis",
+                f"metric {definition.name!r} has unknown Recording Basis {definition.recording_basis!r}",
+                "use step or wall_time",
+            )
+        if (
+            definition.recording_basis == "wall_time"
+            and definition.step_reduction is not None
+        ):
+            raise TrainingContractViolation(
+                "metric-definition/wall-time-reduction",
+                f"wall-time metric {definition.name!r} declares a Step Reduction",
+                "omit step_reduction for wall-time metrics",
+            )
+        if definition.recording_basis == "step" and definition.step_reduction not in (
+            "mean",
+            "sum",
+            "min",
+            "max",
+            "last",
+        ):
             raise TrainingContractViolation(
                 "metric-definition/reduction",
                 f"metric {definition.name!r} has unknown Step Reduction {definition.step_reduction!r}",
                 "use mean, sum, min, max, or last",
             )
-        if definition.numeric_kind == "integer" and definition.step_reduction == "mean":
+        if (
+            definition.recording_basis == "step"
+            and definition.numeric_kind == "integer"
+            and definition.step_reduction == "mean"
+        ):
             raise TrainingContractViolation(
                 "metric-definition/integer-mean",
                 f"integer metric {definition.name!r} uses mean reduction",
@@ -880,6 +1521,36 @@ def _validate_metric_definitions(
             )
         catalog[definition.name] = definition
     return catalog
+
+
+def _validate_cursor_advance(
+    current: DatasetCursor,
+    next_cursor: DatasetCursor,
+    violate: Callable[[str, str, str], NoReturn],
+) -> None:
+    values = (
+        next_cursor.epoch,
+        next_cursor.item_offset,
+        next_cursor.epoch_step,
+    )
+    if any(type(value) is not int or value < 0 for value in values):
+        violate(
+            "dataset-cursor/shape",
+            f"next Dataset Cursor {next_cursor!r} contains an invalid position",
+            "commit a cursor containing non-negative integer positions",
+        )
+    if next_cursor.epoch < current.epoch or (
+        next_cursor.epoch == current.epoch
+        and (
+            next_cursor.item_offset <= current.item_offset
+            or next_cursor.epoch_step <= current.epoch_step
+        )
+    ):
+        violate(
+            "dataset-cursor/not-advanced",
+            f"next Dataset Cursor {next_cursor!r} does not advance {current!r}",
+            "commit the cursor supplied by the Dataset batch after its work succeeds",
+        )
 
 
 def _freeze(value: object) -> object:

@@ -8,9 +8,14 @@ from skywright import (
     ArtifactRecord,
     CheckpointSnapshot,
     CheckpointState,
+    DatasetAccess,
+    DatasetBatch,
+    DatasetCursor,
     ExecutionAttemptRecord,
     ExecutionTerminationCause,
     ExecutionTerminationReport,
+    MetricCatalog,
+    MetricContractResolver,
     MetricDefinition,
     MetricObservation,
     ResumeState,
@@ -19,6 +24,7 @@ from skywright import (
     ScalarValue,
     TrainingContractViolation,
     TrainingProcessOutcome,
+    TrainingProcessRecorder,
     TrainingProcessResult,
     TrainingProject,
     __version__,
@@ -48,7 +54,8 @@ def training_project(context: RunContext) -> None:
     state: CheckpointState = ConsumerState()
     context.register_checkpoint_state("consumer", state)
     context.start()
-    context.commit_step()
+    batch = next(iter(context.dataset.batches(context.dataset_cursor)))
+    context.commit_step(batch)
 
 
 project: TrainingProject = training_project
@@ -57,10 +64,13 @@ public_types: tuple[type[object], ...] = (
     Accelerator,
     ArtifactRecord,
     CheckpointSnapshot,
+    DatasetBatch,
+    DatasetCursor,
     ExecutionAttemptRecord,
     ExecutionTerminationCause,
     ExecutionTerminationReport,
     MetricDefinition,
+    MetricCatalog,
     MetricObservation,
     ResumeState,
     SampleRecord,
@@ -69,4 +79,7 @@ public_types: tuple[type[object], ...] = (
     TrainingProcessResult,
 )
 scalar: ScalarValue
+dataset_access: DatasetAccess
+recorder: TrainingProcessRecorder
+metric_contract_resolver: MetricContractResolver
 del project, public_types, runner

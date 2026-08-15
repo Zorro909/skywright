@@ -140,6 +140,11 @@ def test_runtime_command_executes_a_training_project(
 ) -> None:
     (tmp_path / "installed_project.py").write_text(
         """
+import random
+
+assert random.random() == random.Random(8).random()
+
+
 class State:
     def state_dict(self):
         return {"step": 1}
@@ -151,7 +156,55 @@ class State:
 def train(context):
     context.register_checkpoint_state("state", State())
     context.start()
-    context.commit_step()
+    context.commit_step(next(iter(context.dataset.batches(context.dataset_cursor))))
+
+
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "installed_runtime_support.py").write_text(
+        """
+from skywright import DatasetBatch, DatasetCursor, MetricCatalog
+
+
+class Dataset:
+    @property
+    def ordering_fingerprint(self): return "sha256:installed-ordering"
+
+    def batches(self, cursor):
+        yield DatasetBatch(("item",), DatasetCursor(
+            item_offset=1,
+            epoch_step=1,
+            ordering_fingerprint=self.ordering_fingerprint,
+        ))
+
+
+class Recorder:
+    def publish_attempt(self, attempt): pass
+    def publish_checkpoint(self, checkpoint): return "checkpoint:installed"
+    def publish_step(self, step, dataset_cursor, observations, durable_step, durable_ref): pass
+    def publish_artifact(self, artifact): pass
+    def publish_sample(self, sample): pass
+    def publish_report(self, report): pass
+
+
+def dataset(): return Dataset()
+def recorder(): return Recorder()
+
+
+class MetricContracts:
+    def compose(self, project_version, schema_identity):
+        return MetricCatalog(
+            project_identity=project_version,
+            project_contract_digest="sha256:project",
+            skywright_schema_identity=schema_identity,
+            skywright_schema_digest="sha256:skywright",
+            units=frozenset(("dimensionless",)),
+            project_definitions=(),
+        )
+
+
+def metric_contracts(): return MetricContracts()
 """,
         encoding="utf-8",
     )
@@ -162,8 +215,10 @@ def train(context):
                 "run_id": "installed-run",
                 "project_version": "installed-project@abc123",
                 "configuration": {},
-                "dataset": [],
-                "metric_definitions": [],
+                "dataset_factory": "installed_runtime_support:dataset",
+                "recorder_factory": "installed_runtime_support:recorder",
+                "metric_contract_factory": "installed_runtime_support:metric_contracts",
+                "skywright_metric_schema": "skywright-metrics@1",
                 "seed": 8,
                 "accelerator": {"kind": "cpu"},
             }

@@ -8,6 +8,98 @@ from pathlib import Path
 
 SDK_ROOT = Path(__file__).parents[1]
 
+PROCESS_SUPPORT = """
+from skywright import DatasetBatch, DatasetCursor, MetricCatalog
+
+
+class TestDataset:
+    def __init__(self, items=("item",) * 20):
+        self.items = tuple(items)
+
+    @property
+    def ordering_fingerprint(self):
+        return "sha256:test-ordering"
+
+    def batches(self, cursor):
+        remaining = self.items[cursor.item_offset:]
+        for item_offset, item in enumerate(remaining, start=cursor.item_offset):
+            yield DatasetBatch(
+                items=(item,),
+                next_cursor=DatasetCursor(
+                    epoch=cursor.epoch,
+                    item_offset=item_offset + 1,
+                    epoch_step=(
+                        cursor.epoch_step + item_offset - cursor.item_offset + 1
+                    ),
+                    ordering_fingerprint=self.ordering_fingerprint,
+                ),
+                epoch=cursor.epoch,
+            )
+
+
+class TestRecorder:
+    def __init__(self):
+        self.events = []
+
+    def publish_attempt(self, attempt):
+        self.events.append(("attempt", attempt))
+
+    def publish_checkpoint(self, checkpoint):
+        self.events.append(("checkpoint", checkpoint))
+        return f"checkpoint:{checkpoint.step}"
+
+    def publish_step(
+        self,
+        step,
+        dataset_cursor,
+        observations,
+        latest_durable_step,
+        latest_durable_checkpoint,
+    ):
+        self.events.append(("step", step, dataset_cursor, observations))
+
+    def publish_artifact(self, artifact):
+        self.events.append(("artifact", artifact))
+
+    def publish_sample(self, sample):
+        self.events.append(("sample", sample))
+
+    def publish_report(self, report):
+        self.events.append(("report", report))
+
+
+def test_catalog(*definitions):
+    return MetricCatalog(
+        project_identity="test-project@abc123",
+        project_contract_digest="sha256:project-contract",
+        skywright_schema_identity="test-schema@1",
+        skywright_schema_digest="sha256:skywright-schema",
+        units=frozenset(("count", "dimensionless")),
+        project_definitions=tuple(definitions),
+    )
+
+
+class TestMetricContracts:
+    def __init__(self, *definitions):
+        self.definitions = definitions
+
+    def compose(self, project_version, skywright_schema_identity):
+        catalog = test_catalog(*self.definitions)
+        return MetricCatalog(
+            project_identity=project_version,
+            project_contract_digest=catalog.project_contract_digest,
+            skywright_schema_identity=skywright_schema_identity,
+            skywright_schema_digest=catalog.skywright_schema_digest,
+            units=catalog.units,
+            project_definitions=catalog.project_definitions,
+            system_definitions=catalog.system_definitions,
+        )
+
+
+def next_batch(context):
+    return next(iter(context.dataset.batches(context.dataset_cursor)))
+"""
+
 
 def process_environment() -> dict[str, str]:
     environment = os.environ.copy()
@@ -17,7 +109,7 @@ def process_environment() -> dict[str, str]:
 
 def run_project(source: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, "-c", source],
+        [sys.executable, "-c", PROCESS_SUPPORT + source],
         check=False,
         cwd=SDK_ROOT,
         env=process_environment(),
@@ -51,16 +143,17 @@ def train(context):
     context.start()
     counter.value = 1
     context.observe("train/loss", 1.5)
-    context.commit_step()
+    context.commit_step(next_batch(context))
 
 
+recorder = TestRecorder()
 result = run_training_process(
     train,
     run_id="test-run",
     project_version="test-project@abc123",
     configuration={"learning_rate": 0.01},
-    dataset=("item-0",),
-    metric_definitions=(
+    dataset=TestDataset(("item-0",)),
+    metric_contracts=TestMetricContracts(
         MetricDefinition(
             name="train/loss",
             numeric_kind="real",
@@ -69,6 +162,8 @@ result = run_training_process(
             step_reduction="mean",
         ),
     ),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
     seed=17,
 )
 print(json.dumps({
@@ -77,6 +172,8 @@ print(json.dumps({
     "last_step": result.report.last_committed_step,
     "durable_step": result.report.latest_durable_step,
     "checkpoint_state": result.final_checkpoint.state["counter"],
+    "checkpoint_reference": result.report.latest_durable_checkpoint,
+    "events": [event[0] for event in recorder.events],
     "metrics": [
         [observation.name, observation.step, observation.value]
         for observation in result.metric_observations
@@ -92,6 +189,8 @@ print(json.dumps({
         "last_step": 1,
         "durable_step": 1,
         "checkpoint_state": {"value": 1},
+        "checkpoint_reference": "checkpoint:1",
+        "events": ["attempt", "step", "checkpoint", "report"],
         "metrics": [["train/loss", 1, 1.5]],
     }
 
@@ -116,8 +215,10 @@ result = run_training_process(
     run_id="test-run",
     project_version="test-project@abc123",
     configuration={},
-    dataset=(),
-    metric_definitions=(),
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
     seed=1,
 )
 print(json.dumps({
@@ -172,7 +273,7 @@ def train(context):
     })
     context.register_checkpoint_state("state", State())
     context.start()
-    context.commit_step()
+    context.commit_step(next_batch(context))
 
 
 result = run_training_process(
@@ -180,8 +281,10 @@ result = run_training_process(
     run_id="test-run",
     project_version="test-project@abc123",
     configuration={},
-    dataset=(),
-    metric_definitions=(),
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
     seed=1234,
     accelerator=Accelerator("cpu"),
 )
@@ -206,7 +309,7 @@ import random
 import numpy
 import torch
 
-from skywright import CheckpointSnapshot, run_training_process
+from skywright import CheckpointSnapshot, DatasetCursor, run_training_process
 
 
 random.seed(55)
@@ -246,8 +349,13 @@ def train(context):
     resume = context.start()
     observed["resumed"] = resume.resumed
     observed["counter"] = counter.value
+    observed["cursor"] = (
+        context.dataset_cursor.epoch,
+        context.dataset_cursor.item_offset,
+        context.dataset_cursor.epoch_step,
+    )
     observed["rng"] = (random.random(), numpy.random.random(), torch.rand(1).item())
-    context.commit_step()
+    context.commit_step(next_batch(context))
 
 
 result = run_training_process(
@@ -255,17 +363,37 @@ result = run_training_process(
     run_id="test-run",
     project_version="test-project@abc123",
     configuration={},
-    dataset=(),
-    metric_definitions=(),
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
     seed=999,
     resume_from=CheckpointSnapshot(
         step=4,
         state={"counter": {"value": 23}},
         runtime_state=runtime_state,
+        dataset_cursor=DatasetCursor(
+            epoch=1,
+            item_offset=9,
+            epoch_step=4,
+            ordering_fingerprint="sha256:test-ordering",
+        ),
+        reference="checkpoint:seed",
     ),
 )
 assert result.report.last_committed_step == 5
-assert observed == {"resumed": True, "counter": 23, "rng": expected}
+assert result.final_checkpoint.dataset_cursor == DatasetCursor(
+    epoch=1,
+    item_offset=10,
+    epoch_step=5,
+    ordering_fingerprint="sha256:test-ordering",
+)
+assert observed == {
+    "resumed": True,
+    "counter": 23,
+    "cursor": (1, 9, 4),
+    "rng": expected,
+}
 """
     )
 
@@ -293,7 +421,8 @@ observed = {}
 
 def train(context):
     observed["batch_size"] = context.configuration["training"]["batch_size"]
-    observed["dataset"] = list(context.dataset)
+    batches = list(context.dataset.batches(context.dataset_cursor))
+    observed["dataset"] = [item for batch in batches for item in batch.items]
     try:
         context.configuration["training"]["batch_size"] = 99
     except TypeError:
@@ -302,7 +431,7 @@ def train(context):
     context.start()
     context.persist_artifact("model.txt", b"model summary")
     context.persist_sample("preview", b"png bytes", media_type="image/png")
-    context.commit_step()
+    context.commit_step(batches[-1])
 
 
 result = run_training_process(
@@ -310,8 +439,10 @@ result = run_training_process(
     run_id="test-run",
     project_version="test-project@abc123",
     configuration={"training": {"batch_size": 8}},
-    dataset=("item-2", "item-1"),
-    metric_definitions=(),
+    dataset=TestDataset(("item-2", "item-1")),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
     seed=5,
 )
 print(json.dumps({
@@ -368,7 +499,7 @@ def train(context):
     context.register_checkpoint_state("state", state)
     context.start()
     state.value = 1
-    context.commit_step()
+    context.commit_step(next_batch(context))
     continued = True
 
 
@@ -377,8 +508,10 @@ result = run_training_process(
     run_id="test-run",
     project_version="test-project@abc123",
     configuration={},
-    dataset=(),
-    metric_definitions=(),
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
     seed=1,
     cancellation_requested=lambda: True,
     interruption_requested=lambda: True,
@@ -429,7 +562,7 @@ def train(context):
     context.register_checkpoint_state("state", state)
     context.start()
     state.value = 7
-    context.commit_step()
+    context.commit_step(next_batch(context))
 
 
 result = run_training_process(
@@ -437,8 +570,10 @@ result = run_training_process(
     run_id="test-run",
     project_version="test-project@abc123",
     configuration={},
-    dataset=(),
-    metric_definitions=(),
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
     seed=1,
     interruption_requested=lambda: True,
 )
@@ -487,7 +622,7 @@ def train(context):
     context.start()
     os.kill(os.getpid(), signal.SIGTERM)
     assert context.interruption_requested
-    context.commit_step()
+    context.commit_step(next_batch(context))
 
 
 result = run_training_process(
@@ -495,8 +630,10 @@ result = run_training_process(
     run_id="test-run",
     project_version="test-project@abc123",
     configuration={},
-    dataset=(),
-    metric_definitions=(),
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
     seed=1,
 )
 print(json.dumps({
@@ -538,13 +675,16 @@ invalid = MetricDefinition(
     comparison="none",
     step_reduction="mean",
 )
+first_recorder = TestRecorder()
 first = run_training_process(
     train,
     run_id="test-run",
     project_version="test-project@abc123",
     configuration={},
-    dataset=(),
-    metric_definitions=(invalid,),
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(invalid,),
+    skywright_metric_schema="test-schema@1",
+    recorder=first_recorder,
     seed=1,
 )
 second = run_training_process(
@@ -552,8 +692,10 @@ second = run_training_process(
     run_id="test-run-2",
     project_version="test-project@abc123",
     configuration={},
-    dataset=(),
-    metric_definitions=(),
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
     seed=1,
 )
 print(json.dumps({
@@ -561,6 +703,7 @@ print(json.dumps({
     "first_cause": first.report.cause.value,
     "first_rule": first.report.diagnostics["rule"],
     "second_rule": second.report.diagnostics["rule"],
+    "first_events": [event[0] for event in first_recorder.events],
 }))
 """
     )
@@ -571,6 +714,58 @@ print(json.dumps({
         "first_cause": "contract_violation",
         "first_rule": "metric-definition/reserved-name",
         "second_rule": "run-context/one-per-process",
+        "first_events": ["attempt", "report"],
+    }
+
+
+def test_invalid_library_metric_is_a_skywright_failure() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import MetricCatalog, MetricDefinition, run_training_process
+
+
+class InvalidSystemContracts:
+    def compose(self, project_version, schema_identity):
+        return MetricCatalog(
+            project_identity=project_version,
+            project_contract_digest="sha256:project",
+            skywright_schema_identity=schema_identity,
+            skywright_schema_digest="sha256:skywright",
+            units=frozenset(("dimensionless",)),
+            project_definitions=(),
+            system_definitions=(MetricDefinition(
+                name="system/broken",
+                numeric_kind="real",
+                unit="dimensionless",
+                comparison="none",
+            ),),
+        )
+
+
+result = run_training_process(
+    lambda context: None,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=InvalidSystemContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=1,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "stage": result.report.diagnostics["stage"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "skywright_failure",
+        "stage": "construction",
     }
 
 
@@ -580,6 +775,13 @@ def test_runtime_command_executes_a_training_project_entry_point(
     project = tmp_path / "example_project.py"
     project.write_text(
         """
+import random
+
+from skywright import DatasetCursor
+
+assert random.random() == random.Random(12).random()
+
+
 class State:
     def state_dict(self):
         return {"ready": True}
@@ -592,7 +794,61 @@ def train(context):
     context.register_checkpoint_state("state", State())
     context.start()
     context.observe("train/loss", 2.0)
-    context.commit_step()
+    context.commit_step(next(iter(context.dataset.batches(context.dataset_cursor))))
+
+
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "runtime_support.py").write_text(
+        """
+from skywright import DatasetBatch, DatasetCursor, MetricCatalog, MetricDefinition
+
+
+class Dataset:
+    @property
+    def ordering_fingerprint(self): return "sha256:runtime-ordering"
+
+    def batches(self, cursor):
+        yield DatasetBatch(("item-0",), DatasetCursor(
+            item_offset=1,
+            epoch_step=1,
+            ordering_fingerprint=self.ordering_fingerprint,
+        ))
+
+
+class Recorder:
+    def publish_attempt(self, attempt): pass
+    def publish_checkpoint(self, checkpoint): return "checkpoint:runtime"
+    def publish_step(self, step, dataset_cursor, observations, durable_step, durable_ref): pass
+    def publish_artifact(self, artifact): pass
+    def publish_sample(self, sample): pass
+    def publish_report(self, report): pass
+
+
+def dataset(): return Dataset()
+def recorder(): return Recorder()
+
+
+class MetricContracts:
+    def compose(self, project_version, schema_identity):
+        return MetricCatalog(
+            project_identity=project_version,
+            project_contract_digest="sha256:project",
+            skywright_schema_identity=schema_identity,
+            skywright_schema_digest="sha256:skywright",
+            units=frozenset(("dimensionless",)),
+            project_definitions=(MetricDefinition(
+                name="train/loss",
+                numeric_kind="real",
+                unit="dimensionless",
+                comparison="minimize",
+                step_reduction="mean",
+            ),),
+        )
+
+
+def metric_contracts(): return MetricContracts()
 """,
         encoding="utf-8",
     )
@@ -603,16 +859,10 @@ def train(context):
                 "run_id": "run-123",
                 "project_version": "example@abc123",
                 "configuration": {"epochs": 1},
-                "dataset": ["item-0"],
-                "metric_definitions": [
-                    {
-                        "name": "train/loss",
-                        "numeric_kind": "real",
-                        "unit": "dimensionless",
-                        "comparison": "minimize",
-                        "step_reduction": "mean",
-                    }
-                ],
+                "dataset_factory": "runtime_support:dataset",
+                "recorder_factory": "runtime_support:recorder",
+                "metric_contract_factory": "runtime_support:metric_contracts",
+                "skywright_metric_schema": "skywright-metrics@1",
                 "seed": 12,
                 "accelerator": {"kind": "cpu"},
             }
@@ -645,6 +895,7 @@ def train(context):
         "diagnostics": {},
         "last_committed_step": 1,
         "latest_durable_step": 1,
+        "latest_durable_checkpoint": "checkpoint:runtime",
         "outcome": "completed",
         "project_version": "example@abc123",
         "run_id": "run-123",
@@ -675,7 +926,7 @@ def train(context):
     context.start()
     context.observe("train/loss", torch.tensor(1.0))
     context.observe("train/loss", 3.0)
-    context.commit_step()
+    context.commit_step(next_batch(context))
 
 
 result = run_training_process(
@@ -683,14 +934,16 @@ result = run_training_process(
     run_id="test-run",
     project_version="test-project@abc123",
     configuration={},
-    dataset=(),
-    metric_definitions=(MetricDefinition(
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(MetricDefinition(
         name="train/loss",
         numeric_kind="real",
         unit="dimensionless",
         comparison="minimize",
         step_reduction="mean",
     ),),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
     seed=2,
 )
 print(json.dumps([
@@ -723,7 +976,7 @@ class State:
 def train(context):
     context.register_checkpoint_state("state", State())
     context.start()
-    context.commit_step()
+    context.commit_step(next_batch(context))
     raise ValueError("bad project arithmetic")
 
 
@@ -732,8 +985,10 @@ result = run_training_process(
     run_id="test-run",
     project_version="test-project@abc123",
     configuration={},
-    dataset=(),
-    metric_definitions=(),
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
     seed=3,
 )
 print(json.dumps({
@@ -756,3 +1011,429 @@ print(json.dumps({
         "last_step": 1,
         "checkpoint": None,
     }
+
+
+def test_checkpoint_publication_failure_is_a_skywright_failure() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+class FailingRecorder(TestRecorder):
+    def publish_checkpoint(self, checkpoint):
+        raise OSError("Run Store unavailable")
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+
+
+recorder = FailingRecorder()
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=3,
+)
+print(json.dumps({
+    "outcome": result.outcome.value,
+    "cause": result.report.cause.value,
+    "durable_step": result.report.latest_durable_step,
+    "checkpoint": result.final_checkpoint,
+    "events": [event[0] for event in recorder.events],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "outcome": "failed",
+        "cause": "skywright_failure",
+        "durable_step": None,
+        "checkpoint": None,
+        "events": ["attempt", "step", "report"],
+    }
+
+
+def test_commit_rejects_a_fabricated_dataset_batch() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import DatasetBatch, run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    issued = next_batch(context)
+    fabricated = DatasetBatch(issued.items, issued.next_cursor)
+    try:
+        context.commit_step(fabricated)
+    except Exception:
+        pass
+
+
+recorder = TestRecorder()
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=3,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "last_step": result.report.last_committed_step,
+    "observations": len(result.metric_observations),
+    "events": [event[0] for event in recorder.events],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "contract_violation",
+        "last_step": 0,
+        "observations": 0,
+        "events": ["attempt", "report"],
+    }
+
+
+def test_dataset_batches_cannot_cross_an_epoch_within_one_step() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import DatasetBatch, DatasetCursor, run_training_process
+
+
+class CrossingDataset:
+    ordering_fingerprint = "sha256:crossing-order"
+
+    def batches(self, cursor):
+        yield DatasetBatch(
+            ("epoch-0-final",),
+            DatasetCursor(
+                epoch=1,
+                item_offset=0,
+                epoch_step=0,
+                ordering_fingerprint=self.ordering_fingerprint,
+            ),
+            epoch=0,
+        )
+        yield DatasetBatch(
+            ("epoch-1-first",),
+            DatasetCursor(
+                epoch=1,
+                item_offset=1,
+                epoch_step=1,
+                ordering_fingerprint=self.ordering_fingerprint,
+            ),
+            epoch=1,
+        )
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    list(context.dataset.batches(context.dataset_cursor))
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=CrossingDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=3,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "rule": result.report.diagnostics["rule"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "contract_violation",
+        "rule": "dataset-cursor/epoch-boundary",
+    }
+
+
+def test_only_the_latest_issued_batch_can_commit_a_step() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    batches = list(context.dataset.batches(context.dataset_cursor))
+    context.commit_step(batches[0])
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(("first", "second")),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=3,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "rule": result.report.diagnostics["rule"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "contract_violation",
+        "rule": "dataset-cursor/not-issued",
+    }
+
+
+def test_failed_atomic_step_publication_does_not_commit_observations() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import MetricDefinition, run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+class FailingStepRecorder(TestRecorder):
+    def publish_step(self, *args):
+        raise OSError("metric writer unavailable")
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.observe("train/loss", 2.0)
+    context.commit_step(next_batch(context))
+
+
+recorder = FailingStepRecorder()
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(MetricDefinition(
+        name="train/loss",
+        numeric_kind="real",
+        unit="dimensionless",
+        comparison="minimize",
+    )),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=3,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "last_step": result.report.last_committed_step,
+    "observations": len(result.metric_observations),
+    "events": [event[0] for event in recorder.events],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "skywright_failure",
+        "last_step": 0,
+        "observations": 0,
+        "events": ["attempt", "report"],
+    }
+
+
+def test_dataset_adapter_failure_is_a_skywright_failure() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import run_training_process
+
+
+class BrokenDataset(TestDataset):
+    def batches(self, cursor):
+        raise OSError("Dataset backend unavailable")
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    next_batch(context)
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=BrokenDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=3,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "message": result.report.diagnostics["message"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "skywright_failure",
+        "message": "Dataset backend unavailable",
+    }
+
+
+def test_report_failure_preserves_training_project_failure_evidence() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+class FailingReportRecorder(TestRecorder):
+    def publish_report(self, report):
+        raise OSError("report store unavailable")
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+    raise ValueError("original project failure")
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=FailingReportRecorder(),
+    seed=3,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "message": result.report.diagnostics["message"],
+    "report_failure": result.report.diagnostics["report_publication_failure"]["message"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "training_project_failure",
+        "message": "original project failure",
+        "report_failure": "report store unavailable",
+    }
+
+
+def test_shutdown_grace_forces_exit_when_project_ignores_interruption() -> None:
+    completed = run_project(
+        """
+import os
+import signal
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    os.kill(os.getpid(), signal.SIGTERM)
+    while True:
+        pass
+
+
+run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=3,
+    shutdown_grace_seconds=0.05,
+)
+"""
+    )
+
+    assert completed.returncode == 1
