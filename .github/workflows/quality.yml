@@ -251,8 +251,60 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-  sdk:
-    name: Python SDK
+  sdk-compatibility:
+    name: Python SDK / Python ${{ matrix.python-version }}
+    needs:
+      - plan
+      - sdk-artifacts
+    if: needs.plan.outputs.sdk == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - '3.10'
+          - '3.11'
+          - '3.12'
+          - '3.13'
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: ${{ needs.plan.outputs.uv_version }}
+          enable-cache: true
+          cache-dependency-glob: sdk/uv.lock
+      - name: Receive distributions from the primary lane
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: sdk-qualified-distributions
+          path: sdk-dist
+      - name: Qualify the installed SDK and contributor checks
+        run: |
+          sdk/scripts/check
+          uv run --project sdk --locked pytest sdk/tests/system -m system \
+            --junitxml sdk/target/test-results/system-${{ matrix.python-version }}.xml \
+            --artifact-dir sdk-dist
+      - name: Retain SDK test and diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sdk-python-${{ matrix.python-version }}-reports
+          path: |
+            sdk/target/test-results/**
+            sdk/target/coverage/**
+          if-no-files-found: ignore
+          retention-days: 90
+
+  sdk-artifacts:
+    name: Python SDK / Primary artifacts
     needs: plan
     if: needs.plan.outputs.sdk == 'true'
     runs-on: ubuntu-24.04
@@ -261,7 +313,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
-      - name: Set up Python
+      - name: Set up primary Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.14'
@@ -271,18 +323,50 @@ jobs:
           version: ${{ needs.plan.outputs.uv_version }}
           enable-cache: true
           cache-dependency-glob: sdk/uv.lock
-      - name: Run SDK verification
-        run: scripts/quality run sdk
+      - name: Build each distribution once and run complete SDK verification
+        run: sdk/scripts/verify target/ci-dist
+      - name: Hand verified distributions to compatibility lanes
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sdk-qualified-distributions
+          path: sdk/target/ci-dist/*
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 30 || 7 }}
       - name: Retain SDK test and diagnostic reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: sdk-reports
+          name: sdk-primary-reports
           path: |
             sdk/target/test-results/**
             sdk/target/coverage/**
           if-no-files-found: ignore
           retention-days: 90
+
+  sdk:
+    name: Python SDK
+    if: always()
+    needs:
+      - plan
+      - sdk-artifacts
+      - sdk-compatibility
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every applicable SDK lane
+        env:
+          APPLICABLE: ${{ needs.plan.outputs.sdk }}
+          ARTIFACT_RESULT: ${{ needs.sdk-artifacts.result }}
+          COMPATIBILITY_RESULT: ${{ needs.sdk-compatibility.result }}
+        run: |
+          if [[ "$APPLICABLE" != "true" ]]; then
+            echo "SDK qualification is deliberately inapplicable."
+            exit 0
+          fi
+          if [[ "$ARTIFACT_RESULT" != "success" || "$COMPATIBILITY_RESULT" != "success" ]]; then
+            echo "SDK qualification failed: artifacts=$ARTIFACT_RESULT compatibility=$COMPATIBILITY_RESULT" >&2
+            exit 1
+          fi
+          echo "SDK qualification passed on Python 3.10 through 3.14."
 
   security:
     name: Security

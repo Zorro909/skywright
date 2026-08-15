@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from importlib.metadata import version
@@ -124,8 +125,10 @@ def test_runtime_command_reports_version_and_source_revision(
         capture_output=True,
     )
 
+    expected_source_revision = os.environ.get("SKYWRIGHT_SOURCE_REVISION", "unknown")
     assert completed.stdout == (
-        f"skywright-runtime {version('skywright')}\nsource revision: unknown\n"
+        f"skywright-runtime {version('skywright')}\n"
+        f"source revision: {expected_source_revision}\n"
     )
 
 

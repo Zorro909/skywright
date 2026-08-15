@@ -77,12 +77,21 @@ def distribution_wheels(
 
 
 @pytest.fixture(
-    scope="session", params=(0, 1), ids=("direct-wheel", "source-derived-wheel")
+    scope="session",
+    params=("wheel", "sdist"),
+    ids=("direct-wheel", "source-distribution"),
 )
-def wheel_path(
-    request: pytest.FixtureRequest, distribution_wheels: tuple[Path, Path]
+def install_artifact(
+    request: pytest.FixtureRequest,
+    distribution_wheels: tuple[Path, Path],
 ) -> Path:
-    return distribution_wheels[cast(int, request.param)]
+    direct_wheel = distribution_wheels[0]
+    if cast(str, request.param) == "wheel":
+        return direct_wheel
+    source_distributions = tuple(direct_wheel.parent.glob("skywright-*.tar.gz"))
+    if len(source_distributions) != 1:
+        pytest.fail("expected one source distribution for the installed consumer")
+    return source_distributions[0]
 
 
 @pytest.fixture(scope="session")
@@ -91,7 +100,7 @@ def direct_wheel_path(distribution_wheels: tuple[Path, Path]) -> Path:
 
 
 @pytest.fixture
-def installed_sdk(wheel_path: Path, tmp_path: Path) -> Path:
+def installed_sdk(install_artifact: Path, tmp_path: Path) -> Path:
     environment = tmp_path / "consumer-environment"
     subprocess.run(
         [sys.executable, "-m", "venv", str(environment)],
@@ -106,7 +115,7 @@ def installed_sdk(wheel_path: Path, tmp_path: Path) -> Path:
             "--disable-pip-version-check",
             "install",
             "--no-deps",
-            wheel_path,
+            install_artifact,
         ],
         check=True,
         env=isolated_environment(),

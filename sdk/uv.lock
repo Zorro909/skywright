@@ -1204,6 +1204,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "tomli" },
     { name = "twine" },
 ]
 ml-test = [
@@ -1224,6 +1225,7 @@ dev = [
     { name = "pytest", specifier = ">=8.4,<10" },
     { name = "pytest-cov", specifier = ">=6.2,<8" },
     { name = "ruff", specifier = ">=0.12,<1" },
+    { name = "tomli", specifier = ">=2,<3" },
     { name = "twine", specifier = ">=6.1,<7" },
 ]
 ml-test = [
