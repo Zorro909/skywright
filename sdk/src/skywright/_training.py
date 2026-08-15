@@ -367,12 +367,21 @@ class _TrackedDatasetAccess:
         self._issued: dict[int, DatasetBatch] = {}
         self._latest_issued: DatasetBatch | None = None
         self._commit_count = 0
+        self._active_iterator: object | None = None
 
     @property
     def ordering_fingerprint(self) -> str:
         return self._dataset.ordering_fingerprint
 
     def batches(self, cursor: DatasetCursor) -> Iterable[DatasetBatch]:
+        iterator_token = object()
+        if self._active_iterator is not None or self._issued:
+            self._violate(
+                "dataset-cursor/overlapping-iteration",
+                "Dataset batches were requested before the prior iterator committed or closed",
+                "use one Dataset iterator and commit its final issued batch before starting another",
+            )
+        self._active_iterator = iterator_token
         if cursor != self._cursor:
             self._violate(
                 "dataset-cursor/stale",
@@ -422,6 +431,9 @@ class _TrackedDatasetAccess:
             raise
         except Exception as failure:
             raise _SkywrightFailure(failure, "project") from failure
+        finally:
+            if self._active_iterator is iterator_token:
+                self._active_iterator = None
 
     def consume(self, batch: DatasetBatch) -> DatasetCursor:
         issued = self._issued.get(id(batch))
@@ -1502,7 +1514,7 @@ def _validate_metric_definitions(
             ("maximum", definition.maximum),
         ):
             if bound is not None and (
-                isinstance(bound, bool) or not math.isfinite(bound)
+                type(bound) not in (int, float) or not math.isfinite(bound)
             ):
                 raise TrainingContractViolation(
                     "metric-definition/bounds",

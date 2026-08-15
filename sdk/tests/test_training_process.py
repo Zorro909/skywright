@@ -769,6 +769,46 @@ print(json.dumps({
     }
 
 
+def test_non_numeric_metric_bound_is_a_contract_violation() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import MetricDefinition, run_training_process
+
+
+invalid = MetricDefinition(
+    name="train/loss",
+    numeric_kind="real",
+    unit="dimensionless",
+    comparison="minimize",
+    minimum="0",
+)
+result = run_training_process(
+    lambda context: None,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(invalid),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=1,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "rule": result.report.diagnostics["rule"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "contract_violation",
+        "rule": "metric-definition/bounds",
+    }
+
+
 def test_runtime_command_executes_a_training_project_entry_point(
     tmp_path: Path,
 ) -> None:
@@ -1235,6 +1275,53 @@ print(json.dumps({
     assert json.loads(completed.stdout) == {
         "cause": "contract_violation",
         "rule": "dataset-cursor/not-issued",
+    }
+
+
+def test_dataset_iterators_cannot_overlap() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    first = iter(context.dataset.batches(context.dataset_cursor))
+    next(first)
+    second = iter(context.dataset.batches(context.dataset_cursor))
+    next(second)
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(("first", "second")),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=3,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "rule": result.report.diagnostics["rule"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "contract_violation",
+        "rule": "dataset-cursor/overlapping-iteration",
     }
 
 
