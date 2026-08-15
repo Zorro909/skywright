@@ -1,0 +1,33 @@
+name: Set up Java toolchain
+description: Download and install the repository's exact verified GraalVM Community toolchain.
+inputs:
+  archive-sha256:
+    description: SHA-256 of the supported GraalVM archive
+    required: true
+  archive-url:
+    description: URL of the supported GraalVM archive
+    required: true
+  java-version:
+    description: Exact supported Java version
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Download exact GraalVM Community archive
+      shell: bash
+      env:
+        JAVA_ARCHIVE_SHA256: ${{ inputs.archive-sha256 }}
+        JAVA_ARCHIVE_URL: ${{ inputs.archive-url }}
+      run: |
+        curl --fail --location --silent --show-error \
+          --output "${RUNNER_TEMP}/graalvm-community.tar.gz" \
+          "$JAVA_ARCHIVE_URL"
+        echo "${JAVA_ARCHIVE_SHA256}  ${RUNNER_TEMP}/graalvm-community.tar.gz" \
+          | sha256sum --check --strict
+    - name: Set up GraalVM Community
+      uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+      with:
+        distribution: jdkfile
+        jdk-file: ${{ runner.temp }}/graalvm-community.tar.gz
+        java-version: ${{ inputs.java-version }}
+        cache: maven

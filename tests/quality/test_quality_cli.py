@@ -41,39 +41,90 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(plan["categories"], ["shared-tooling"])
         self.assertEqual(
             {name: check["applicable"] for name, check in plan["checks"].items()},
-            {"frontend": True, "java": True, "sdk": True, "security": True},
+            {
+                "application": True,
+                "frontend": True,
+                "image": True,
+                "java": True,
+                "sdk": True,
+                "security": True,
+            },
         )
 
     def test_component_and_future_component_changes_have_explicit_plans(self) -> None:
         cases = {
             "api/skywright-api/openapi.yaml": (
                 ["api"],
-                {"frontend": True, "java": True, "sdk": False, "security": True},
+                {
+                    "application": True,
+                    "frontend": True,
+                    "image": True,
+                    "java": True,
+                    "sdk": False,
+                    "security": True,
+                },
             ),
             "backend/src/main/App.java": (
                 ["backend"],
-                {"frontend": False, "java": True, "sdk": False, "security": True},
+                {
+                    "application": True,
+                    "frontend": False,
+                    "image": True,
+                    "java": True,
+                    "sdk": False,
+                    "security": True,
+                },
             ),
             "frontend/src/app/app.ts": (
                 ["frontend"],
-                {"frontend": True, "java": False, "sdk": False, "security": True},
+                {
+                    "application": True,
+                    "frontend": True,
+                    "image": True,
+                    "java": False,
+                    "sdk": False,
+                    "security": True,
+                },
             ),
             "sdk/src/skywright/__init__.py": (
                 ["sdk"],
-                {"frontend": False, "java": False, "sdk": True, "security": True},
+                {
+                    "application": False,
+                    "frontend": False,
+                    "image": False,
+                    "java": False,
+                    "sdk": True,
+                    "security": True,
+                },
             ),
             "fixtures/structural-overlay/cases.json": (
                 ["fixture"],
-                {"frontend": False, "java": True, "sdk": True, "security": True},
+                {
+                    "application": True,
+                    "frontend": False,
+                    "image": True,
+                    "java": True,
+                    "sdk": True,
+                    "security": True,
+                },
             ),
             "environment-profiles/cuda/Containerfile": (
                 ["profile"],
-                {"frontend": False, "java": False, "sdk": True, "security": True},
+                {
+                    "application": False,
+                    "frontend": False,
+                    "image": False,
+                    "java": False,
+                    "sdk": True,
+                    "security": True,
+                },
             ),
             "docs/operator-guide.md": (
                 ["documentation"],
                 {
+                    "application": False,
                     "frontend": False,
+                    "image": False,
                     "java": False,
                     "sdk": False,
                     "security": False,
@@ -149,6 +200,8 @@ class AggregationTest(unittest.TestCase):
             with self.subTest(outcome=outcome):
                 completed = self.aggregate(
                     plan,
+                    "application=success",
+                    "image=success",
                     f"java={outcome}",
                     "frontend=skipped",
                     "sdk=skipped",

@@ -1,10 +1,13 @@
 # Repository quality gate
 
 `scripts/quality` is the versioned Linux definition of repository verification. `scripts/quality
-run` executes the complete current plan, while `scripts/quality run java`, `frontend`, or `sdk`
-provides focused iteration and delegates to the Maven, pnpm, and SDK `uv` interfaces documented by
-their owning project parts. The command prints all active checks, including deliberately
-inapplicable work, and fails explicitly when an exact prerequisite is missing or has drifted.
+run` executes the complete current plan. `scripts/quality run application` qualifies the canonical
+API through the independently verified Angular artifact and the packaged Spring/browser boundary;
+`scripts/quality run image` builds and exercises the production backend image. The `java`,
+`frontend`, and `sdk` selectors provide focused iteration. Every check delegates to the Maven, pnpm,
+and SDK `uv` interfaces documented by its owning project part. The command prints all active checks,
+including deliberately inapplicable work, and fails explicitly when an exact prerequisite is
+missing or has drifted.
 
 The planning interface accepts either a Git comparison or explicit paths:
 
@@ -15,9 +18,10 @@ scripts/quality plan --format json --changed-file frontend/src/app/app.ts
 
 Root files, wrappers, GitHub automation, and unknown top-level paths fail safe by selecting every
 check. API, backend, frontend, SDK, future shared-fixture, and future Environment Profile paths fan
-out to their affected active checks. Documentation-only changes retain the visible aggregate result
-without running build-heavy work. Tickets #117 through #120 add checks to this same interface as
-their application, release, fixture, and integration capabilities become available.
+out to their affected active checks. API, backend, frontend, and shared-fixture changes select both
+the complete-application and production-image checks. Documentation-only changes retain the visible
+aggregate result without running build-heavy work. Tickets #118 through #120 add release, fixture,
+and integration checks to this same interface as those capabilities become available.
 
 ## GitHub Actions contract
 
@@ -94,3 +98,11 @@ secret resolution with `scripts/quality github-dismissal-policy --scanner secret
 read-only secret-scanning-alert and issue permissions; it has no publication or infrastructure
 access and is not available to ordinary verification jobs. A missing credential fails the
 scheduled control visibly. Fork pull requests need no permission to read base-repository alerts.
+
+The production backend image is scanned twice with pinned Trivy tooling. The retained SARIF records
+all high and critical findings, including findings without a fix; a second enforcement scan rejects
+every fixable high or critical finding. The image scan accepts no scanner-local ignore file, wildcard
+exclusion, or hidden baseline. If an image suppression is ever required, this policy and the
+versioned suppression validator must first gain an exact finding-and-package scope with the same
+open-issue, owner, decision, and 90-day expiry evidence. This prevents an ad hoc image exception from
+bypassing repository governance.

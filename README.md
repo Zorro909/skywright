@@ -150,6 +150,9 @@ for exact standalone image construction, external configuration, read-only-root 
 option injection, build-identity inspection, graceful termination, and local container debugging
 commands.
 
+To build and exercise that exact Maven image through its production runtime boundary, run
+`scripts/quality run image`. CI scans the same local image but does not publish it.
+
 ## Remote debugging
 
 Start the local application with JDWP listening on port 5005, then attach a Java debugger to
