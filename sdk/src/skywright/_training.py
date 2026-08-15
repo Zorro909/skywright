@@ -13,7 +13,7 @@ import signal
 import threading
 import uuid
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from enum import Enum
 from types import MappingProxyType
 from typing import Literal, NoReturn, Protocol, TypeAlias, cast
@@ -61,10 +61,6 @@ class Accelerator:
 
 
 _CPU_ACCELERATOR = Accelerator("cpu")
-
-
-def _empty_runtime_state() -> Mapping[str, object]:
-    return {}
 
 
 @dataclass(frozen=True)
@@ -147,17 +143,65 @@ class SampleRecord:
     step: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class CheckpointSnapshot:
-    """Immutable snapshot awaiting publication by Run Store persistence."""
+    """Snapshot isolated from mutable state awaiting Run Store publication."""
 
     step: int
-    state: Mapping[str, object]
-    runtime_state: Mapping[str, object] = field(default_factory=_empty_runtime_state)
-    dataset_cursor: DatasetCursor = DatasetCursor()
-    reference: str | None = None
-    run_id: str = ""
-    project_version: str = ""
+    _state: dict[str, object]
+    _runtime_state: dict[str, object]
+    dataset_cursor: DatasetCursor
+    reference: str | None
+    run_id: str
+    project_version: str
+
+    def __init__(
+        self,
+        step: int,
+        state: Mapping[str, object],
+        runtime_state: Mapping[str, object] | None = None,
+        dataset_cursor: DatasetCursor | None = None,
+        reference: str | None = None,
+        run_id: str = "",
+        project_version: str = "",
+    ) -> None:
+        object.__setattr__(self, "step", step)
+        object.__setattr__(self, "_state", copy.deepcopy(dict(state)))
+        object.__setattr__(
+            self,
+            "_runtime_state",
+            copy.deepcopy(dict(runtime_state)) if runtime_state is not None else {},
+        )
+        object.__setattr__(
+            self,
+            "dataset_cursor",
+            dataset_cursor if dataset_cursor is not None else DatasetCursor(),
+        )
+        object.__setattr__(self, "reference", reference)
+        object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "project_version", project_version)
+
+    @property
+    def state(self) -> Mapping[str, object]:
+        """Return a defensive copy of project-owned checkpoint state."""
+        return copy.deepcopy(self._state)
+
+    @property
+    def runtime_state(self) -> Mapping[str, object]:
+        """Return a defensive copy of library-owned checkpoint state."""
+        return copy.deepcopy(self._runtime_state)
+
+    def with_reference(self, reference: str) -> CheckpointSnapshot:
+        """Return the published form without exposing stored mutable state."""
+        return CheckpointSnapshot(
+            step=self.step,
+            state=self._state,
+            runtime_state=self._runtime_state,
+            dataset_cursor=self.dataset_cursor,
+            reference=reference,
+            run_id=self.run_id,
+            project_version=self.project_version,
+        )
 
 
 @dataclass(frozen=True)
@@ -403,6 +447,12 @@ class _TrackedDatasetAccess:
                         f"Dataset batch has invalid item epoch {batch.epoch!r}",
                         "issue batches with the global epoch containing their items",
                     )
+                if batch.epoch != previous.epoch:
+                    self._violate(
+                        "dataset-batch/epoch-transition",
+                        "the Dataset batch item epoch does not match its starting cursor",
+                        "issue items from the cursor epoch before advancing to the next epoch",
+                    )
                 if batch.next_cursor.epoch not in (batch.epoch, batch.epoch + 1):
                     self._violate(
                         "dataset-cursor/epoch-transition",
@@ -466,6 +516,8 @@ class _DefaultRunContext:
         run_id: str,
         project_version: str,
     ) -> None:
+        self._started = False
+        self._violated: TrainingContractViolation | None = None
         frozen_configuration = _freeze(copy.deepcopy(dict(configuration)))
         self._configuration = cast(Mapping[str, object], frozen_configuration)
         self._recorder = recorder
@@ -484,8 +536,16 @@ class _DefaultRunContext:
             metric_catalog, project_version, skywright_metric_schema
         )
         self._resume_state = ResumeState(resume_from)
+        if resume_from is not None and (
+            type(resume_from.step) is not int or resume_from.step < 0
+        ):
+            self._violate(
+                "resume/checkpoint-step",
+                f"the resume checkpoint has invalid Step {resume_from.step!r}",
+                "resume from a checkpoint with a non-negative integer Step",
+            )
         if resume_from is not None and not resume_from.reference:
-            raise TrainingContractViolation(
+            self._violate(
                 "resume/checkpoint-reference",
                 "the resume checkpoint has no durable reference",
                 "resume only from a checkpoint confirmed by the Run Store publisher",
@@ -496,6 +556,7 @@ class _DefaultRunContext:
         self._artifacts: list[ArtifactRecord] = []
         self._samples: list[SampleRecord] = []
         self._step = resume_from.step if resume_from is not None else 0
+        self._initial_step = self._step
         fingerprint = dataset.ordering_fingerprint
         if not fingerprint:
             raise TrainingContractViolation(
@@ -503,11 +564,12 @@ class _DefaultRunContext:
                 "the Dataset ordering fingerprint is empty",
                 "identify the Dataset Definition, seed, ordering policy, and policy version",
             )
-        self._dataset_cursor = (
+        self._dataset_cursor: DatasetCursor = (
             resume_from.dataset_cursor
             if resume_from is not None
             else DatasetCursor(ordering_fingerprint=fingerprint)
         )
+        _validate_cursor_shape(self._dataset_cursor, self._violate)
         if self._dataset_cursor.ordering_fingerprint != fingerprint:
             raise TrainingContractViolation(
                 "dataset-ordering/fingerprint",
@@ -523,8 +585,6 @@ class _DefaultRunContext:
         self._latest_durable_checkpoint = (
             resume_from.reference if resume_from is not None else None
         )
-        self._started = False
-        self._violated: TrainingContractViolation | None = None
 
     @property
     def configuration(self) -> Mapping[str, object]:
@@ -561,6 +621,9 @@ class _DefaultRunContext:
     def interruption_requested(self) -> bool:
         if self.cancellation_requested:
             return False
+        return self._read_interruption_requested()
+
+    def _read_interruption_requested(self) -> bool:
         try:
             return self._interruption_requested()
         except Exception as failure:
@@ -594,6 +657,12 @@ class _DefaultRunContext:
                 f"Checkpoint State {name!r} is not resumable",
                 "provide state_dict() and load_state_dict() methods",
             )
+        if any(registered is state for registered in self._states.values()):
+            self._violate(
+                "checkpoint-state/identity",
+                f"Checkpoint State {name!r} is already registered under another name",
+                "register each state object exactly once under one stable name",
+            )
         self._states[name] = state
 
     def start(self) -> ResumeState:
@@ -606,6 +675,7 @@ class _DefaultRunContext:
             )
         checkpoint = self._resume_state.checkpoint
         if checkpoint is not None:
+            checkpoint_state = checkpoint.state
             if checkpoint.run_id and checkpoint.run_id != self._run_id:
                 self._violate(
                     "resume/run-identity",
@@ -621,7 +691,7 @@ class _DefaultRunContext:
                     f"checkpoint Training Project Version {checkpoint.project_version!r} does not match {self._project_version!r}",
                     "resume with the identical Training Project Version",
                 )
-            expected = set(checkpoint.state)
+            expected = set(checkpoint_state)
             actual = set(self._states)
             if expected != actual:
                 self._violate(
@@ -630,7 +700,7 @@ class _DefaultRunContext:
                     "resume with the same complete Checkpoint State shape",
                 )
             for name, state in self._states.items():
-                restored = checkpoint.state[name]
+                restored = checkpoint_state[name]
                 if not isinstance(restored, Mapping):
                     self._violate(
                         "checkpoint-state/payload",
@@ -707,6 +777,12 @@ class _DefaultRunContext:
                     "record only project-owned Step metrics through observe()",
                 )
             reduced = _reduce(values, reduction)
+            if not math.isfinite(reduced):
+                self._violate(
+                    "metric/non-finite-reduction",
+                    f"metric {name!r} reduced to {reduced!r}",
+                    "record finite values whose Step reduction is also finite",
+                )
             if definition.minimum is not None and reduced < definition.minimum:
                 self._violate(
                     "metric/bounds",
@@ -736,7 +812,10 @@ class _DefaultRunContext:
         self._dataset_cursor = next_dataset_cursor
         if self.cancellation_requested:
             raise _CooperativeStop(ExecutionTerminationCause.CANCELLED)
-        if self.interruption_requested:
+        interrupted = self._read_interruption_requested()
+        if self.cancellation_requested:
+            raise _CooperativeStop(ExecutionTerminationCause.CANCELLED)
+        if interrupted:
             raise _CooperativeStop(ExecutionTerminationCause.INTERRUPTED)
 
     def persist_artifact(self, name: str, data: object) -> None:
@@ -772,8 +851,8 @@ class _DefaultRunContext:
         }
         return CheckpointSnapshot(
             step=self._step,
-            state=MappingProxyType(state),
-            runtime_state=MappingProxyType(_capture_runtime_state()),
+            state=state,
+            runtime_state=_capture_runtime_state(),
             dataset_cursor=self._dataset_cursor,
             run_id=self._run_id,
             project_version=self._project_version,
@@ -794,11 +873,11 @@ class _DefaultRunContext:
                 f"the Training Project returned with pending metrics {sorted(self._pending)!r}",
                 "commit or discard the current Step before returning",
             )
-        if self._step == 0:
+        if self._step == self._initial_step:
             self._violate(
                 "step/empty-run",
                 "the Training Project returned without committing a Step",
-                "commit at least one Step before successful completion",
+                "commit at least one new Step in this Execution Attempt before successful completion",
             )
 
     def _require_registering(self, operation: str) -> None:
@@ -1087,7 +1166,7 @@ def _durable_result(
         reference = recorder.publish_checkpoint(checkpoint)
         if not reference:
             raise ValueError("checkpoint publisher returned an empty reference")
-        checkpoint = replace(checkpoint, reference=reference)
+        checkpoint = checkpoint.with_reference(reference)
     except Exception as failure:
         return _failure_result(
             attempt, failure, context, resume_from, "finalization", recorder, True
@@ -1540,17 +1619,7 @@ def _validate_cursor_advance(
     next_cursor: DatasetCursor,
     violate: Callable[[str, str, str], NoReturn],
 ) -> None:
-    values = (
-        next_cursor.epoch,
-        next_cursor.item_offset,
-        next_cursor.epoch_step,
-    )
-    if any(type(value) is not int or value < 0 for value in values):
-        violate(
-            "dataset-cursor/shape",
-            f"next Dataset Cursor {next_cursor!r} contains an invalid position",
-            "commit a cursor containing non-negative integer positions",
-        )
+    _validate_cursor_shape(next_cursor, violate)
     if next_cursor.epoch < current.epoch or (
         next_cursor.epoch == current.epoch
         and (
@@ -1565,6 +1634,23 @@ def _validate_cursor_advance(
         )
 
 
+def _validate_cursor_shape(
+    cursor: DatasetCursor,
+    violate: Callable[[str, str, str], NoReturn],
+) -> None:
+    values = (
+        cursor.epoch,
+        cursor.item_offset,
+        cursor.epoch_step,
+    )
+    if any(type(value) is not int or value < 0 for value in values):
+        violate(
+            "dataset-cursor/shape",
+            f"Dataset Cursor {cursor!r} contains an invalid position",
+            "commit a cursor containing non-negative integer positions",
+        )
+
+
 def _freeze(value: object) -> object:
     if isinstance(value, Mapping):
         mapping = cast(Mapping[object, object], value)
@@ -1574,6 +1660,9 @@ def _freeze(value: object) -> object:
     if isinstance(value, list | tuple):
         sequence = cast(list[object] | tuple[object, ...], value)
         return tuple(_freeze(item) for item in sequence)
+    if isinstance(value, set | frozenset):
+        values = cast(set[object] | frozenset[object], value)
+        return frozenset(_freeze(item) for item in values)
     return value
 
 

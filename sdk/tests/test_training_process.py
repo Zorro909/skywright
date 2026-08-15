@@ -421,12 +421,17 @@ observed = {}
 
 def train(context):
     observed["batch_size"] = context.configuration["training"]["batch_size"]
+    observed["labels"] = sorted(context.configuration["training"]["labels"])
     batches = list(context.dataset.batches(context.dataset_cursor))
     observed["dataset"] = [item for batch in batches for item in batch.items]
     try:
         context.configuration["training"]["batch_size"] = 99
     except TypeError:
         observed["immutable"] = True
+    try:
+        context.configuration["training"]["labels"].add("validation")
+    except AttributeError:
+        observed["set_immutable"] = True
     context.register_checkpoint_state("state", State())
     context.start()
     context.persist_artifact("model.txt", b"model summary")
@@ -438,7 +443,7 @@ result = run_training_process(
     train,
     run_id="test-run",
     project_version="test-project@abc123",
-    configuration={"training": {"batch_size": 8}},
+    configuration={"training": {"batch_size": 8, "labels": {"train"}}},
     dataset=TestDataset(("item-2", "item-1")),
     metric_contracts=TestMetricContracts(),
     skywright_metric_schema="test-schema@1",
@@ -463,8 +468,10 @@ print(json.dumps({
     assert json.loads(completed.stdout) == {
         "observed": {
             "batch_size": 8,
+            "labels": ["train"],
             "dataset": ["item-2", "item-1"],
             "immutable": True,
+            "set_immutable": True,
         },
         "artifacts": [["model.txt", "model summary", 0]],
         "samples": [["preview", "image/png", "png bytes", 0]],
@@ -535,6 +542,55 @@ print(json.dumps({
         "durable_step": None,
         "checkpoint": None,
         "continued": False,
+    }
+
+
+def test_cancellation_wins_when_requested_while_checking_interruption() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+checks = iter((False, True))
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=1,
+    cancellation_requested=lambda: next(checks),
+    interruption_requested=lambda: True,
+)
+print(json.dumps({
+    "outcome": result.outcome.value,
+    "cause": result.report.cause.value,
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "outcome": "cancelled",
+        "cause": "cancelled",
     }
 
 
@@ -1233,6 +1289,66 @@ print(json.dumps({
     }
 
 
+def test_dataset_batch_epoch_cannot_jump_from_the_requested_cursor() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import DatasetBatch, DatasetCursor, run_training_process
+
+
+class JumpingDataset:
+    ordering_fingerprint = "sha256:jumping-order"
+
+    def batches(self, cursor):
+        yield DatasetBatch(
+            ("future-item",),
+            DatasetCursor(
+                epoch=10,
+                item_offset=1,
+                epoch_step=1,
+                ordering_fingerprint=self.ordering_fingerprint,
+            ),
+            epoch=10,
+        )
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    next_batch(context)
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=JumpingDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=3,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "rule": result.report.diagnostics["rule"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "contract_violation",
+        "rule": "dataset-batch/epoch-transition",
+    }
+
+
 def test_only_the_latest_issued_batch_can_commit_a_step() -> None:
     completed = run_project(
         """
@@ -1382,6 +1498,240 @@ print(json.dumps({
         "last_step": 0,
         "observations": 0,
         "events": ["attempt", "report"],
+    }
+
+
+def test_non_finite_metric_reduction_is_rejected() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import MetricDefinition, run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.observe("train/total", 1e308)
+    context.observe("train/total", 1e308)
+    context.commit_step(next_batch(context))
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(MetricDefinition(
+        name="train/total",
+        numeric_kind="real",
+        unit="dimensionless",
+        comparison="minimize",
+        step_reduction="sum",
+    )),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=3,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "rule": result.report.diagnostics["rule"],
+    "last_step": result.report.last_committed_step,
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "contract_violation",
+        "rule": "metric/non-finite-reduction",
+        "last_step": 0,
+    }
+
+
+def test_resume_checkpoint_step_and_cursor_are_validated() -> None:
+    cases = (
+        ("step=-1", "resume/checkpoint-step"),
+        (
+            "step=1, dataset_cursor=DatasetCursor("
+            "item_offset=-1, ordering_fingerprint='sha256:test-ordering')",
+            "dataset-cursor/shape",
+        ),
+    )
+
+    for checkpoint_arguments, expected_rule in cases:
+        completed = run_project(
+            f"""
+import json
+
+from skywright import CheckpointSnapshot, DatasetCursor, run_training_process
+
+
+result = run_training_process(
+    lambda context: None,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={{}},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=3,
+    resume_from=CheckpointSnapshot(
+        {checkpoint_arguments},
+        state={{}},
+        reference="checkpoint:seed",
+    ),
+)
+print(json.dumps({{
+    "cause": result.report.cause.value,
+    "rule": result.report.diagnostics["rule"],
+}}))
+"""
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert json.loads(completed.stdout) == {
+            "cause": "contract_violation",
+            "rule": expected_rule,
+        }
+
+
+def test_resumed_attempt_must_commit_a_new_step() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import CheckpointSnapshot, DatasetCursor, run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=3,
+    resume_from=CheckpointSnapshot(
+        step=4,
+        state={"state": {}},
+        dataset_cursor=DatasetCursor(
+            item_offset=4,
+            epoch_step=4,
+            ordering_fingerprint="sha256:test-ordering",
+        ),
+        reference="checkpoint:seed",
+    ),
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "rule": result.report.diagnostics["rule"],
+    "last_step": result.report.last_committed_step,
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "contract_violation",
+        "rule": "step/empty-run",
+        "last_step": 4,
+    }
+
+
+def test_checkpoint_state_object_cannot_be_registered_twice() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    state = State()
+    context.register_checkpoint_state("first", state)
+    context.register_checkpoint_state("second", state)
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=3,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "rule": result.report.diagnostics["rule"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "contract_violation",
+        "rule": "checkpoint-state/identity",
+    }
+
+
+def test_checkpoint_snapshot_isolated_from_mutable_state() -> None:
+    completed = run_project(
+        """
+import json
+
+import numpy
+
+from skywright import CheckpointSnapshot
+
+
+values = numpy.array([1, 2])
+source = {"state": {"values": values, "nested": [3]}}
+checkpoint = CheckpointSnapshot(step=1, state=source)
+values[0] = 99
+source["state"]["nested"].append(4)
+exposed = checkpoint.state
+exposed["state"]["values"][1] = 88
+exposed["state"]["nested"].append(5)
+preserved = checkpoint.state["state"]
+print(json.dumps({
+    "values": preserved["values"].tolist(),
+    "nested": preserved["nested"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "values": [1, 2],
+        "nested": [3],
     }
 
 
