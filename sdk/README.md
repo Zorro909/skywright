@@ -22,6 +22,14 @@ The package root is the complete Training Project authoring API. Only names impo
 
 - `skywright.version` is the typed SDK version string.
 - `skywright.__version__` is its conventional alias.
+- `run_training_process` is the direct-execution Training Process Boundary; the installed
+  `skywright-runtime` command drives the same boundary for managed execution.
+- `RunContext` is the project-owned loop's interface for resolved configuration, Dataset access,
+  explicit accelerator access, Checkpoint State registration and resume, metric observations and
+  Step commits, Samples, Artifacts, cancellation, and interruption.
+- `MetricDefinition`, `Accelerator`, `CheckpointSnapshot`, and the other exported records describe
+  the version-pinned runtime inputs and process evidence. `TrainingContractViolation` identifies
+  project misuse with a stable rule, problem, and corrective guidance.
 
 Modules and names beginning with an underscore, including the operational launcher and generated
 build information, are private implementation details. They may move or change without a
@@ -37,6 +45,134 @@ SDK releases are tagged `sdk-v<version>`, for example `sdk-v0.1.0`. Only the str
 check compares the declared public API against the latest such tag. Before the first SDK release
 tag exists, it prints an explicit skip; it never falls back to an unrelated repository tag.
 
+## Training Project entry point
+
+A Training Project is a callable receiving one `RunContext`. Runtime setup happens before the
+callable runs; the project then constructs and registers every resumable object, calls `start()` to
+restore any checkpoint, and retains ownership of its loop:
+
+```python
+from collections.abc import Mapping
+
+from skywright import (
+    DatasetBatch,
+    DatasetCursor,
+    MetricCatalog,
+    MetricDefinition,
+    RunContext,
+    run_training_process,
+)
+
+
+class Counter:
+    def __init__(self) -> None:
+        self.value = 0
+
+    def state_dict(self) -> Mapping[str, object]:
+        return {"value": self.value}
+
+    def load_state_dict(self, state: Mapping[str, object]) -> None:
+        self.value = int(state["value"])
+
+
+def train(context: RunContext) -> None:
+    counter = Counter()
+    context.register_checkpoint_state("counter", counter)
+    context.start()
+
+    for batch in context.dataset.batches(context.dataset_cursor):
+        counter.value += 1
+        context.observe("train/items", 1)
+        context.commit_step(batch)
+
+
+class LocalDataset:
+    ordering_fingerprint = "sha256:local-ordering"
+
+    def batches(self, cursor: DatasetCursor):
+        yield DatasetBatch(
+            ("item-0",),
+            DatasetCursor(
+                item_offset=1,
+                epoch_step=1,
+                ordering_fingerprint=self.ordering_fingerprint,
+            ),
+        )
+
+
+class LocalRecorder:
+    def publish_attempt(self, attempt):
+        pass
+
+    def publish_step(
+        self, step, dataset_cursor, observations, durable_step, durable_reference
+    ):
+        pass
+
+    def publish_artifact(self, artifact):
+        pass
+
+    def publish_sample(self, sample):
+        pass
+
+    def publish_report(self, report):
+        pass
+
+    def publish_checkpoint(self, checkpoint):
+        return f"local-checkpoint:{checkpoint.step}"
+
+
+class LocalMetricContracts:
+    def compose(self, project_version, schema_identity):
+        return MetricCatalog(
+            project_identity=project_version,
+            project_contract_digest="sha256:project-contract",
+            skywright_schema_identity=schema_identity,
+            skywright_schema_digest="sha256:skywright-schema",
+            units=frozenset(("count",)),
+            project_definitions=(
+                MetricDefinition(
+                    name="train/items",
+                    numeric_kind="integer",
+                    unit="count",
+                    comparison="maximize",
+                    step_reduction="sum",
+                ),
+            ),
+        )
+
+
+result = run_training_process(
+    train,
+    run_id="local-smoke",
+    project_version="example@abc123",
+    configuration={"batch_size": 1},
+    dataset=LocalDataset(),
+    metric_contracts=LocalMetricContracts(),
+    skywright_metric_schema="skywright-metrics@1",
+    recorder=LocalRecorder(),
+    seed=7,
+)
+assert result.outcome.value == "completed"
+```
+
+Every invocation requires a fresh process or notebook kernel. The first context-construction
+attempt claims the process permanently, including failed construction. Python, NumPy, and PyTorch
+RNGs and deterministic numerical behavior are library-owned; NumPy and PyTorch are configured when
+the Environment Profile supplies them, without becoming SDK runtime dependencies. The first
+`SIGINT` or `SIGTERM` requests interruption at the next Step and starts the configured shutdown
+grace; grace expiry or a repeated signal forces immediate termination. Cancellation wins when both
+requests are present.
+
+This milestone keeps checkpoint, metric-event, Sample, Artifact, and Dataset transport behind
+explicit protocols. A `DatasetAccess` implementation supplies batches and their next cursor; the
+Run Context accepts only a context-issued batch. `commit_step()` advances its cursor while
+atomically publishing the Step's metrics and progress. A `TrainingProcessRecorder` synchronously
+confirms attempt, checkpoint, metric/progress, output, and
+termination-report publication. Completion and recoverable interruption are returned only after a
+checkpoint reference and the final report are durable. The SDK does not implement a concrete Run
+Store, TensorBoard writer, or MosaicML Streaming transport.
+
 ## Operational runtime command
 
 Installing the SDK registers one private operational bootstrap for Environment Profiles:
@@ -44,19 +180,19 @@ Installing the SDK registers one private operational bootstrap for Environment P
 ```bash
 skywright-runtime --help
 skywright-runtime --version
+skywright-runtime my_project:train --definition run.json
 ```
 
-This command is infrastructure-facing and is not a Training Project authoring API. Help and version
-load only the Python standard library and installed Skywright package metadata; they do not import
-or locate PyTorch, SkyPilot, the backend, Vault, Kubernetes, or an Environment Profile. The version
-diagnostic prints the canonical installed SDK Semantic Version and the separately frozen source
-revision.
-
-Issue #47 will provide the Training Process Boundary that eventually executes a Training Project.
-Until that boundary exists, invoking `skywright-runtime` for training exits non-zero with a clear
-limitation diagnostic. It does not create or imply a Run, Execution Attempt, Run Context, Execution
-Termination Report, or Training Process Outcome. PyTorch discovery belongs only to future runtime
-behavior that actually needs it.
+This command is infrastructure-facing rather than a second authoring interface. Its JSON definition
+names `run_id`, `project_version`, resolved `configuration`, `dataset_factory` and
+`recorder_factory` references, an optional `resume_factory`, `metric_contract_factory`, the pinned
+`skywright_metric_schema`, `seed`, and the explicit `accelerator`. Adapter factories use
+`MODULE:CALLABLE` form and belong in runtime infrastructure modules that do not import the Training
+Project. The project entry point itself is
+imported inside the deterministic process boundary. The command emits the Execution Termination
+Report as JSON. Exit 0 is completion, 75 is safely finalized recoverable interruption, 64 is
+terminal cancellation, and 1 is terminal failure. Help and version load no runtime services and
+report the installed SDK version and frozen source revision separately.
 
 ## Install and build natively
 

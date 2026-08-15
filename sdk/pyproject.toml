@@ -78,7 +78,11 @@ include = [
 path = "hatch_build.py"
 
 [tool.pytest.ini_options]
-testpaths = ["tests/test_package.py", "tests/test_release.py"]
+testpaths = [
+  "tests/test_package.py",
+  "tests/test_release.py",
+  "tests/test_training_process.py",
+]
 markers = [
   "system: installed-artifact tests that require a built wheel",
 ]
