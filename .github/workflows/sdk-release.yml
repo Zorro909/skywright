@@ -145,6 +145,42 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
           python3 sdk/release_support.py verify-handoff \
             --artifact-dir release/distributions
+      - name: Verify retained attestations before accepting an identical rerun
+        if: steps.collisions.outputs.github == 'skip'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ needs.validate.outputs.source_revision }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          mkdir --parents release/retained-attestations
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir release/retained-attestations \
+            --pattern '*.intoto.jsonl'
+          for distribution in \
+            "release/distributions/skywright-$VERSION-py3-none-any.whl" \
+            "release/distributions/skywright-$VERSION.tar.gz"; do
+            gh attestation verify "$distribution" \
+              --bundle release/retained-attestations/provenance.intoto.jsonl \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-digest "$SOURCE_REVISION" \
+              --source-ref "refs/tags/$TAG"
+          done
+          gh attestation verify \
+            "release/distributions/skywright-$VERSION-py3-none-any.whl" \
+            --bundle release/retained-attestations/wheel-sbom.intoto.jsonl \
+            --repo "$GITHUB_REPOSITORY" \
+            --source-digest "$SOURCE_REVISION" \
+            --source-ref "refs/tags/$TAG" \
+            --predicate-type https://spdx.dev/Document/v2.3
+          gh attestation verify \
+            "release/distributions/skywright-$VERSION.tar.gz" \
+            --bundle release/retained-attestations/source-sbom.intoto.jsonl \
+            --repo "$GITHUB_REPOSITORY" \
+            --source-digest "$SOURCE_REVISION" \
+            --source-ref "refs/tags/$TAG" \
+            --predicate-type https://spdx.dev/Document/v2.3
       - name: Separate publication evidence from distributions
         run: |
           mkdir --parents release/evidence

@@ -216,7 +216,10 @@ def release_notes_section(repository: Path, release: ValidatedRelease) -> str:
         repository, release.source_revision, "sdk/CHANGELOG.md"
     ).decode()
     heading = f"## {release.version}"
-    start = notes.index(heading)
+    heading_match = re.search(rf"^{re.escape(heading)}$", notes, re.MULTILINE)
+    if heading_match is None:
+        raise ReleaseError(f"committed release notes have no '{heading}' section")
+    start = heading_match.start()
     following = re.search(r"^## ", notes[start + len(heading) :], re.MULTILINE)
     end = (
         start + len(heading) + following.start()

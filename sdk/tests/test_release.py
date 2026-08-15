@@ -218,6 +218,38 @@ def test_release_notes_must_contain_the_exact_version_heading(
     assert "committed release notes have no '## 0.1.0' section" in completed.stderr
 
 
+def test_release_evidence_uses_the_complete_version_heading(
+    release_repository: Path, tmp_path: Path
+) -> None:
+    (release_repository / "sdk" / "CHANGELOG.md").write_text(
+        "# Release notes\n\n"
+        "## 0.1.00\n\n- Different release.\n\n"
+        "## 0.1.0\n\n- Exact release.\n",
+        encoding="utf-8",
+    )
+    git(release_repository, "add", ".")
+    git(release_repository, "commit", "-m", "Add prefixed release notes")
+    git(release_repository, "tag", "--force", "sdk-v0.1.0")
+    release_json = tmp_path / "release.json"
+    write_release_json(release_repository, release_json)
+    artifact_directory = tmp_path / "dist"
+    make_distributions(artifact_directory)
+
+    completed = release_command(
+        release_repository,
+        "evidence",
+        "--release",
+        release_json,
+        "--artifact-dir",
+        artifact_directory,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    release_notes = (artifact_directory / "RELEASE.md").read_text()
+    assert release_notes.startswith("## 0.1.0\n\n- Exact release.\n")
+    assert "Different release" not in release_notes
+
+
 def test_release_never_substitutes_a_different_pypi_project(
     release_repository: Path,
 ) -> None:
