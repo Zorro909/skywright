@@ -211,6 +211,9 @@ jobs:
       - name: Build and exercise the production image
         id: build_image
         run: scripts/quality run image
+      - name: Prepare image security reports
+        if: steps.build_image.outcome == 'success'
+        run: mkdir --parents security-results
       - name: Record all high and critical image findings
         if: steps.build_image.outcome == 'success'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
