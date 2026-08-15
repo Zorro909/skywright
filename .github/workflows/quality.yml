@@ -37,7 +37,7 @@ jobs:
       uv_version: ${{ steps.plan.outputs.uv_version }}
     steps:
       - name: Check out the tested revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Record source identity
@@ -72,7 +72,7 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
       - name: Retain source identity
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: quality-source-identity
           path: quality-metadata.json
@@ -86,7 +86,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out the tested revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Set up GraalVM Community
@@ -104,7 +104,7 @@ jobs:
         run: scripts/quality run java
       - name: Retain Java test and diagnostic reports
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: java-reports
           path: |
@@ -126,7 +126,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out the tested revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
@@ -136,7 +136,7 @@ jobs:
         run: scripts/quality run frontend
       - name: Retain frontend test and diagnostic reports
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: frontend-reports
           path: |
@@ -154,7 +154,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out the tested revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Set up GraalVM Community
@@ -172,7 +172,7 @@ jobs:
         run: scripts/quality run application
       - name: Retain application test, coverage, and diagnostic reports
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: application-reports
           path: |
@@ -194,7 +194,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out the tested revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Set up GraalVM Community
@@ -235,7 +235,7 @@ jobs:
           exit-code: '1'
       - name: Retain image acceptance and security reports
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: image-reports
           path: |
@@ -258,15 +258,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out the tested revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.14'
       - name: Set up uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
         with:
           version: ${{ needs.plan.outputs.uv_version }}
           enable-cache: true
@@ -275,7 +275,7 @@ jobs:
         run: scripts/quality run sdk
       - name: Retain SDK test and diagnostic reports
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sdk-reports
           path: |
@@ -294,7 +294,7 @@ jobs:
       security-events: write
     steps:
       - name: Check out the tested revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Validate security suppressions
@@ -344,7 +344,7 @@ jobs:
         run: scripts/quality github-dismissal-policy --scanner codeql
       - name: Retain security reports
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: security-reports
           path: security-results/**
@@ -365,7 +365,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out the tested revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Require a valid plan
         if: needs.plan.result != 'success'
         env:
