@@ -22,6 +22,14 @@ The package root is the complete Training Project authoring API. Only names impo
 
 - `skywright.version` is the typed SDK version string.
 - `skywright.__version__` is its conventional alias.
+- `run_training_process` is the direct-execution Training Process Boundary; the installed
+  `skywright-runtime` command drives the same boundary for managed execution.
+- `RunContext` is the project-owned loop's interface for resolved configuration, Dataset access,
+  explicit accelerator access, Checkpoint State registration and resume, metric observations and
+  Step commits, Samples, Artifacts, cancellation, and interruption.
+- `MetricDefinition`, `Accelerator`, `CheckpointSnapshot`, and the other exported records describe
+  the version-pinned runtime inputs and process evidence. `TrainingContractViolation` identifies
+  project misuse with a stable rule, problem, and corrective guidance.
 
 Modules and names beginning with an underscore, including the operational launcher and generated
 build information, are private implementation details. They may move or change without a
@@ -37,6 +45,72 @@ SDK releases are tagged `sdk-v<version>`, for example `sdk-v0.1.0`. Only the str
 check compares the declared public API against the latest such tag. Before the first SDK release
 tag exists, it prints an explicit skip; it never falls back to an unrelated repository tag.
 
+## Training Project entry point
+
+A Training Project is a callable receiving one `RunContext`. Runtime setup happens before the
+callable runs; the project then constructs and registers every resumable object, calls `start()` to
+restore any checkpoint, and retains ownership of its loop:
+
+```python
+from collections.abc import Mapping
+
+from skywright import MetricDefinition, RunContext, run_training_process
+
+
+class Counter:
+    def __init__(self) -> None:
+        self.value = 0
+
+    def state_dict(self) -> Mapping[str, object]:
+        return {"value": self.value}
+
+    def load_state_dict(self, state: Mapping[str, object]) -> None:
+        self.value = int(state["value"])
+
+
+def train(context: RunContext) -> None:
+    counter = Counter()
+    context.register_checkpoint_state("counter", counter)
+    context.start()
+
+    for _item in context.dataset:
+        counter.value += 1
+        context.observe("train/items", 1)
+        context.commit_step()
+
+
+result = run_training_process(
+    train,
+    run_id="local-smoke",
+    project_version="example@abc123",
+    configuration={"batch_size": 1},
+    dataset=("item-0",),
+    metric_definitions=(
+        MetricDefinition(
+            name="train/items",
+            numeric_kind="integer",
+            unit="count",
+            comparison="maximize",
+            step_reduction="sum",
+        ),
+    ),
+    seed=7,
+)
+assert result.outcome.value == "completed"
+```
+
+Every invocation requires a fresh process or notebook kernel. The first context-construction
+attempt claims the process permanently, including failed construction. Python, NumPy, and PyTorch
+RNGs and deterministic numerical behavior are library-owned; NumPy and PyTorch are configured when
+the Environment Profile supplies them, without becoming SDK runtime dependencies. The first
+`SIGINT` or `SIGTERM` requests interruption at the next Step; a repeated signal forces immediate
+termination. Cancellation wins when both requests are present.
+
+This milestone keeps checkpoint, metric-event, Sample, Artifact, and Dataset transport behind the
+runtime seam: `TrainingProcessResult` carries the accepted records and final immutable checkpoint
+snapshot for those persistence implementations. It does not implement a concrete Run Store,
+TensorBoard writer, or MosaicML Streaming transport.
+
 ## Operational runtime command
 
 Installing the SDK registers one private operational bootstrap for Environment Profiles:
@@ -44,19 +118,15 @@ Installing the SDK registers one private operational bootstrap for Environment P
 ```bash
 skywright-runtime --help
 skywright-runtime --version
+skywright-runtime my_project:train --definition run.json
 ```
 
-This command is infrastructure-facing and is not a Training Project authoring API. Help and version
-load only the Python standard library and installed Skywright package metadata; they do not import
-or locate PyTorch, SkyPilot, the backend, Vault, Kubernetes, or an Environment Profile. The version
-diagnostic prints the canonical installed SDK Semantic Version and the separately frozen source
-revision.
-
-Issue #47 will provide the Training Process Boundary that eventually executes a Training Project.
-Until that boundary exists, invoking `skywright-runtime` for training exits non-zero with a clear
-limitation diagnostic. It does not create or imply a Run, Execution Attempt, Run Context, Execution
-Termination Report, or Training Process Outcome. PyTorch discovery belongs only to future runtime
-behavior that actually needs it.
+This command is infrastructure-facing rather than a second authoring interface. Its JSON definition
+names `run_id`, `project_version`, resolved `configuration`, Dataset items, `metric_definitions`,
+`seed`, and the explicit `accelerator`. It emits the Execution Termination Report as JSON. Exit 0 is
+completion, 75 is safely finalized recoverable interruption, 64 is terminal cancellation, and 1 is
+terminal failure. Help and version load no runtime services and report the installed SDK version
+and frozen source revision separately.
 
 ## Install and build natively
 

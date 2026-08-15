@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -132,27 +133,62 @@ def test_runtime_command_reports_version_and_source_revision(
     )
 
 
-def test_runtime_command_rejects_training_until_the_process_boundary_exists(
+def test_runtime_command_executes_a_training_project(
     installed_sdk: Path,
     tmp_path: Path,
     isolated_process_environment: dict[str, str],
 ) -> None:
+    (tmp_path / "installed_project.py").write_text(
+        """
+class State:
+    def state_dict(self):
+        return {"step": 1}
+
+    def load_state_dict(self, state):
+        pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step()
+""",
+        encoding="utf-8",
+    )
+    definition = tmp_path / "run.json"
+    definition.write_text(
+        json.dumps(
+            {
+                "run_id": "installed-run",
+                "project_version": "installed-project@abc123",
+                "configuration": {},
+                "dataset": [],
+                "metric_definitions": [],
+                "seed": 8,
+                "accelerator": {"kind": "cpu"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    environment = isolated_process_environment.copy()
+    environment["PYTHONPATH"] = str(tmp_path)
     completed = subprocess.run(
-        [installed_sdk / "bin" / "skywright-runtime"],
+        [
+            installed_sdk / "bin" / "skywright-runtime",
+            "installed_project:train",
+            "--definition",
+            definition,
+        ],
         check=False,
         cwd=tmp_path,
-        env=isolated_process_environment,
+        env=environment,
         text=True,
         capture_output=True,
     )
 
-    assert completed.returncode == 2
-    assert completed.stdout == ""
-    assert (
-        "training execution is unavailable until the Training Process Boundary "
-        "is implemented" in completed.stderr
-    )
-    assert "Run Context" not in completed.stderr
-    assert "Execution Attempt" not in completed.stderr
-    assert "Execution Termination Report" not in completed.stderr
-    assert "Training Process Outcome" not in completed.stderr
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["outcome"] == "completed"
+    assert report["cause"] == "completed"
+    assert report["last_committed_step"] == 1
+    assert report["latest_durable_step"] == 1
