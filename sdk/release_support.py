@@ -207,7 +207,8 @@ def distributions(artifact_directory: Path, version: str) -> list[Distribution]:
 
 def commit_timestamp(repository: Path, revision: str) -> str:
     timestamp = run_git(repository, "show", "-s", "--format=%cI", revision)
-    parsed = datetime.fromisoformat(timestamp)
+    normalized = f"{timestamp[:-1]}+00:00" if timestamp.endswith("Z") else timestamp
+    parsed = datetime.fromisoformat(normalized)
     return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
