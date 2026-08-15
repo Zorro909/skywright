@@ -403,9 +403,9 @@ def run_command(arguments: argparse.Namespace) -> int:
         print(f"APPLICABLE {check}: selected for local verification")
         try:
             check_prerequisites(check)
-            if check in {"application", "image", "java", "frontend"}:
-                require_browser()
             if arguments.dry_run:
+                if check in {"application", "image", "java", "frontend"}:
+                    require_browser()
                 print(f"PASSED {check}: prerequisites available (dry run)")
                 continue
             commands = COMMANDS[check]
