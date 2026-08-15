@@ -11,6 +11,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import cast
 
@@ -27,6 +28,17 @@ STABLE_TAG = re.compile(
 
 class ReleaseError(RuntimeError):
     """A release cannot proceed without violating the release contract."""
+
+
+class PublicationAction(str, Enum):
+    """A permitted action for one immutable publication destination."""
+
+    PUBLISH = "publish"
+    REPAIR = "repair"
+    SKIP = "skip"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 @dataclass(frozen=True)
@@ -407,14 +419,14 @@ def published_github_files(
 
 def collision_plan(
     artifact_directory: Path, pypi_path: Path, github_path: Path
-) -> dict[str, str]:
+) -> dict[str, PublicationAction]:
     verify_handoff(artifact_directory)
     version, expected = manifest_distributions(artifact_directory)
     pypi_files = published_pypi_files(load_json(pypi_path), version)
     if pypi_files is not None and pypi_files != expected:
         raise ReleaseError(f"PyPI version {version} conflicts with verified artifacts")
     github_release = published_github_files(load_json(github_path))
-    github_state = "publish"
+    github_state = PublicationAction.PUBLISH
     if github_release is not None:
         github_files, github_names = github_release
         deterministic_evidence = {
@@ -440,10 +452,18 @@ def collision_plan(
                 "source-sbom.intoto.jsonl",
             )
         )
-        github_state = "skip" if required_names <= github_names else "repair"
+        github_state = (
+            PublicationAction.SKIP
+            if required_names <= github_names
+            else PublicationAction.REPAIR
+        )
     return {
         "github": github_state,
-        "pypi": "skip" if pypi_files is not None else "publish",
+        "pypi": (
+            PublicationAction.SKIP
+            if pypi_files is not None
+            else PublicationAction.PUBLISH
+        ),
     }
 
 

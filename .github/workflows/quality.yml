@@ -290,6 +290,7 @@ jobs:
         run: |
           sdk/scripts/check
           uv run --project sdk --locked pytest sdk/tests/system -m system \
+            --junitxml sdk/target/test-results/system-${{ matrix.python-version }}.xml \
             --artifact-dir sdk-dist
       - name: Retain SDK test and diagnostic reports
         if: always()
@@ -330,7 +331,7 @@ jobs:
           name: sdk-qualified-distributions
           path: sdk/target/ci-dist/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 30 || 7 }}
       - name: Retain SDK test and diagnostic reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

@@ -96,6 +96,16 @@ jobs:
             --artifact-dir release/distributions
           python3 sdk/release_support.py verify-handoff \
             --artifact-dir release/distributions
+      - name: Retain release qualification reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sdk-release-reports
+          path: |
+            sdk/target/test-results/**
+            sdk/target/coverage/**
+          if-no-files-found: ignore
+          retention-days: 90
       - name: Inspect immutable publication collisions
         id: collisions
         env:
@@ -181,11 +191,19 @@ jobs:
           cd release/distributions
           sha256sum --check ../evidence/SHA256SUMS
       - name: Publish to PyPI with Trusted Publishing and attestations
+        id: pypi
         if: steps.collisions.outputs.pypi == 'publish'
+        continue-on-error: true
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           packages-dir: release/distributions/
           attestations: true
+      - name: Reject an unavailable exact PyPI identity
+        if: steps.pypi.outcome == 'failure'
+        run: |
+          echo "Trusted Publishing could not publish the exact 'skywright' PyPI project." >&2
+          echo "The release will not substitute another distribution identity." >&2
+          exit 1
       - name: Publish the matching immutable GitHub Release
         if: steps.collisions.outputs.github == 'publish'
         env:

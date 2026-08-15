@@ -42,7 +42,7 @@ def build_sdk(
     )
 
 
-def test_local_wheel_build_information_matches_package_metadata(
+def test_wheel_build_information_matches_package_metadata_and_build_mode(
     direct_wheel_path: Path,
 ) -> None:
     with ZipFile(direct_wheel_path) as wheel:
@@ -52,8 +52,10 @@ def test_local_wheel_build_information_matches_package_metadata(
         metadata = Parser().parsestr(wheel.read(metadata_path).decode())
         build_information = wheel.read("skywright/_build_info.py").decode()
 
+    expected_source_revision = os.environ.get("SKYWRIGHT_SOURCE_REVISION", "unknown")
     assert build_information == (
-        f'PACKAGE_VERSION = "{metadata["Version"]}"\nSOURCE_REVISION = "unknown"\n'
+        f'PACKAGE_VERSION = "{metadata["Version"]}"\n'
+        f'SOURCE_REVISION = "{expected_source_revision}"\n'
     )
 
 
