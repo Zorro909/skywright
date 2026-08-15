@@ -324,7 +324,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: sdk/uv.lock
       - name: Build each distribution once and run complete SDK verification
-        run: sdk/scripts/verify sdk/target/ci-dist
+        run: sdk/scripts/verify target/ci-dist
       - name: Hand verified distributions to compatibility lanes
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
