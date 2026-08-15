@@ -12,11 +12,19 @@ From the repository root, build the backend JAR and production image:
 ./mvnw -pl backend-deployment -am package
 ```
 
-The normal Maven verification lifecycle builds the same image during its package phase:
+The normal Maven verification lifecycle builds the same image during its package phase, then starts
+that image and verifies its operator-visible runtime contract:
 
 ```bash
 ./mvnw -pl backend-deployment -am verify
 ```
+
+The verification covers non-root execution, health and application/source identity, the exact
+served OpenAPI bytes, structured safe console output, sanitized invalid-configuration failure, and
+bounded graceful termination. It deliberately does not inspect Dockerfile instructions, image
+layers, private JVM details, or internal filesystem layout. CI additionally retains a complete high
+and critical vulnerability report and rejects fixable findings at those severities under the
+repository security policy; it does not publish the image.
 
 For a Podman-compatible daemon, expose its Docker API:
 

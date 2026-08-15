@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 test('user can navigate the packaged Skywright shell', async ({ page }) => {
   await page.goto('/');
@@ -166,7 +167,11 @@ test('direct application routes boot without rewriting reserved backend URLs', a
   const openApi = await request.get('/openapi/skywright-api.yaml');
   expect(openApi.status()).toBe(200);
   expect(openApi.headers()['content-type'] ?? '').not.toContain('text/html');
-  expect(await openApi.text()).toContain('openapi: 3.1.0');
+  expect(await openApi.body()).toEqual(
+    await readFile(
+      '../api/skywright-api/src/main/resources/META-INF/openapi/skywright-api.yaml',
+    ),
+  );
 
   for (const path of ['/livez', '/readyz', '/actuator/health']) {
     const response = await request.get(path);

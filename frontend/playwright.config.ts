@@ -14,6 +14,10 @@ export default defineConfig({
   testDir: './tests/acceptance',
   fullyParallel: false,
   workers: 1,
+  reporter: [
+    ['html', { open: 'never', outputFolder: 'playwright-report' }],
+    ['junit', { outputFile: 'target/test-results/acceptance.xml' }],
+  ],
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     browserName: 'chromium',

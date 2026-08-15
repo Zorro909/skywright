@@ -14,4 +14,26 @@
   <artifactId>skywright-api</artifactId>
   <name>Skywright product API contract</name>
   <description>Reusable OpenAPI contract for the Skywright product HTTP boundary.</description>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.openapitools</groupId>
+        <artifactId>openapi-generator-maven-plugin</artifactId>
+        <version>${openapi-generator.version}</version>
+        <executions>
+          <execution>
+            <id>validate-product-api</id>
+            <phase>validate</phase>
+            <goals>
+              <goal>validate</goal>
+            </goals>
+            <configuration>
+              <inputSpec>${project.basedir}/src/main/resources/META-INF/openapi/skywright-api.yaml</inputSpec>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>

@@ -52,20 +52,44 @@ def load_toolchain() -> dict[str, str]:
 
 
 TOOLCHAIN = load_toolchain()
-LOCAL_CHECKS = ("java", "frontend", "sdk")
+LOCAL_CHECKS = ("application", "image", "java", "frontend", "sdk")
 CHECKS = (*LOCAL_CHECKS, "security")
 ALL_CHECKS = frozenset(CHECKS)
 CATEGORY_CHECKS = {
-    "api": frozenset(("java", "frontend", "security")),
-    "backend": frozenset(("java", "security")),
+    "api": frozenset(("application", "image", "java", "frontend", "security")),
+    "backend": frozenset(("application", "image", "java", "security")),
     "documentation": frozenset(),
-    "fixture": frozenset(("java", "sdk", "security")),
-    "frontend": frozenset(("frontend", "security")),
+    "fixture": frozenset(("application", "image", "java", "sdk", "security")),
+    "frontend": frozenset(("application", "image", "frontend", "security")),
     "profile": frozenset(("sdk", "security")),
     "sdk": frozenset(("sdk", "security")),
     "shared-tooling": ALL_CHECKS,
 }
 COMMANDS = {
+    "application": (
+        ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
+        ("./mvnw", "--batch-mode", "-pl", "backend", "-am", "verify"),
+        (
+            "./mvnw",
+            "--batch-mode",
+            "-pl",
+            "frontend",
+            "-am",
+            "-Ppackaged-acceptance",
+            "verify",
+        ),
+    ),
+    "image": (
+        ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
+        (
+            "./mvnw",
+            "--batch-mode",
+            "-pl",
+            "backend-deployment",
+            "-am",
+            "verify",
+        ),
+    ),
     "java": (
         ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
         ("./mvnw", "--batch-mode", "-pl", "backend", "-am", "verify"),
@@ -337,14 +361,26 @@ def require_browser() -> None:
         )
 
 
+def require_container_runtime() -> None:
+    docker = executable("docker")
+    try:
+        output_of(docker, "version", "--format", "{{.Server.Version}}")
+    except subprocess.CalledProcessError as error:
+        raise PrerequisiteError(
+            "required Docker-compatible container runtime is unavailable"
+        ) from error
+
+
 def check_prerequisites(check: str) -> None:
-    if check == "java":
+    if check in {"application", "image", "java"}:
         require_java()
         require_frontend()
     elif check == "frontend":
         require_frontend()
     elif check == "sdk":
         require_uv()
+    if check == "image":
+        require_container_runtime()
 
 
 def run_command(arguments: argparse.Namespace) -> int:
@@ -367,7 +403,7 @@ def run_command(arguments: argparse.Namespace) -> int:
         print(f"APPLICABLE {check}: selected for local verification")
         try:
             check_prerequisites(check)
-            if check in {"java", "frontend"}:
+            if check in {"application", "image", "java", "frontend"}:
                 require_browser()
             if arguments.dry_run:
                 print(f"PASSED {check}: prerequisites available (dry run)")
@@ -377,7 +413,10 @@ def run_command(arguments: argparse.Namespace) -> int:
                 subprocess.run(
                     command, cwd=REPOSITORY, check=True, env=os.environ.copy()
                 )
-                if check in {"java", "frontend"} and index == 0:
+                if (
+                    check in {"application", "image", "java", "frontend"}
+                    and index == 0
+                ):
                     require_browser()
             print(f"PASSED {check}")
         except (PrerequisiteError, subprocess.CalledProcessError) as error:

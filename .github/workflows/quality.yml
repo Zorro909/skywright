@@ -22,8 +22,10 @@ jobs:
     name: Plan
     runs-on: ubuntu-24.04
     outputs:
+      application: ${{ steps.plan.outputs.application }}
       plan: ${{ steps.plan.outputs.plan }}
       frontend: ${{ steps.plan.outputs.frontend }}
+      image: ${{ steps.plan.outputs.image }}
       java: ${{ steps.plan.outputs.java }}
       sdk: ${{ steps.plan.outputs.sdk }}
       security: ${{ steps.plan.outputs.security }}
@@ -87,23 +89,12 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
-      - name: Download exact GraalVM Community archive
-        env:
-          JAVA_ARCHIVE_SHA256: ${{ needs.plan.outputs.java_archive_sha256 }}
-          JAVA_ARCHIVE_URL: ${{ needs.plan.outputs.java_archive_url }}
-        run: |
-          curl --fail --location --silent --show-error \
-            --output "${RUNNER_TEMP}/graalvm-community.tar.gz" \
-            "$JAVA_ARCHIVE_URL"
-          echo "${JAVA_ARCHIVE_SHA256}  ${RUNNER_TEMP}/graalvm-community.tar.gz" \
-            | sha256sum --check --strict
       - name: Set up GraalVM Community
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        uses: ./.github/actions/setup-java
         with:
-          distribution: jdkfile
-          jdk-file: ${{ runner.temp }}/graalvm-community.tar.gz
+          archive-sha256: ${{ needs.plan.outputs.java_archive_sha256 }}
+          archive-url: ${{ needs.plan.outputs.java_archive_url }}
           java-version: ${{ needs.plan.outputs.java_version }}
-          cache: maven
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
@@ -153,6 +144,107 @@ jobs:
             frontend/target/test-results/**
             frontend/test-results/**
             frontend/playwright-report/**
+          if-no-files-found: ignore
+          retention-days: 90
+
+  application:
+    name: Complete application
+    needs: plan
+    if: needs.plan.outputs.application == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Set up GraalVM Community
+        uses: ./.github/actions/setup-java
+        with:
+          archive-sha256: ${{ needs.plan.outputs.java_archive_sha256 }}
+          archive-url: ${{ needs.plan.outputs.java_archive_url }}
+          java-version: ${{ needs.plan.outputs.java_version }}
+      - name: Set up frontend prerequisites
+        uses: ./.github/actions/setup-frontend
+        with:
+          node-version: ${{ needs.plan.outputs.node_version }}
+          pnpm-version: ${{ needs.plan.outputs.pnpm_version }}
+      - name: Qualify the complete application
+        run: scripts/quality run application
+      - name: Retain application test, coverage, and diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: application-reports
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+            **/target/site/jacoco/**
+            **/target/site/jacoco-it/**
+            frontend/coverage/**
+            frontend/target/test-results/**
+            frontend/test-results/**
+            frontend/playwright-report/**
+          if-no-files-found: ignore
+          retention-days: 90
+
+  image:
+    name: Production backend image
+    needs: plan
+    if: needs.plan.outputs.image == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Set up GraalVM Community
+        uses: ./.github/actions/setup-java
+        with:
+          archive-sha256: ${{ needs.plan.outputs.java_archive_sha256 }}
+          archive-url: ${{ needs.plan.outputs.java_archive_url }}
+          java-version: ${{ needs.plan.outputs.java_version }}
+      - name: Set up frontend prerequisites
+        uses: ./.github/actions/setup-frontend
+        with:
+          node-version: ${{ needs.plan.outputs.node_version }}
+          pnpm-version: ${{ needs.plan.outputs.pnpm_version }}
+      - name: Build and exercise the production image
+        id: build_image
+        run: scripts/quality run image
+      - name: Record all high and critical image findings
+        if: steps.build_image.outcome == 'success'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: skywright-backend:0.1.0-SNAPSHOT
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: security-results/backend-image.sarif
+          exit-code: '0'
+      - name: Reject fixable high and critical image findings
+        if: steps.build_image.outcome == 'success'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: skywright-backend:0.1.0-SNAPSHOT
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Retain image acceptance and security reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: image-reports
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+            **/target/site/jacoco/**
+            **/target/site/jacoco-it/**
+            frontend/coverage/**
+            frontend/target/test-results/**
+            frontend/test-results/**
+            frontend/playwright-report/**
+            security-results/backend-image.sarif
           if-no-files-found: ignore
           retention-days: 90
 
@@ -261,8 +353,10 @@ jobs:
     if: always()
     needs:
       - plan
+      - application
       - java
       - frontend
+      - image
       - sdk
       - security
     runs-on: ubuntu-24.04
@@ -279,15 +373,19 @@ jobs:
       - name: Aggregate required outcomes
         if: needs.plan.result == 'success'
         env:
+          APPLICATION_RESULT: ${{ needs.application.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
+          IMAGE_RESULT: ${{ needs.image.result }}
           JAVA_RESULT: ${{ needs.java.result }}
           PLAN: ${{ needs.plan.outputs.plan }}
           SDK_RESULT: ${{ needs.sdk.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
         run: |
           scripts/quality aggregate \
+            --result "application=$APPLICATION_RESULT" \
             --plan "$PLAN" \
             --result "frontend=$FRONTEND_RESULT" \
+            --result "image=$IMAGE_RESULT" \
             --result "java=$JAVA_RESULT" \
             --result "sdk=$SDK_RESULT" \
             --result "security=$SECURITY_RESULT"
