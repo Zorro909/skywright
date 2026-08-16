@@ -1,0 +1,37 @@
+{
+  "corpusVersion": 1,
+  "cases": [
+    {
+      "name": "valid-real-step-metric",
+      "definitions": [{"name":"train/loss","numericKind":"real","unit":"dimensionless","recordingBasis":"step","comparison":"minimize","stepReduction":"mean","bounds":{"minimum":0}}]
+    },
+    {
+      "name": "reserved-project-namespace",
+      "definitions": [{"name":"skywright/project/loss","numericKind":"real","unit":"dimensionless","recordingBasis":"step","comparison":"minimize","stepReduction":"mean"}],
+      "errors": [{"code":"METRIC_RESERVED_NAME","source":"project-contract","pointer":"/definitions/0/name","keyword":"pattern"}]
+    },
+    {
+      "name": "integer-mean-is-not-closed",
+      "definitions": [{"name":"train/items","numericKind":"integer","unit":"count","recordingBasis":"step","comparison":"maximize","stepReduction":"mean"}],
+      "errors": [{"code":"METRIC_INTEGER_MEAN","source":"project-contract","pointer":"/definitions/0/stepReduction","keyword":"semantic"}]
+    },
+    {
+      "name": "unknown-unit",
+      "definitions": [{"name":"train/energy","numericKind":"real","unit":"joules","recordingBasis":"step","comparison":"minimize","stepReduction":"sum"}],
+      "errors": [{"code":"METRIC_UNKNOWN_UNIT","source":"project-contract","pointer":"/definitions/0/unit","keyword":"registry"}]
+    },
+    {
+      "name": "duplicate-name",
+      "definitions": [
+        {"name":"train/loss","numericKind":"real","unit":"dimensionless","recordingBasis":"step","comparison":"minimize","stepReduction":"mean"},
+        {"name":"train/loss","numericKind":"real","unit":"dimensionless","recordingBasis":"step","comparison":"minimize","stepReduction":"last"}
+      ],
+      "errors": [{"code":"METRIC_DEFINITION_COLLISION","source":"project-contract","pointer":"/definitions/1/name","keyword":"unique"}]
+    },
+    {
+      "name": "reversed-bounds",
+      "definitions": [{"name":"train/accuracy","numericKind":"real","unit":"ratio","recordingBasis":"step","comparison":"maximize","stepReduction":"last","bounds":{"minimum":1,"maximum":0}}],
+      "errors": [{"code":"METRIC_BOUNDS_ORDER","source":"project-contract","pointer":"/definitions/0/bounds","keyword":"semantic"}]
+    }
+  ]
+}

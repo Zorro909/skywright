@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:skywright:project-metric-contract:1",
+  "title": "Project Metric Contract artifact",
+  "type": "object",
+  "properties": {
+    "contractVersion": {"const": 1},
+    "skywrightSchema": {
+      "type": "object",
+      "properties": {
+        "version": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      },
+      "required": ["version", "digest"],
+      "additionalProperties": false
+    },
+    "definitions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/metricDefinition"}
+    }
+  },
+  "required": ["contractVersion", "skywrightSchema", "definitions"],
+  "additionalProperties": false,
+  "$defs": {
+    "metricDefinition": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(/[a-z][a-z0-9_]*)+$"},
+        "numericKind": {"enum": ["real", "integer"]},
+        "unit": {"type": "string"},
+        "recordingBasis": {"const": "step"},
+        "comparison": {"enum": ["minimize", "maximize", "none"]},
+        "stepReduction": {"enum": ["mean", "sum", "min", "max", "last"]},
+        "bounds": {
+          "type": "object",
+          "properties": {
+            "minimum": {"type": "number"},
+            "maximum": {"type": "number"}
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        },
+        "displayName": {"type": "string", "minLength": 1},
+        "description": {"type": "string", "minLength": 1}
+      },
+      "required": ["name", "numericKind", "unit", "recordingBasis", "comparison", "stepReduction"],
+      "additionalProperties": false
+    }
+  }
+}

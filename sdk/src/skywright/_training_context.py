@@ -30,6 +30,7 @@ from skywright._training_types import (
     DatasetBatch,
     DatasetCursor,
     ExecutionTerminationCause,
+    MetricCatalog,
     MetricObservation,
     ResumeState,
     SampleRecord,
@@ -68,6 +69,7 @@ class DefaultRunContext:
             )
         except Exception as failure:
             raise SkywrightFailure(failure, "construction") from failure
+        self._metric_catalog = metric_catalog
         self._definitions = validate_metric_catalog(
             metric_catalog, project_version, skywright_metric_schema
         )
@@ -137,6 +139,10 @@ class DefaultRunContext:
     @property
     def accelerator(self) -> Accelerator:
         return self._accelerator
+
+    @property
+    def metric_catalog(self) -> MetricCatalog:
+        return self._metric_catalog
 
     @property
     def step(self) -> int:

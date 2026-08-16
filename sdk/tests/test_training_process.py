@@ -195,6 +195,83 @@ print(json.dumps({
     }
 
 
+def test_run_context_exposes_the_immutable_composed_metric_catalog() -> None:
+    completed = run_project(
+        """
+import json
+from dataclasses import FrozenInstanceError
+
+from skywright import run_training_process
+from skywright.metrics import MetricContract, MetricSchema, ProjectMetricContract
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+artifact = {
+    "contractVersion": 1,
+    "skywrightSchema": MetricSchema.identity(),
+    "definitions": [{
+        "name": "train/loss",
+        "numericKind": "real",
+        "unit": "dimensionless",
+        "recordingBasis": "step",
+        "comparison": "minimize",
+        "stepReduction": "mean",
+    }],
+}
+compiled = MetricContract.compile(artifact)
+seen = {}
+
+
+def train(context):
+    seen["project"] = context.metric_catalog.project_identity
+    seen["version"] = context.metric_catalog.project_version
+    seen["names"] = [item.name for item in context.metric_catalog.definitions]
+    try:
+        context.metric_catalog.project_identity = "changed"
+    except FrozenInstanceError:
+        seen["immutable"] = True
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+
+
+run_training_process(
+    train,
+    run_id="test-run",
+    project_version="project@revision",
+    configuration={},
+    dataset=TestDataset(("item",)),
+    metric_contracts=ProjectMetricContract(
+        artifact,
+        expected_digest=compiled.digest,
+        project_identity="stable-project",
+    ),
+    skywright_metric_schema=MetricSchema.identity()["version"],
+    recorder=TestRecorder(),
+    seed=1,
+)
+print(json.dumps(seen))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "project": "stable-project",
+        "version": "project@revision",
+        "names": [
+            "train/loss",
+            "skywright/system/throughput",
+            "skywright/system/data_loading_wait",
+            "skywright/system/memory_used",
+        ],
+        "immutable": True,
+    }
+
+
 def test_caught_project_misuse_still_terminates_as_a_contract_violation() -> None:
     completed = run_project(
         """

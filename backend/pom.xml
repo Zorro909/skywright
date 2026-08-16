@@ -72,6 +72,19 @@
         <directory>${maven.multiModuleProjectDirectory}/sdk/src/skywright/_configuration_resources</directory>
         <targetPath>META-INF/skywright/configuration</targetPath>
         <filtering>false</filtering>
+        <excludes>
+          <exclude>**/__pycache__/**</exclude>
+          <exclude>**/*.pyc</exclude>
+        </excludes>
+      </resource>
+      <resource>
+        <directory>${maven.multiModuleProjectDirectory}/sdk/src/skywright/_metric_resources</directory>
+        <targetPath>META-INF/skywright/metrics</targetPath>
+        <filtering>false</filtering>
+        <excludes>
+          <exclude>**/__pycache__/**</exclude>
+          <exclude>**/*.pyc</exclude>
+        </excludes>
       </resource>
     </resources>
     <plugins>

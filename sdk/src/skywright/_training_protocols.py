@@ -88,6 +88,9 @@ class RunContext(Protocol):
     def accelerator(self) -> Accelerator: ...
 
     @property
+    def metric_catalog(self) -> MetricCatalog: ...
+
+    @property
     def step(self) -> int: ...
 
     @property

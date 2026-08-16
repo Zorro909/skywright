@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "0.1.0",
+  "units": [
+    {"name": "dimensionless", "description": "A number with no physical dimension."},
+    {"name": "ratio", "description": "A dimensionless fraction whose bounds are declared by its Metric Definition."},
+    {"name": "count", "description": "A count of discrete items."},
+    {"name": "bytes", "description": "A count of octets."},
+    {"name": "seconds", "description": "Elapsed SI seconds."},
+    {"name": "items_per_second", "description": "Discrete items processed per elapsed second."}
+  ],
+  "definitions": [
+    {
+      "name": "skywright/system/throughput",
+      "numericKind": "real",
+      "unit": "items_per_second",
+      "recordingBasis": "step",
+      "comparison": "maximize",
+      "stepReduction": "mean",
+      "bounds": {"minimum": 0},
+      "displayName": "Throughput",
+      "description": "Dataset Items completed per second during one committed Step."
+    },
+    {
+      "name": "skywright/system/data_loading_wait",
+      "numericKind": "real",
+      "unit": "seconds",
+      "recordingBasis": "step",
+      "comparison": "minimize",
+      "stepReduction": "sum",
+      "bounds": {"minimum": 0},
+      "displayName": "Data loading wait"
+    },
+    {
+      "name": "skywright/system/memory_used",
+      "numericKind": "integer",
+      "unit": "bytes",
+      "recordingBasis": "wall_time",
+      "comparison": "none",
+      "bounds": {"minimum": 0},
+      "displayName": "Memory used"
+    }
+  ]
+}
