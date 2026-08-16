@@ -5,15 +5,14 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from importlib.resources import files
-from pathlib import Path
 from typing import Protocol, TypeAlias, cast
 
 from jsonschema import Draft202012Validator, FormatChecker
+from jsonschema.exceptions import SchemaError
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012, SchemaRegistry
 
@@ -36,6 +35,31 @@ _VOCABULARIES = frozenset(
         "https://json-schema.org/draft/2020-12/vocab/content",
     }
 )
+_APPLICATOR_KEYWORDS = (
+    "allOf",
+    "anyOf",
+    "oneOf",
+    "not",
+    "if",
+    "then",
+    "else",
+    "dependentSchemas",
+)
+_COMPOSED_KEYWORDS = ("$defs", *_APPLICATOR_KEYWORDS, "dependentRequired")
+_SHARED_OBJECT_KEYWORDS = frozenset(
+    {
+        "$comment",
+        "$defs",
+        "$schema",
+        "additionalProperties",
+        "description",
+        "properties",
+        "required",
+        "title",
+        "type",
+        *_COMPOSED_KEYWORDS,
+    }
+)
 
 
 def _resource_text(name: str) -> str:
@@ -43,29 +67,6 @@ def _resource_text(name: str) -> str:
         files("skywright._configuration_resources")
         .joinpath(name)
         .read_text(encoding="utf-8")
-    )
-
-
-def _json_text(value: JsonValue) -> str:
-    if value is None:
-        return "null"
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
-    if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False)
-    if isinstance(value, (int, Decimal)):
-        return str(value)
-    if isinstance(value, list):
-        return "[" + ",".join(_json_text(item) for item in value) + "]"
-    return (
-        "{"
-        + ",".join(
-            f"{json.dumps(name, ensure_ascii=False)}:{_json_text(item)}"
-            for name, item in value.items()
-        )
-        + "}"
     )
 
 
@@ -173,7 +174,13 @@ def _composition_errors(
     library: Mapping[str, JsonValue],
     project: Mapping[str, JsonValue],
     path: tuple[str, ...] = (),
+    root_project: Mapping[str, JsonValue] | None = None,
+    references: Mapping[str, JsonValue] | None = None,
 ) -> list[ConfigurationError]:
+    if root_project is None:
+        root_project = project
+    if references is None:
+        references = {}
     errors: list[ConfigurationError] = []
     library_properties = library.get("properties", {})
     project_properties = project.get("properties", {})
@@ -181,6 +188,30 @@ def _composition_errors(
         project_properties, Mapping
     ):
         return errors
+    for keyword in project:
+        if keyword not in _SHARED_OBJECT_KEYWORDS:
+            errors.append(
+                ConfigurationError(
+                    "CONFIG_OWNERSHIP_COLLISION",
+                    "project-schema",
+                    _pointer(path),
+                    keyword,
+                )
+            )
+    project_required = project.get("required", [])
+    if isinstance(project_required, Sequence) and not isinstance(
+        project_required, (str, bytes)
+    ):
+        for required_name in project_required:
+            if required_name in library_properties:
+                errors.append(
+                    ConfigurationError(
+                        "CONFIG_OWNERSHIP_COLLISION",
+                        "project-schema",
+                        _pointer((*path, required_name)),
+                        "required",
+                    )
+                )
     for name, project_definition in project_properties.items():
         if name not in library_properties:
             continue
@@ -198,39 +229,10 @@ def _composition_errors(
                     cast(Mapping[str, JsonValue], library_definition),
                     cast(Mapping[str, JsonValue], project_definition),
                     property_path,
+                    root_project,
+                    references,
                 )
             )
-            for keyword in project_definition:
-                if keyword not in {
-                    "type",
-                    "properties",
-                    "required",
-                    "additionalProperties",
-                    "description",
-                    "$comment",
-                }:
-                    errors.append(
-                        ConfigurationError(
-                            "CONFIG_OWNERSHIP_COLLISION",
-                            "project-schema",
-                            _pointer(property_path),
-                            keyword,
-                        )
-                    )
-            project_required = project_definition.get("required", [])
-            if isinstance(project_required, Sequence) and not isinstance(
-                project_required, (str, bytes)
-            ):
-                for required_name in project_required:
-                    if required_name in library_properties:
-                        errors.append(
-                            ConfigurationError(
-                                "CONFIG_OWNERSHIP_COLLISION",
-                                "project-schema",
-                                _pointer((*property_path, required_name)),
-                                "required",
-                            )
-                        )
             continue
         errors.append(
             ConfigurationError(
@@ -240,7 +242,198 @@ def _composition_errors(
                 "properties",
             )
         )
+    for keyword in _APPLICATOR_KEYWORDS:
+        if keyword in project:
+            constraint = project[keyword]
+            constraints = (
+                constraint.values()
+                if keyword == "dependentSchemas" and isinstance(constraint, Mapping)
+                else (constraint,)
+            )
+            for nested_schema in constraints:
+                errors.extend(
+                    _applicator_ownership_errors(
+                        cast(Mapping[str, JsonValue], library_properties),
+                        cast(JsonValue, nested_schema),
+                        path,
+                        root_project,
+                        references,
+                    )
+                )
     return errors
+
+
+def _applicator_ownership_errors(
+    library_properties: Mapping[str, JsonValue],
+    constraint: JsonValue,
+    path: tuple[str, ...],
+    root_project: Mapping[str, JsonValue],
+    references: Mapping[str, JsonValue],
+) -> list[ConfigurationError]:
+    errors: list[ConfigurationError] = []
+    if isinstance(constraint, list):
+        for item in constraint:
+            errors.extend(
+                _applicator_ownership_errors(
+                    library_properties, item, path, root_project, references
+                )
+            )
+        return errors
+    if not isinstance(constraint, Mapping):
+        return errors
+    reference = constraint.get("$ref")
+    referenced_schema = _referenced_schema(root_project, references, reference)
+    if referenced_schema is not None:
+        errors.extend(
+            _applicator_ownership_errors(
+                library_properties, referenced_schema, path, root_project, references
+            )
+        )
+    elif "$ref" in constraint or "$dynamicRef" in constraint:
+        errors.append(
+            ConfigurationError(
+                "CONFIG_OWNERSHIP_COLLISION",
+                "project-schema",
+                _pointer(path),
+                "$ref" if "$ref" in constraint else "$dynamicRef",
+            )
+        )
+    constrained_properties = constraint.get("properties")
+    if isinstance(constrained_properties, Mapping):
+        for name, definition in constrained_properties.items():
+            if name not in library_properties:
+                continue
+            property_path = (*path, name)
+            library_definition = library_properties[name]
+            if (
+                isinstance(library_definition, Mapping)
+                and isinstance(definition, Mapping)
+                and isinstance(library_definition.get("properties"), Mapping)
+                and isinstance(definition.get("properties"), Mapping)
+            ):
+                errors.extend(
+                    _applicator_ownership_errors(
+                        cast(
+                            Mapping[str, JsonValue],
+                            library_definition["properties"],
+                        ),
+                        cast(JsonValue, definition),
+                        property_path,
+                        root_project,
+                        references,
+                    )
+                )
+            else:
+                errors.append(
+                    ConfigurationError(
+                        "CONFIG_OWNERSHIP_COLLISION",
+                        "project-schema",
+                        _pointer(property_path),
+                        "properties",
+                    )
+                )
+    required = constraint.get("required")
+    if isinstance(required, list):
+        for name in required:
+            if isinstance(name, str) and name in library_properties:
+                errors.append(
+                    ConfigurationError(
+                        "CONFIG_OWNERSHIP_COLLISION",
+                        "project-schema",
+                        _pointer((*path, name)),
+                        "required",
+                    )
+                )
+    dependent_required = constraint.get("dependentRequired")
+    if isinstance(dependent_required, Mapping):
+        for name, dependents in dependent_required.items():
+            if name in library_properties or (
+                isinstance(dependents, list)
+                and any(
+                    isinstance(dependent, str) and dependent in library_properties
+                    for dependent in dependents
+                )
+            ):
+                errors.append(
+                    ConfigurationError(
+                        "CONFIG_OWNERSHIP_COLLISION",
+                        "project-schema",
+                        _pointer((*path, name)),
+                        "dependentRequired",
+                    )
+                )
+    for keyword in _APPLICATOR_KEYWORDS:
+        if keyword in constraint:
+            nested = constraint[keyword]
+            nested_schemas = (
+                nested.values()
+                if keyword == "dependentSchemas" and isinstance(nested, Mapping)
+                else (nested,)
+            )
+            for nested_schema in nested_schemas:
+                errors.extend(
+                    _applicator_ownership_errors(
+                        library_properties,
+                        cast(JsonValue, nested_schema),
+                        path,
+                        root_project,
+                        references,
+                    )
+                )
+    return errors
+
+
+def _referenced_schema(
+    root_schema: Mapping[str, JsonValue],
+    references: Mapping[str, JsonValue],
+    reference: object,
+) -> JsonValue | None:
+    if not isinstance(reference, str):
+        return None
+    identity, separator, fragment = reference.partition("#")
+    current = references.get(identity) if identity else cast(JsonValue, root_schema)
+    if current is None:
+        return None
+    if not separator or not fragment:
+        return cast(JsonValue, current)
+    if not fragment.startswith("/"):
+        return None
+    for encoded_part in fragment[1:].split("/"):
+        part = encoded_part.replace("~1", "/").replace("~0", "~")
+        if not isinstance(current, Mapping) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _check_project_schema(schema: Mapping[str, JsonValue]) -> None:
+    required = schema.get("required")
+    if required is not None and not (
+        isinstance(required, list) and all(isinstance(name, str) for name in required)
+    ):
+        raise ConfigurationContractError(
+            (
+                ConfigurationError(
+                    "CONFIG_INVALID_PROJECT_SCHEMA",
+                    "project-schema",
+                    "/required",
+                    "type",
+                ),
+            )
+        )
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as error:
+        raise ConfigurationContractError(
+            (
+                ConfigurationError(
+                    "CONFIG_INVALID_PROJECT_SCHEMA",
+                    "project-schema",
+                    _pointer(error.absolute_path),
+                    str(error.validator),
+                ),
+            )
+        ) from error
 
 
 def _merge_schema_properties(
@@ -276,12 +469,17 @@ def _merge_schema_properties(
                 required.extend(
                     item for item in project_required if item not in required
                 )
+    for keyword in _COMPOSED_KEYWORDS:
+        if keyword in project:
+            library[keyword] = copy.deepcopy(project[keyword])
 
 
 def _compose_schema(
-    library: JsonObject, project: Mapping[str, JsonValue]
+    library: JsonObject,
+    project: Mapping[str, JsonValue],
+    references: Mapping[str, JsonValue],
 ) -> JsonObject:
-    errors = _composition_errors(library, project)
+    errors = _composition_errors(library, project, references=references)
     if errors:
         raise ConfigurationContractError(errors)
     composed = copy.deepcopy(library)
@@ -291,20 +489,6 @@ def _compose_schema(
         raise ValueError("projectSchema.required must be an array")
     required = cast(list[JsonValue], composed["required"])
     required.extend(copy.deepcopy(project_required))
-    for keyword in (
-        "$defs",
-        "allOf",
-        "anyOf",
-        "oneOf",
-        "not",
-        "if",
-        "then",
-        "else",
-        "dependentRequired",
-        "dependentSchemas",
-    ):
-        if keyword in project:
-            composed[keyword] = copy.deepcopy(project[keyword])
     return composed
 
 
@@ -337,18 +521,20 @@ def _schema_feature_errors(
                             "$vocabulary",
                         )
                     )
-        reference = value.get("$ref")
-        if isinstance(reference, str) and not (
-            reference.startswith("#") or reference in bundled_references
-        ):
-            errors.append(
-                ConfigurationError(
-                    "CONFIG_MUTABLE_EXTERNAL_REFERENCE",
-                    "project-contract",
-                    _pointer((*path, "$ref")),
-                    "$ref",
-                )
+        for reference_keyword in ("$ref", "$dynamicRef"):
+            reference = value.get(reference_keyword)
+            reference_identity = (
+                reference.partition("#")[0] if isinstance(reference, str) else None
             )
+            if reference_identity and reference_identity not in bundled_references:
+                errors.append(
+                    ConfigurationError(
+                        "CONFIG_MUTABLE_EXTERNAL_REFERENCE",
+                        "project-contract",
+                        _pointer((*path, reference_keyword)),
+                        reference_keyword,
+                    )
+                )
         for name, child in value.items():
             errors.extend(
                 _schema_feature_errors(child, bundled_references, (*path, name))
@@ -552,7 +738,8 @@ class ConfigurationContract:
                     ),
                 )
             )
-        references = artifact_object.get("references", {})
+        _check_project_schema(cast(Mapping[str, JsonValue], project_schema))
+        references = artifact_object.get("references")
         if not isinstance(references, Mapping):
             raise ConfigurationContractError(
                 (
@@ -565,6 +752,9 @@ class ConfigurationContract:
                 )
             )
         typed_references = cast(Mapping[str, JsonValue], references)
+        for reference_schema in typed_references.values():
+            if isinstance(reference_schema, Mapping):
+                _check_project_schema(cast(Mapping[str, JsonValue], reference_schema))
         feature_errors = _schema_feature_errors(
             cast(JsonValue, project_schema),
             frozenset(typed_references),
@@ -581,12 +771,14 @@ class ConfigurationContract:
         if feature_errors:
             raise ConfigurationContractError(feature_errors)
         registry = _reference_registry(typed_references)
-        schema = _compose_schema(_load_resource("schema.json"), project_schema)
+        schema = _compose_schema(
+            _load_resource("schema.json"), project_schema, typed_references
+        )
         Draft202012Validator.check_schema(schema)
         merged_defaults = _overlay(
             _load_resource("defaults.json"), cast(Mapping[str, JsonValue], defaults)
         )
-        witness = artifact_object.get("defaultsCompletionWitness", {})
+        witness = artifact_object.get("defaultsCompletionWitness")
         if not isinstance(witness, Mapping):
             raise ConfigurationContractError(
                 (
@@ -622,67 +814,6 @@ class ConfigurationContract:
         if errors:
             raise ConfigurationContractError(errors)
         return cast(dict[str, object], resolved)
-
-
-def main(arguments: Sequence[str] | None = None) -> int:
-    """Validate a project artifact or resolve one submission for project CI."""
-    args = list(sys.argv[1:] if arguments is None else arguments)
-    if len(args) not in {2, 3} or args[0] not in {"validate", "resolve"}:
-        print(
-            "usage: skywright-config validate CONTRACT | "
-            "skywright-config resolve CONTRACT SUBMISSION",
-            file=sys.stderr,
-        )
-        return 64
-    try:
-        contract = ConfigurationContract.compile(Path(args[1]).read_bytes())
-        if args[0] == "validate" and len(args) == 2:
-            print(
-                _json_text(
-                    {
-                        "status": "runnable",
-                        "skywrightSchema": cast(
-                            JsonValue, contract.skywright_schema_identity()
-                        ),
-                    }
-                )
-            )
-            return 0
-        if args[0] == "resolve" and len(args) == 3:
-            print(
-                _json_text(
-                    cast(JsonValue, contract.resolve(Path(args[2]).read_bytes()))
-                )
-            )
-            return 0
-    except (ConfigurationContractError, OSError) as error:
-        failures: list[JsonValue] = (
-            [
-                {
-                    "code": item.code,
-                    "source": item.source,
-                    "pointer": item.pointer,
-                    "keyword": item.keyword,
-                }
-                for item in error.errors
-            ]
-            if isinstance(error, ConfigurationContractError)
-            else [
-                {
-                    "code": "CONFIG_IO",
-                    "source": "project-contract",
-                    "pointer": "",
-                    "keyword": "read",
-                }
-            ]
-        )
-        failure_document: JsonObject = {
-            "status": "not-runnable",
-            "errors": failures,
-        }
-        print(_json_text(failure_document), file=sys.stderr)
-        return 2
-    return 64
 
 
 __all__ = [

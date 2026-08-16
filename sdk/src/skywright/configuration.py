@@ -3,11 +3,11 @@
 from collections.abc import Mapping
 from typing import TypeAlias
 
+from skywright._configuration_cli import main
 from skywright._configuration_contract import (
     ConfigurationContract,
     ConfigurationContractError,
     ConfigurationError,
-    main,
 )
 
 JsonDocument: TypeAlias = str | bytes | Mapping[str, object]

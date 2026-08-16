@@ -16,6 +16,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.networknt.schema.Schema;
+import com.networknt.schema.SchemaLocation;
 import com.networknt.schema.SchemaRegistry;
 import com.networknt.schema.SchemaRegistryConfig;
 import com.networknt.schema.SpecificationVersion;
@@ -44,6 +45,13 @@ public final class ConfigurationContracts {
 			"https://json-schema.org/draft/2020-12/vocab/format-annotation",
 			"https://json-schema.org/draft/2020-12/vocab/format-assertion",
 			"https://json-schema.org/draft/2020-12/vocab/content");
+
+	private static final List<String> APPLICATOR_KEYWORDS = List.of("allOf", "anyOf", "oneOf", "not", "if", "then",
+			"else", "dependentSchemas");
+
+	private static final Set<String> SHARED_OBJECT_KEYWORDS = Set.of("$comment", "$defs", "$schema",
+			"additionalProperties", "description", "properties", "required", "title", "type", "allOf", "anyOf", "oneOf",
+			"not", "if", "then", "else", "dependentRequired", "dependentSchemas");
 
 	private static final JsonMapper JSON = JsonMapper.builder()
 		.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -82,21 +90,25 @@ public final class ConfigurationContracts {
 		if (!DIALECT.equals(projectSchema.path("$schema").asText())) {
 			throw failure("CONFIG_UNSUPPORTED_DIALECT", "project-contract", "/projectSchema/$schema", "$schema");
 		}
+		validateProjectSchema(projectSchema);
 
 		Set<String> bundled = references.propertyStream()
 			.map(Map.Entry::getKey)
 			.collect(java.util.stream.Collectors.toSet());
 		List<ConfigurationError> featureErrors = new ArrayList<>();
 		schemaFeatureErrors(projectSchema, bundled, List.of("projectSchema"), featureErrors);
-		references.properties()
-			.forEach(entry -> schemaFeatureErrors(entry.getValue(), bundled, List.of("references", entry.getKey()),
-					featureErrors));
+		references.properties().forEach(entry -> {
+			if (entry.getValue().isObject()) {
+				validateProjectSchema((ObjectNode) entry.getValue());
+			}
+			schemaFeatureErrors(entry.getValue(), bundled, List.of("references", entry.getKey()), featureErrors);
+		});
 		if (!featureErrors.isEmpty()) {
 			throw new ConfigurationContractException(featureErrors);
 		}
 
 		List<ConfigurationError> ownershipErrors = new ArrayList<>();
-		ownershipErrors(this.librarySchema, projectSchema, List.of(), ownershipErrors);
+		ownershipErrors(this.librarySchema, projectSchema, List.of(), projectSchema, references, ownershipErrors);
 		if (!ownershipErrors.isEmpty()) {
 			throw new ConfigurationContractException(ownershipErrors);
 		}
@@ -119,16 +131,27 @@ public final class ConfigurationContracts {
 			.build();
 		SchemaRegistry registry = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12,
 				builder -> builder.schemaRegistryConfig(config).schemas(bundledSchemas));
-		Schema schema = registry.getSchema(composedSchema);
-		List<ConfigurationError> baselineErrors = schema.validate(completed)
+		Schema schema;
+		try {
+			schema = registry.getSchema(composedSchema);
+		}
+		catch (RuntimeException error) {
+			throw failure("CONFIG_INVALID_PROJECT_SCHEMA", "project-schema", "", "schema");
+		}
+		validate(schema, completed, "defaults-completion-witness");
+		return new ConfigurationContract(this, schema, mergedDefaults);
+	}
+
+	void validate(Schema schema, JsonNode instance, String source) {
+		List<ConfigurationError> errors = schema.validate(instance)
 			.stream()
-			.map(error -> ConfigurationContract.schemaError(error, "defaults-completion-witness"))
+			.map(error -> new ConfigurationError("CONFIG_SCHEMA_VALIDATION", source,
+					error.getInstanceLocation().toString(), error.getKeyword()))
 			.sorted()
 			.toList();
-		if (!baselineErrors.isEmpty()) {
-			throw new ConfigurationContractException(baselineErrors);
+		if (!errors.isEmpty()) {
+			throw new ConfigurationContractException(errors);
 		}
-		return new ConfigurationContract(this, schema, mergedDefaults);
 	}
 
 	ObjectNode parseObject(String source, String layer) {
@@ -196,11 +219,24 @@ public final class ConfigurationContracts {
 	}
 
 	private static void ownershipErrors(ObjectNode library, ObjectNode project, List<String> path,
-			List<ConfigurationError> errors) {
+			ObjectNode rootProject, ObjectNode references, List<ConfigurationError> errors) {
 		JsonNode libraryProperties = library.path("properties");
 		JsonNode projectProperties = project.path("properties");
 		if (!libraryProperties.isObject() || !projectProperties.isObject()) {
 			return;
+		}
+		project.propertyStream()
+			.filter(entry -> !SHARED_OBJECT_KEYWORDS.contains(entry.getKey()))
+			.forEach(entry -> errors.add(new ConfigurationError("CONFIG_OWNERSHIP_COLLISION", "project-schema",
+					pointer(path), entry.getKey())));
+		JsonNode projectRequired = project.path("required");
+		if (projectRequired.isArray()) {
+			projectRequired.forEach(name -> {
+				if (name.isTextual() && libraryProperties.has(name.asText())) {
+					errors.add(new ConfigurationError("CONFIG_OWNERSHIP_COLLISION", "project-schema",
+							pointer(append(path, name.asText())), "required"));
+				}
+			});
 		}
 		projectProperties.properties().forEach(entry -> {
 			JsonNode libraryDefinition = libraryProperties.get(entry.getKey());
@@ -213,12 +249,132 @@ public final class ConfigurationContracts {
 					&& "object".equals(libraryDefinition.path("type").asText())
 					&& "object".equals(projectDefinition.path("type").asText())
 					&& projectDefinition.path("properties").isObject()) {
-				ownershipErrors((ObjectNode) libraryDefinition, (ObjectNode) projectDefinition, propertyPath, errors);
+				ownershipErrors((ObjectNode) libraryDefinition, (ObjectNode) projectDefinition, propertyPath,
+						rootProject, references, errors);
 				return;
 			}
 			errors.add(new ConfigurationError("CONFIG_OWNERSHIP_COLLISION", "project-schema", pointer(propertyPath),
 					"properties"));
 		});
+		for (String keyword : APPLICATOR_KEYWORDS) {
+			if (project.has(keyword)) {
+				JsonNode constraint = project.get(keyword);
+				if ("dependentSchemas".equals(keyword) && constraint.isObject()) {
+					constraint.forEach(schema -> applicatorOwnershipErrors((ObjectNode) libraryProperties, schema, path,
+							rootProject, references, errors));
+				}
+				else {
+					applicatorOwnershipErrors((ObjectNode) libraryProperties, constraint, path, rootProject, references,
+							errors);
+				}
+			}
+		}
+	}
+
+	private static void applicatorOwnershipErrors(ObjectNode libraryProperties, JsonNode constraint, List<String> path,
+			ObjectNode rootProject, ObjectNode references, List<ConfigurationError> errors) {
+		if (constraint.isArray()) {
+			constraint.forEach(
+					item -> applicatorOwnershipErrors(libraryProperties, item, path, rootProject, references, errors));
+			return;
+		}
+		if (!constraint.isObject()) {
+			return;
+		}
+		JsonNode referencedSchema = referencedSchema(rootProject, references, constraint.get("$ref"));
+		if (referencedSchema != null) {
+			applicatorOwnershipErrors(libraryProperties, referencedSchema, path, rootProject, references, errors);
+		}
+		else if (constraint.has("$ref") || constraint.has("$dynamicRef")) {
+			errors.add(new ConfigurationError("CONFIG_OWNERSHIP_COLLISION", "project-schema", pointer(path),
+					constraint.has("$ref") ? "$ref" : "$dynamicRef"));
+		}
+		JsonNode constrainedProperties = constraint.path("properties");
+		if (constrainedProperties.isObject()) {
+			constrainedProperties.properties().forEach(entry -> {
+				JsonNode libraryDefinition = libraryProperties.get(entry.getKey());
+				if (libraryDefinition == null) {
+					return;
+				}
+				List<String> propertyPath = append(path, entry.getKey());
+				if (libraryDefinition.path("properties").isObject() && entry.getValue().path("properties").isObject()) {
+					applicatorOwnershipErrors((ObjectNode) libraryDefinition.path("properties"), entry.getValue(),
+							propertyPath, rootProject, references, errors);
+				}
+				else {
+					errors.add(new ConfigurationError("CONFIG_OWNERSHIP_COLLISION", "project-schema",
+							pointer(propertyPath), "properties"));
+				}
+			});
+		}
+		JsonNode required = constraint.path("required");
+		if (required.isArray()) {
+			required.forEach(name -> {
+				if (name.isTextual() && libraryProperties.has(name.asText())) {
+					errors.add(new ConfigurationError("CONFIG_OWNERSHIP_COLLISION", "project-schema",
+							pointer(append(path, name.asText())), "required"));
+				}
+			});
+		}
+		JsonNode dependentRequired = constraint.path("dependentRequired");
+		if (dependentRequired.isObject()) {
+			dependentRequired.properties().forEach(entry -> {
+				boolean constrainsLibrary = libraryProperties.has(entry.getKey());
+				if (entry.getValue().isArray()) {
+					constrainsLibrary = constrainsLibrary || entry.getValue()
+						.valueStream()
+						.anyMatch(item -> item.isTextual() && libraryProperties.has(item.asText()));
+				}
+				if (constrainsLibrary) {
+					errors.add(new ConfigurationError("CONFIG_OWNERSHIP_COLLISION", "project-schema",
+							pointer(append(path, entry.getKey())), "dependentRequired"));
+				}
+			});
+		}
+		for (String keyword : APPLICATOR_KEYWORDS) {
+			if (constraint.has(keyword)) {
+				JsonNode nested = constraint.get(keyword);
+				if ("dependentSchemas".equals(keyword) && nested.isObject()) {
+					nested.forEach(schema -> applicatorOwnershipErrors(libraryProperties, schema, path, rootProject,
+							references, errors));
+				}
+				else {
+					applicatorOwnershipErrors(libraryProperties, nested, path, rootProject, references, errors);
+				}
+			}
+		}
+	}
+
+	private static JsonNode referencedSchema(ObjectNode rootProject, ObjectNode references, JsonNode reference) {
+		if (reference == null || !reference.isTextual()) {
+			return null;
+		}
+		String[] parts = reference.asText().split("#", 2);
+		JsonNode result = parts[0].isEmpty() ? rootProject : references.get(parts[0]);
+		if (result == null) {
+			return null;
+		}
+		if (parts.length == 2 && !parts[1].isEmpty()) {
+			if (!parts[1].startsWith("/")) {
+				return null;
+			}
+			result = result.at(parts[1]);
+		}
+		return result.isMissingNode() ? null : result;
+	}
+
+	private static void validateProjectSchema(ObjectNode projectSchema) {
+		Schema metaSchema = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12)
+			.getSchema(SchemaLocation.of(DIALECT));
+		List<ConfigurationError> errors = metaSchema.validate(projectSchema)
+			.stream()
+			.map(error -> new ConfigurationError("CONFIG_INVALID_PROJECT_SCHEMA", "project-schema",
+					error.getInstanceLocation().toString(), error.getKeyword()))
+			.sorted()
+			.toList();
+		if (!errors.isEmpty()) {
+			throw new ConfigurationContractException(errors);
+		}
 	}
 
 	private static void mergeSchema(ObjectNode library, ObjectNode project) {
@@ -270,11 +426,15 @@ public final class ConfigurationContracts {
 					}
 				});
 			}
-			JsonNode reference = value.get("$ref");
-			if (reference != null && reference.isTextual() && !reference.asText().startsWith("#")
-					&& !bundled.contains(reference.asText())) {
-				errors.add(new ConfigurationError("CONFIG_MUTABLE_EXTERNAL_REFERENCE", "project-contract",
-						pointer(append(path, "$ref")), "$ref"));
+			for (String keyword : List.of("$ref", "$dynamicRef")) {
+				JsonNode reference = value.get(keyword);
+				if (reference != null && reference.isTextual() && !reference.asText().startsWith("#")) {
+					String identity = reference.asText().split("#", 2)[0];
+					if (!bundled.contains(identity)) {
+						errors.add(new ConfigurationError("CONFIG_MUTABLE_EXTERNAL_REFERENCE", "project-contract",
+								pointer(append(path, keyword)), keyword));
+					}
+				}
 			}
 			value.properties()
 				.forEach(entry -> schemaFeatureErrors(entry.getValue(), bundled, append(path, entry.getKey()), errors));

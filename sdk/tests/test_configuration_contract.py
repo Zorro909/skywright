@@ -301,6 +301,75 @@ def test_contract_rejects_unsupported_schema_features(
     )
 
 
+def test_contract_requires_every_artifact_member() -> None:
+    artifact = project_contract(
+        {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {},
+        }
+    )
+    del artifact["references"]
+
+    with pytest.raises(ConfigurationContractError) as raised:
+        ConfigurationContract.compile(artifact)
+
+    assert raised.value.errors == (
+        ConfigurationError(
+            "CONFIG_LAYER_NOT_OBJECT", "project-contract", "/references", "type"
+        ),
+    )
+
+
+def test_invalid_project_schema_has_a_stable_failure() -> None:
+    artifact = project_contract(
+        {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {},
+            "required": "not-an-array",
+        }
+    )
+
+    with pytest.raises(ConfigurationContractError) as raised:
+        ConfigurationContract.compile(artifact)
+
+    assert raised.value.errors == (
+        ConfigurationError(
+            "CONFIG_INVALID_PROJECT_SCHEMA", "project-schema", "/required", "type"
+        ),
+    )
+
+
+def test_applicators_cannot_constrain_library_owned_properties() -> None:
+    artifact = project_contract(
+        {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {},
+            "allOf": [
+                {
+                    "properties": {
+                        "reproducibility": {"properties": {"seed": {"maximum": 10}}}
+                    }
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(ConfigurationContractError) as raised:
+        ConfigurationContract.compile(artifact)
+
+    assert raised.value.errors == (
+        ConfigurationError(
+            "CONFIG_OWNERSHIP_COLLISION",
+            "project-schema",
+            "/reproducibility/seed",
+            "properties",
+        ),
+    )
+
+
 @pytest.mark.parametrize(
     "case",
     cast(list[dict[str, object]], _CORPUS["cases"]),

@@ -157,6 +157,29 @@ class ConfigurationContractTest {
 	}
 
 	@Test
+	void rejectsInvalidSchemasAndApplicatorOwnershipBypasses() {
+		var invalidSchema = projectContract(
+				"""
+						{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{},"required":"not-an-array"}
+						""",
+				"{}", "{}");
+		assertThatExceptionOfType(ConfigurationContractException.class)
+			.isThrownBy(() -> this.contracts.compile(invalidSchema))
+			.satisfies(error -> assertThat(error.errors()).containsExactly(
+					new ConfigurationError("CONFIG_INVALID_PROJECT_SCHEMA", "project-schema", "/required", "type")));
+
+		var applicatorBypass = projectContract(
+				"""
+						{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{},"allOf":[{"properties":{"reproducibility":{"properties":{"seed":{"maximum":10}}}}}]}
+						""",
+				"{}", "{}");
+		assertThatExceptionOfType(ConfigurationContractException.class)
+			.isThrownBy(() -> this.contracts.compile(applicatorBypass))
+			.satisfies(error -> assertThat(error.errors()).containsExactly(new ConfigurationError(
+					"CONFIG_OWNERSHIP_COLLISION", "project-schema", "/reproducibility/seed", "properties")));
+	}
+
+	@Test
 	void passesTheVersionedSharedConformanceCorpus() throws IOException {
 		JsonNode corpus = JSON.readTree(
 				ConfigurationContractTest.class.getResourceAsStream("/META-INF/skywright/configuration/corpus.json"));
