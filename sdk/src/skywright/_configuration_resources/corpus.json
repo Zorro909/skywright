@@ -166,6 +166,24 @@
       "references": {"urn:example:project-rule":{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"urn:example:project-rule","properties":{"project":{"required":["token"]}}}},
       "submission": {},
       "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"project":{"token":"bundled"}}
+    },
+    {
+      "name": "object-wide-applicator-cannot-constrain-library-properties",
+      "covers": ["property-names", "applicator", "library-ownership", "omitted-properties-keyword"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","allOf":[{"propertyNames":{"not":{"const":"metrics"}}}]},
+      "projectDefaults": {},
+      "witness": {},
+      "submission": {},
+      "contractErrors": [{"code":"CONFIG_OWNERSHIP_COLLISION","source":"project-schema","pointer":"","keyword":"propertyNames"}]
+    },
+    {
+      "name": "recursive-applicator-reference-is-controlled",
+      "covers": ["recursive-reference", "stable-error"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{},"allOf":[{"$ref":"#"}]},
+      "projectDefaults": {},
+      "witness": {},
+      "submission": {},
+      "contractErrors": [{"code":"CONFIG_RECURSIVE_REFERENCE","source":"project-schema","pointer":"","keyword":"$ref"}]
     }
   ]
 }

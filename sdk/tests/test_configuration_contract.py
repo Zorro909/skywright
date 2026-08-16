@@ -321,6 +321,49 @@ def test_contract_requires_every_artifact_member() -> None:
     )
 
 
+def test_contract_rejects_unknown_members_and_non_string_reference_names() -> None:
+    schema: dict[str, object] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+    }
+    unknown = project_contract(schema)
+    unknown["unknown"] = True
+    with pytest.raises(ConfigurationContractError) as raised:
+        ConfigurationContract.compile(unknown)
+    assert raised.value.errors == (
+        ConfigurationError(
+            "CONFIG_SCHEMA_VALIDATION",
+            "project-contract",
+            "",
+            "additionalProperties",
+        ),
+    )
+
+    invalid_reference = project_contract(
+        schema, references=cast(dict[str, object], {1: {}})
+    )
+    with pytest.raises(ConfigurationContractError) as raised:
+        ConfigurationContract.compile(invalid_reference)
+    assert raised.value.errors[0].code == "CONFIG_PROPERTY_NAME_NOT_STRING"
+
+
+def test_object_payloads_are_not_scanned_as_schemas() -> None:
+    contract = ConfigurationContract.compile(
+        project_contract(
+            {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                    "payload": {"const": {"$ref": "https://example.com/data"}}
+                },
+            },
+            defaults={"payload": {"$ref": "https://example.com/data"}},
+        )
+    )
+    assert contract.resolve({})["payload"] == {"$ref": "https://example.com/data"}
+
+
 def test_invalid_project_schema_has_a_stable_failure() -> None:
     artifact = project_contract(
         {

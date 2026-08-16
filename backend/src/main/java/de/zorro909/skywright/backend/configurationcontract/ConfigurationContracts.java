@@ -2,10 +2,12 @@ package de.zorro909.skywright.backend.configurationcontract;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -53,6 +55,9 @@ public final class ConfigurationContracts {
 			"additionalProperties", "description", "properties", "required", "title", "type", "allOf", "anyOf", "oneOf",
 			"not", "if", "then", "else", "dependentRequired", "dependentSchemas");
 
+	private static final Set<String> SHARED_APPLICATOR_COLLISIONS = Set.of("additionalProperties", "const", "enum",
+			"maxProperties", "minProperties", "patternProperties", "propertyNames", "unevaluatedProperties");
+
 	private static final JsonMapper JSON = JsonMapper.builder()
 		.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
 		.build();
@@ -87,6 +92,9 @@ public final class ConfigurationContracts {
 		ObjectNode witness = requireObject(artifact.get("defaultsCompletionWitness"), "defaults-completion-witness",
 				"");
 		ObjectNode references = requireObject(artifact.get("references"), "project-contract", "/references");
+		Schema artifactSchema = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12)
+			.getSchema(parseObject(resource("project-contract.schema.json"), "project-contract-schema"));
+		validate(artifactSchema, artifact, "project-contract");
 		if (!DIALECT.equals(projectSchema.path("$schema").asText())) {
 			throw failure("CONFIG_UNSUPPORTED_DIALECT", "project-contract", "/projectSchema/$schema", "$schema");
 		}
@@ -222,7 +230,7 @@ public final class ConfigurationContracts {
 			ObjectNode rootProject, ObjectNode references, List<ConfigurationError> errors) {
 		JsonNode libraryProperties = library.path("properties");
 		JsonNode projectProperties = project.path("properties");
-		if (!libraryProperties.isObject() || !projectProperties.isObject()) {
+		if (!libraryProperties.isObject()) {
 			return;
 		}
 		project.propertyStream()
@@ -238,58 +246,75 @@ public final class ConfigurationContracts {
 				}
 			});
 		}
-		projectProperties.properties().forEach(entry -> {
-			JsonNode libraryDefinition = libraryProperties.get(entry.getKey());
-			if (libraryDefinition == null) {
-				return;
-			}
-			List<String> propertyPath = append(path, entry.getKey());
-			JsonNode projectDefinition = entry.getValue();
-			if (libraryDefinition.isObject() && projectDefinition.isObject()
-					&& "object".equals(libraryDefinition.path("type").asText())
-					&& "object".equals(projectDefinition.path("type").asText())
-					&& projectDefinition.path("properties").isObject()) {
-				ownershipErrors((ObjectNode) libraryDefinition, (ObjectNode) projectDefinition, propertyPath,
-						rootProject, references, errors);
-				return;
-			}
-			errors.add(new ConfigurationError("CONFIG_OWNERSHIP_COLLISION", "project-schema", pointer(propertyPath),
-					"properties"));
-		});
+		if (projectProperties.isObject()) {
+			projectProperties.properties().forEach(entry -> {
+				JsonNode libraryDefinition = libraryProperties.get(entry.getKey());
+				if (libraryDefinition == null) {
+					return;
+				}
+				List<String> propertyPath = append(path, entry.getKey());
+				JsonNode projectDefinition = entry.getValue();
+				if (libraryDefinition.isObject() && projectDefinition.isObject()
+						&& "object".equals(libraryDefinition.path("type").asText())
+						&& "object".equals(projectDefinition.path("type").asText())
+						&& projectDefinition.path("properties").isObject()) {
+					ownershipErrors((ObjectNode) libraryDefinition, (ObjectNode) projectDefinition, propertyPath,
+							rootProject, references, errors);
+					return;
+				}
+				errors.add(new ConfigurationError("CONFIG_OWNERSHIP_COLLISION", "project-schema", pointer(propertyPath),
+						"properties"));
+			});
+		}
 		for (String keyword : APPLICATOR_KEYWORDS) {
 			if (project.has(keyword)) {
 				JsonNode constraint = project.get(keyword);
 				if ("dependentSchemas".equals(keyword) && constraint.isObject()) {
 					constraint.forEach(schema -> applicatorOwnershipErrors((ObjectNode) libraryProperties, schema, path,
-							rootProject, references, errors));
+							rootProject, references, Set.of(), errors));
 				}
 				else {
 					applicatorOwnershipErrors((ObjectNode) libraryProperties, constraint, path, rootProject, references,
-							errors);
+							Set.of(), errors);
 				}
 			}
 		}
 	}
 
 	private static void applicatorOwnershipErrors(ObjectNode libraryProperties, JsonNode constraint, List<String> path,
-			ObjectNode rootProject, ObjectNode references, List<ConfigurationError> errors) {
+			ObjectNode rootProject, ObjectNode references, Set<String> visitedReferences,
+			List<ConfigurationError> errors) {
 		if (constraint.isArray()) {
-			constraint.forEach(
-					item -> applicatorOwnershipErrors(libraryProperties, item, path, rootProject, references, errors));
+			constraint.forEach(item -> applicatorOwnershipErrors(libraryProperties, item, path, rootProject, references,
+					visitedReferences, errors));
 			return;
 		}
 		if (!constraint.isObject()) {
 			return;
 		}
 		JsonNode referencedSchema = referencedSchema(rootProject, references, constraint.get("$ref"));
+		String referenceKey = constraint.path("$ref").asText() + "|" + pointer(path);
 		if (referencedSchema != null) {
-			applicatorOwnershipErrors(libraryProperties, referencedSchema, path, rootProject, references, errors);
+			if (!visitedReferences.contains(referenceKey)) {
+				Set<String> nextVisited = new HashSet<>(visitedReferences);
+				nextVisited.add(referenceKey);
+				applicatorOwnershipErrors(libraryProperties, referencedSchema, path, rootProject, references,
+						nextVisited, errors);
+			}
+			else {
+				errors
+					.add(new ConfigurationError("CONFIG_RECURSIVE_REFERENCE", "project-schema", pointer(path), "$ref"));
+			}
 		}
 		else if (constraint.has("$ref") || constraint.has("$dynamicRef")) {
 			errors.add(new ConfigurationError("CONFIG_OWNERSHIP_COLLISION", "project-schema", pointer(path),
 					constraint.has("$ref") ? "$ref" : "$dynamicRef"));
 		}
 		JsonNode constrainedProperties = constraint.path("properties");
+		SHARED_APPLICATOR_COLLISIONS.stream()
+			.filter(constraint::has)
+			.forEach(keyword -> errors
+				.add(new ConfigurationError("CONFIG_OWNERSHIP_COLLISION", "project-schema", pointer(path), keyword)));
 		if (constrainedProperties.isObject()) {
 			constrainedProperties.properties().forEach(entry -> {
 				JsonNode libraryDefinition = libraryProperties.get(entry.getKey());
@@ -299,7 +324,7 @@ public final class ConfigurationContracts {
 				List<String> propertyPath = append(path, entry.getKey());
 				if (libraryDefinition.path("properties").isObject() && entry.getValue().path("properties").isObject()) {
 					applicatorOwnershipErrors((ObjectNode) libraryDefinition.path("properties"), entry.getValue(),
-							propertyPath, rootProject, references, errors);
+							propertyPath, rootProject, references, visitedReferences, errors);
 				}
 				else {
 					errors.add(new ConfigurationError("CONFIG_OWNERSHIP_COLLISION", "project-schema",
@@ -336,10 +361,11 @@ public final class ConfigurationContracts {
 				JsonNode nested = constraint.get(keyword);
 				if ("dependentSchemas".equals(keyword) && nested.isObject()) {
 					nested.forEach(schema -> applicatorOwnershipErrors(libraryProperties, schema, path, rootProject,
-							references, errors));
+							references, visitedReferences, errors));
 				}
 				else {
-					applicatorOwnershipErrors(libraryProperties, nested, path, rootProject, references, errors);
+					applicatorOwnershipErrors(libraryProperties, nested, path, rootProject, references,
+							visitedReferences, errors);
 				}
 			}
 		}
@@ -355,12 +381,28 @@ public final class ConfigurationContracts {
 			return null;
 		}
 		if (parts.length == 2 && !parts[1].isEmpty()) {
-			if (!parts[1].startsWith("/")) {
-				return null;
+			String fragment = URLDecoder.decode(parts[1].replace("+", "%2B"), StandardCharsets.UTF_8);
+			if (!fragment.startsWith("/")) {
+				return findAnchor(result, fragment);
 			}
-			result = result.at(parts[1]);
+			result = result.at(fragment);
 		}
 		return result.isMissingNode() ? null : result;
+	}
+
+	private static JsonNode findAnchor(JsonNode value, String anchor) {
+		if (value.isObject() && anchor.equals(value.path("$anchor").asText())) {
+			return value;
+		}
+		if (value.isObject() || value.isArray()) {
+			for (JsonNode child : value) {
+				JsonNode found = findAnchor(child, anchor);
+				if (found != null) {
+					return found;
+				}
+			}
+		}
+		return null;
 	}
 
 	private static void validateProjectSchema(ObjectNode projectSchema) {
@@ -437,6 +479,8 @@ public final class ConfigurationContracts {
 				}
 			}
 			value.properties()
+				.stream()
+				.filter(entry -> !Set.of("const", "default", "examples").contains(entry.getKey()))
 				.forEach(entry -> schemaFeatureErrors(entry.getValue(), bundled, append(path, entry.getKey()), errors));
 		}
 		else if (value.isArray()) {

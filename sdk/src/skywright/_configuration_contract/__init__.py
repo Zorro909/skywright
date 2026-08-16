@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from importlib.resources import files
 from typing import Protocol, TypeAlias, cast
+from urllib.parse import unquote
 
 from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import SchemaError
@@ -58,6 +59,18 @@ _SHARED_OBJECT_KEYWORDS = frozenset(
         "title",
         "type",
         *_COMPOSED_KEYWORDS,
+    }
+)
+_SHARED_APPLICATOR_COLLISIONS = frozenset(
+    {
+        "additionalProperties",
+        "const",
+        "enum",
+        "maxProperties",
+        "minProperties",
+        "patternProperties",
+        "propertyNames",
+        "unevaluatedProperties",
     }
 )
 
@@ -269,13 +282,19 @@ def _applicator_ownership_errors(
     path: tuple[str, ...],
     root_project: Mapping[str, JsonValue],
     references: Mapping[str, JsonValue],
+    visited_references: frozenset[tuple[str, tuple[str, ...]]] = frozenset(),
 ) -> list[ConfigurationError]:
     errors: list[ConfigurationError] = []
     if isinstance(constraint, list):
         for item in constraint:
             errors.extend(
                 _applicator_ownership_errors(
-                    library_properties, item, path, root_project, references
+                    library_properties,
+                    item,
+                    path,
+                    root_project,
+                    references,
+                    visited_references,
                 )
             )
         return errors
@@ -283,12 +302,29 @@ def _applicator_ownership_errors(
         return errors
     reference = constraint.get("$ref")
     referenced_schema = _referenced_schema(root_project, references, reference)
+    reference_key = (reference, path) if isinstance(reference, str) else None
     if referenced_schema is not None:
-        errors.extend(
-            _applicator_ownership_errors(
-                library_properties, referenced_schema, path, root_project, references
+        if reference_key not in visited_references:
+            errors.extend(
+                _applicator_ownership_errors(
+                    library_properties,
+                    referenced_schema,
+                    path,
+                    root_project,
+                    references,
+                    visited_references
+                    | {cast(tuple[str, tuple[str, ...]], reference_key)},
+                )
             )
-        )
+        else:
+            errors.append(
+                ConfigurationError(
+                    "CONFIG_RECURSIVE_REFERENCE",
+                    "project-schema",
+                    _pointer(path),
+                    "$ref",
+                )
+            )
     elif "$ref" in constraint or "$dynamicRef" in constraint:
         errors.append(
             ConfigurationError(
@@ -299,6 +335,15 @@ def _applicator_ownership_errors(
             )
         )
     constrained_properties = constraint.get("properties")
+    for keyword in _SHARED_APPLICATOR_COLLISIONS & constraint.keys():
+        errors.append(
+            ConfigurationError(
+                "CONFIG_OWNERSHIP_COLLISION",
+                "project-schema",
+                _pointer(path),
+                keyword,
+            )
+        )
     if isinstance(constrained_properties, Mapping):
         for name, definition in constrained_properties.items():
             if name not in library_properties:
@@ -321,6 +366,7 @@ def _applicator_ownership_errors(
                         property_path,
                         root_project,
                         references,
+                        visited_references,
                     )
                 )
             else:
@@ -378,6 +424,7 @@ def _applicator_ownership_errors(
                         path,
                         root_project,
                         references,
+                        visited_references,
                     )
                 )
     return errors
@@ -390,20 +437,37 @@ def _referenced_schema(
 ) -> JsonValue | None:
     if not isinstance(reference, str):
         return None
-    identity, separator, fragment = reference.partition("#")
+    identity, separator, encoded_fragment = reference.partition("#")
+    fragment = unquote(encoded_fragment)
     current = references.get(identity) if identity else cast(JsonValue, root_schema)
     if current is None:
         return None
     if not separator or not fragment:
         return cast(JsonValue, current)
     if not fragment.startswith("/"):
-        return None
+        return _find_anchor(cast(JsonValue, current), fragment)
     for encoded_part in fragment[1:].split("/"):
         part = encoded_part.replace("~1", "/").replace("~0", "~")
         if not isinstance(current, Mapping) or part not in current:
             return None
         current = current[part]
     return current
+
+
+def _find_anchor(value: JsonValue, anchor: str) -> JsonValue | None:
+    if isinstance(value, Mapping):
+        if value.get("$anchor") == anchor:
+            return value
+        for child in value.values():
+            found = _find_anchor(child, anchor)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _find_anchor(child, anchor)
+            if found is not None:
+                return found
+    return None
 
 
 def _check_project_schema(schema: Mapping[str, JsonValue]) -> None:
@@ -536,6 +600,8 @@ def _schema_feature_errors(
                     )
                 )
         for name, child in value.items():
+            if name in {"const", "default", "examples"}:
+                continue
             errors.extend(
                 _schema_feature_errors(child, bundled_references, (*path, name))
             )
@@ -751,7 +817,28 @@ class ConfigurationContract:
                     ),
                 )
             )
-        typed_references = cast(Mapping[str, JsonValue], references)
+        untyped_references = cast(Mapping[object, JsonValue], references)
+        for identity in untyped_references:
+            if not isinstance(identity, str):
+                raise ConfigurationContractError(
+                    (
+                        ConfigurationError(
+                            "CONFIG_PROPERTY_NAME_NOT_STRING",
+                            "project-contract",
+                            _pointer(("references", identity)),
+                            "parse",
+                        ),
+                    )
+                )
+        typed_references = cast(Mapping[str, JsonValue], untyped_references)
+        artifact_errors = _validation_errors(
+            _load_resource("project-contract.schema.json"),
+            artifact_object,
+            "project-contract",
+            Registry(),
+        )
+        if artifact_errors:
+            raise ConfigurationContractError(artifact_errors)
         for reference_schema in typed_references.values():
             if isinstance(reference_schema, Mapping):
                 _check_project_schema(cast(Mapping[str, JsonValue], reference_schema))
