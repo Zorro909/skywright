@@ -173,11 +173,11 @@ class MetricSchema:
 def _definition(value: Mapping[str, object]) -> MetricDefinition:
     bounds = cast(Mapping[str, object], value.get("bounds", {}))
 
-    def numeric_bound(name: str) -> int | float | Decimal | None:
+    def numeric_bound(name: str) -> int | float | None:
         bound = bounds.get(name)
         if isinstance(bound, float):
-            return Decimal(str(bound))
-        return cast(int | Decimal | None, bound)
+            bound = Decimal(str(bound))
+        return cast(int | float | None, bound)
 
     return MetricDefinition(
         name=cast(str, value["name"]),
