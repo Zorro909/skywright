@@ -19,6 +19,7 @@ import com.networknt.schema.SchemaRegistry;
 import com.networknt.schema.SpecificationVersion;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -30,6 +31,7 @@ public final class MetricContracts {
 
 	private static final JsonMapper JSON = JsonMapper.builder()
 		.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+		.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
 		.build();
 
 	private final ObjectNode manifest;
@@ -214,6 +216,9 @@ public final class MetricContracts {
 		}
 		if (value.isArray()) {
 			return "[" + value.valueStream().map(MetricContracts::canonical).collect(Collectors.joining(",")) + "]";
+		}
+		if (value.isNumber()) {
+			return value.decimalValue().toPlainString();
 		}
 		return value.toString();
 	}

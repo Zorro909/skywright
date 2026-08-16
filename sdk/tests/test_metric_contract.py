@@ -209,6 +209,49 @@ def test_comparability_normalizes_equivalent_numeric_representations() -> None:
     assert project_metrics_comparable(mapping_catalog, json_catalog, "train/loss")
 
 
+def test_comparability_preserves_distinct_exact_decimal_bounds() -> None:
+    left = MetricContract.compile(
+        json.dumps(project_contract(metric_definition())).replace(
+            '"stepReduction": "mean"',
+            '"stepReduction": "mean", "bounds": {"minimum": 0.1}',
+        )
+    ).catalog("project")
+    right = MetricContract.compile(
+        json.dumps(project_contract(metric_definition())).replace(
+            '"stepReduction": "mean"',
+            '"stepReduction": "mean", "bounds": {"minimum": 0.10000000000000001}',
+        )
+    ).catalog("project")
+
+    assert not project_metrics_comparable(left, right, "train/loss")
+
+
+def test_canonical_numbers_use_plain_exact_decimal_notation() -> None:
+    artifact = json.dumps(project_contract(metric_definition())).replace(
+        '"stepReduction": "mean"',
+        '"stepReduction": "mean", "bounds": {"minimum": 1e2}',
+    )
+
+    assert '"bounds":{"minimum":100}' in MetricContract.compile(artifact).canonical_json
+
+
+def test_schema_failure_does_not_escape_as_an_internal_type_error() -> None:
+    artifact = project_contract()
+    artifact["definitions"] = None
+
+    with pytest.raises(MetricContractError) as raised:
+        MetricContract.compile(artifact)
+
+    assert raised.value.errors == (
+        MetricError(
+            "METRIC_SCHEMA_VALIDATION",
+            "project-contract",
+            "/definitions",
+            "type",
+        ),
+    )
+
+
 def test_project_ci_command_marks_an_invalid_contract_not_runnable(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -90,7 +90,7 @@ def _json_text(value: object) -> str:
         numeric = Decimal(str(value))
         if not numeric.is_finite():
             raise ValueError("canonical JSON cannot contain a non-finite number")
-        return str(numeric)
+        return format(numeric, "f")
     if isinstance(value, list):
         items = cast(list[object], value)
         return "[" + ",".join(_json_text(item) for item in items) + "]"
@@ -173,11 +173,11 @@ class MetricSchema:
 def _definition(value: Mapping[str, object]) -> MetricDefinition:
     bounds = cast(Mapping[str, object], value.get("bounds", {}))
 
-    def numeric_bound(name: str) -> int | float | None:
+    def numeric_bound(name: str) -> int | float | Decimal | None:
         bound = bounds.get(name)
-        if isinstance(bound, Decimal):
-            return float(bound)
-        return cast(int | float | None, bound)
+        if isinstance(bound, float):
+            return Decimal(str(bound))
+        return cast(int | Decimal | None, bound)
 
     return MetricDefinition(
         name=cast(str, value["name"]),
@@ -197,7 +197,10 @@ def _semantic_errors(artifact: Mapping[str, object]) -> list[MetricError]:
     errors: list[MetricError] = []
     names: set[str] = set()
     units = frozenset(MetricSchema.units())
-    definitions = cast(list[object], artifact.get("definitions", []))
+    raw_definitions = artifact.get("definitions", [])
+    if not isinstance(raw_definitions, list):
+        return errors
+    definitions = cast(list[object], raw_definitions)
     for index, item in enumerate(definitions):
         if not isinstance(item, Mapping):
             continue
@@ -405,7 +408,14 @@ def project_metrics_comparable(
         "step_reduction",
     )
     return all(
-        getattr(left_definition, field) == getattr(right_definition, field)
+        (
+            Decimal(str(getattr(left_definition, field)))
+            == Decimal(str(getattr(right_definition, field)))
+            if field in {"minimum", "maximum"}
+            and getattr(left_definition, field) is not None
+            and getattr(right_definition, field) is not None
+            else getattr(left_definition, field) == getattr(right_definition, field)
+        )
         for field in semantic
     )
 

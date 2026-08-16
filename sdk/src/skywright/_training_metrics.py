@@ -3,6 +3,7 @@
 import math
 import re
 from collections.abc import Callable, Iterable, Mapping
+from decimal import Decimal
 from typing import NoReturn
 
 from skywright._training_errors import SkywrightFailure, TrainingContractViolation
@@ -290,7 +291,7 @@ def _validate_metric_definitions(
             ("maximum", definition.maximum),
         ):
             if bound is not None and (
-                type(bound) not in (int, float) or not math.isfinite(bound)
+                type(bound) not in (int, float, Decimal) or not math.isfinite(bound)
             ):
                 raise TrainingContractViolation(
                     "metric-definition/bounds",

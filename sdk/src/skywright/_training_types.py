@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import Enum
 from typing import Literal, TypeAlias
 
@@ -63,8 +64,8 @@ class MetricDefinition:
     comparison: Comparison
     recording_basis: RecordingBasis = "step"
     step_reduction: StepReduction | None = "mean"
-    minimum: int | float | None = None
-    maximum: int | float | None = None
+    minimum: int | float | Decimal | None = None
+    maximum: int | float | Decimal | None = None
     display_name: str | None = None
     description: str | None = None
 

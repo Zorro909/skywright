@@ -109,6 +109,16 @@ class MetricContractTest {
 	}
 
 	@Test
+	void canonicalizesScientificNotationAsPlainExactDecimals() {
+		MetricContract compiled = this.contracts.compile(contract(
+				"""
+						[{"name":"train/loss","numericKind":"real","unit":"dimensionless","recordingBasis":"step","comparison":"minimize","stepReduction":"mean","bounds":{"minimum":1e2}}]
+						"""));
+
+		assertThat(compiled.canonicalJson()).contains("\"bounds\":{\"minimum\":100}");
+	}
+
+	@Test
 	void passesVersionedSharedConformanceCorpus() throws IOException {
 		JsonNode corpus = JSON
 			.readTree(MetricContractTest.class.getResourceAsStream("/META-INF/skywright/metrics/corpus.json"));
