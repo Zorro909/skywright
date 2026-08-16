@@ -1,0 +1,17 @@
+# Skywright Configuration Schema changelog
+
+Every library property addition, removal, rename, ownership transfer, type or constraint change,
+default change, or semantic change must be recorded here. Breaking entries include migration
+guidance. Published schema bytes are immutable; a change always creates a new schema version and
+digest. The backend retains an explicit trusted copy of every supported historical identity and
+reports an unlisted identity as not runnable.
+
+## 0.1.0
+
+- Introduced `reproducibility.seed`, `dataset.ordering.policy`, `checkpoint.cadence`,
+  `checkpoint.retention`, `metrics.flushInterval`, `metrics.segmentRoll`, and
+  `metrics.systemSamplingInterval`.
+- Established Draft 2020-12, closed-world composition, content-digest pinning, and the version 1
+  Project Configuration Contract artifact.
+
+Migration: initial version; no prior configuration schema exists.

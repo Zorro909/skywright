@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "0.1.0",
+  "schemaDigest": "sha256:41b7373c4477361d53ef92b861c63e7cfd65a9471b260475de1f9eca65ca21b2",
+  "dialect": "https://json-schema.org/draft/2020-12/schema",
+  "requiredVocabularies": [
+    "https://json-schema.org/draft/2020-12/vocab/core",
+    "https://json-schema.org/draft/2020-12/vocab/applicator",
+    "https://json-schema.org/draft/2020-12/vocab/unevaluated",
+    "https://json-schema.org/draft/2020-12/vocab/validation"
+  ],
+  "assertedFormats": [
+    "date",
+    "date-time",
+    "duration",
+    "email",
+    "hostname",
+    "idn-email",
+    "idn-hostname",
+    "ipv4",
+    "ipv6",
+    "iri",
+    "iri-reference",
+    "json-pointer",
+    "regex",
+    "relative-json-pointer",
+    "time",
+    "uri",
+    "uri-reference",
+    "uri-template",
+    "uuid"
+  ],
+  "supportedByBackend": true,
+  "conformanceCorpusVersion": 1
+}

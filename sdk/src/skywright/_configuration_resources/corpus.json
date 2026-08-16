@@ -1,0 +1,189 @@
+{
+  "corpusVersion": 1,
+  "skywrightSchemaFile": "schema.json",
+  "libraryDefaultsFile": "defaults.json",
+  "cases": [
+    {
+      "name": "three-layer-precedence-and-omission",
+      "covers": ["library-project", "library-submission", "project-submission", "omission"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{}},
+      "projectDefaults": {"reproducibility":{"seed":1}},
+      "witness": {},
+      "submission": {"reproducibility":{"seed":2}},
+      "expectedResolved": {"reproducibility":{"seed":2},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10}}
+    },
+    {
+      "name": "recursive-empty-array-null-and-exact-numbers",
+      "covers": ["recursive-object", "empty-object", "array-replacement", "literal-null", "large-integer", "decimal"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"project":{"type":"object","properties":{"nested":{"type":"object"},"empty":{"type":"object"},"array":{"type":"array"},"nullable":{"type":["number","null"]},"large":{"type":"integer"},"decimal":{"type":"number"}},"required":["nested","empty","array","nullable","large","decimal"],"additionalProperties":false}}},
+      "projectDefaults": {"project":{"nested":{"a":1,"b":2},"empty":{"preserved":true},"array":[1,2],"nullable":1,"large":9007199254740993,"decimal":0.1}},
+      "witness": {},
+      "submission": {"project":{"nested":{"b":3,"c":4},"empty":{},"array":[3],"nullable":null}},
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"project":{"nested":{"a":1,"b":3,"c":4},"empty":{"preserved":true},"array":[3],"nullable":null,"large":9007199254740993,"decimal":0.1}}
+    },
+    {
+      "name": "object-and-scalar-replacement-both-directions",
+      "covers": ["object-to-scalar", "scalar-to-object"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"objectToScalar":{},"scalarToObject":{}}},
+      "projectDefaults": {"objectToScalar":{"old":true},"scalarToObject":1},
+      "witness": {},
+      "submission": {"objectToScalar":2,"scalarToObject":{"new":true}},
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"objectToScalar":2,"scalarToObject":{"new":true}}
+    },
+    {
+      "name": "free-form-map-is-explicitly-admitted",
+      "covers": ["free-form-keys"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"labels":{"type":"object","additionalProperties":{"type":"string"}}}},
+      "projectDefaults": {},
+      "witness": {},
+      "submission": {"labels":{"任意":"value"}},
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"labels":{"任意":"value"}}
+    },
+    {
+      "name": "canonically-distinct-property-names-remain-distinct",
+      "covers": ["exact-names", "no-unicode-normalization"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"é":{"type":"integer"},"é":{"type":"integer"}},"required":["é","é"]},
+      "projectDefaults": {"é":1,"é":2},
+      "witness": {},
+      "submission": {},
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"é":1,"é":2}
+    },
+    {
+      "name": "required-value-is-witnessed-but-not-defaulted",
+      "covers": ["witness-fill", "required-submission", "complete-instance-validation"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"requiredValue":{"type":"integer"}},"required":["requiredValue"]},
+      "projectDefaults": {},
+      "witness": {"requiredValue":0},
+      "submission": {},
+      "expectedErrors": [{"code":"CONFIG_SCHEMA_VALIDATION","source":"submission","pointer":"","keyword":"required"}]
+    },
+    {
+      "name": "conditional-dependency-and-combinator-see-complete-instance",
+      "covers": ["if-then", "dependent-required", "all-of", "completed-only"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"mode":{"enum":["on","off"]},"detail":{"type":"string"},"token":{"type":"string"}},"allOf":[{"if":{"properties":{"mode":{"const":"on"}},"required":["mode"]},"then":{"required":["detail"]}}],"dependentRequired":{"detail":["token"]}},
+      "projectDefaults": {"mode":"on"},
+      "witness": {"detail":"ready","token":"bundled"},
+      "submission": {"detail":"submitted","token":"present"},
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"mode":"on","detail":"submitted","token":"present"}
+    },
+    {
+      "name": "required-value-can-be-supplied-by-submission",
+      "covers": ["required-submission-supplied"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"requiredValue":{"type":"integer"}},"required":["requiredValue"]},
+      "projectDefaults": {},
+      "witness": {"requiredValue":0},
+      "submission": {"requiredValue":7},
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"requiredValue":7}
+    },
+    {
+      "name": "unknown-closed-world-property-is-rejected",
+      "covers": ["closed-world", "unknown-property"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{}},
+      "projectDefaults": {},
+      "witness": {},
+      "submission": {"unknown":true},
+      "expectedErrors": [{"code":"CONFIG_SCHEMA_VALIDATION","source":"submission","pointer":"","keyword":"additionalProperties"}]
+    },
+    {
+      "name": "null-is-rejected-when-schema-does-not-admit-it",
+      "covers": ["rejected-null"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"integer"}}},
+      "projectDefaults": {"value":1},
+      "witness": {},
+      "submission": {"value":null},
+      "expectedErrors": [{"code":"CONFIG_SCHEMA_VALIDATION","source":"submission","pointer":"/value","keyword":"type"}]
+    },
+    {
+      "name": "witness-cannot-replace-an-equal-default",
+      "covers": ["witness-replacement"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"integer"}}},
+      "projectDefaults": {"value":1},
+      "witness": {"value":1},
+      "submission": {},
+      "contractErrors": [{"code":"CONFIG_WITNESS_REPLACEMENT","source":"defaults-completion-witness","pointer":"/value","keyword":"overlay"}]
+    },
+    {
+      "name": "invalid-completed-baseline-is-rejected",
+      "covers": ["invalid-completed-baseline"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"integer","minimum":1}},"required":["value"]},
+      "projectDefaults": {},
+      "witness": {"value":0},
+      "submission": {},
+      "contractErrors": [{"code":"CONFIG_SCHEMA_VALIDATION","source":"defaults-completion-witness","pointer":"/value","keyword":"minimum"}]
+    },
+    {
+      "name": "duplicate-submission-name-is-rejected",
+      "covers": ["duplicate-names"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"integer"}}},
+      "projectDefaults": {},
+      "witness": {},
+      "rawSubmission": "{\"value\":1,\"value\":2}",
+      "expectedErrors": [{"code":"CONFIG_DUPLICATE_PROPERTY","source":"submission","pointer":"/value","keyword":"parse"}]
+    },
+    {
+      "name": "non-object-submission-is-rejected",
+      "covers": ["non-object-root"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{}},
+      "projectDefaults": {},
+      "witness": {},
+      "rawSubmission": "[]",
+      "expectedErrors": [{"code":"CONFIG_LAYER_NOT_OBJECT","source":"submission","pointer":"","keyword":"type"}]
+    },
+    {
+      "name": "dependent-schema-cannot-constrain-library-property",
+      "covers": ["dependent-schemas", "library-ownership"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"trigger":{"type":"boolean"}},"dependentSchemas":{"trigger":{"properties":{"reproducibility":{"properties":{"seed":{"const":0}}}}}}},
+      "projectDefaults": {},
+      "witness": {},
+      "submission": {},
+      "contractErrors": [{"code":"CONFIG_OWNERSHIP_COLLISION","source":"project-schema","pointer":"/reproducibility/seed","keyword":"properties"}]
+    },
+    {
+      "name": "local-definition-constrains-only-project-property",
+      "covers": ["local-ref", "local-definitions", "project-ownership"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"project":{"type":"object","properties":{"token":{"type":"string"}},"additionalProperties":false}},"$defs":{"projectRule":{"properties":{"project":{"required":["token"]}}}},"allOf":[{"$ref":"#/$defs/projectRule"}]},
+      "projectDefaults": {"project":{"token":"bundled"}},
+      "witness": {},
+      "submission": {},
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"project":{"token":"bundled"}}
+    },
+    {
+      "name": "invalid-bundled-schema-is-rejected",
+      "covers": ["invalid-schema", "bundled-reference"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{}},
+      "projectDefaults": {},
+      "witness": {},
+      "references": {"urn:example:invalid":{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"urn:example:invalid","type":"object","required":"not-an-array"}},
+      "submission": {},
+      "contractErrors": [{"code":"CONFIG_INVALID_PROJECT_SCHEMA","source":"project-schema","pointer":"/required","keyword":"type"}]
+    },
+    {
+      "name": "bundled-applicator-reference-constrains-only-project-property",
+      "covers": ["bundled-ref", "applicator", "project-ownership"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"project":{"type":"object","properties":{"token":{"type":"string"}},"additionalProperties":false}},"allOf":[{"$ref":"urn:example:project-rule"}]},
+      "projectDefaults": {"project":{"token":"bundled"}},
+      "witness": {},
+      "references": {"urn:example:project-rule":{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"urn:example:project-rule","properties":{"project":{"required":["token"]}}}},
+      "submission": {},
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"project":{"token":"bundled"}}
+    },
+    {
+      "name": "object-wide-applicator-cannot-constrain-library-properties",
+      "covers": ["property-names", "applicator", "library-ownership", "omitted-properties-keyword"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","allOf":[{"propertyNames":{"not":{"const":"metrics"}}}]},
+      "projectDefaults": {},
+      "witness": {},
+      "submission": {},
+      "contractErrors": [{"code":"CONFIG_OWNERSHIP_COLLISION","source":"project-schema","pointer":"","keyword":"propertyNames"}]
+    },
+    {
+      "name": "recursive-applicator-reference-is-controlled",
+      "covers": ["recursive-reference", "stable-error"],
+      "projectSchema": {"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{},"allOf":[{"$ref":"#"}]},
+      "projectDefaults": {},
+      "witness": {},
+      "submission": {},
+      "contractErrors": [{"code":"CONFIG_RECURSIVE_REFERENCE","source":"project-schema","pointer":"","keyword":"$ref"}]
+    }
+  ]
+}

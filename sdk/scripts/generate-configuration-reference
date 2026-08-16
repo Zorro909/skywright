@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Generate the library-owned Run Configuration property reference."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+SCHEMA = ROOT / "sdk/src/skywright/_configuration_resources/schema.json"
+OUTPUT = ROOT / "docs/reference/run-configuration.md"
+
+
+def properties(node: dict[str, object], prefix: tuple[str, ...] = ()):
+    for name, raw_definition in node.get("properties", {}).items():
+        definition = raw_definition
+        path = (*prefix, name)
+        if "description" in definition:
+            yield ".".join(path), definition
+        yield from properties(definition, path)
+
+
+def render() -> str:
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    lines = [
+        "# Run Configuration library properties\n",
+        "Generated from the content-addressed Skywright Configuration Schema. Do not edit by hand.\n",
+        "| Property | Type | Constraints/default | Unit | Resume compatibility | Description |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for path, definition in properties(schema):
+        constraints = [f"default `{json.dumps(definition['default'])}`"]
+        for keyword in ("minimum", "maximum", "exclusiveMinimum", "enum"):
+            if keyword in definition:
+                constraints.append(f"{keyword} `{json.dumps(definition[keyword])}`")
+        lines.append(
+            "| `{}` | `{}` | {} | {} | {} | {} |".format(
+                path,
+                json.dumps(definition.get("type"), separators=(",", ":")),
+                "; ".join(constraints),
+                definition["x-unit"],
+                definition["x-resume-compatibility"],
+                definition["description"],
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
+def main() -> None:
+    generated = render()
+    if sys.argv[1:] == ["--check"]:
+        if not OUTPUT.is_file() or OUTPUT.read_text(encoding="utf-8") != generated:
+            raise SystemExit(
+                "generated Run Configuration reference is stale; run "
+                "sdk/scripts/generate-configuration-reference"
+            )
+        return
+    if sys.argv[1:]:
+        raise SystemExit("usage: generate-configuration-reference [--check]")
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT.write_text(generated, encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()

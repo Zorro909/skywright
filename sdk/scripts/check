@@ -9,8 +9,10 @@ uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked pyright
 uv run --locked pyright --verifytypes skywright
+scripts/generate-configuration-reference --check
 uv run --locked --group ml-test pytest \
-  tests/test_package.py tests/test_release.py tests/test_training_process.py \
+  tests/test_configuration_contract.py tests/test_package.py \
+  tests/test_release.py tests/test_training_process.py \
   --junitxml target/test-results/unit.xml \
   --cov skywright \
   --cov-report xml:target/coverage/coverage.xml \

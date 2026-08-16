@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:skywright:project-configuration-contract:1",
+  "title": "Project Configuration Contract artifact",
+  "type": "object",
+  "properties": {
+    "contractVersion": {"const": 1},
+    "skywrightSchema": {
+      "type": "object",
+      "properties": {
+        "version": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      },
+      "required": ["version", "digest"],
+      "additionalProperties": false
+    },
+    "projectSchema": {"type": "object"},
+    "defaults": {"type": "object"},
+    "defaultsCompletionWitness": {"type": "object"},
+    "references": {
+      "type": "object",
+      "propertyNames": {"pattern": "^urn:"},
+      "additionalProperties": {"type": "object"}
+    }
+  },
+  "required": ["contractVersion", "skywrightSchema", "projectSchema", "defaults", "defaultsCompletionWitness", "references"],
+  "additionalProperties": false
+}

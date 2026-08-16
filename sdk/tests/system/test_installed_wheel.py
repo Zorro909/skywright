@@ -21,7 +21,7 @@ def test_distribution_paths_expose_equivalent_wheel_contents(
     assert rebuilt_contents == direct_contents
 
 
-def test_wheel_is_a_complete_dependency_free_install(
+def test_wheel_declares_only_the_configuration_validation_stack(
     installed_sdk: Path,
     tmp_path: Path,
     isolated_process_environment: dict[str, str],
@@ -36,8 +36,9 @@ from importlib.resources import files
 import skywright
 
 assert version("skywright") == skywright.__version__
-assert metadata("skywright").get_all("Requires-Dist") is None
+assert metadata("skywright").get_all("Requires-Dist") == ["jsonschema[format]<5,>=4.25"]
 assert files(skywright).joinpath("py.typed").is_file()
+assert importlib.util.find_spec("jsonschema") is None
 assert importlib.util.find_spec("torch") is None
 print(skywright.__version__)
 """
