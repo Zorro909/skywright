@@ -89,6 +89,7 @@ class MetricCatalog:
     units: frozenset[str]
     project_definitions: tuple[MetricDefinition, ...]
     system_definitions: tuple[MetricDefinition, ...] = ()
+    project_version: str | None = None
 
     @property
     def definitions(self) -> tuple[MetricDefinition, ...]:

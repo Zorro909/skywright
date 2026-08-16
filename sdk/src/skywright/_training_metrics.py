@@ -135,10 +135,15 @@ def validate_metric_catalog(
             "the composed catalog is missing its Skywright schema identity, digest, or unit registry",
             "load the complete pinned Skywright Metric Schema",
         )
-    if catalog.project_identity != project_version:
+    catalog_project_version = (
+        catalog.project_identity
+        if catalog.project_version is None
+        else catalog.project_version
+    )
+    if catalog_project_version != project_version:
         raise TrainingContractViolation(
             "metric-catalog/project-identity",
-            f"Metric Catalog project {catalog.project_identity!r} does not match {project_version!r}",
+            f"Metric Catalog project version {catalog_project_version!r} does not match {project_version!r}",
             "use the catalog composed for the exact Training Project Version",
         )
     if catalog.skywright_schema_identity != skywright_schema_identity:

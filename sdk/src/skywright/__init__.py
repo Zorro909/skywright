@@ -33,11 +33,12 @@ from skywright._training import (
 
 if _TYPE_CHECKING:
     from skywright import configuration as configuration
+    from skywright import metrics as metrics
 
 
 def __getattr__(name: str) -> object:
-    if name == "configuration":
-        module = _import_module("skywright.configuration")
+    if name in {"configuration", "metrics"}:
+        module = _import_module(f"skywright.{name}")
         globals()[name] = module
         return module
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -69,6 +70,7 @@ __all__ = (
     "TrainingProject",
     "__version__",
     "configuration",
+    "metrics",
     "run_training_process",
     "version",
 )

@@ -25,6 +25,8 @@ The package root is the complete Training Project authoring API. Only names impo
 - `skywright.__version__` is its conventional alias.
 - `skywright.configuration` compiles Project Configuration Contracts and resolves submissions for
   Training Project CI using the same conformance contract as the backend.
+- `skywright.metrics` publishes and compiles content-addressed Project Metric Contracts, composes
+  their immutable Metric Catalogs, and applies the project-metric comparability rule.
 - `run_training_process` is the direct-execution Training Process Boundary; the installed
   `skywright-runtime` command drives the same boundary for managed execution.
 - `RunContext` is the project-owned loop's interface for resolved configuration, Dataset access,
@@ -60,6 +62,15 @@ exit 2 emits stable JSON failures and means it must not be published as runnable
 and complete-instance validation used by the backend, and emits the fully materialized Run
 Configuration as JSON. The committed conformance corpus is packaged beside the schema and is
 consumed independently by Python and Java tests.
+
+## Project Metric Contract CI
+
+`skywright-metrics publish project-metrics.json published-metrics.json` validates a Training
+Project Version's declared metrics against the exact Skywright Metric Schema it pins and writes
+the canonical content-addressed artifact. `skywright-metrics validate project-metrics.json`
+performs the same runnable/not-runnable check without publishing. See
+[`docs/reference/project-metric-contract.md`](../docs/reference/project-metric-contract.md) for
+the artifact format, controlled units, semantic rules, and comparison behavior.
 
 ## Training Project entry point
 
