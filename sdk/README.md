@@ -10,8 +10,9 @@ The SDK requires Python 3.10 or later. Linux is the initial supported runtime pl
 managed and direct execution. The universal wheel does not artificially prevent installation on
 other operating systems, but those environments are not yet qualified as supported runtimes.
 
-The SDK has no runtime dependencies. In particular, it does not install PyTorch or select a CPU,
-CUDA, or ROCm build. Environment Profiles supply the compatible PyTorch stack for managed
+The SDK's only runtime dependency is the JSON Schema engine used by Training Project CI to compile
+Project Configuration Contracts. It does not install PyTorch or select a CPU, CUDA, or ROCm build.
+Environment Profiles supply the compatible PyTorch stack for managed
 execution. Direct-execution developers own that choice in their project environment and should use
 PyTorch's installation guidance for their accelerator backend.
 
@@ -22,6 +23,8 @@ The package root is the complete Training Project authoring API. Only names impo
 
 - `skywright.version` is the typed SDK version string.
 - `skywright.__version__` is its conventional alias.
+- `skywright.configuration` compiles Project Configuration Contracts and resolves submissions for
+  Training Project CI using the same conformance contract as the backend.
 - `run_training_process` is the direct-execution Training Process Boundary; the installed
   `skywright-runtime` command drives the same boundary for managed execution.
 - `RunContext` is the project-owned loop's interface for resolved configuration, Dataset access,
@@ -44,6 +47,19 @@ SDK releases are tagged `sdk-v<version>`, for example `sdk-v0.1.0`. Only the str
 `sdk-vMAJOR.MINOR.PATCH` form is accepted; prerelease tags are not supported. The compatibility
 check compares the declared public API against the latest such tag. Before the first SDK release
 tag exists, it prints an explicit skip; it never falls back to an unrelated repository tag.
+
+## Project Configuration Contract CI
+
+`skywright-config validate project-contract.json` compiles a Training Project Version's
+configuration artifact against the exact Skywright Configuration Schema identity it pins. It
+checks exclusive property ownership, Draft 2020-12 and vocabulary constraints, bundled immutable
+references, defaults and the Defaults Completion Witness. Exit 0 means the version is runnable;
+exit 2 emits stable JSON failures and means it must not be published as runnable.
+
+`skywright-config resolve project-contract.json submission.json` runs the same structural overlay
+and complete-instance validation used by the backend, and emits the fully materialized Run
+Configuration as JSON. The committed conformance corpus is packaged beside the schema and is
+consumed independently by Python and Java tests.
 
 ## Training Project entry point
 

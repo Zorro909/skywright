@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:skywright:configuration-schema:0.1.0",
+  "title": "Skywright Configuration Schema",
+  "description": "The library-owned part of a Skywright Run Configuration.",
+  "type": "object",
+  "properties": {
+    "reproducibility": {
+      "type": "object",
+      "properties": {
+        "seed": {
+          "description": "Seeds library-managed deterministic random number generators before project code runs.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807,
+          "default": 0,
+          "x-unit": "integer seed",
+          "x-resume-compatibility": "must-match"
+        }
+      },
+      "required": ["seed"],
+      "additionalProperties": false
+    },
+    "dataset": {
+      "type": "object",
+      "properties": {
+        "ordering": {
+          "type": "object",
+          "properties": {
+            "policy": {
+              "description": "Selects the library-owned Dataset Item Sequence ordering policy.",
+              "type": "string",
+              "enum": ["deterministic-shuffle"],
+              "default": "deterministic-shuffle",
+              "x-unit": "policy name",
+              "x-resume-compatibility": "must-match"
+            }
+          },
+          "required": ["policy"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["ordering"],
+      "additionalProperties": false
+    },
+    "checkpoint": {
+      "type": "object",
+      "properties": {
+        "cadence": {
+          "description": "Maximum completed Steps between periodic durable checkpoints.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 100,
+          "x-unit": "Steps",
+          "x-resume-compatibility": "may-change"
+        },
+        "retention": {
+          "description": "Minimum number of newest periodic checkpoints retained by the library.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 3,
+          "x-unit": "checkpoints",
+          "x-resume-compatibility": "may-change"
+        }
+      },
+      "required": ["cadence", "retention"],
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "flushInterval": {
+          "description": "Maximum wall-clock interval between flushing pending metric events.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 10,
+          "x-unit": "seconds",
+          "x-resume-compatibility": "may-change"
+        },
+        "segmentRoll": {
+          "description": "Maximum metric events written before rolling a TensorBoard event segment.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 1000,
+          "x-unit": "events",
+          "x-resume-compatibility": "may-change"
+        },
+        "systemSamplingInterval": {
+          "description": "Wall-clock interval between library-owned system metric observations.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 10,
+          "x-unit": "seconds",
+          "x-resume-compatibility": "may-change"
+        }
+      },
+      "required": ["flushInterval", "segmentRoll", "systemSamplingInterval"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["reproducibility", "dataset", "checkpoint", "metrics"],
+  "additionalProperties": false
+}

@@ -39,6 +39,11 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-validation</artifactId>
     </dependency>
+    <dependency>
+      <groupId>com.networknt</groupId>
+      <artifactId>json-schema-validator</artifactId>
+      <version>${networknt-json-schema.version}</version>
+    </dependency>
 
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -62,6 +67,11 @@
       <resource>
         <directory>src/main/resources</directory>
         <filtering>true</filtering>
+      </resource>
+      <resource>
+        <directory>${maven.multiModuleProjectDirectory}/sdk/src/skywright/_configuration_resources</directory>
+        <targetPath>META-INF/skywright/configuration</targetPath>
+        <filtering>false</filtering>
       </resource>
     </resources>
     <plugins>

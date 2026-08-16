@@ -9,6 +9,8 @@
   outcomes.
 - Enables direct Python execution and managed `skywright-runtime MODULE:CALLABLE --definition ...`
   execution over the same Training Project entry point.
+- Adds Project Configuration Contract compilation and deterministic Run Configuration resolution,
+  the `skywright-config` project-CI command, and the shared Java/Python conformance corpus.
 
 ## 0.1.0
 

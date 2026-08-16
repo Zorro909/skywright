@@ -2,6 +2,7 @@
 
 from importlib.metadata import version as _distribution_version
 
+from skywright import configuration
 from skywright._training import (
     Accelerator,
     ArtifactRecord,
@@ -54,6 +55,7 @@ __all__ = (
     "TrainingProcessResult",
     "TrainingProject",
     "__version__",
+    "configuration",
     "run_training_process",
     "version",
 )
