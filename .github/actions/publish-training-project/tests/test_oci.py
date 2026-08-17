@@ -3,8 +3,11 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import subprocess
+import sys
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from email.message import Message
 from pathlib import Path
 from typing import cast
@@ -13,6 +16,7 @@ import pytest
 from skywright.configuration import ConfigurationContract
 from skywright.metrics import MetricSchema
 
+import skywright_project_action.oci as project_oci
 from skywright_project_action.oci import DockerProjectImageBuilder, OciArtifactRegistry
 from skywright_project_action.version import ProjectVersionDefinition
 
@@ -78,7 +82,7 @@ def test_oci_adapter_publishes_content_before_an_immutable_manifest(
             return Response(201)
         raise AssertionError(f"unexpected request {method} {typed.full_url}")
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(project_oci, "_urlopen", urlopen)
     registry = OciArtifactRegistry(
         "registry.test", "owner/project", username="ci", password="secret"
     )
@@ -149,7 +153,7 @@ def test_oci_adapter_bounds_bearer_retries(
             typed.full_url, 401, "unauthorized", headers, io.BytesIO()
         )
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(project_oci, "_urlopen", urlopen)
 
     with pytest.raises(RuntimeError, match="HTTP 401"):
         OciArtifactRegistry("registry.test", "owner/project").manifest_digest(
@@ -181,7 +185,7 @@ def test_oci_adapter_resolves_relative_upload_locations(
             return Response(201)
         raise AssertionError(f"unexpected request {typed.get_method()}")
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(project_oci, "_urlopen", urlopen)
     ExercisableRegistry("registry.test", "owner/project").push_blob(b"content")
 
     assert requests[-1].startswith(
@@ -195,7 +199,7 @@ def test_oci_adapter_rejects_insecure_bearer_realms(
     def urlopen(request: object, timeout: int) -> Response:
         raise AssertionError("an insecure token request must not be sent")
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(project_oci, "_urlopen", urlopen)
 
     with pytest.raises(RuntimeError, match="must use HTTPS"):
         ExercisableRegistry(
@@ -209,7 +213,7 @@ def test_oci_adapter_rejects_a_non_object_token_response(
     def urlopen(request: object, timeout: int) -> Response:
         return Response(200, b"[]")
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(project_oci, "_urlopen", urlopen)
 
     with pytest.raises(RuntimeError, match="returned no token"):
         ExercisableRegistry("registry.test", "owner/project").bearer_token(
@@ -242,7 +246,7 @@ def test_oci_adapter_accepts_access_token_and_preserves_realm_query(
             typed.full_url, 401, "unauthorized", headers, io.BytesIO()
         )
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(project_oci, "_urlopen", urlopen)
 
     assert (
         OciArtifactRegistry("registry.test", "owner/project").manifest_digest(
@@ -287,7 +291,7 @@ def test_oci_adapter_preserves_put_across_secure_redirects_without_leaking_auth(
             f"unexpected request {typed.get_method()} {typed.full_url}"
         )
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(project_oci, "_urlopen", urlopen)
     ExercisableRegistry(
         "registry.test", "owner/project", username="ci", password="secret"
     ).push_blob(b"content")
@@ -298,13 +302,58 @@ def test_oci_adapter_preserves_put_across_secure_redirects_without_leaking_auth(
     assert requests[-1][3] is None
 
 
+def test_oci_adapter_follows_get_redirects_without_leaking_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str | None]] = []
+
+    def urlopen(request: object, timeout: int) -> Response:
+        typed = cast(urllib.request.Request, request)
+        requests.append((typed.full_url, typed.get_header("Authorization")))
+        if typed.full_url.startswith("https://registry.test/"):
+            headers = Message()
+            headers["Location"] = "https://manifests.test/content"
+            raise urllib.error.HTTPError(
+                typed.full_url, 302, "redirect", headers, io.BytesIO()
+            )
+        return Response(200, b"{}")
+
+    monkeypatch.setattr(project_oci, "_urlopen", urlopen)
+    digest = OciArtifactRegistry(
+        "registry.test", "owner/project", username="ci", password="secret"
+    ).manifest_digest("registry.test/owner/project", "tag")
+
+    assert digest == "sha256:" + hashlib.sha256(b"{}").hexdigest()
+    assert requests[0][1] is not None
+    assert requests[1] == ("https://manifests.test/content", None)
+
+
+def test_docker_process_output_is_kept_off_structured_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    def run(command: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(kwargs.get("stdout"))
+        return subprocess.CompletedProcess(cast(list[str], command), 0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    OciArtifactRegistry(
+        "registry.test", "owner/project", username="ci", password="secret"
+    ).authenticate_container_engine()
+    docker_run = cast(Callable[..., None], project_oci.__dict__["_run"])
+    docker_run("docker", "push", "registry.test/owner/project:staging")
+
+    assert calls == [sys.stderr, sys.stderr]
+
+
 def test_oci_adapter_rejects_a_mismatched_manifest_digest_header(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def urlopen(request: object, timeout: int) -> Response:
         return Response(200, b"{}", Docker_Content_Digest="sha256:" + "a" * 64)
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(project_oci, "_urlopen", urlopen)
 
     with pytest.raises(RuntimeError, match="does not match response bytes"):
         OciArtifactRegistry("registry.test", "owner/project").manifest_digest(

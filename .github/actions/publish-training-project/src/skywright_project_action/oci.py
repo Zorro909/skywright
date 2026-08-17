@@ -8,13 +8,14 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
 from email.message import Message
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 from skywright_project_action.identity import sha256_bytes
 from skywright_project_action.publication import ArtifactRegistry, ProjectImageBuilder
@@ -32,6 +33,37 @@ _ACCEPT_MANIFESTS = ", ".join(
         "application/vnd.docker.distribution.manifest.list.v2+json",
     )
 )
+
+
+class _HttpResponse(Protocol):
+    status: int
+    headers: Message
+
+    def read(self) -> bytes: ...
+
+    def __enter__(self) -> _HttpResponse: ...
+
+    def __exit__(self, *args: object) -> None: ...
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: object,
+        code: int,
+        msg: str,
+        headers: Message,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirectHandler())
+
+
+def _urlopen(request: urllib.request.Request, timeout: int) -> _HttpResponse:
+    return cast(_HttpResponse, _OPENER.open(request, timeout=timeout))
 
 
 class OciArtifactRegistry(ArtifactRegistry):
@@ -132,6 +164,7 @@ class OciArtifactRegistry(ArtifactRegistry):
             input=self._password,
             text=True,
             check=True,
+            stdout=sys.stderr,
         )
 
     def _publish_artifact(
@@ -260,12 +293,12 @@ class OciArtifactRegistry(ArtifactRegistry):
             url, data=data, headers=request_headers, method=method
         )
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with _urlopen(request, timeout=60) as response:
                 return response.status, response.headers, response.read()
         except urllib.error.HTTPError as error:
             if (
                 error.code in {301, 302, 303, 307, 308}
-                and method in {"POST", "PUT"}
+                and method in {"GET", "HEAD", "POST", "PUT"}
                 and _redirects > 0
                 and error.headers.get("Location")
             ):
@@ -333,7 +366,7 @@ class OciArtifactRegistry(ArtifactRegistry):
         request = urllib.request.Request(f"{realm}{separator}{query}", headers=headers)
         token: object = None
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with _urlopen(request, timeout=60) as response:
                 document = json.loads(response.read())
                 if isinstance(document, dict):
                     typed_document = cast(dict[str, object], document)
@@ -438,7 +471,7 @@ class DockerProjectImageBuilder(ProjectImageBuilder):
 
 
 def _run(*command: str) -> None:
-    subprocess.run(command, check=True)
+    subprocess.run(command, check=True, stdout=sys.stderr)
 
 
 def _split_repository(repository: str) -> tuple[str, str]:
