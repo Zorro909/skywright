@@ -76,7 +76,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 "versionLabel": published.manifest.version_label,
                 "manifestDigest": published.manifest.digest,
                 "artifactDigest": published.artifact_digest,
-                "images": published.manifest.images,
+                "images": dict(published.manifest.images),
             }
         )
         return 0

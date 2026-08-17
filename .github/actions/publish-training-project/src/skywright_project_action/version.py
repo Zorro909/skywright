@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -20,7 +21,7 @@ from skywright.metrics import MetricContract, MetricContractError
 from skywright_project_action.identity import DIGEST, sha256_text
 
 _IMAGE_COMPONENT = re.compile(r"[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*\Z")
-_IMAGE_TAG = re.compile(r"[\w][\w.-]{0,127}\Z")
+_IMAGE_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
 _PROJECT_IDENTITY = re.compile(r"[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?\Z")
 _LOCKED_SKYWRIGHT = re.compile(
     r"(?im)^\s*(?:skywright|skywright\[[^]]+\])\s*(?:[<>=!~]+|@|$)"
@@ -51,7 +52,12 @@ class ContractArtifact:
 
     canonical_json: str
     digest: str
-    skywright_schema: dict[str, object]
+    _skywright_schema_json: str
+
+    @property
+    def skywright_schema(self) -> dict[str, object]:
+        """Return a defensive copy of the schema identity."""
+        return cast(dict[str, object], json.loads(self._skywright_schema_json))
 
 
 @dataclass(frozen=True)
@@ -196,7 +202,7 @@ class ProjectVersionManifest:
     canonical_json: str
     digest: str
     version_label: str
-    images: dict[str, str]
+    images: Mapping[str, str]
 
     @staticmethod
     def validate_provenance(*, source_revision: str, pipeline: str) -> None:
@@ -274,7 +280,12 @@ class ProjectVersionManifest:
             "contractArtifacts": artifacts,
         }
         canonical = _canonical(document)
-        return cls(canonical, sha256_text(canonical), label, pinned_images)
+        return cls(
+            canonical,
+            sha256_text(canonical),
+            label,
+            MappingProxyType(pinned_images),
+        )
 
     def image_for(self, capabilities: Mapping[str, object]) -> str:
         backend = capabilities.get("acceleratorBackend")
@@ -302,7 +313,7 @@ def _configuration_artifact(
         return ContractArtifact(
             canonical,
             sha256_text(canonical),
-            ConfigurationContract.skywright_schema_identity(),
+            _canonical(ConfigurationContract.skywright_schema_identity()),
         )
     except (OSError, ValueError, ConfigurationContractError):
         failures.append(
@@ -324,7 +335,7 @@ def _metric_artifact(
         return ContractArtifact(
             contract.canonical_json,
             contract.digest,
-            cast(dict[str, object], document["skywrightSchema"]),
+            _canonical(cast(dict[str, object], document["skywrightSchema"])),
         )
     except (OSError, ValueError, MetricContractError):
         failures.append(
@@ -405,7 +416,19 @@ def _image_name(value: str, *, allow_tag: bool) -> bool:
     if not parts or any(not part for part in parts):
         return False
     host = parts[0]
-    if len(parts) > 1 and ":" in host:
+    if len(parts) > 1 and host.startswith("["):
+        closing = host.find("]")
+        if closing < 0:
+            return False
+        try:
+            ipaddress.IPv6Address(host[1:closing])
+        except ipaddress.AddressValueError:
+            return False
+        suffix = host[closing + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            return False
+        parts = parts[1:]
+    elif len(parts) > 1 and ":" in host:
         hostname, port_separator, port = host.rpartition(":")
         if not port_separator or not port.isdigit() or not hostname:
             return False

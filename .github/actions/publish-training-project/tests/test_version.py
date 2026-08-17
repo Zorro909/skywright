@@ -151,6 +151,32 @@ def test_definition_rejects_malformed_profile_and_tagged_repository(
         "PROJECT_REGISTRY_INVALID",
     }
 
+    source = definition(tmp_path)
+    source["backends"] = {
+        "cuda": {
+            "environmentProfile": "ghcr.io/example/environment:\u00e9@sha256:"
+            + "a" * 64
+        }
+    }
+    with pytest.raises(ProjectVersionError) as unicode_tag:
+        ProjectVersionDefinition.compile(source, tmp_path)
+    assert unicode_tag.value.errors[0].code == "PROJECT_PROFILE_NOT_DIGEST_PINNED"
+
+
+def test_definition_accepts_a_bracketed_ipv6_registry(tmp_path: Path) -> None:
+    source = definition(tmp_path)
+    source["registryRepository"] = "[2001:db8::1]:5000/team/project"
+    source["backends"] = {
+        "cuda": {
+            "environmentProfile": "[2001:db8::1]:5000/team/environment:cuda@sha256:"
+            + "a" * 64
+        }
+    }
+
+    compiled = ProjectVersionDefinition.compile(source, tmp_path)
+
+    assert compiled.registry_repository == "[2001:db8::1]:5000/team/project"
+
 
 def test_complete_manifest_is_canonical_and_fails_closed_for_capabilities(
     tmp_path: Path,
@@ -178,6 +204,12 @@ def test_complete_manifest_is_canonical_and_fails_closed_for_capabilities(
         "cuda",
         "rocm",
     ]
+    assert manifest.image_for({"acceleratorBackend": "cuda"}) == "sha256:" + "c" * 64
+    schema = compiled.configuration_contract.skywright_schema
+    schema["mutated"] = True
+    assert "mutated" not in compiled.configuration_contract.skywright_schema
+    with pytest.raises(TypeError):
+        cast(dict[str, str], manifest.images)["cuda"] = "sha256:" + "9" * 64
     assert manifest.image_for({"acceleratorBackend": "cuda"}) == "sha256:" + "c" * 64
     with pytest.raises(ProjectVersionError) as raised:
         manifest.image_for({"acceleratorBackend": "tpu"})
