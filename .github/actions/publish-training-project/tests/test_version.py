@@ -340,6 +340,7 @@ def test_publisher_bounds_staging_tags_for_the_longest_pipeline(
 def test_canonicalization_rejects_pathological_decimal_exponents() -> None:
     canonical = cast(Callable[[object], str], project_version.__dict__["_canonical"])
 
+    assert canonical(Decimal("-0")) == canonical(Decimal("0.000")) == "0"
     with pytest.raises(ValueError, match="representation bounds"):
         canonical(Decimal("1E+1000000000"))
     with pytest.raises(ValueError, match="representation bounds"):
