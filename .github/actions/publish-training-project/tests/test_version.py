@@ -268,6 +268,8 @@ def test_ci_provenance_checks_the_definition_repository(
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     monkeypatch.setenv("CI", "true")
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
     monkeypatch.setenv("CI_COMMIT_SHA", revision)
     monkeypatch.setenv("CI_PIPELINE_ID", "pipeline-1")
     monkeypatch.setattr(subprocess, "run", run)

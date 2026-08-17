@@ -148,6 +148,8 @@ def test_action_publication_entrypoint_runs_the_complete_application_flow(
     )
     monkeypatch.setattr(oci, "DockerProjectImageBuilder", image_builder)
     monkeypatch.setenv("CI", "true")
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
     monkeypatch.setenv("CI_COMMIT_SHA", revision)
     monkeypatch.setenv("CI_PIPELINE_ID", "system-1")
 
