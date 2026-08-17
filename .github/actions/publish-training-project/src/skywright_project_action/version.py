@@ -165,7 +165,7 @@ class ProjectVersionDefinition:
                             "PROJECT_DEPENDENCY_REPLACES_SKYWRIGHT", "/dependencyLock"
                         )
                     )
-            except OSError:
+            except (OSError, UnicodeDecodeError):
                 failures.append(
                     ProjectVersionFailure(
                         "PROJECT_ARTIFACT_UNAVAILABLE", "/dependencyLock"

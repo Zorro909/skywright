@@ -129,7 +129,7 @@ def _ci_provenance(project_root: Path) -> dict[str, str]:
             text=True,
             cwd=project_root,
         ).stdout
-    except subprocess.SubprocessError as error:
+    except (OSError, subprocess.SubprocessError) as error:
         raise ProjectVersionError(
             (ProjectVersionFailure("PROJECT_SOURCE_UNAVAILABLE", "/sourceRevision"),)
         ) from error

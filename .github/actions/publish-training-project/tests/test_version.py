@@ -122,6 +122,20 @@ def test_definition_rejects_sdk_replacement_and_unpinned_profiles(
     }
 
 
+def test_definition_reports_an_invalid_utf8_dependency_lock(
+    tmp_path: Path,
+) -> None:
+    source = definition(tmp_path)
+    (tmp_path / "requirements.lock").write_bytes(b"\xff")
+
+    with pytest.raises(ProjectVersionError) as raised:
+        ProjectVersionDefinition.compile(source, tmp_path)
+
+    assert [(item.code, item.pointer) for item in raised.value.errors] == [
+        ("PROJECT_ARTIFACT_UNAVAILABLE", "/dependencyLock")
+    ]
+
+
 def test_definition_rejects_malformed_profile_and_tagged_repository(
     tmp_path: Path,
 ) -> None:
@@ -310,6 +324,34 @@ def test_ci_provenance_checks_the_definition_repository(
         "pipeline": "pipeline-1",
     }
     assert calls == [tmp_path, tmp_path]
+
+
+def test_ci_provenance_reports_an_unavailable_git_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    revision = "1" * 40
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("CI_COMMIT_SHA", revision)
+    monkeypatch.setenv("CI_PIPELINE_ID", "pipeline-1")
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+
+    def unavailable(
+        *args: object, **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "run", unavailable)
+    ci_provenance = cast(
+        Callable[[Path], dict[str, str]], project_cli.__dict__["_ci_provenance"]
+    )
+
+    with pytest.raises(ProjectVersionError) as raised:
+        ci_provenance(tmp_path)
+
+    assert [(item.code, item.pointer) for item in raised.value.errors] == [
+        ("PROJECT_SOURCE_UNAVAILABLE", "/sourceRevision")
+    ]
 
 
 def test_project_ci_command_validates_and_rejects_publication_outside_ci(
