@@ -27,8 +27,6 @@ The package root is the complete Training Project authoring API. Only names impo
   Training Project CI using the same conformance contract as the backend.
 - `skywright.metrics` publishes and compiles content-addressed Project Metric Contracts, composes
   their immutable Metric Catalogs, and applies the project-metric comparability rule.
-- `skywright.project` defines complete Training Project Version manifests and the CI-only
-  publication boundary. The installed `skywright-project` command is its operational entry point.
 - `run_training_process` is the direct-execution Training Process Boundary; the installed
   `skywright-runtime` command drives the same boundary for managed execution.
 - `RunContext` is the project-owned loop's interface for resolved configuration, Dataset access,
@@ -73,16 +71,6 @@ the canonical content-addressed artifact. `skywright-metrics validate project-me
 performs the same runnable/not-runnable check without publishing. See
 [`docs/reference/project-metric-contract.md`](../docs/reference/project-metric-contract.md) for
 the artifact format, controlled units, semantic rules, and comparison behavior.
-
-## Training Project Version CI
-
-`skywright-project validate skywright-project.json` validates stable project identity, the exact
-configuration and metric contracts, digest-pinned Environment Profiles, the declared backend set,
-and the fully hashed dependency lock. `skywright-project publish` additionally requires a clean CI
-checkout, builds and smokes every declared backend image, and exposes the immutable version
-artifact only after all images and contracts are available. See
-[`docs/reference/training-project-version.md`](../docs/reference/training-project-version.md) for
-the definition, credentials, OCI addressing, and failure contract.
 
 ## Training Project entry point
 

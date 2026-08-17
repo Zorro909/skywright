@@ -34,7 +34,6 @@ def test_package_root_declares_its_complete_public_surface() -> None:
         "__version__",
         "configuration",
         "metrics",
-        "project",
         "run_training_process",
         "version",
     )

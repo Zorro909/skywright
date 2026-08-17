@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import tempfile
 import urllib.error
@@ -15,8 +15,9 @@ import urllib.request
 from email.message import Message
 from pathlib import Path
 
-from skywright._project_publication import ArtifactRegistry, ProjectImageBuilder
-from skywright._project_version import (
+from skywright_project_action.identity import sha256_bytes
+from skywright_project_action.publication import ArtifactRegistry, ProjectImageBuilder
+from skywright_project_action.version import (
     ProjectVersionDefinition,
 )
 
@@ -112,7 +113,7 @@ class OciArtifactRegistry(ArtifactRegistry):
             raise RuntimeError(
                 f"registry manifest resolution failed with HTTP {status}"
             )
-        return headers.get("Docker-Content-Digest") or _digest(content)
+        return headers.get("Docker-Content-Digest") or sha256_bytes(content)
 
     def authenticate_container_engine(self) -> None:
         """Project the configured registry credential into Docker without exposing it."""
@@ -141,7 +142,7 @@ class OciArtifactRegistry(ArtifactRegistry):
         *,
         annotations: dict[str, str],
     ) -> str:
-        if _digest(content) != content_digest:
+        if sha256_bytes(content) != content_digest:
             raise RuntimeError(
                 "artifact content digest does not match its declared identity"
             )
@@ -155,7 +156,7 @@ class OciArtifactRegistry(ArtifactRegistry):
                 "artifactType": artifact_type,
                 "config": {
                     "mediaType": _OCI_CONFIG,
-                    "digest": _digest(empty),
+                    "digest": sha256_bytes(empty),
                     "size": len(empty),
                 },
                 "layers": [
@@ -179,21 +180,29 @@ class OciArtifactRegistry(ArtifactRegistry):
                 raise RuntimeError(
                     f"immutable OCI artifact tag {tag!r} already differs"
                 )
-            return existing_headers.get("Docker-Content-Digest") or _digest(existing)
-        status, headers, _ = self._request(
+            return existing_headers.get("Docker-Content-Digest") or sha256_bytes(
+                existing
+            )
+        status, _, _ = self._request(
             "PUT",
             suffix,
             data=manifest,
-            headers={"Content-Type": _OCI_MANIFEST},
+            headers={"Content-Type": _OCI_MANIFEST, "If-None-Match": "*"},
+            allow_precondition_failed=True,
         )
-        if status != 201:
+        if status not in {201, 412}:
             raise RuntimeError(
                 f"registry manifest publication failed with HTTP {status}"
             )
-        return headers.get("Docker-Content-Digest") or _digest(manifest)
+        verified_status, verified_headers, verified = self._request(
+            "GET", suffix, headers={"Accept": _OCI_MANIFEST}
+        )
+        if verified_status != 200 or verified != manifest:
+            raise RuntimeError(f"immutable OCI artifact tag {tag!r} was replaced")
+        return verified_headers.get("Docker-Content-Digest") or sha256_bytes(verified)
 
     def _push_blob(self, content: bytes) -> None:
-        digest = _digest(content)
+        digest = sha256_bytes(content)
         status, _, _ = self._request(
             "HEAD", f"/v2/{self._path}/blobs/{digest}", allow_not_found=True
         )
@@ -225,6 +234,8 @@ class OciArtifactRegistry(ArtifactRegistry):
         headers: dict[str, str] | None = None,
         query: str = "",
         allow_not_found: bool = False,
+        allow_precondition_failed: bool = False,
+        _auth_retry: bool = True,
     ) -> tuple[int, Message, bytes]:
         url = (
             target
@@ -232,9 +243,14 @@ class OciArtifactRegistry(ArtifactRegistry):
             else f"https://{self._host}{target}"
         ) + query
         request_headers = dict(headers or {})
-        if self._token:
+        registry_origin = self._is_registry_origin(url)
+        if registry_origin and self._token:
             request_headers["Authorization"] = f"Bearer {self._token}"
-        elif self._username is not None and self._password is not None:
+        elif (
+            registry_origin
+            and self._username is not None
+            and self._password is not None
+        ):
             credentials = base64.b64encode(
                 f"{self._username}:{self._password}".encode()
             ).decode()
@@ -247,7 +263,12 @@ class OciArtifactRegistry(ArtifactRegistry):
                 return response.status, response.headers, response.read()
         except urllib.error.HTTPError as error:
             challenge = error.headers.get("WWW-Authenticate", "")
-            if error.code == 401 and challenge.startswith("Bearer "):
+            if (
+                error.code == 401
+                and registry_origin
+                and _auth_retry
+                and challenge.startswith("Bearer ")
+            ):
                 self._token = self._bearer_token(challenge)
                 return self._request(
                     method,
@@ -256,8 +277,12 @@ class OciArtifactRegistry(ArtifactRegistry):
                     headers=headers,
                     query=query,
                     allow_not_found=allow_not_found,
+                    allow_precondition_failed=allow_precondition_failed,
+                    _auth_retry=False,
                 )
             if allow_not_found and error.code == 404:
+                return error.code, error.headers, error.read()
+            if allow_precondition_failed and error.code == 412:
                 return error.code, error.headers, error.read()
             raise RuntimeError(
                 f"registry request failed with HTTP {error.code}"
@@ -280,15 +305,22 @@ class OciArtifactRegistry(ArtifactRegistry):
                 f"{self._username}:{self._password}".encode()
             ).decode()
             headers["Authorization"] = f"Basic {credentials}"
-        request = urllib.request.Request(f"{realm}?{query}", headers=headers)
+        separator = "&" if "?" in realm else "?"
+        request = urllib.request.Request(f"{realm}{separator}{query}", headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
-                token = json.loads(response.read()).get("token")
+                document = json.loads(response.read())
+                token = document.get("token") or document.get("access_token")
         except (urllib.error.URLError, ValueError) as error:
             raise RuntimeError("registry bearer token exchange failed") from error
         if not isinstance(token, str) or not token:
             raise RuntimeError("registry bearer token exchange returned no token")
         return token
+
+    def _is_registry_origin(self, url: str) -> bool:
+        target = urllib.parse.urlsplit(url)
+        registry = urllib.parse.urlsplit(f"https://{self._host}")
+        return target.scheme == registry.scheme and target.netloc == registry.netloc
 
     def _assert_repository(self, repository: str) -> None:
         if _split_repository(repository) != (self._host, self._path):
@@ -317,6 +349,18 @@ class DockerProjectImageBuilder(ProjectImageBuilder):
     ) -> str:
         lock = definition.dependency_lock.relative_to(definition.root).as_posix()
         profile = definition.environment_profiles[backend]
+        schema_check = "; ".join(
+            (
+                "import pathlib, skywright",
+                "from skywright.configuration import ConfigurationContract",
+                "from skywright.metrics import MetricSchema",
+                "assert pathlib.Path(skywright.__file__).is_relative_to('/opt/skywright')",
+                "assert ConfigurationContract.skywright_schema_identity() == "
+                + repr(definition.configuration_contract.skywright_schema),
+                "assert MetricSchema.identity() == "
+                + repr(definition.metric_contract.skywright_schema),
+            )
+        )
         containerfile = (
             "\n".join(
                 (
@@ -332,8 +376,7 @@ class DockerProjectImageBuilder(ProjectImageBuilder):
                     "WORKDIR /workspace",
                     'ENV VIRTUAL_ENV="/opt/skywright-project"',
                     'ENV PATH="/opt/skywright-project/bin:${PATH}"',
-                    'RUN python -c "import pathlib, skywright; '
-                    "assert pathlib.Path(skywright.__file__).is_relative_to('/opt/skywright')\"",
+                    f"RUN python -c {shlex.quote(schema_check)}",
                 )
             )
             + "\n"
@@ -367,10 +410,6 @@ class DockerProjectImageBuilder(ProjectImageBuilder):
 
 def _run(*command: str) -> None:
     subprocess.run(command, check=True)
-
-
-def _digest(content: bytes) -> str:
-    return "sha256:" + hashlib.sha256(content).hexdigest()
 
 
 def _split_repository(repository: str) -> tuple[str, str]:

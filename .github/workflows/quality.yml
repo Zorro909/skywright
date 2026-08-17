@@ -280,7 +280,9 @@ jobs:
         with:
           version: ${{ needs.plan.outputs.uv_version }}
           enable-cache: true
-          cache-dependency-glob: sdk/uv.lock
+          cache-dependency-glob: |
+            sdk/uv.lock
+            .github/actions/publish-training-project/uv.lock
       - name: Receive distributions from the primary lane
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -322,9 +324,13 @@ jobs:
         with:
           version: ${{ needs.plan.outputs.uv_version }}
           enable-cache: true
-          cache-dependency-glob: sdk/uv.lock
-      - name: Build each distribution once and run complete SDK verification
-        run: sdk/scripts/verify target/ci-dist
+          cache-dependency-glob: |
+            sdk/uv.lock
+            .github/actions/publish-training-project/uv.lock
+      - name: Build each distribution once and run complete SDK and project-action verification
+        run: |
+          sdk/scripts/verify target/ci-dist
+          .github/actions/publish-training-project/scripts/check
       - name: Hand verified distributions to compatibility lanes
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:

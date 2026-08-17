@@ -1,23 +1,29 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import pytest
-
 from skywright.configuration import ConfigurationContract
 from skywright.metrics import MetricSchema
-from skywright.project import (
+
+import skywright_project_action.cli as project_cli
+from skywright_project_action.cli import main
+from skywright_project_action.publication import (
     ArtifactRegistry,
     ProjectImageBuilder,
+    ProjectVersionPublisher,
+)
+from skywright_project_action.version import (
     ProjectVersionDefinition,
     ProjectVersionError,
     ProjectVersionManifest,
-    ProjectVersionPublisher,
-    main,
 )
 
-REPOSITORY = Path(__file__).resolve().parents[2]
+REPOSITORY = Path(__file__).resolve().parents[4]
 
 
 def configuration_contract() -> dict[str, object]:
@@ -88,6 +94,9 @@ def test_definition_validates_both_exact_contracts_and_locked_profiles(
     assert compiled.metric_contract.skywright_schema == MetricSchema.identity()
     assert compiled.configuration_contract.digest.startswith("sha256:")
     assert compiled.metric_contract.digest.startswith("sha256:")
+
+    with pytest.raises(TypeError):
+        cast(dict[str, str], compiled.environment_profiles)["cuda"] = "latest"
 
 
 def test_definition_rejects_sdk_replacement_and_unpinned_profiles(
@@ -222,6 +231,55 @@ def test_publisher_exposes_the_version_only_after_every_piece_succeeds(
             RecordingImages(fail_backend="rocm"), failed_registry
         ).publish(compiled, source_revision="1" * 40, pipeline="github-123-1")
     assert failed_registry.versions == []
+
+
+def test_publisher_rejects_provenance_before_any_external_write(
+    tmp_path: Path,
+) -> None:
+    compiled = ProjectVersionDefinition.compile(definition(tmp_path), tmp_path)
+    images = RecordingImages()
+    registry = RecordingRegistry()
+
+    with pytest.raises(ProjectVersionError) as raised:
+        ProjectVersionPublisher(images, registry).publish(
+            compiled, source_revision="invalid", pipeline="invalid pipeline"
+        )
+
+    assert {failure.code for failure in raised.value.errors} == {
+        "PROJECT_SOURCE_REVISION_INVALID",
+        "PROJECT_PIPELINE_INVALID",
+    }
+    assert images.built == []
+    assert registry.contracts == []
+    assert registry.versions == []
+
+
+def test_ci_provenance_checks_the_definition_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    revision = "1" * 40
+    calls: list[Path] = []
+
+    def run(
+        command: tuple[str, ...], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(cast(Path, kwargs["cwd"]))
+        stdout = revision + "\n" if command[1:3] == ("rev-parse", "HEAD") else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("CI_COMMIT_SHA", revision)
+    monkeypatch.setenv("CI_PIPELINE_ID", "pipeline-1")
+    monkeypatch.setattr(subprocess, "run", run)
+
+    ci_provenance = cast(
+        Callable[[Path], dict[str, str]], project_cli.__dict__["_ci_provenance"]
+    )
+    assert ci_provenance(tmp_path) == {
+        "sourceRevision": revision,
+        "pipeline": "pipeline-1",
+    }
+    assert calls == [tmp_path, tmp_path]
 
 
 def test_project_ci_command_validates_and_rejects_publication_outside_ci(

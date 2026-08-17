@@ -1,4 +1,4 @@
-"""CI-only operational entry point for Training Project Version publication."""
+"""Process entry point hidden behind the reusable GitHub Action."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from skywright._project_publication import ProjectVersionPublisher
-from skywright._project_version import (
+from skywright_project_action.publication import ProjectVersionPublisher
+from skywright_project_action.version import (
     ProjectVersionDefinition,
     ProjectVersionError,
     ProjectVersionFailure,
@@ -22,8 +22,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if arguments is None else arguments)
     if len(args) != 2 or args[0] not in {"validate", "publish"}:
         print(
-            "usage: skywright-project validate DEFINITION | "
-            "skywright-project publish DEFINITION",
+            "usage: publish-training-project validate DEFINITION | "
+            "publish-training-project publish DEFINITION",
             file=sys.stderr,
         )
         return 64
@@ -49,8 +49,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 }
             )
             return 0
-        provenance = _ci_provenance()
-        from skywright._project_oci import (
+        provenance = _ci_provenance(definition.root)
+        from skywright_project_action.oci import (
             DockerProjectImageBuilder,
             OciArtifactRegistry,
         )
@@ -103,7 +103,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         return 2
 
 
-def _ci_provenance() -> dict[str, str]:
+def _ci_provenance(project_root: Path) -> dict[str, str]:
     if os.environ.get("CI") != "true" and os.environ.get("GITHUB_ACTIONS") != "true":
         raise ProjectVersionError(
             (ProjectVersionFailure("PROJECT_PUBLICATION_REQUIRES_CI", "/ci"),)
@@ -120,12 +120,14 @@ def _ci_provenance() -> dict[str, str]:
             check=True,
             capture_output=True,
             text=True,
+            cwd=project_root,
         ).stdout.strip()
         dirty = subprocess.run(
             ("git", "status", "--porcelain"),
             check=True,
             capture_output=True,
             text=True,
+            cwd=project_root,
         ).stdout
     except subprocess.SubprocessError as error:
         raise ProjectVersionError(

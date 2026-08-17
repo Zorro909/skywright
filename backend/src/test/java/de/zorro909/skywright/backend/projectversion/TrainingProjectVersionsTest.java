@@ -2,6 +2,9 @@ package de.zorro909.skywright.backend.projectversion;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
@@ -55,10 +58,6 @@ class TrainingProjectVersionsTest {
 		assertThat(assessment.version().configurationContract()).isNotNull();
 		assertThat(assessment.version().metricCatalog().projectContractDigest()).isEqualTo(metricDigest);
 		assertThat(new TrainingProjectVersions(registry, this.configuration, this.metrics)
-			.discoverAvailable(new TrainingProjectBinding("stable-project", "ghcr.io/example/project"))).singleElement()
-			.extracting(ProjectVersionAssessment::runnable)
-			.isEqualTo(true);
-		assertThat(new TrainingProjectVersions(registry, this.configuration, this.metrics)
 			.discover(new TrainingProjectBinding("another-project", "ghcr.io/example/project"), versionOciDigest)
 			.errors()).extracting(ProjectVersionFailure::code).containsExactly("PROJECT_IDENTITY_INVALID");
 	}
@@ -102,61 +101,24 @@ class TrainingProjectVersionsTest {
 	}
 
 	@Test
-	void reportsAnEmptyArtifactWithoutHidingOtherDiscoveredVersions() {
-		String configurationArtifact = configurationContract();
-		String metricArtifact = metricContract();
-		String configurationOciDigest = "sha256:" + "e".repeat(64);
-		String metricOciDigest = "sha256:" + "f".repeat(64);
-		String cudaImage = "sha256:" + "a".repeat(64);
-		String rocmImage = "sha256:" + "b".repeat(64);
-		String validDigest = "sha256:" + "9".repeat(64);
-		String emptyDigest = "sha256:" + "8".repeat(64);
-		String manifest = manifest("1".repeat(40) + "-github-123-1", digest(configurationArtifact),
-				digest(metricArtifact), configurationOciDigest, metricOciDigest, cudaImage, rocmImage);
-		FakeRegistry registry = new FakeRegistry().versionArtifact(emptyDigest, "")
-			.versionArtifact(validDigest, manifest)
-			.artifact(configurationOciDigest, configurationArtifact)
-			.artifact(metricOciDigest, metricArtifact)
-			.image(cudaImage)
-			.image(rocmImage);
+	void enumeratesAgeBearingReferencesWithoutResolvingThem() {
+		String first = "sha256:" + "8".repeat(64);
+		String second = "sha256:" + "9".repeat(64);
+		Instant observedAt = Instant.parse("2026-08-18T00:00:00Z");
+		String firstLabel = "1".repeat(40) + "-github-1-1";
+		String secondLabel = "2".repeat(40) + "-github-2-1";
+		FakeRegistry registry = new FakeRegistry().versionReference(firstLabel, first)
+			.versionReference(secondLabel, second);
 
-		java.util.List<ProjectVersionAssessment> assessments = new TrainingProjectVersions(registry, this.configuration,
-				this.metrics)
+		ProjectVersionDiscovery discovery = new TrainingProjectVersions(registry, this.configuration, this.metrics,
+				Clock.fixed(observedAt, ZoneOffset.UTC))
 			.discoverAvailable(new TrainingProjectBinding("stable-project", "ghcr.io/example/project"));
 
-		assertThat(assessments).hasSize(2);
-		assertThat(assessments.getFirst().errors()).extracting(ProjectVersionFailure::code)
-			.containsExactly("PROJECT_MANIFEST_INVALID");
-		assertThat(assessments.getLast().runnable()).isTrue();
-	}
-
-	@Test
-	void rejectsDuplicateProvenanceLabelsDiscoveredAtDifferentDigests() {
-		String configurationArtifact = configurationContract();
-		String metricArtifact = metricContract();
-		String configurationOciDigest = "sha256:" + "e".repeat(64);
-		String metricOciDigest = "sha256:" + "f".repeat(64);
-		String cudaImage = "sha256:" + "a".repeat(64);
-		String rocmImage = "sha256:" + "b".repeat(64);
-		String label = "1".repeat(40) + "-github-123-1";
-		String manifest = manifest(label, digest(configurationArtifact), digest(metricArtifact), configurationOciDigest,
-				metricOciDigest, cudaImage, rocmImage);
-		FakeRegistry registry = new FakeRegistry().versionArtifact("sha256:" + "8".repeat(64), manifest)
-			.versionArtifact("sha256:" + "9".repeat(64), manifest)
-			.artifact(configurationOciDigest, configurationArtifact)
-			.artifact(metricOciDigest, metricArtifact)
-			.image(cudaImage)
-			.image(rocmImage);
-
-		java.util.List<ProjectVersionAssessment> assessments = new TrainingProjectVersions(registry, this.configuration,
-				this.metrics)
-			.discoverAvailable(new TrainingProjectBinding("stable-project", "ghcr.io/example/project"));
-
-		assertThat(assessments).hasSize(2).allSatisfy(assessment -> {
-			assertThat(assessment.runnable()).isFalse();
-			assertThat(assessment.errors()).extracting(ProjectVersionFailure::code)
-				.containsExactly("PROJECT_VERSION_LABEL_COLLISION");
-		});
+		assertThat(discovery.registryAvailable()).isTrue();
+		assertThat(discovery.versions()).containsExactly(new ProjectVersionReference(firstLabel, first),
+				new ProjectVersionReference(secondLabel, second));
+		assertThat(discovery.observedAt()).isEqualTo(observedAt);
+		assertThat(registry.pullCount).isZero();
 	}
 
 	@Test
@@ -224,9 +186,11 @@ class TrainingProjectVersionsTest {
 
 		private final Map<String, RegistryArtifact> artifacts = new HashMap<>();
 
-		private final java.util.List<String> versions = new java.util.ArrayList<>();
+		private final java.util.List<ProjectVersionReference> versions = new java.util.ArrayList<>();
 
 		private final java.util.Set<String> images = new java.util.HashSet<>();
+
+		private int pullCount;
 
 		FakeRegistry artifact(String reference, String content) {
 			this.artifacts.put(reference, new RegistryArtifact(reference, content));
@@ -239,8 +203,12 @@ class TrainingProjectVersionsTest {
 		}
 
 		FakeRegistry versionArtifact(String reference, String content) {
-			this.versions.add(reference);
 			return artifact(reference, content);
+		}
+
+		FakeRegistry versionReference(String label, String digest) {
+			this.versions.add(new ProjectVersionReference(label, digest));
+			return this;
 		}
 
 		FakeRegistry image(String digest) {
@@ -249,12 +217,13 @@ class TrainingProjectVersionsTest {
 		}
 
 		@Override
-		public java.util.List<String> listVersionArtifactDigests(String repository) {
+		public java.util.List<ProjectVersionReference> listVersions(String repository) {
 			return java.util.List.copyOf(this.versions);
 		}
 
 		@Override
 		public Optional<RegistryArtifact> pullArtifact(String repository, String reference) {
+			this.pullCount++;
 			return Optional.ofNullable(this.artifacts.get(reference));
 		}
 

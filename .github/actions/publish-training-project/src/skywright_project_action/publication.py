@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from skywright._project_version import (
+from skywright_project_action.identity import DIGEST
+from skywright_project_action.version import (
     ProjectVersionDefinition,
     ProjectVersionError,
     ProjectVersionFailure,
     ProjectVersionManifest,
 )
-
-_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 class ProjectImageBuilder(ABC):
@@ -76,6 +74,9 @@ class ProjectVersionPublisher:
         source_revision: str,
         pipeline: str,
     ) -> PublishedProjectVersion:
+        ProjectVersionManifest.validate_provenance(
+            source_revision=source_revision, pipeline=pipeline
+        )
         version_label = f"{source_revision}-{pipeline}"
         images: dict[str, str] = {}
         for backend in definition.backends:
@@ -83,7 +84,7 @@ class ProjectVersionPublisher:
                 f"{definition.registry_repository}:{version_label}-{backend}-staging"
             )
             digest = self._images.build_smoke_and_push(definition, backend, staging_tag)
-            if _DIGEST.fullmatch(digest) is None:
+            if DIGEST.fullmatch(digest) is None:
                 raise ProjectVersionError(
                     (
                         ProjectVersionFailure(

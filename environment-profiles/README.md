@@ -10,5 +10,5 @@ attestations, SBOMs, and public GHCR publication are intentionally owned by issu
 accelerator behavior and private-pull qualification remain owned by issue #57.
 
 Training Projects consume released profile references by digest in `skywright-project.json`. Their
-own CI then uses `skywright-project publish` to build thin images without replacing the Skywright
-installation supplied here.
+own CI invokes the repository's reusable `publish-training-project` GitHub Action to build thin
+images without replacing the Skywright installation supplied here.

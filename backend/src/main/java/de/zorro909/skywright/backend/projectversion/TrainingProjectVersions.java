@@ -3,6 +3,8 @@ package de.zorro909.skywright.backend.projectversion;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -48,60 +50,60 @@ public final class TrainingProjectVersions {
 
 	private final MetricContracts metricContracts;
 
+	private final Clock clock;
+
 	public TrainingProjectVersions(ProjectVersionRegistry registry, ConfigurationContracts configurationContracts,
 			MetricContracts metricContracts) {
+		this(registry, configurationContracts, metricContracts, Clock.systemUTC());
+	}
+
+	TrainingProjectVersions(ProjectVersionRegistry registry, ConfigurationContracts configurationContracts,
+			MetricContracts metricContracts, Clock clock) {
 		this.registry = registry;
 		this.configurationContracts = configurationContracts;
 		this.metricContracts = metricContracts;
+		this.clock = clock;
 	}
 
-	public List<ProjectVersionAssessment> discoverAvailable(TrainingProjectBinding project) {
+	public ProjectVersionDiscovery discoverAvailable(TrainingProjectBinding project) {
+		Instant observedAt = this.clock.instant();
 		try {
-			List<ProjectVersionAssessment> assessments = this.registry
-				.listVersionArtifactDigests(project.registryRepository())
-				.stream()
-				.map(reference -> discover(project, reference))
-				.toList();
-			Map<String, Long> labelCounts = assessments.stream()
-				.filter(ProjectVersionAssessment::runnable)
-				.collect(java.util.stream.Collectors.groupingBy(assessment -> assessment.version().versionLabel(),
-						java.util.stream.Collectors.counting()));
-			return assessments.stream()
-				.map(assessment -> assessment.runnable() && labelCounts.get(assessment.version().versionLabel()) > 1
-						? failed("PROJECT_VERSION_LABEL_COLLISION", "/versionLabel") : assessment)
-				.toList();
+			return new ProjectVersionDiscovery(this.registry.listVersions(project.registryRepository()), observedAt,
+					List.of());
 		}
 		catch (RuntimeException error) {
-			return List.of(failed("PROJECT_REGISTRY_UNAVAILABLE", ""));
+			return new ProjectVersionDiscovery(List.of(), observedAt,
+					List.of(failure("PROJECT_REGISTRY_UNAVAILABLE", "")));
 		}
 	}
 
 	public ProjectVersionAssessment discover(TrainingProjectBinding project, String manifestArtifactDigest) {
+		Instant assessedAt = this.clock.instant();
 		Optional<RegistryArtifact> pulled;
 		try {
 			pulled = this.registry.pullArtifact(project.registryRepository(), manifestArtifactDigest);
 		}
 		catch (RuntimeException error) {
-			return failed("PROJECT_REGISTRY_UNAVAILABLE", "");
+			return failed(assessedAt, "PROJECT_REGISTRY_UNAVAILABLE", "");
 		}
 		if (pulled.isEmpty()) {
-			return failed("PROJECT_VERSION_MISSING", "");
+			return failed(assessedAt, "PROJECT_VERSION_MISSING", "");
 		}
 		ObjectNode manifest;
 		try {
 			RegistryArtifact artifact = pulled.get();
 			if (!DIGEST.matcher(manifestArtifactDigest).matches()
 					|| !manifestArtifactDigest.equals(artifact.manifestDigest())) {
-				return failed("PROJECT_VERSION_DIGEST_MISMATCH", "");
+				return failed(assessedAt, "PROJECT_VERSION_DIGEST_MISMATCH", "");
 			}
 			JsonNode parsed = JSON.readTree(artifact.content());
 			if (!parsed.isObject()) {
-				return failed("PROJECT_MANIFEST_INVALID", "");
+				return failed(assessedAt, "PROJECT_MANIFEST_INVALID", "");
 			}
 			manifest = (ObjectNode) parsed;
 		}
 		catch (JacksonException error) {
-			return failed("PROJECT_MANIFEST_INVALID", "");
+			return failed(assessedAt, "PROJECT_MANIFEST_INVALID", "");
 		}
 
 		List<ProjectVersionFailure> errors = new ArrayList<>();
@@ -168,13 +170,13 @@ public final class TrainingProjectVersions {
 				this.metricContracts.skywrightSchemaIdentityJson(), "/metricContract/skywrightSchema", errors);
 
 		if (!errors.isEmpty()) {
-			return new ProjectVersionAssessment(false, null, errors.stream().distinct().sorted().toList());
+			return new ProjectVersionAssessment(false, null, errors.stream().distinct().sorted().toList(), assessedAt);
 		}
 		return new ProjectVersionAssessment(true,
 				new TrainingProjectVersion(projectIdentity, manifestLabel, manifestArtifactDigest, sourceRevision,
 						pipeline, images, profiles, configurationDigest, metricDigest, configurationContract,
 						metricCatalog),
-				List.of());
+				List.of(), assessedAt);
 	}
 
 	private Boolean imageAvailable(String repository, String digest, List<ProjectVersionFailure> errors,
@@ -308,8 +310,8 @@ public final class TrainingProjectVersions {
 		}
 	}
 
-	private static ProjectVersionAssessment failed(String code, String pointer) {
-		return new ProjectVersionAssessment(false, null, List.of(failure(code, pointer)));
+	private static ProjectVersionAssessment failed(Instant assessedAt, String code, String pointer) {
+		return new ProjectVersionAssessment(false, null, List.of(failure(code, pointer)), assessedAt);
 	}
 
 	private static ProjectVersionFailure failure(String code, String pointer) {

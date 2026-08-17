@@ -62,6 +62,7 @@ CATEGORY_CHECKS = {
     "fixture": frozenset(("application", "image", "java", "sdk", "security")),
     "frontend": frozenset(("application", "image", "frontend", "security")),
     "profile": frozenset(("sdk", "security")),
+    "project-action": frozenset(("sdk", "security")),
     "sdk": frozenset(("sdk", "security")),
     "shared-tooling": ALL_CHECKS,
 }
@@ -98,7 +99,10 @@ COMMANDS = {
         ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
         ("pnpm", "--dir", "frontend", "run", "verify"),
     ),
-    "sdk": (("sdk/scripts/verify",),),
+    "sdk": (
+        ("sdk/scripts/verify",),
+        (".github/actions/publish-training-project/scripts/check",),
+    ),
 }
 
 
@@ -177,6 +181,8 @@ def category_for(path: str) -> str:
         return "fixture"
     if normalized.startswith(("environment-profiles/", "profiles/")):
         return "profile"
+    if normalized.startswith(".github/actions/publish-training-project/"):
+        return "project-action"
     return "shared-tooling"
 
 

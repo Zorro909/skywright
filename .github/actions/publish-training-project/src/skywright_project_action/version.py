@@ -2,22 +2,23 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+from types import MappingProxyType
 from typing import cast
 
-from skywright._configuration_contract import (
+from skywright.configuration import (
     ConfigurationContract,
     ConfigurationContractError,
 )
-from skywright._metric_contract import MetricContract, MetricContractError
+from skywright.metrics import MetricContract, MetricContractError
 
-_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+from skywright_project_action.identity import DIGEST, sha256_text
+
 _PROFILE = re.compile(r"[^@\s]+@sha256:[0-9a-f]{64}\Z")
 _PROJECT_IDENTITY = re.compile(r"[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?\Z")
 _LOCKED_SKYWRIGHT = re.compile(
@@ -61,7 +62,7 @@ class ProjectVersionDefinition:
     root: Path
     dependency_lock: Path
     smoke_command: tuple[str, ...]
-    environment_profiles: dict[str, str]
+    environment_profiles: Mapping[str, str]
     configuration_contract: ContractArtifact
     metric_contract: ContractArtifact
 
@@ -181,7 +182,7 @@ class ProjectVersionDefinition:
             resolved_root,
             lock,
             tuple(cast(list[str], smoke)),
-            profiles,
+            MappingProxyType(dict(profiles)),
             configuration,
             metrics,
         )
@@ -196,6 +197,13 @@ class ProjectVersionManifest:
     version_label: str
     images: dict[str, str]
 
+    @staticmethod
+    def validate_provenance(*, source_revision: str, pipeline: str) -> None:
+        """Reject invalid publication provenance before any external writes."""
+        failures = _provenance_failures(source_revision, pipeline)
+        if failures:
+            raise ProjectVersionError(failures)
+
     @classmethod
     def complete(
         cls,
@@ -206,22 +214,12 @@ class ProjectVersionManifest:
         images: Mapping[str, str],
         contract_artifacts: Mapping[str, Mapping[str, str]],
     ) -> ProjectVersionManifest:
-        failures: list[ProjectVersionFailure] = []
-        if re.fullmatch(r"[0-9a-f]{40}", source_revision) is None:
-            failures.append(
-                ProjectVersionFailure(
-                    "PROJECT_SOURCE_REVISION_INVALID", "/sourceRevision"
-                )
-            )
-        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,86}", pipeline) is None:
-            failures.append(
-                ProjectVersionFailure("PROJECT_PIPELINE_INVALID", "/pipeline")
-            )
+        failures = _provenance_failures(source_revision, pipeline)
         artifacts: dict[str, dict[str, str]] = {}
         pinned_images: dict[str, str] = {}
         for backend in definition.backends:
             image = images.get(backend)
-            if not isinstance(image, str) or _DIGEST.fullmatch(image) is None:
+            if not isinstance(image, str) or DIGEST.fullmatch(image) is None:
                 failures.append(
                     ProjectVersionFailure("PROJECT_IMAGE_MISSING", f"/images/{backend}")
                 )
@@ -237,9 +235,9 @@ class ProjectVersionManifest:
             metric_artifact = typed_artifacts.get("metrics")
             if (
                 not isinstance(configuration_artifact, str)
-                or _DIGEST.fullmatch(configuration_artifact) is None
+                or DIGEST.fullmatch(configuration_artifact) is None
                 or not isinstance(metric_artifact, str)
-                or _DIGEST.fullmatch(metric_artifact) is None
+                or DIGEST.fullmatch(metric_artifact) is None
             ):
                 failures.append(
                     ProjectVersionFailure(
@@ -275,7 +273,7 @@ class ProjectVersionManifest:
             "contractArtifacts": artifacts,
         }
         canonical = _canonical(document)
-        return cls(canonical, _sha256(canonical), label, pinned_images)
+        return cls(canonical, sha256_text(canonical), label, pinned_images)
 
     def image_for(self, capabilities: Mapping[str, object]) -> str:
         backend = capabilities.get("acceleratorBackend")
@@ -302,7 +300,7 @@ def _configuration_artifact(
         canonical = _canonical(document)
         return ContractArtifact(
             canonical,
-            _sha256(canonical),
+            sha256_text(canonical),
             ConfigurationContract.skywright_schema_identity(),
         )
     except (OSError, ValueError, ConfigurationContractError):
@@ -375,8 +373,17 @@ def _canonical(value: object) -> str:
     raise TypeError(f"unsupported JSON value {type(value).__name__}")
 
 
-def _sha256(source: str) -> str:
-    return "sha256:" + hashlib.sha256(source.encode()).hexdigest()
+def _provenance_failures(
+    source_revision: str, pipeline: str
+) -> list[ProjectVersionFailure]:
+    failures: list[ProjectVersionFailure] = []
+    if re.fullmatch(r"[0-9a-f]{40}", source_revision) is None:
+        failures.append(
+            ProjectVersionFailure("PROJECT_SOURCE_REVISION_INVALID", "/sourceRevision")
+        )
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,86}", pipeline) is None:
+        failures.append(ProjectVersionFailure("PROJECT_PIPELINE_INVALID", "/pipeline"))
+    return failures
 
 
 def _registry_repository(value: str) -> bool:

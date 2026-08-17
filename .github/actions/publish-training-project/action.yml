@@ -1,0 +1,53 @@
+name: Publish Skywright Training Project
+description: Build, smoke-test, and publish one complete immutable Training Project Version.
+inputs:
+  definition:
+    description: Path to the committed Training Project definition in the caller's checkout
+    required: false
+    default: skywright-project.json
+  registry-username:
+    description: Username used to push the configured OCI repository
+    required: true
+  registry-password:
+    description: Password or short-lived token used to push the configured OCI repository
+    required: true
+outputs:
+  version-label:
+    description: Commit-and-pipeline provenance label
+    value: ${{ steps.publish.outputs.version-label }}
+  manifest-digest:
+    description: Content digest of the canonical Training Project Version manifest
+    value: ${{ steps.publish.outputs.manifest-digest }}
+  artifact-digest:
+    description: OCI manifest digest of the published Training Project Version artifact
+    value: ${{ steps.publish.outputs.artifact-digest }}
+runs:
+  using: composite
+  steps:
+    - name: Prepare the action's isolated contract environment
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        action_environment="${RUNNER_TEMP}/skywright-project-action"
+        python3 -m venv --clear "$action_environment"
+        "$action_environment/bin/python" -m pip install \
+          --disable-pip-version-check \
+          "${ACTION_PATH}/../../../sdk"
+    - name: Publish the complete Training Project Version
+      id: publish
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        DEFINITION: ${{ inputs.definition }}
+        SKYWRIGHT_REGISTRY_USERNAME: ${{ inputs.registry-username }}
+        SKYWRIGHT_REGISTRY_PASSWORD: ${{ inputs.registry-password }}
+      run: |
+        action_environment="${RUNNER_TEMP}/skywright-project-action"
+        result="${RUNNER_TEMP}/skywright-project-publication.json"
+        PYTHONPATH="${ACTION_PATH}/src" \
+          "$action_environment/bin/python" -m skywright_project_action \
+          publish "$DEFINITION" > "$result"
+        jq --raw-output \
+          '"version-label=\(.versionLabel)\nmanifest-digest=\(.manifestDigest)\nartifact-digest=\(.artifactDigest)"' \
+          "$result" >> "$GITHUB_OUTPUT"

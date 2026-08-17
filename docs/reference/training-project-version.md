@@ -1,8 +1,8 @@
 # Training Project Version publication
 
-A Training Project commits one `skywright-project.json` definition. Validation may run anywhere;
-publication is accepted only from a clean CI checkout whose reported source revision equals
-`HEAD`.
+A Training Project commits one `skywright-project.json` definition. The repository's reusable
+GitHub Action accepts publication only from a clean CI checkout whose reported source revision
+equals `HEAD`.
 
 ```json
 {
@@ -29,17 +29,45 @@ project dependency and must not contain `skywright`; the selected Environment Pr
 supplier of that library. Every profile reference is digest-pinned. A project can declare either
 or both of the initial `cuda` and `rocm` backends, but CI never silently drops one.
 
-Run `skywright-project validate skywright-project.json` for the contract-only check. In CI, provide
-standard GitHub Actions provenance (`GITHUB_SHA`, `GITHUB_RUN_ID`, and `GITHUB_RUN_ATTEMPT`) or the
-generic `CI_COMMIT_SHA` and `CI_PIPELINE_ID`, authenticate the configured registry with
-`SKYWRIGHT_REGISTRY_USERNAME` and `SKYWRIGHT_REGISTRY_PASSWORD`, then run:
+Downstream Training Projects invoke the Action from a workflow with permission to push their
+configured registry repository. Pin the Action to an immutable Skywright commit (the placeholder
+below must be replaced with a full commit SHA):
 
-```bash
-skywright-project publish skywright-project.json
+```yaml
+name: Publish Training Project Version
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+      - id: project-version
+        uses: Zorro909/skywright/.github/actions/publish-training-project@<full-commit-sha>
+        with:
+          definition: skywright-project.json
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
 ```
 
+The Action is the complete publication interface. Docker builds, registry authentication, smoke
+checks, and OCI writes are implementation details inside the Action artifact; the installed
+`skywright` Python SDK exposes no project-image publishing command or transport code. The Action
+uses the exact SDK contract compilers shipped at its pinned revision in an isolated CI environment.
+
 The publisher builds each thin image from the selected profile, installs only the hashed project
-lock, runs the declared smoke command, pushes every image, and resolves each immutable digest. It
+lock, and verifies that the profile's installed Skywright library exposes the exact configuration
+and metric schema identities used by the Action's contract compilers. It then runs the declared
+smoke command, pushes every image, and resolves each immutable digest. It
 then publishes canonical configuration and metric artifacts at deterministic tags derived from
 each image digest. The version artifact is tagged from its own content digest and carries the
 `<commit>-<pipeline>` provenance label; it is the final write. Therefore an
@@ -55,9 +83,10 @@ artifact cannot authenticate its own project identity. It pulls every referenced
 registry, checks image availability, recomputes contract identities, and independently compiles
 both contracts. Missing/pruned artifacts,
 unsupported schemas, incomplete backend maps, incompatible requested backends, and registry
-unavailability remain distinct not-runnable reasons. Registry discovery enumerates the
-content-addressed version artifacts for display, but selection and verification always use the
-resolved OCI manifest digest rather than a mutable provenance tag.
+unavailability remain distinct not-runnable reasons. Registry discovery returns an age-bearing
+list pairing each provenance label with its content-addressed manifest digest for display without
+pulling its contracts or images. Selection returns a separately age-bearing verification of only
+the resolved OCI manifest digest rather than a mutable provenance tag.
 
 Registry retention must preserve every digest referenced by an undeleted Run Record. Skywright
 verifies availability but cannot enforce that external policy.
