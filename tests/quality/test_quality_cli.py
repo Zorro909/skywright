@@ -119,6 +119,17 @@ class PlanningTest(unittest.TestCase):
                     "security": True,
                 },
             ),
+            ".github/actions/publish-training-project/action.yml": (
+                ["project-action"],
+                {
+                    "application": False,
+                    "frontend": False,
+                    "image": False,
+                    "java": False,
+                    "sdk": True,
+                    "security": True,
+                },
+            ),
             "docs/operator-guide.md": (
                 ["documentation"],
                 {

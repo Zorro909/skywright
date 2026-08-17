@@ -1,0 +1,20 @@
+{
+  "profileDefinitionVersion": 1,
+  "architecture": "linux/amd64",
+  "pythonCompatibility": ">=3.10,<3.15",
+  "pytorch": "2.12.0",
+  "profiles": {
+    "cuda": {
+      "acceleratorBackend": "cuda",
+      "acceleratorRuntime": "13.0",
+      "baseImage": "pytorch/pytorch:2.12.0-cuda13.0-cudnn9-runtime@sha256:c263514402c85b4203311883fbef75cc48c4dcc01bbc65bcd2435348788a34e7",
+      "containerfile": "environment-profiles/cuda/Containerfile"
+    },
+    "rocm": {
+      "acceleratorBackend": "rocm",
+      "acceleratorRuntime": "7.14",
+      "baseImage": "rocm/pytorch:rocm7.14_ubuntu24.04_py3.12_pytorch_release_2.12.0@sha256:c38eeda81d85f00fbe35d3d50ce42ce59c524e87d810624f4eb5c52fddb3b9ad",
+      "containerfile": "environment-profiles/rocm/Containerfile"
+    }
+  }
+}

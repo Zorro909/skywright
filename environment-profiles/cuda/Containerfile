@@ -1,0 +1,20 @@
+FROM pytorch/pytorch:2.12.0-cuda13.0-cudnn9-runtime@sha256:c263514402c85b4203311883fbef75cc48c4dcc01bbc65bcd2435348788a34e7
+
+ARG SKYWRIGHT_SOURCE_REVISION
+LABEL org.opencontainers.image.source="https://github.com/Zorro909/skywright"
+LABEL org.opencontainers.image.revision="${SKYWRIGHT_SOURCE_REVISION}"
+LABEL org.skywright.accelerator-backend="cuda"
+LABEL org.skywright.accelerator-runtime="13.0"
+LABEL org.skywright.architecture="linux/amd64"
+
+COPY sdk /tmp/skywright-sdk
+RUN python -m pip install --no-cache-dir uv==0.8.8 \
+    && uv venv --system-site-packages /opt/skywright \
+    && UV_PROJECT_ENVIRONMENT=/opt/skywright uv sync \
+        --project /tmp/skywright-sdk --locked --no-dev --no-editable \
+    && rm -rf /tmp/skywright-sdk /root/.cache
+
+ENV VIRTUAL_ENV="/opt/skywright"
+ENV PATH="/opt/skywright/bin:${PATH}"
+
+RUN skywright-runtime --help
