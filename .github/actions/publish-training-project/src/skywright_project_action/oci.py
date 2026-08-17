@@ -113,7 +113,7 @@ class OciArtifactRegistry(ArtifactRegistry):
             raise RuntimeError(
                 f"registry manifest resolution failed with HTTP {status}"
             )
-        return headers.get("Docker-Content-Digest") or sha256_bytes(content)
+        return _verified_digest(headers, content)
 
     def authenticate_container_engine(self) -> None:
         """Project the configured registry credential into Docker without exposing it."""
@@ -180,9 +180,7 @@ class OciArtifactRegistry(ArtifactRegistry):
                 raise RuntimeError(
                     f"immutable OCI artifact tag {tag!r} already differs"
                 )
-            return existing_headers.get("Docker-Content-Digest") or sha256_bytes(
-                existing
-            )
+            return _verified_digest(existing_headers, existing)
         status, _, _ = self._request(
             "PUT",
             suffix,
@@ -199,7 +197,7 @@ class OciArtifactRegistry(ArtifactRegistry):
         )
         if verified_status != 200 or verified != manifest:
             raise RuntimeError(f"immutable OCI artifact tag {tag!r} was replaced")
-        return verified_headers.get("Docker-Content-Digest") or sha256_bytes(verified)
+        return _verified_digest(verified_headers, verified)
 
     def _push_blob(self, content: bytes) -> None:
         digest = sha256_bytes(content)
@@ -237,6 +235,7 @@ class OciArtifactRegistry(ArtifactRegistry):
         allow_not_found: bool = False,
         allow_precondition_failed: bool = False,
         _auth_retry: bool = True,
+        _redirects: int = 3,
     ) -> tuple[int, Message, bytes]:
         url = (
             target
@@ -263,6 +262,26 @@ class OciArtifactRegistry(ArtifactRegistry):
             with urllib.request.urlopen(request, timeout=60) as response:
                 return response.status, response.headers, response.read()
         except urllib.error.HTTPError as error:
+            if (
+                error.code in {301, 302, 303, 307, 308}
+                and method in {"POST", "PUT"}
+                and _redirects > 0
+                and error.headers.get("Location")
+            ):
+                redirected = urllib.parse.urljoin(url, error.headers["Location"])
+                if urllib.parse.urlsplit(redirected).scheme != "https":
+                    raise RuntimeError("registry redirect must use HTTPS") from error
+                return self._request(
+                    method,
+                    redirected,
+                    data=data,
+                    headers=headers,
+                    query="",
+                    allow_not_found=allow_not_found,
+                    allow_precondition_failed=allow_precondition_failed,
+                    _auth_retry=_auth_retry,
+                    _redirects=_redirects - 1,
+                )
             challenge = error.headers.get("WWW-Authenticate", "")
             if (
                 error.code == 401
@@ -280,6 +299,7 @@ class OciArtifactRegistry(ArtifactRegistry):
                     allow_not_found=allow_not_found,
                     allow_precondition_failed=allow_precondition_failed,
                     _auth_retry=False,
+                    _redirects=_redirects,
                 )
             if allow_not_found and error.code == 404:
                 return error.code, error.headers, error.read()
@@ -420,6 +440,14 @@ def _split_repository(repository: str) -> tuple[str, str]:
     if not separator or not host or not path:
         raise RuntimeError("registry repository must contain a host and path")
     return host, path
+
+
+def _verified_digest(headers: Message, content: bytes) -> str:
+    computed = sha256_bytes(content)
+    declared = headers.get("Docker-Content-Digest")
+    if declared is not None and declared != computed:
+        raise RuntimeError("registry content digest does not match response bytes")
+    return computed
 
 
 __all__ = ["DockerProjectImageBuilder", "OciArtifactRegistry"]

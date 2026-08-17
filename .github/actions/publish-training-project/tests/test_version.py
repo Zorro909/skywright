@@ -99,12 +99,15 @@ def test_definition_validates_both_exact_contracts_and_locked_profiles(
         cast(dict[str, str], compiled.environment_profiles)["cuda"] = "latest"
 
 
+@pytest.mark.parametrize(
+    "requirement", ["skywright==99.0", "skywright>=99.0", "skywright~=2.0"]
+)
 def test_definition_rejects_sdk_replacement_and_unpinned_profiles(
-    tmp_path: Path,
+    tmp_path: Path, requirement: str
 ) -> None:
     source = definition(tmp_path)
     (tmp_path / "requirements.lock").write_text(
-        "skywright==99.0 --hash=sha256:" + "1" * 64 + "\n", encoding="utf-8"
+        requirement + " --hash=sha256:" + "1" * 64 + "\n", encoding="utf-8"
     )
     source["backends"] = {
         "cuda": {"environmentProfile": "ghcr.io/example/environment:latest"}
@@ -199,9 +202,10 @@ class RecordingImages(ProjectImageBuilder):
 
 
 class RecordingRegistry(ArtifactRegistry):
-    def __init__(self) -> None:
+    def __init__(self, *, version_digest: str = "sha256:" + "9" * 64) -> None:
         self.contracts: list[tuple[str, str]] = []
         self.versions: list[str] = []
+        self.version_digest = version_digest
 
     def publish_contract(
         self,
@@ -218,7 +222,7 @@ class RecordingRegistry(ArtifactRegistry):
         self, repository: str, version_label: str, content: bytes, content_digest: str
     ) -> str:
         self.versions.append(version_label)
-        return "sha256:" + "9" * 64
+        return self.version_digest
 
 
 def test_publisher_exposes_the_version_only_after_every_piece_succeeds(
@@ -247,6 +251,14 @@ def test_publisher_exposes_the_version_only_after_every_piece_succeeds(
             RecordingImages(fail_backend="rocm"), failed_registry
         ).publish(compiled, source_revision="1" * 40, pipeline="github-123-1")
     assert failed_registry.versions == []
+
+    with pytest.raises(ProjectVersionError) as invalid_digest:
+        ProjectVersionPublisher(
+            images, RecordingRegistry(version_digest="invalid")
+        ).publish(compiled, source_revision="1" * 40, pipeline="github-123-1")
+    assert invalid_digest.value.errors[0].code == (
+        "PROJECT_VERSION_ARTIFACT_DIGEST_INVALID"
+    )
 
 
 def test_publisher_rejects_provenance_before_any_external_write(

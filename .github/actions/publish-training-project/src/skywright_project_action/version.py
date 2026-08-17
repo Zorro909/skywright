@@ -23,7 +23,7 @@ _IMAGE_COMPONENT = re.compile(r"[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*\Z")
 _IMAGE_TAG = re.compile(r"[\w][\w.-]{0,127}\Z")
 _PROJECT_IDENTITY = re.compile(r"[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?\Z")
 _LOCKED_SKYWRIGHT = re.compile(
-    r"(?im)^\s*(?:skywright|skywright\[[^]]+\])\s*(?:==|@|$)"
+    r"(?im)^\s*(?:skywright|skywright\[[^]]+\])\s*(?:[<>=!~]+|@|$)"
 )
 
 

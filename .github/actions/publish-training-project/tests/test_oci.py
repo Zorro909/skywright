@@ -215,7 +215,11 @@ def test_oci_adapter_accepts_access_token_and_preserves_realm_query(
         if typed.full_url.startswith("https://auth.test/token?existing=1&"):
             return Response(200, b'{"access_token":"accepted"}')
         if authorization == "Bearer accepted":
-            return Response(200, b"{}", Docker_Content_Digest="sha256:" + "a" * 64)
+            return Response(
+                200,
+                b"{}",
+                Docker_Content_Digest="sha256:" + hashlib.sha256(b"{}").hexdigest(),
+            )
         headers = Message()
         headers["WWW-Authenticate"] = (
             'Bearer realm="https://auth.test/token?existing=1",service="registry.test"'
@@ -230,10 +234,68 @@ def test_oci_adapter_accepts_access_token_and_preserves_realm_query(
         OciArtifactRegistry("registry.test", "owner/project").manifest_digest(
             "registry.test/owner/project", "tag"
         )
-        == "sha256:" + "a" * 64
+        == "sha256:" + hashlib.sha256(b"{}").hexdigest()
     )
     assert requests[1][0].startswith("https://auth.test/token?existing=1&service=")
     assert requests[-1][1] == "Bearer accepted"
+
+
+def test_oci_adapter_preserves_put_across_secure_redirects_without_leaking_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, bytes | None, str | None]] = []
+
+    def urlopen(request: object, timeout: int) -> Response:
+        typed = cast(urllib.request.Request, request)
+        requests.append(
+            (
+                typed.get_method(),
+                typed.full_url,
+                cast(bytes | None, typed.data),
+                typed.get_header("Authorization"),
+            )
+        )
+        if typed.get_method() == "HEAD":
+            raise urllib.error.HTTPError(
+                typed.full_url, 404, "missing", Message(), io.BytesIO()
+            )
+        if typed.get_method() == "POST":
+            return Response(202, Location="/upload/1")
+        if typed.full_url.startswith("https://registry.test/upload/1"):
+            headers = Message()
+            headers["Location"] = "https://uploads.test/final"
+            raise urllib.error.HTTPError(
+                typed.full_url, 307, "redirect", headers, io.BytesIO()
+            )
+        if typed.full_url == "https://uploads.test/final":
+            return Response(201)
+        raise AssertionError(
+            f"unexpected request {typed.get_method()} {typed.full_url}"
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    ExercisableRegistry(
+        "registry.test", "owner/project", username="ci", password="secret"
+    ).push_blob(b"content")
+
+    assert requests[-2][0] == requests[-1][0] == "PUT"
+    assert requests[-2][2] == requests[-1][2] == b"content"
+    assert requests[-2][3] is not None
+    assert requests[-1][3] is None
+
+
+def test_oci_adapter_rejects_a_mismatched_manifest_digest_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def urlopen(request: object, timeout: int) -> Response:
+        return Response(200, b"{}", Docker_Content_Digest="sha256:" + "a" * 64)
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(RuntimeError, match="does not match response bytes"):
+        OciArtifactRegistry("registry.test", "owner/project").manifest_digest(
+            "registry.test/owner/project", "tag"
+        )
 
 
 def test_oci_adapter_detects_a_manifest_replaced_during_publication(

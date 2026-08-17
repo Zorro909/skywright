@@ -122,6 +122,14 @@ class ProjectVersionPublisher:
             manifest.canonical_json.encode(),
             manifest.digest,
         )
+        if DIGEST.fullmatch(digest) is None:
+            raise ProjectVersionError(
+                (
+                    ProjectVersionFailure(
+                        "PROJECT_VERSION_ARTIFACT_DIGEST_INVALID", "/artifactDigest"
+                    ),
+                )
+            )
         return PublishedProjectVersion(manifest, digest)
 
 
