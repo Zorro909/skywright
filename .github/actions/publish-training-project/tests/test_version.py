@@ -101,6 +101,21 @@ def test_definition_validates_both_exact_contracts_and_locked_profiles(
         cast(dict[str, str], compiled.environment_profiles)["cuda"] = "latest"
 
 
+def test_definition_rejects_duplicate_json_properties(tmp_path: Path) -> None:
+    source = json.dumps(definition(tmp_path)).replace(
+        '"registryRepository": "ghcr.io/example/stable-project"',
+        '"registryRepository": "ghcr.io/example/attacker", '
+        '"registryRepository": "ghcr.io/example/stable-project"',
+    )
+
+    with pytest.raises(ProjectVersionError) as raised:
+        ProjectVersionDefinition.compile(source, tmp_path)
+
+    assert [(item.code, item.pointer) for item in raised.value.errors] == [
+        ("PROJECT_DEFINITION_INVALID", "")
+    ]
+
+
 @pytest.mark.parametrize(
     "requirement", ["skywright==99.0", "skywright>=99.0", "skywright~=2.0"]
 )

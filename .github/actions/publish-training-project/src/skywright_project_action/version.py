@@ -347,10 +347,21 @@ def _metric_artifact(
 def _object(source: str | bytes | Mapping[str, object]) -> dict[str, object]:
     if isinstance(source, Mapping):
         return dict(source)
-    value = json.loads(source, parse_float=Decimal)
+    value = json.loads(
+        source, parse_float=Decimal, object_pairs_hook=_unique_object_pairs
+    )
     if not isinstance(value, dict):
         raise ValueError("document must be an object")
     return cast(dict[str, object], value)
+
+
+def _unique_object_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for name, item in pairs:
+        if name in value:
+            raise ValueError(f"duplicate property: {name}")
+        value[name] = item
+    return value
 
 
 def _canonical(value: object) -> str:
