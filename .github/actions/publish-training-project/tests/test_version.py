@@ -119,6 +119,22 @@ def test_definition_rejects_sdk_replacement_and_unpinned_profiles(
     }
 
 
+def test_definition_rejects_malformed_profile_and_tagged_repository(
+    tmp_path: Path,
+) -> None:
+    source = definition(tmp_path)
+    source["registryRepository"] = "ghcr.io/example/project:latest"
+    source["backends"] = {"cuda": {"environmentProfile": "bad@@sha256:" + "a" * 64}}
+
+    with pytest.raises(ProjectVersionError) as raised:
+        ProjectVersionDefinition.compile(source, tmp_path)
+
+    assert {item.code for item in raised.value.errors} == {
+        "PROJECT_PROFILE_NOT_DIGEST_PINNED",
+        "PROJECT_REGISTRY_INVALID",
+    }
+
+
 def test_complete_manifest_is_canonical_and_fails_closed_for_capabilities(
     tmp_path: Path,
 ) -> None:

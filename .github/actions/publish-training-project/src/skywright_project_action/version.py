@@ -19,7 +19,8 @@ from skywright.metrics import MetricContract, MetricContractError
 
 from skywright_project_action.identity import DIGEST, sha256_text
 
-_PROFILE = re.compile(r"[^@\s]+@sha256:[0-9a-f]{64}\Z")
+_IMAGE_COMPONENT = re.compile(r"[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*\Z")
+_IMAGE_TAG = re.compile(r"[\w][\w.-]{0,127}\Z")
 _PROJECT_IDENTITY = re.compile(r"[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?\Z")
 _LOCKED_SKYWRIGHT = re.compile(
     r"(?im)^\s*(?:skywright|skywright\[[^]]+\])\s*(?:==|@|$)"
@@ -128,7 +129,7 @@ class ProjectVersionDefinition:
                     continue
                 typed_backend = cast(Mapping[object, object], raw)
                 profile = typed_backend.get("environmentProfile")
-                if not isinstance(profile, str) or _PROFILE.fullmatch(profile) is None:
+                if not isinstance(profile, str) or not _profile_reference(profile):
                     failures.append(
                         ProjectVersionFailure(
                             "PROJECT_PROFILE_NOT_DIGEST_PINNED", pointer
@@ -387,12 +388,37 @@ def _provenance_failures(
 
 
 def _registry_repository(value: str) -> bool:
-    return (
-        "://" not in value
-        and "/" in value
-        and not value.endswith("/")
-        and "@" not in value
-    )
+    return "/" in value and _image_name(value, allow_tag=False)
+
+
+def _profile_reference(value: str) -> bool:
+    name, separator, digest = value.partition("@")
+    if not separator or "@" in digest or DIGEST.fullmatch(digest) is None:
+        return False
+    return _image_name(name, allow_tag=True)
+
+
+def _image_name(value: str, *, allow_tag: bool) -> bool:
+    if "://" in value or "@" in value or value.endswith("/"):
+        return False
+    parts = value.split("/")
+    if not parts or any(not part for part in parts):
+        return False
+    host = parts[0]
+    if len(parts) > 1 and ":" in host:
+        hostname, port_separator, port = host.rpartition(":")
+        if not port_separator or not port.isdigit() or not hostname:
+            return False
+        parts[0] = hostname
+    final = parts[-1]
+    if ":" in final:
+        if not allow_tag:
+            return False
+        component, tag_separator, tag = final.rpartition(":")
+        if not tag_separator or _IMAGE_TAG.fullmatch(tag) is None:
+            return False
+        parts[-1] = component
+    return all(_IMAGE_COMPONENT.fullmatch(part) is not None for part in parts)
 
 
 __all__ = [

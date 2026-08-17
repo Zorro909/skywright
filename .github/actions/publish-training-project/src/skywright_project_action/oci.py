@@ -213,7 +213,8 @@ class OciArtifactRegistry(ArtifactRegistry):
         )
         if status != 202 or "Location" not in headers:
             raise RuntimeError(f"registry blob upload could not start (HTTP {status})")
-        location = headers["Location"]
+        upload_base = f"https://{self._host}/v2/{self._path}/blobs/uploads/"
+        location = urllib.parse.urljoin(upload_base, headers["Location"])
         separator = "&" if "?" in location else "?"
         status, _, _ = self._request(
             "PUT",
@@ -289,10 +290,12 @@ class OciArtifactRegistry(ArtifactRegistry):
             ) from error
 
     def _bearer_token(self, challenge: str) -> str:
-        values = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+        values: dict[str, str] = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
         realm = values.get("realm")
         if realm is None:
             raise RuntimeError("registry bearer challenge has no realm")
+        if urllib.parse.urlsplit(realm).scheme != "https":
+            raise RuntimeError("registry bearer realm must use HTTPS")
         query = urllib.parse.urlencode(
             {
                 "service": values.get("service", ""),

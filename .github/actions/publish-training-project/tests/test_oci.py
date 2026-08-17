@@ -35,6 +35,14 @@ class Response:
         return None
 
 
+class ExercisableRegistry(OciArtifactRegistry):
+    def push_blob(self, content: bytes) -> None:
+        self._push_blob(content)
+
+    def bearer_token(self, challenge: str) -> str:
+        return self._bearer_token(challenge)
+
+
 def test_oci_adapter_publishes_content_before_an_immutable_manifest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -153,6 +161,46 @@ def test_oci_adapter_bounds_bearer_retries(
         "https://auth.test/token?service=registry.test&scope=repository%3Aowner%2Fproject%3Apull%2Cpush",
         "https://registry.test/v2/owner/project/manifests/tag",
     ]
+
+
+def test_oci_adapter_resolves_relative_upload_locations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[str] = []
+
+    def urlopen(request: object, timeout: int) -> Response:
+        typed = cast(urllib.request.Request, request)
+        requests.append(typed.full_url)
+        if typed.get_method() == "HEAD":
+            raise urllib.error.HTTPError(
+                typed.full_url, 404, "missing", Message(), io.BytesIO()
+            )
+        if typed.get_method() == "POST":
+            return Response(202, Location="upload/1")
+        if typed.get_method() == "PUT":
+            return Response(201)
+        raise AssertionError(f"unexpected request {typed.get_method()}")
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    ExercisableRegistry("registry.test", "owner/project").push_blob(b"content")
+
+    assert requests[-1].startswith(
+        "https://registry.test/v2/owner/project/blobs/uploads/upload/1?digest=sha256:"
+    )
+
+
+def test_oci_adapter_rejects_insecure_bearer_realms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def urlopen(request: object, timeout: int) -> Response:
+        raise AssertionError("an insecure token request must not be sent")
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(RuntimeError, match="must use HTTPS"):
+        ExercisableRegistry(
+            "registry.test", "owner/project", username="ci", password="secret"
+        ).bearer_token('Bearer realm="http://attacker.test/token"')
 
 
 def test_oci_adapter_accepts_access_token_and_preserves_realm_query(
