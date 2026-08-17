@@ -27,8 +27,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 64
-    definition_path = Path(args[1]).resolve()
     try:
+        definition_path = Path(args[1]).resolve()
         definition = ProjectVersionDefinition.compile(
             definition_path.read_bytes(), definition_path.parent
         )

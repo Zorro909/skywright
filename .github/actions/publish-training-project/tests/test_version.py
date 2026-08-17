@@ -456,6 +456,21 @@ def test_project_ci_command_validates_and_rejects_publication_outside_ci(
     }
 
 
+def test_project_ci_command_structures_definition_path_failures(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unavailable(self: Path, *, strict: bool = False) -> Path:
+        raise OSError("path unavailable")
+
+    monkeypatch.setattr(Path, "resolve", unavailable)
+
+    assert main(["validate", "unavailable.json"]) == 2
+    assert json.loads(capsys.readouterr().err) == {
+        "status": "not-runnable",
+        "errors": [{"code": "PROJECT_PUBLICATION_FAILED", "pointer": ""}],
+    }
+
+
 def test_maintained_environment_profiles_pin_distinct_backend_bases() -> None:
     manifest = json.loads(
         (REPOSITORY / "environment-profiles/manifest.json").read_text(encoding="utf-8")
