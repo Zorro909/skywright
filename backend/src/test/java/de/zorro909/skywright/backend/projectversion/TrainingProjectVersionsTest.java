@@ -31,27 +31,132 @@ class TrainingProjectVersionsTest {
 		String metricOciDigest = "sha256:" + "f".repeat(64);
 		String cudaImage = "sha256:" + "a".repeat(64);
 		String rocmImage = "sha256:" + "b".repeat(64);
+		String versionOciDigest = "sha256:" + "9".repeat(64);
 		String label = "1".repeat(40) + "-github-123-1";
 		String manifest = manifest(label, configurationDigest, metricDigest, configurationOciDigest, metricOciDigest,
 				cudaImage, rocmImage);
-		FakeRegistry registry = new FakeRegistry().artifact(label, manifest)
+		FakeRegistry registry = new FakeRegistry().versionArtifact(versionOciDigest, manifest)
 			.artifact(configurationOciDigest, configurationArtifact)
 			.artifact(metricOciDigest, metricArtifact)
 			.image(cudaImage)
 			.image(rocmImage);
 
 		ProjectVersionAssessment assessment = new TrainingProjectVersions(registry, this.configuration, this.metrics)
-			.discover("ghcr.io/example/project", label);
+			.discover(new TrainingProjectBinding("stable-project", "ghcr.io/example/project"), versionOciDigest);
 
 		assertThat(assessment.runnable()).as(assessment.errors().toString()).isTrue();
 		assertThat(assessment.errors()).isEmpty();
 		assertThat(assessment.version().projectIdentity()).isEqualTo("stable-project");
+		assertThat(assessment.version().manifestArtifactDigest()).isEqualTo(versionOciDigest);
 		assertThat(assessment.version().images()).containsEntry("cuda", cudaImage).containsEntry("rocm", rocmImage);
 		assertThat(assessment.version().imageFor("cuda")).isEqualTo(cudaImage);
 		assertThatExceptionOfType(ProjectVersionException.class).isThrownBy(() -> assessment.version().imageFor("tpu"))
 			.satisfies(error -> assertThat(error.failure().code()).isEqualTo("PROJECT_CAPABILITIES_INCOMPATIBLE"));
 		assertThat(assessment.version().configurationContract()).isNotNull();
 		assertThat(assessment.version().metricCatalog().projectContractDigest()).isEqualTo(metricDigest);
+		assertThat(new TrainingProjectVersions(registry, this.configuration, this.metrics)
+			.discoverAvailable(new TrainingProjectBinding("stable-project", "ghcr.io/example/project"))).singleElement()
+			.extracting(ProjectVersionAssessment::runnable)
+			.isEqualTo(true);
+		assertThat(new TrainingProjectVersions(registry, this.configuration, this.metrics)
+			.discover(new TrainingProjectBinding("another-project", "ghcr.io/example/project"), versionOciDigest)
+			.errors()).extracting(ProjectVersionFailure::code).containsExactly("PROJECT_IDENTITY_INVALID");
+	}
+
+	@Test
+	void rejectsACombinedLabelThatHidesAMalformedSourceRevision() {
+		String configurationArtifact = configurationContract();
+		String metricArtifact = metricContract();
+		String configurationOciDigest = "sha256:" + "e".repeat(64);
+		String metricOciDigest = "sha256:" + "f".repeat(64);
+		String versionOciDigest = "sha256:" + "9".repeat(64);
+		String label = "1".repeat(40) + "-extra-github-123-1";
+		String manifest = manifest(label, digest(configurationArtifact), digest(metricArtifact), configurationOciDigest,
+				metricOciDigest, "sha256:" + "a".repeat(64), "sha256:" + "b".repeat(64))
+			.replace("\"sourceRevision\":\"" + "1".repeat(40) + "\"",
+					"\"sourceRevision\":\"" + "1".repeat(40) + "-extra\"");
+		FakeRegistry registry = new FakeRegistry().versionArtifact(versionOciDigest, manifest)
+			.artifact(configurationOciDigest, configurationArtifact)
+			.artifact(metricOciDigest, metricArtifact)
+			.image("sha256:" + "a".repeat(64))
+			.image("sha256:" + "b".repeat(64));
+
+		ProjectVersionAssessment assessment = new TrainingProjectVersions(registry, this.configuration, this.metrics)
+			.discover(new TrainingProjectBinding("stable-project", "ghcr.io/example/project"), versionOciDigest);
+
+		assertThat(assessment.errors()).extracting(ProjectVersionFailure::code)
+			.contains("PROJECT_VERSION_LABEL_INVALID");
+	}
+
+	@Test
+	void rejectsRegistryDigestSubstitution() {
+		String requestedDigest = "sha256:" + "9".repeat(64);
+		FakeRegistry registry = new FakeRegistry().substitutedArtifact(requestedDigest, "sha256:" + "8".repeat(64),
+				"{}");
+
+		ProjectVersionAssessment assessment = new TrainingProjectVersions(registry, this.configuration, this.metrics)
+			.discover(new TrainingProjectBinding("stable-project", "ghcr.io/example/project"), requestedDigest);
+
+		assertThat(assessment.errors()).extracting(ProjectVersionFailure::code)
+			.containsExactly("PROJECT_VERSION_DIGEST_MISMATCH");
+	}
+
+	@Test
+	void reportsAnEmptyArtifactWithoutHidingOtherDiscoveredVersions() {
+		String configurationArtifact = configurationContract();
+		String metricArtifact = metricContract();
+		String configurationOciDigest = "sha256:" + "e".repeat(64);
+		String metricOciDigest = "sha256:" + "f".repeat(64);
+		String cudaImage = "sha256:" + "a".repeat(64);
+		String rocmImage = "sha256:" + "b".repeat(64);
+		String validDigest = "sha256:" + "9".repeat(64);
+		String emptyDigest = "sha256:" + "8".repeat(64);
+		String manifest = manifest("1".repeat(40) + "-github-123-1", digest(configurationArtifact),
+				digest(metricArtifact), configurationOciDigest, metricOciDigest, cudaImage, rocmImage);
+		FakeRegistry registry = new FakeRegistry().versionArtifact(emptyDigest, "")
+			.versionArtifact(validDigest, manifest)
+			.artifact(configurationOciDigest, configurationArtifact)
+			.artifact(metricOciDigest, metricArtifact)
+			.image(cudaImage)
+			.image(rocmImage);
+
+		java.util.List<ProjectVersionAssessment> assessments = new TrainingProjectVersions(registry, this.configuration,
+				this.metrics)
+			.discoverAvailable(new TrainingProjectBinding("stable-project", "ghcr.io/example/project"));
+
+		assertThat(assessments).hasSize(2);
+		assertThat(assessments.getFirst().errors()).extracting(ProjectVersionFailure::code)
+			.containsExactly("PROJECT_MANIFEST_INVALID");
+		assertThat(assessments.getLast().runnable()).isTrue();
+	}
+
+	@Test
+	void rejectsDuplicateProvenanceLabelsDiscoveredAtDifferentDigests() {
+		String configurationArtifact = configurationContract();
+		String metricArtifact = metricContract();
+		String configurationOciDigest = "sha256:" + "e".repeat(64);
+		String metricOciDigest = "sha256:" + "f".repeat(64);
+		String cudaImage = "sha256:" + "a".repeat(64);
+		String rocmImage = "sha256:" + "b".repeat(64);
+		String label = "1".repeat(40) + "-github-123-1";
+		String manifest = manifest(label, digest(configurationArtifact), digest(metricArtifact), configurationOciDigest,
+				metricOciDigest, cudaImage, rocmImage);
+		FakeRegistry registry = new FakeRegistry().versionArtifact("sha256:" + "8".repeat(64), manifest)
+			.versionArtifact("sha256:" + "9".repeat(64), manifest)
+			.artifact(configurationOciDigest, configurationArtifact)
+			.artifact(metricOciDigest, metricArtifact)
+			.image(cudaImage)
+			.image(rocmImage);
+
+		java.util.List<ProjectVersionAssessment> assessments = new TrainingProjectVersions(registry, this.configuration,
+				this.metrics)
+			.discoverAvailable(new TrainingProjectBinding("stable-project", "ghcr.io/example/project"));
+
+		assertThat(assessments).hasSize(2).allSatisfy(assessment -> {
+			assertThat(assessment.runnable()).isFalse();
+			assertThat(assessment.errors()).extracting(ProjectVersionFailure::code)
+				.containsExactly("PROJECT_VERSION_LABEL_COLLISION");
+		});
 	}
 
 	@Test
@@ -63,13 +168,14 @@ class TrainingProjectVersionsTest {
 		String metricOciDigest = "sha256:" + "f".repeat(64);
 		String cudaImage = "sha256:" + "a".repeat(64);
 		String rocmImage = "sha256:" + "b".repeat(64);
+		String versionOciDigest = "sha256:" + "9".repeat(64);
 		String manifest = manifest(label, digest(configurationArtifact), digest(metricArtifact), configurationOciDigest,
 				metricOciDigest, cudaImage, rocmImage);
-		FakeRegistry registry = new FakeRegistry().artifact(label, manifest)
+		FakeRegistry registry = new FakeRegistry().versionArtifact(versionOciDigest, manifest)
 			.artifact(configurationOciDigest, configurationArtifact);
 
 		ProjectVersionAssessment assessment = new TrainingProjectVersions(registry, this.configuration, this.metrics)
-			.discover("ghcr.io/example/project", label);
+			.discover(new TrainingProjectBinding("stable-project", "ghcr.io/example/project"), versionOciDigest);
 
 		assertThat(assessment.runnable()).isFalse();
 		assertThat(assessment.version()).isNull();
@@ -116,13 +222,25 @@ class TrainingProjectVersionsTest {
 
 	private static final class FakeRegistry implements ProjectVersionRegistry {
 
-		private final Map<String, String> artifacts = new HashMap<>();
+		private final Map<String, RegistryArtifact> artifacts = new HashMap<>();
+
+		private final java.util.List<String> versions = new java.util.ArrayList<>();
 
 		private final java.util.Set<String> images = new java.util.HashSet<>();
 
 		FakeRegistry artifact(String reference, String content) {
-			this.artifacts.put(reference, content);
+			this.artifacts.put(reference, new RegistryArtifact(reference, content));
 			return this;
+		}
+
+		FakeRegistry substitutedArtifact(String reference, String resolvedDigest, String content) {
+			this.artifacts.put(reference, new RegistryArtifact(resolvedDigest, content));
+			return this;
+		}
+
+		FakeRegistry versionArtifact(String reference, String content) {
+			this.versions.add(reference);
+			return artifact(reference, content);
 		}
 
 		FakeRegistry image(String digest) {
@@ -131,7 +249,12 @@ class TrainingProjectVersionsTest {
 		}
 
 		@Override
-		public Optional<String> pullArtifact(String repository, String reference) {
+		public java.util.List<String> listVersionArtifactDigests(String repository) {
+			return java.util.List.copyOf(this.versions);
+		}
+
+		@Override
+		public Optional<RegistryArtifact> pullArtifact(String repository, String reference) {
 			return Optional.ofNullable(this.artifacts.get(reference));
 		}
 

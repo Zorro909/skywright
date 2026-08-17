@@ -113,6 +113,105 @@ def test_runtime_command_help_is_available_without_runtime_services(
     assert "Execute a Skywright Training Project" in completed.stdout
 
 
+def test_installed_project_command_rejects_publication_outside_ci(
+    installed_sdk: Path,
+    tmp_path: Path,
+    isolated_process_environment: dict[str, str],
+) -> None:
+    subprocess.run(
+        [
+            installed_sdk / "bin" / "python",
+            "-m",
+            "pip",
+            "--disable-pip-version-check",
+            "install",
+            "jsonschema[format]>=4.25,<5",
+        ],
+        check=True,
+        env=isolated_process_environment,
+        capture_output=True,
+    )
+    configuration_manifest = json.loads(
+        (SDK_ROOT / "src/skywright/_configuration_resources/manifest.json").read_text()
+    )
+    metric_manifest = json.loads(
+        (SDK_ROOT / "src/skywright/_metric_resources/manifest.json").read_text()
+    )
+    (tmp_path / "configuration.json").write_text(
+        json.dumps(
+            {
+                "contractVersion": 1,
+                "skywrightSchema": {
+                    "version": configuration_manifest["schemaVersion"],
+                    "digest": configuration_manifest["schemaDigest"],
+                },
+                "projectSchema": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {},
+                },
+                "defaults": {},
+                "defaultsCompletionWitness": {},
+                "references": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "metrics.json").write_text(
+        json.dumps(
+            {
+                "contractVersion": 1,
+                "skywrightSchema": {
+                    "version": metric_manifest["schemaVersion"],
+                    "digest": metric_manifest["schemaDigest"],
+                },
+                "definitions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "requirements.lock").write_text(
+        "example==1 --hash=sha256:" + "1" * 64 + "\n", encoding="utf-8"
+    )
+    definition = tmp_path / "skywright-project.json"
+    definition.write_text(
+        json.dumps(
+            {
+                "definitionVersion": 1,
+                "projectIdentity": "installed-project",
+                "registryRepository": "registry.test/owner/project",
+                "configurationContract": "configuration.json",
+                "metricContract": "metrics.json",
+                "dependencyLock": "requirements.lock",
+                "smokeCommand": ["python", "-m", "project", "--smoke"],
+                "backends": {
+                    "cuda": {
+                        "environmentProfile": "registry.test/profile@sha256:" + "a" * 64
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    environment = isolated_process_environment.copy()
+    environment.pop("CI", None)
+    environment.pop("GITHUB_ACTIONS", None)
+
+    completed = subprocess.run(
+        [installed_sdk / "bin" / "skywright-project", "publish", definition],
+        check=False,
+        cwd=tmp_path,
+        env=environment,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 2
+    assert json.loads(completed.stderr)["errors"] == [
+        {"code": "PROJECT_PUBLICATION_REQUIRES_CI", "pointer": "/ci"}
+    ]
+
+
 def test_runtime_command_reports_version_and_source_revision(
     installed_sdk: Path,
     tmp_path: Path,

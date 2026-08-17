@@ -25,8 +25,9 @@ HTTP failures use `application/problem+json` with the RFC 9457 fields plus `erro
 
 ## Training Project Version discovery
 
-`ProjectVersionRegistry` is the pull-side OCI boundary. `TrainingProjectVersions` resolves an exact
-version label, verifies every declared image and contract directly against registry authority, and
+`ProjectVersionRegistry` is the pull-side OCI boundary. `TrainingProjectVersions` enumerates and
+resolves immutable version-artifact digests for a trusted project binding, verifies every declared
+image and contract directly against registry authority, and
 recompiles the configuration and metric contracts with the backend's trusted schemas. It returns a
 `ProjectVersionAssessment` with stable reasons instead of narrowing an incomplete backend map or
 using stale artifacts. Registry transport and credentials remain adapters so target/registry

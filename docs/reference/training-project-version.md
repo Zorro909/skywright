@@ -41,7 +41,8 @@ skywright-project publish skywright-project.json
 The publisher builds each thin image from the selected profile, installs only the hashed project
 lock, runs the declared smoke command, pushes every image, and resolves each immutable digest. It
 then publishes canonical configuration and metric artifacts at deterministic tags derived from
-each image digest. The `<commit>-<pipeline>` version artifact is the final write. Therefore an
+each image digest. The version artifact is tagged from its own content digest and carries the
+`<commit>-<pipeline>` provenance label; it is the final write. Therefore an
 interrupted build may leave unreachable intermediates but never exposes a partial version as
 runnable. An existing deterministic tag with different content is an immutable-publication
 collision and fails.
@@ -49,10 +50,14 @@ collision and fails.
 The version artifact records stable project identity, commit and pipeline provenance, the complete
 declared backend set, all image and Environment Profile digests, both contract content identities,
 their exact Skywright schema identities, and each OCI contract artifact digest. The backend pulls
-that artifact and every referenced piece from the registry, checks image availability, recomputes
-contract identities, and independently compiles both contracts. Missing/pruned artifacts,
+that artifact using a Skywright-owned binding of project identity to registry repository; the
+artifact cannot authenticate its own project identity. It pulls every referenced piece from the
+registry, checks image availability, recomputes contract identities, and independently compiles
+both contracts. Missing/pruned artifacts,
 unsupported schemas, incomplete backend maps, incompatible requested backends, and registry
-unavailability remain distinct not-runnable reasons.
+unavailability remain distinct not-runnable reasons. Registry discovery enumerates the
+content-addressed version artifacts for display, but selection and verification always use the
+resolved OCI manifest digest rather than a mutable provenance tag.
 
 Registry retention must preserve every digest referenced by an undeleted Run Record. Skywright
 verifies availability but cannot enforce that external policy.

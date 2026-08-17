@@ -89,8 +89,9 @@ class OciArtifactRegistry(ArtifactRegistry):
         content_digest: str,
     ) -> str:
         self._assert_repository(repository)
+        tag = f"{content_digest.replace(':', '-')}.skywright-version.v1"
         return self._publish_artifact(
-            version_label,
+            tag,
             "application/vnd.skywright.project.version.v1+json",
             content,
             content_digest,

@@ -6,8 +6,8 @@ import de.zorro909.skywright.backend.configurationcontract.ConfigurationContract
 import de.zorro909.skywright.backend.metriccontract.MetricCatalog;
 
 /** Independently verified immutable Training Project Version. */
-public record TrainingProjectVersion(String projectIdentity, String versionLabel, String sourceRevision,
-		String pipeline, Map<String, String> images, Map<String, String> environmentProfiles,
+public record TrainingProjectVersion(String projectIdentity, String versionLabel, String manifestArtifactDigest,
+		String sourceRevision, String pipeline, Map<String, String> images, Map<String, String> environmentProfiles,
 		String configurationContractDigest, String metricContractDigest, ConfigurationContract configurationContract,
 		MetricCatalog metricCatalog) {
 

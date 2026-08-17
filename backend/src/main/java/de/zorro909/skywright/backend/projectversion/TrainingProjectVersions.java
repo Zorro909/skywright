@@ -34,6 +34,10 @@ public final class TrainingProjectVersions {
 
 	private static final Pattern LABEL = Pattern.compile("[0-9a-f]{40}-[A-Za-z0-9][A-Za-z0-9._-]{0,86}");
 
+	private static final Pattern REVISION = Pattern.compile("[0-9a-f]{40}");
+
+	private static final Pattern PIPELINE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,86}");
+
 	private static final JsonMapper JSON = JsonMapper.builder()
 		.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
 		.build();
@@ -51,10 +55,31 @@ public final class TrainingProjectVersions {
 		this.metricContracts = metricContracts;
 	}
 
-	public ProjectVersionAssessment discover(String repository, String versionLabel) {
-		Optional<String> pulled;
+	public List<ProjectVersionAssessment> discoverAvailable(TrainingProjectBinding project) {
 		try {
-			pulled = this.registry.pullArtifact(repository, versionLabel);
+			List<ProjectVersionAssessment> assessments = this.registry
+				.listVersionArtifactDigests(project.registryRepository())
+				.stream()
+				.map(reference -> discover(project, reference))
+				.toList();
+			Map<String, Long> labelCounts = assessments.stream()
+				.filter(ProjectVersionAssessment::runnable)
+				.collect(java.util.stream.Collectors.groupingBy(assessment -> assessment.version().versionLabel(),
+						java.util.stream.Collectors.counting()));
+			return assessments.stream()
+				.map(assessment -> assessment.runnable() && labelCounts.get(assessment.version().versionLabel()) > 1
+						? failed("PROJECT_VERSION_LABEL_COLLISION", "/versionLabel") : assessment)
+				.toList();
+		}
+		catch (RuntimeException error) {
+			return List.of(failed("PROJECT_REGISTRY_UNAVAILABLE", ""));
+		}
+	}
+
+	public ProjectVersionAssessment discover(TrainingProjectBinding project, String manifestArtifactDigest) {
+		Optional<RegistryArtifact> pulled;
+		try {
+			pulled = this.registry.pullArtifact(project.registryRepository(), manifestArtifactDigest);
 		}
 		catch (RuntimeException error) {
 			return failed("PROJECT_REGISTRY_UNAVAILABLE", "");
@@ -64,7 +89,12 @@ public final class TrainingProjectVersions {
 		}
 		ObjectNode manifest;
 		try {
-			JsonNode parsed = JSON.readTree(pulled.get());
+			RegistryArtifact artifact = pulled.get();
+			if (!DIGEST.matcher(manifestArtifactDigest).matches()
+					|| !manifestArtifactDigest.equals(artifact.manifestDigest())) {
+				return failed("PROJECT_VERSION_DIGEST_MISMATCH", "");
+			}
+			JsonNode parsed = JSON.readTree(artifact.content());
 			if (!parsed.isObject()) {
 				return failed("PROJECT_MANIFEST_INVALID", "");
 			}
@@ -81,12 +111,12 @@ public final class TrainingProjectVersions {
 		String manifestLabel = manifest.path("versionLabel").asText();
 		String sourceRevision = manifest.path("sourceRevision").asText();
 		String pipeline = manifest.path("pipeline").asText();
-		if (!versionLabel.equals(manifestLabel) || !LABEL.matcher(manifestLabel).matches()
-				|| !manifestLabel.equals(sourceRevision + "-" + pipeline)) {
+		if (!LABEL.matcher(manifestLabel).matches() || !REVISION.matcher(sourceRevision).matches()
+				|| !PIPELINE.matcher(pipeline).matches() || !manifestLabel.equals(sourceRevision + "-" + pipeline)) {
 			errors.add(failure("PROJECT_VERSION_LABEL_INVALID", "/versionLabel"));
 		}
 		String projectIdentity = manifest.path("projectIdentity").asText();
-		if (projectIdentity.isBlank()) {
+		if (!project.projectIdentity().equals(projectIdentity)) {
 			errors.add(failure("PROJECT_IDENTITY_INVALID", "/projectIdentity"));
 		}
 
@@ -100,8 +130,8 @@ public final class TrainingProjectVersions {
 		Map<String, String> metricArtifacts = new HashMap<>();
 		for (String backend : backends) {
 			String image = imageNode.path(backend).asText();
-			Boolean available = DIGEST.matcher(image).matches() ? imageAvailable(repository, image, errors, backend)
-					: Boolean.FALSE;
+			Boolean available = DIGEST.matcher(image).matches()
+					? imageAvailable(project.registryRepository(), image, errors, backend) : Boolean.FALSE;
 			if (Boolean.FALSE.equals(available)) {
 				errors.add(failure("PROJECT_IMAGE_MISSING", "/images/" + backend));
 			}
@@ -116,10 +146,10 @@ public final class TrainingProjectVersions {
 				profiles.put(backend, profile);
 			}
 			JsonNode backendArtifacts = artifactNode.path(backend);
-			pullContract(repository, backendArtifacts.path("configuration").asText(), backend, "configuration",
-					configurationArtifacts, errors);
-			pullContract(repository, backendArtifacts.path("metrics").asText(), backend, "metrics", metricArtifacts,
-					errors);
+			pullContract(project.registryRepository(), backendArtifacts.path("configuration").asText(), backend,
+					"configuration", configurationArtifacts, errors);
+			pullContract(project.registryRepository(), backendArtifacts.path("metrics").asText(), backend, "metrics",
+					metricArtifacts, errors);
 		}
 		checkExactKeys(imageNode, backends, "/images", errors);
 		checkExactKeys(profileNode, backends, "/environmentProfiles", errors);
@@ -141,8 +171,9 @@ public final class TrainingProjectVersions {
 			return new ProjectVersionAssessment(false, null, errors.stream().distinct().sorted().toList());
 		}
 		return new ProjectVersionAssessment(true,
-				new TrainingProjectVersion(projectIdentity, manifestLabel, sourceRevision, pipeline, images, profiles,
-						configurationDigest, metricDigest, configurationContract, metricCatalog),
+				new TrainingProjectVersion(projectIdentity, manifestLabel, manifestArtifactDigest, sourceRevision,
+						pipeline, images, profiles, configurationDigest, metricDigest, configurationContract,
+						metricCatalog),
 				List.of());
 	}
 
@@ -165,12 +196,18 @@ public final class TrainingProjectVersions {
 			return;
 		}
 		try {
-			Optional<String> content = this.registry.pullArtifact(repository, reference);
+			Optional<RegistryArtifact> content = this.registry.pullArtifact(repository, reference);
 			if (content.isEmpty()) {
 				errors.add(failure("PROJECT_CONTRACT_ARTIFACT_MISSING", pointer));
 			}
 			else {
-				artifacts.put(backend, content.get());
+				RegistryArtifact artifact = content.get();
+				if (!reference.equals(artifact.manifestDigest())) {
+					errors.add(failure("PROJECT_CONTRACT_ARTIFACT_DIGEST_MISMATCH", pointer));
+				}
+				else {
+					artifacts.put(backend, artifact.content());
+				}
 			}
 		}
 		catch (RuntimeException error) {

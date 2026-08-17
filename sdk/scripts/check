@@ -13,6 +13,7 @@ scripts/generate-configuration-reference --check
 uv run --locked --group ml-test pytest \
   tests/test_configuration_contract.py tests/test_metric_contract.py tests/test_package.py \
   tests/test_project_version.py \
+  tests/test_project_oci.py \
   tests/test_release.py tests/test_training_process.py \
   --junitxml target/test-results/unit.xml \
   --cov skywright \
