@@ -409,7 +409,7 @@ def _profile_reference(value: str) -> bool:
     name, separator, digest = value.partition("@")
     if not separator or "@" in digest or DIGEST.fullmatch(digest) is None:
         return False
-    return _image_name(name, allow_tag=True)
+    return "/" in name and _image_name(name, allow_tag=True)
 
 
 def _image_name(value: str, *, allow_tag: bool) -> bool:

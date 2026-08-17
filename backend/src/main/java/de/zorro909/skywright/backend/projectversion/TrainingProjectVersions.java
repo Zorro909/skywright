@@ -1,5 +1,8 @@
 package de.zorro909.skywright.backend.projectversion;
 
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -32,7 +35,9 @@ public final class TrainingProjectVersions {
 
 	private static final Pattern DIGEST = Pattern.compile("sha256:[0-9a-f]{64}");
 
-	private static final Pattern PROFILE = Pattern.compile("[^@\\s]+@sha256:[0-9a-f]{64}");
+	private static final Pattern IMAGE_COMPONENT = Pattern.compile("[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*");
+
+	private static final Pattern IMAGE_TAG = Pattern.compile("[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}");
 
 	private static final Pattern LABEL = Pattern.compile("[0-9a-f]{40}-[A-Za-z0-9][A-Za-z0-9._-]{0,86}");
 
@@ -133,7 +138,7 @@ public final class TrainingProjectVersions {
 		for (String backend : backends) {
 			String image = imageNode.path(backend).asText();
 			Boolean available = DIGEST.matcher(image).matches()
-					? imageAvailable(project.registryRepository(), image, errors, backend) : Boolean.FALSE;
+					? imageAvailable(project.registryRepository(), image, errors, "/images/" + backend) : Boolean.FALSE;
 			if (Boolean.FALSE.equals(available)) {
 				errors.add(failure("PROJECT_IMAGE_MISSING", "/images/" + backend));
 			}
@@ -141,11 +146,20 @@ public final class TrainingProjectVersions {
 				images.put(backend, image);
 			}
 			String profile = profileNode.path(backend).asText();
-			if (!PROFILE.matcher(profile).matches()) {
+			Optional<ProfileReference> parsedProfile = profileReference(profile);
+			if (parsedProfile.isEmpty()) {
 				errors.add(failure("PROJECT_PROFILE_NOT_DIGEST_PINNED", "/environmentProfiles/" + backend));
 			}
 			else {
-				profiles.put(backend, profile);
+				ProfileReference reference = parsedProfile.get();
+				Boolean profileAvailable = imageAvailable(reference.repository(), reference.digest(), errors,
+						"/environmentProfiles/" + backend);
+				if (Boolean.FALSE.equals(profileAvailable)) {
+					errors.add(failure("PROJECT_PROFILE_MISSING", "/environmentProfiles/" + backend));
+				}
+				else if (Boolean.TRUE.equals(profileAvailable)) {
+					profiles.put(backend, profile);
+				}
 			}
 			JsonNode backendArtifacts = artifactNode.path(backend);
 			pullContract(project.registryRepository(), backendArtifacts.path("configuration").asText(), backend,
@@ -180,14 +194,76 @@ public final class TrainingProjectVersions {
 	}
 
 	private Boolean imageAvailable(String repository, String digest, List<ProjectVersionFailure> errors,
-			String backend) {
+			String pointer) {
 		try {
 			return this.registry.imageAvailable(repository, digest);
 		}
 		catch (RuntimeException error) {
-			errors.add(failure("PROJECT_REGISTRY_UNAVAILABLE", "/images/" + backend));
+			errors.add(failure("PROJECT_REGISTRY_UNAVAILABLE", pointer));
 			return null;
 		}
+	}
+
+	private static Optional<ProfileReference> profileReference(String value) {
+		int separator = value.indexOf('@');
+		if (separator <= 0 || separator != value.lastIndexOf('@')) {
+			return Optional.empty();
+		}
+		String name = value.substring(0, separator);
+		String digest = value.substring(separator + 1);
+		if (!DIGEST.matcher(digest).matches() || !name.contains("/") || name.contains("://") || name.endsWith("/")) {
+			return Optional.empty();
+		}
+		List<String> parts = new ArrayList<>(List.of(name.split("/", -1)));
+		if (parts.stream().anyMatch(String::isEmpty)) {
+			return Optional.empty();
+		}
+		String host = parts.getFirst();
+		if (host.startsWith("[")) {
+			int closing = host.indexOf(']');
+			String suffix = closing < 0 ? "" : host.substring(closing + 1);
+			if (closing < 0 || !ipv6(host.substring(1, closing))
+					|| (!suffix.isEmpty() && (!suffix.matches(":[0-9]+")))) {
+				return Optional.empty();
+			}
+			parts.removeFirst();
+		}
+		else if (host.contains(":")) {
+			int portSeparator = host.lastIndexOf(':');
+			String hostname = host.substring(0, portSeparator);
+			String port = host.substring(portSeparator + 1);
+			if (hostname.isEmpty() || !port.matches("[0-9]+")) {
+				return Optional.empty();
+			}
+			parts.set(0, hostname);
+		}
+		int finalSlash = name.lastIndexOf('/');
+		int tagSeparator = name.lastIndexOf(':');
+		String repository = name;
+		if (tagSeparator > finalSlash) {
+			String tag = name.substring(tagSeparator + 1);
+			if (!IMAGE_TAG.matcher(tag).matches()) {
+				return Optional.empty();
+			}
+			parts.set(parts.size() - 1, name.substring(finalSlash + 1, tagSeparator));
+			repository = name.substring(0, tagSeparator);
+		}
+		if (parts.stream().anyMatch(part -> !IMAGE_COMPONENT.matcher(part).matches())) {
+			return Optional.empty();
+		}
+		return Optional.of(new ProfileReference(repository, digest));
+	}
+
+	private static boolean ipv6(String value) {
+		try {
+			return InetAddress.getByName(value) instanceof Inet6Address;
+		}
+		catch (UnknownHostException error) {
+			return false;
+		}
+	}
+
+	private record ProfileReference(String repository, String digest) {
 	}
 
 	private void pullContract(String repository, String reference, String backend, String kind,

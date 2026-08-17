@@ -42,7 +42,9 @@ class TrainingProjectVersionsTest {
 			.artifact(configurationOciDigest, configurationArtifact)
 			.artifact(metricOciDigest, metricArtifact)
 			.image(cudaImage)
-			.image(rocmImage);
+			.image(rocmImage)
+			.image("sha256:" + "c".repeat(64))
+			.image("sha256:" + "d".repeat(64));
 
 		ProjectVersionAssessment assessment = new TrainingProjectVersions(registry, this.configuration, this.metrics)
 			.discover(new TrainingProjectBinding("stable-project", "ghcr.io/example/project"), versionOciDigest);
@@ -57,9 +59,38 @@ class TrainingProjectVersionsTest {
 			.satisfies(error -> assertThat(error.failure().code()).isEqualTo("PROJECT_CAPABILITIES_INCOMPATIBLE"));
 		assertThat(assessment.version().configurationContract()).isNotNull();
 		assertThat(assessment.version().metricCatalog().projectContractDigest()).isEqualTo(metricDigest);
+		assertThat(registry.availabilityRequests).contains("ghcr.io/example/environment@sha256:" + "c".repeat(64),
+				"ghcr.io/example/environment@sha256:" + "d".repeat(64));
 		assertThat(new TrainingProjectVersions(registry, this.configuration, this.metrics)
 			.discover(new TrainingProjectBinding("another-project", "ghcr.io/example/project"), versionOciDigest)
 			.errors()).extracting(ProjectVersionFailure::code).containsExactly("PROJECT_IDENTITY_INVALID");
+	}
+
+	@Test
+	void rejectsMalformedAndUnavailableEnvironmentProfiles() {
+		String configurationArtifact = configurationContract();
+		String metricArtifact = metricContract();
+		String configurationOciDigest = "sha256:" + "e".repeat(64);
+		String metricOciDigest = "sha256:" + "f".repeat(64);
+		String cudaImage = "sha256:" + "a".repeat(64);
+		String rocmImage = "sha256:" + "b".repeat(64);
+		String versionOciDigest = "sha256:" + "9".repeat(64);
+		String label = "1".repeat(40) + "-github-123-1";
+		String manifest = manifest(label, digest(configurationArtifact), digest(metricArtifact), configurationOciDigest,
+				metricOciDigest, cudaImage, rocmImage)
+			.replace("ghcr.io/example/environment:1-cuda@", "not-a-repository@");
+		FakeRegistry registry = new FakeRegistry().versionArtifact(versionOciDigest, manifest)
+			.artifact(configurationOciDigest, configurationArtifact)
+			.artifact(metricOciDigest, metricArtifact)
+			.image(cudaImage)
+			.image(rocmImage);
+
+		ProjectVersionAssessment assessment = new TrainingProjectVersions(registry, this.configuration, this.metrics)
+			.discover(new TrainingProjectBinding("stable-project", "ghcr.io/example/project"), versionOciDigest);
+
+		assertThat(assessment.runnable()).isFalse();
+		assertThat(assessment.errors()).extracting(ProjectVersionFailure::code)
+			.contains("PROJECT_PROFILE_NOT_DIGEST_PINNED", "PROJECT_PROFILE_MISSING");
 	}
 
 	@Test
@@ -190,6 +221,8 @@ class TrainingProjectVersionsTest {
 
 		private final java.util.Set<String> images = new java.util.HashSet<>();
 
+		private final java.util.List<String> availabilityRequests = new java.util.ArrayList<>();
+
 		private int pullCount;
 
 		FakeRegistry artifact(String reference, String content) {
@@ -229,6 +262,7 @@ class TrainingProjectVersionsTest {
 
 		@Override
 		public boolean imageAvailable(String repository, String digest) {
+			this.availabilityRequests.add(repository + "@" + digest);
 			return this.images.contains(digest);
 		}
 

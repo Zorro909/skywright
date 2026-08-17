@@ -164,6 +164,16 @@ def test_definition_rejects_malformed_profile_and_tagged_repository(
         ProjectVersionDefinition.compile(source, tmp_path)
     assert unicode_tag.value.errors[0].code == "PROJECT_PROFILE_NOT_DIGEST_PINNED"
 
+    source = definition(tmp_path)
+    source["backends"] = {
+        "cuda": {"environmentProfile": "not-a-repository@sha256:" + "a" * 64}
+    }
+    with pytest.raises(ProjectVersionError) as implicit_repository:
+        ProjectVersionDefinition.compile(source, tmp_path)
+    assert implicit_repository.value.errors[0].code == (
+        "PROJECT_PROFILE_NOT_DIGEST_PINNED"
+    )
+
 
 def test_definition_accepts_a_bracketed_ipv6_registry(tmp_path: Path) -> None:
     source = definition(tmp_path)
