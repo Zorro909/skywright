@@ -123,7 +123,13 @@ def _ci_provenance(project_root: Path) -> dict[str, str]:
             cwd=project_root,
         ).stdout.strip()
         dirty = subprocess.run(
-            ("git", "status", "--porcelain"),
+            (
+                "git",
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--ignored",
+            ),
             check=True,
             capture_output=True,
             text=True,

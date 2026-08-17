@@ -373,11 +373,13 @@ def test_ci_provenance_checks_the_definition_repository(
 ) -> None:
     revision = "1" * 40
     calls: list[Path] = []
+    commands: list[tuple[str, ...]] = []
 
     def run(
         command: tuple[str, ...], **kwargs: object
     ) -> subprocess.CompletedProcess[str]:
         calls.append(cast(Path, kwargs["cwd"]))
+        commands.append(command)
         stdout = revision + "\n" if command[1:3] == ("rev-parse", "HEAD") else ""
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
@@ -396,6 +398,13 @@ def test_ci_provenance_checks_the_definition_repository(
         "pipeline": "pipeline-1",
     }
     assert calls == [tmp_path, tmp_path]
+    assert commands[1] == (
+        "git",
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--ignored",
+    )
 
 
 def test_ci_provenance_reports_an_unavailable_git_executable(
