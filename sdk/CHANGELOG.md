@@ -11,6 +11,8 @@
   execution over the same Training Project entry point.
 - Adds Project Configuration Contract compilation and deterministic Run Configuration resolution,
   the `skywright-config` project-CI command, and the shared Java/Python conformance corpus.
+- Adds Project Metric Contract publication and immutable Training Project Version packaging,
+  including the `skywright-metrics` and CI-only `skywright-project` commands.
 
 ## 0.1.0
 

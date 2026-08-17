@@ -23,6 +23,15 @@ request context, not a Principal Identity or idempotency key.
 HTTP failures use `application/problem+json` with the RFC 9457 fields plus `errorCode`,
 `correlationId`, and `fieldViolations`. Details never expose exception messages or stack traces.
 
+## Training Project Version discovery
+
+`ProjectVersionRegistry` is the pull-side OCI boundary. `TrainingProjectVersions` resolves an exact
+version label, verifies every declared image and contract directly against registry authority, and
+recompiles the configuration and metric contracts with the backend's trusted schemas. It returns a
+`ProjectVersionAssessment` with stable reasons instead of narrowing an incomplete backend map or
+using stale artifacts. Registry transport and credentials remain adapters so target/registry
+qualification can exercise them without weakening the domain verifier.
+
 ## Deployment configuration
 
 Set the required, non-secret `skywright.deployment.environment` to a lowercase identifier such as

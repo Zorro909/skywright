@@ -32,6 +32,7 @@ dependencies = [
 [project.scripts]
 skywright-config = "skywright.configuration:main"
 skywright-metrics = "skywright.metrics:main"
+skywright-project = "skywright.project:main"
 skywright-runtime = "skywright._runtime:main"
 
 [project.urls]
@@ -86,6 +87,7 @@ testpaths = [
   "tests/test_configuration_contract.py",
   "tests/test_metric_contract.py",
   "tests/test_package.py",
+  "tests/test_project_version.py",
   "tests/test_release.py",
   "tests/test_training_process.py",
 ]
