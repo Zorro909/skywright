@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 from email.message import Message
 from pathlib import Path
+from typing import cast
 
 from skywright_project_action.identity import sha256_bytes
 from skywright_project_action.publication import ArtifactRegistry, ProjectImageBuilder
@@ -330,10 +331,15 @@ class OciArtifactRegistry(ArtifactRegistry):
             headers["Authorization"] = f"Basic {credentials}"
         separator = "&" if "?" in realm else "?"
         request = urllib.request.Request(f"{realm}{separator}{query}", headers=headers)
+        token: object = None
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 document = json.loads(response.read())
-                token = document.get("token") or document.get("access_token")
+                if isinstance(document, dict):
+                    typed_document = cast(dict[str, object], document)
+                    token = typed_document.get("token") or typed_document.get(
+                        "access_token"
+                    )
         except (urllib.error.URLError, ValueError) as error:
             raise RuntimeError("registry bearer token exchange failed") from error
         if not isinstance(token, str) or not token:

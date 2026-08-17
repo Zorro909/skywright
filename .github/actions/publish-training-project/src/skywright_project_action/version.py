@@ -365,6 +365,9 @@ def _canonical(value: object) -> str:
     if isinstance(value, int):
         return str(value)
     if isinstance(value, Decimal):
+        _, digits, exponent = value.as_tuple()
+        if not isinstance(exponent, int) or len(digits) > 4096 or abs(exponent) > 4096:
+            raise ValueError("number exceeds canonical representation bounds")
         rendered = format(value, "f")
         if "." in rendered:
             rendered = rendered.rstrip("0").rstrip(".")

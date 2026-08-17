@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from collections.abc import Callable
+from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
@@ -11,6 +12,7 @@ from skywright.configuration import ConfigurationContract
 from skywright.metrics import MetricSchema
 
 import skywright_project_action.cli as project_cli
+import skywright_project_action.version as project_version
 from skywright_project_action.cli import main
 from skywright_project_action.publication import (
     ArtifactRegistry,
@@ -233,6 +235,7 @@ class RecordingImages(ProjectImageBuilder):
     def __init__(self, *, fail_backend: str | None = None):
         self.fail_backend = fail_backend
         self.built: list[str] = []
+        self.tags: list[str] = []
 
     def build_smoke_and_push(
         self,
@@ -241,6 +244,7 @@ class RecordingImages(ProjectImageBuilder):
         staging_tag: str,
     ) -> str:
         self.built.append(backend)
+        self.tags.append(staging_tag)
         if backend == self.fail_backend:
             raise RuntimeError("build failed")
         digit = "c" if backend == "cuda" else "d"
@@ -283,6 +287,7 @@ def test_publisher_exposes_the_version_only_after_every_piece_succeeds(
     )
 
     assert images.built == ["cuda", "rocm"]
+    assert all(len(tag.rsplit(":", 1)[-1]) <= 128 for tag in images.tags)
     assert registry.contracts == [
         ("sha256:" + "c" * 64, "configuration"),
         ("sha256:" + "c" * 64, "metrics"),
@@ -305,6 +310,30 @@ def test_publisher_exposes_the_version_only_after_every_piece_succeeds(
     assert invalid_digest.value.errors[0].code == (
         "PROJECT_VERSION_ARTIFACT_DIGEST_INVALID"
     )
+
+
+def test_publisher_bounds_staging_tags_for_the_longest_pipeline(
+    tmp_path: Path,
+) -> None:
+    compiled = ProjectVersionDefinition.compile(definition(tmp_path), tmp_path)
+    images = RecordingImages()
+
+    ProjectVersionPublisher(images, RecordingRegistry()).publish(
+        compiled, source_revision="1" * 40, pipeline="p" * 87
+    )
+
+    assert len(images.tags) == 2
+    assert all(len(tag.rsplit(":", 1)[-1]) <= 128 for tag in images.tags)
+    assert images.tags[0] != images.tags[1]
+
+
+def test_canonicalization_rejects_pathological_decimal_exponents() -> None:
+    canonical = cast(Callable[[object], str], project_version.__dict__["_canonical"])
+
+    with pytest.raises(ValueError, match="representation bounds"):
+        canonical(Decimal("1E+1000000000"))
+    with pytest.raises(ValueError, match="representation bounds"):
+        canonical(Decimal("1E-1000000000"))
 
 
 def test_publisher_rejects_provenance_before_any_external_write(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from skywright_project_action.identity import DIGEST
+from skywright_project_action.identity import DIGEST, sha256_text
 from skywright_project_action.version import (
     ProjectVersionDefinition,
     ProjectVersionError,
@@ -78,10 +78,12 @@ class ProjectVersionPublisher:
             source_revision=source_revision, pipeline=pipeline
         )
         version_label = f"{source_revision}-{pipeline}"
+        staging_identity = sha256_text(version_label).removeprefix("sha256:")
         images: dict[str, str] = {}
         for backend in definition.backends:
             staging_tag = (
-                f"{definition.registry_repository}:{version_label}-{backend}-staging"
+                f"{definition.registry_repository}:"
+                f"skywright-{staging_identity}-{backend}-staging"
             )
             digest = self._images.build_smoke_and_push(definition, backend, staging_tag)
             if DIGEST.fullmatch(digest) is None:

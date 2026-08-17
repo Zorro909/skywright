@@ -203,6 +203,20 @@ def test_oci_adapter_rejects_insecure_bearer_realms(
         ).bearer_token('Bearer realm="http://attacker.test/token"')
 
 
+def test_oci_adapter_rejects_a_non_object_token_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def urlopen(request: object, timeout: int) -> Response:
+        return Response(200, b"[]")
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(RuntimeError, match="returned no token"):
+        ExercisableRegistry("registry.test", "owner/project").bearer_token(
+            'Bearer realm="https://auth.test/token"'
+        )
+
+
 def test_oci_adapter_accepts_access_token_and_preserves_realm_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
