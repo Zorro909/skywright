@@ -114,6 +114,18 @@ class PlanningTest(unittest.TestCase):
                     "security": True,
                 },
             ),
+            "protocol/run-store/v1/golden.json": (
+                ["fixture"],
+                {
+                    "application": True,
+                    "frontend": False,
+                    "image": True,
+                    "java": True,
+                    "profile": False,
+                    "sdk": True,
+                    "security": True,
+                },
+            ),
             "environment-profiles/cuda/Containerfile": (
                 ["profile"],
                 {
@@ -163,6 +175,29 @@ class PlanningTest(unittest.TestCase):
                     },
                     applicability,
                 )
+
+    def test_mixed_backend_sdk_and_protocol_fixture_change_unions_their_fan_out(
+        self,
+    ) -> None:
+        plan = self.plan(
+            "backend/src/main/App.java",
+            "sdk/src/skywright/__init__.py",
+            "protocol/run-store/v1/golden.json",
+        )
+
+        self.assertEqual(plan["categories"], ["backend", "fixture", "sdk"])
+        self.assertEqual(
+            {name: check["applicable"] for name, check in plan["checks"].items()},
+            {
+                "application": True,
+                "frontend": False,
+                "image": True,
+                "java": True,
+                "profile": True,
+                "sdk": True,
+                "security": True,
+            },
+        )
 
     def test_unknown_path_is_treated_as_shared_to_fail_safe(self) -> None:
         plan = self.plan("new-project-part/file.txt")

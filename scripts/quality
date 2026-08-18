@@ -45,6 +45,7 @@ def load_toolchain() -> dict[str, str]:
             "maven_version": maven_match.group(1),
             "node_version": frontend["engines"]["node"],
             "pnpm_version": frontend["packageManager"].removeprefix("pnpm@"),
+            "playwright_version": frontend["devDependencies"]["@playwright/test"],
             "uv_version": sdk["tool"]["uv"]["required-version"].removeprefix("=="),
         }
     )
@@ -55,6 +56,7 @@ TOOLCHAIN = load_toolchain()
 LOCAL_CHECKS = ("application", "image", "java", "frontend", "profile", "sdk")
 CHECKS = (*LOCAL_CHECKS, "security")
 ALL_CHECKS = frozenset(CHECKS)
+BROWSER_CHECKS = frozenset(("application", "frontend"))
 CATEGORY_CHECKS = {
     "api": frozenset(("application", "image", "java", "frontend", "security")),
     "backend": frozenset(("application", "image", "java", "security")),
@@ -69,10 +71,19 @@ CATEGORY_CHECKS = {
 COMMANDS = {
     "application": (
         ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
-        ("./mvnw", "--batch-mode", "-pl", "backend", "-am", "verify"),
         (
             "./mvnw",
             "--batch-mode",
+            "-DskipFrontendTests=true",
+            "-pl",
+            "backend",
+            "-am",
+            "verify",
+        ),
+        (
+            "./mvnw",
+            "--batch-mode",
+            "-DskipFrontendTests=true",
             "-pl",
             "frontend",
             "-am",
@@ -85,6 +96,7 @@ COMMANDS = {
         (
             "./mvnw",
             "--batch-mode",
+            "-DskipFrontendTests=true",
             "-pl",
             "backend-deployment",
             "-am",
@@ -93,7 +105,15 @@ COMMANDS = {
     ),
     "java": (
         ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
-        ("./mvnw", "--batch-mode", "-pl", "backend", "-am", "verify"),
+        (
+            "./mvnw",
+            "--batch-mode",
+            "-DskipFrontendTests=true",
+            "-pl",
+            "backend",
+            "-am",
+            "verify",
+        ),
     ),
     "frontend": (
         ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
@@ -178,7 +198,7 @@ def category_for(path: str) -> str:
         return "frontend"
     if normalized.startswith("sdk/"):
         return "sdk"
-    if normalized.startswith(("fixtures/", "conformance/")):
+    if normalized.startswith(("fixtures/", "conformance/", "protocol/")):
         return "fixture"
     if normalized.startswith(("environment-profiles/", "profiles/")):
         return "profile"
@@ -411,7 +431,7 @@ def run_command(arguments: argparse.Namespace) -> int:
         try:
             check_prerequisites(check)
             if arguments.dry_run:
-                if check in {"application", "image", "java", "frontend"}:
+                if check in BROWSER_CHECKS:
                     require_browser()
                 print(f"PASSED {check}: prerequisites available (dry run)")
                 continue
@@ -420,7 +440,7 @@ def run_command(arguments: argparse.Namespace) -> int:
                 subprocess.run(
                     command, cwd=REPOSITORY, check=True, env=os.environ.copy()
                 )
-                if check in {"application", "image", "java", "frontend"} and index == 0:
+                if check in BROWSER_CHECKS and index == 0:
                     require_browser()
             print(f"PASSED {check}")
         except (PrerequisiteError, subprocess.CalledProcessError) as error:
