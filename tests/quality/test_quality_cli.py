@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import importlib.machinery
+import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 QUALITY = REPOSITORY / "scripts" / "quality"
@@ -45,6 +51,7 @@ class PlanningTest(unittest.TestCase):
                 "application": True,
                 "frontend": True,
                 "image": True,
+                "integration": True,
                 "java": True,
                 "profile": True,
                 "sdk": True,
@@ -60,6 +67,7 @@ class PlanningTest(unittest.TestCase):
                     "application": True,
                     "frontend": True,
                     "image": True,
+                    "integration": False,
                     "java": True,
                     "profile": False,
                     "sdk": False,
@@ -72,6 +80,7 @@ class PlanningTest(unittest.TestCase):
                     "application": True,
                     "frontend": False,
                     "image": True,
+                    "integration": False,
                     "java": True,
                     "profile": False,
                     "sdk": False,
@@ -84,6 +93,7 @@ class PlanningTest(unittest.TestCase):
                     "application": True,
                     "frontend": True,
                     "image": True,
+                    "integration": False,
                     "java": False,
                     "profile": False,
                     "sdk": False,
@@ -96,6 +106,7 @@ class PlanningTest(unittest.TestCase):
                     "application": False,
                     "frontend": False,
                     "image": False,
+                    "integration": False,
                     "java": False,
                     "profile": True,
                     "sdk": True,
@@ -108,6 +119,7 @@ class PlanningTest(unittest.TestCase):
                     "application": True,
                     "frontend": False,
                     "image": True,
+                    "integration": False,
                     "java": True,
                     "profile": False,
                     "sdk": True,
@@ -120,6 +132,7 @@ class PlanningTest(unittest.TestCase):
                     "application": True,
                     "frontend": False,
                     "image": True,
+                    "integration": True,
                     "java": True,
                     "profile": False,
                     "sdk": True,
@@ -132,6 +145,7 @@ class PlanningTest(unittest.TestCase):
                     "application": False,
                     "frontend": False,
                     "image": False,
+                    "integration": False,
                     "java": False,
                     "profile": True,
                     "sdk": False,
@@ -144,6 +158,7 @@ class PlanningTest(unittest.TestCase):
                     "application": False,
                     "frontend": False,
                     "image": False,
+                    "integration": False,
                     "java": False,
                     "profile": False,
                     "sdk": True,
@@ -156,6 +171,7 @@ class PlanningTest(unittest.TestCase):
                     "application": False,
                     "frontend": False,
                     "image": False,
+                    "integration": False,
                     "java": False,
                     "profile": False,
                     "sdk": False,
@@ -176,6 +192,35 @@ class PlanningTest(unittest.TestCase):
                     applicability,
                 )
 
+    def test_real_structural_overlay_corpus_is_a_shared_fixture(self) -> None:
+        plan = self.plan("sdk/src/skywright/_configuration_resources/corpus.json")
+
+        self.assertEqual(plan["categories"], ["fixture"])
+        self.assertEqual(
+            {name: check["applicable"] for name, check in plan["checks"].items()},
+            {
+                "application": True,
+                "frontend": False,
+                "image": True,
+                "integration": False,
+                "java": True,
+                "profile": False,
+                "sdk": True,
+                "security": True,
+            },
+        )
+
+    def test_dependency_backed_implementation_paths_select_integration(self) -> None:
+        for path in (
+            "backend/src/main/java/de/zorro909/skywright/backend/persistence/Store.java",
+            "backend/src/main/resources/application.properties",
+            "sdk/src/skywright/_run_store/implementation.py",
+            "sdk/tests/support/run_store_training_scenario.py",
+        ):
+            with self.subTest(path=path):
+                plan = self.plan(path)
+                self.assertTrue(plan["checks"]["integration"]["applicable"])
+
     def test_mixed_backend_sdk_and_protocol_fixture_change_unions_their_fan_out(
         self,
     ) -> None:
@@ -192,6 +237,7 @@ class PlanningTest(unittest.TestCase):
                 "application": True,
                 "frontend": False,
                 "image": True,
+                "integration": True,
                 "java": True,
                 "profile": True,
                 "sdk": True,
@@ -247,7 +293,11 @@ class AggregationTest(unittest.TestCase):
     def test_every_non_success_outcome_fails_an_applicable_check(self) -> None:
         plan = json.loads(
             run_quality(
-                "plan", "--format", "json", "--changed-file", "backend/App.java"
+                "plan",
+                "--format",
+                "json",
+                "--changed-file",
+                "backend/src/main/java/de/zorro909/skywright/backend/persistence/Store.java",
             ).stdout
         )
 
@@ -257,6 +307,7 @@ class AggregationTest(unittest.TestCase):
                     plan,
                     "application=success",
                     "image=success",
+                    "integration=success",
                     f"java={outcome}",
                     "frontend=skipped",
                     "sdk=skipped",
@@ -265,8 +316,117 @@ class AggregationTest(unittest.TestCase):
                 self.assertNotEqual(completed.returncode, 0)
                 self.assertIn(f"FAILED java ({outcome})", completed.stdout)
 
+    def test_integration_must_succeed_when_applicable(self) -> None:
+        plan = json.loads(
+            run_quality(
+                "plan",
+                "--format",
+                "json",
+                "--changed-file",
+                "backend/src/main/java/de/zorro909/skywright/backend/persistence/Store.java",
+            ).stdout
+        )
+        other_results = (
+            "application=success",
+            "image=success",
+            "java=success",
+            "frontend=skipped",
+            "sdk=skipped",
+            "security=success",
+        )
+
+        succeeded = self.aggregate(plan, *other_results, "integration=success")
+        self.assertEqual(succeeded.returncode, 0, succeeded.stdout)
+
+        for outcome in ("failure", "cancelled", "skipped", "missing"):
+            with self.subTest(outcome=outcome):
+                integration_result = (
+                    () if outcome == "missing" else (f"integration={outcome}",)
+                )
+                completed = self.aggregate(plan, *other_results, *integration_result)
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn(f"FAILED integration ({outcome})", completed.stdout)
+
 
 class LocalRunnerTest(unittest.TestCase):
+    def test_native_suite_failure_fails_the_integration_component(self) -> None:
+        loader = importlib.machinery.SourceFileLoader("quality_cli", str(QUALITY))
+        specification = importlib.util.spec_from_loader(loader.name, loader)
+        assert specification is not None
+        quality_cli = importlib.util.module_from_spec(specification)
+        sys.modules[loader.name] = quality_cli
+        with mock.patch.object(sys, "path", [str(QUALITY.parent), *sys.path]):
+            loader.exec_module(quality_cli)
+        arguments = SimpleNamespace(
+            check=["integration"],
+            dry_run=False,
+            frontend_dependencies_ready=True,
+        )
+
+        for failing_command in (("native-java",), ("native-python",)):
+            with self.subTest(failing_command=failing_command):
+                commands = (("native-java",), ("native-python",))
+
+                def run_native(command, _failing_command=failing_command, **_kwargs):
+                    if command == _failing_command:
+                        raise subprocess.CalledProcessError(17, command)
+                    return subprocess.CompletedProcess(command, 0)
+
+                output = io.StringIO()
+                with (
+                    mock.patch.object(quality_cli, "check_prerequisites"),
+                    mock.patch.object(
+                        quality_cli, "commands_for", return_value=commands
+                    ),
+                    mock.patch.object(
+                        quality_cli.subprocess, "run", side_effect=run_native
+                    ),
+                    redirect_stdout(output),
+                ):
+                    result = quality_cli.run_command(arguments)
+
+                self.assertEqual(result, 1)
+                self.assertIn(
+                    "FAILED integration: native command exited 17", output.getvalue()
+                )
+
+    def test_integration_fails_explicitly_when_container_cli_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            completed = run_quality(
+                "run",
+                "integration",
+                "--dry-run",
+                check=False,
+                env={**os.environ, "PATH": temporary_directory},
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "FAILED integration: required executable 'docker' is unavailable",
+            completed.stdout,
+        )
+
+    def test_integration_fails_explicitly_when_container_daemon_is_unavailable(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fake_docker = Path(temporary_directory) / "docker"
+            fake_docker.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            fake_docker.chmod(0o755)
+            completed = run_quality(
+                "run",
+                "integration",
+                "--dry-run",
+                check=False,
+                env={**os.environ, "PATH": temporary_directory},
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "FAILED integration: required Docker-compatible container runtime is unavailable",
+            completed.stdout,
+        )
+
     def test_missing_frontend_tools_fail_explicitly_without_hiding_other_checks(
         self,
     ) -> None:

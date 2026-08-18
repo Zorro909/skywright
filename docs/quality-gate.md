@@ -9,6 +9,13 @@ and SDK `uv` interfaces documented by its owning project part. The command print
 including deliberately inapplicable work, and fails explicitly when an exact prerequisite is
 missing or has drifted.
 
+The `integration` selector runs only the real-service suites: PostgreSQL 18 behavior at the running
+backend boundary, Python Run Store recording through `run_training_process`, and Java Run Store
+access through its module interface. Test processes start the repository-pinned PostgreSQL and
+SeaweedFS images through a `docker` CLI connected to a Docker-API-compatible daemon. Docker Engine
+and Podman sockets satisfying that contract are supported; a missing CLI or unreachable daemon is
+a failed prerequisite. The complete local plan includes this selector.
+
 The planning interface accepts either a Git comparison or explicit paths:
 
 ```bash
@@ -18,7 +25,9 @@ scripts/quality plan --format json --changed-file frontend/src/app/app.ts
 
 Root files, wrappers, GitHub automation, and unknown top-level paths fail safe by selecting every
 check. API, backend, frontend, SDK, shared-fixture (including `protocol/`), and Environment Profile
-paths fan out to their affected active checks. API, backend, frontend, and shared-fixture changes
+paths fan out to their affected active checks. The canonical structural-overlay corpus at
+`sdk/src/skywright/_configuration_resources/corpus.json` is classified as a shared fixture despite
+its SDK-owned location. API, backend, frontend, and shared-fixture changes
 select both the complete-application and production-image checks. Documentation-only changes retain
 the visible aggregate result without running build-heavy work.
 
@@ -65,6 +74,7 @@ budgets change.
 | Lane | Warm cache | Cold cache |
 | --- | ---: | ---: |
 | Java and backend | 15 minutes | 25 minutes |
+| Real-service integration | 15 minutes | 25 minutes |
 | Frontend | 12 minutes | 25 minutes |
 | Complete application | 20 minutes | 35 minutes |
 | Production backend image and scan | 25 minutes | 40 minutes |

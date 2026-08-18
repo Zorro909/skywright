@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Properties;
 import tools.jackson.databind.json.JsonMapper;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.info.BuildProperties;
 
+@Tag("real-service")
 class SystemInformationIT {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();

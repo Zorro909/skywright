@@ -53,7 +53,15 @@ def load_toolchain() -> dict[str, str]:
 
 
 TOOLCHAIN = load_toolchain()
-LOCAL_CHECKS = ("application", "image", "java", "frontend", "profile", "sdk")
+LOCAL_CHECKS = (
+    "application",
+    "image",
+    "integration",
+    "java",
+    "frontend",
+    "profile",
+    "sdk",
+)
 CHECKS = (*LOCAL_CHECKS, "security")
 ALL_CHECKS = frozenset(CHECKS)
 BROWSER_CHECKS = frozenset(("application", "frontend"))
@@ -77,6 +85,7 @@ COMMANDS = {
             "--batch-mode",
             "-DskipFrontendInstall=true",
             "-DskipFrontendTests=true",
+            "-DexcludedGroups=real-service",
             "-pl",
             "backend",
             "-am",
@@ -87,6 +96,7 @@ COMMANDS = {
             "--batch-mode",
             "-DskipFrontendInstall=true",
             "-DskipFrontendTests=true",
+            "-DexcludedGroups=real-service",
             "-pl",
             "frontend",
             "-am",
@@ -101,6 +111,7 @@ COMMANDS = {
             "--batch-mode",
             "-DskipFrontendInstall=true",
             "-DskipFrontendTests=true",
+            "-DexcludedGroups=real-service",
             "-pl",
             "backend-deployment",
             "-am",
@@ -114,11 +125,27 @@ COMMANDS = {
             "--batch-mode",
             "-DskipFrontendInstall=true",
             "-DskipFrontendTests=true",
+            "-DexcludedGroups=real-service",
             "-pl",
             "backend",
             "-am",
             "verify",
         ),
+    ),
+    "integration": (
+        FRONTEND_INSTALL,
+        (
+            "./mvnw",
+            "--batch-mode",
+            "-DskipFrontendInstall=true",
+            "-DskipFrontendTests=true",
+            "-Dgroups=real-service",
+            "-pl",
+            "backend",
+            "-am",
+            "verify",
+        ),
+        ("sdk/scripts/integration",),
     ),
     "frontend": (
         FRONTEND_INSTALL,
@@ -194,6 +221,8 @@ class QualityPlan:
 
 def category_for(path: str) -> str:
     normalized = path.removeprefix("./")
+    if normalized == "sdk/src/skywright/_configuration_resources/corpus.json":
+        return "fixture"
     if (
         normalized.startswith(("docs/", ".github/ISSUE_TEMPLATE/"))
         or normalized
@@ -240,6 +269,33 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         if not materialized_paths
         else frozenset().union(*(CATEGORY_CHECKS[category] for category in categories))
     )
+    integration_prefixes = (
+        "backend/src/main/java/de/zorro909/skywright/backend/availability/",
+        "backend/src/main/java/de/zorro909/skywright/backend/persistence/",
+        "backend/src/main/java/de/zorro909/skywright/backend/runstore/",
+        "backend/src/main/resources/db/",
+        "backend/src/test/java/de/zorro909/skywright/backend/acceptance/",
+        "backend/src/test/java/de/zorro909/skywright/backend/runstore/",
+        "protocol/run-store/",
+        "sdk/src/skywright/_run_store/",
+        "sdk/src/skywright/run_store.py",
+        "sdk/src/skywright/_training_process.py",
+        "sdk/tests/test_run_store",
+        "sdk/tests/support/",
+    )
+    integration_files = {
+        "backend/pom.xml",
+        "backend/src/main/resources/application.properties",
+        "sdk/pyproject.toml",
+        "sdk/uv.lock",
+        "sdk/scripts/integration",
+    }
+    if any(
+        normalized in integration_files or normalized.startswith(integration_prefixes)
+        for path in materialized_paths
+        if (normalized := path.removeprefix("./"))
+    ):
+        applicable = applicable.union(("integration",))
     return QualityPlan(
         changed_files=tuple(materialized_paths),
         categories=tuple(categories or ["complete"]),
@@ -413,7 +469,12 @@ def require_container_runtime() -> None:
 
 
 def check_prerequisites(check: str) -> None:
-    if check in {"application", "image", "java"}:
+    if check == "integration":
+        require_container_runtime()
+        require_java()
+        require_frontend()
+        require_uv()
+    elif check in {"application", "image", "java"}:
         require_java()
         require_frontend()
     elif check == "frontend":

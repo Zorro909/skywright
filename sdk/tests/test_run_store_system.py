@@ -1,16 +1,21 @@
 # boto3 and the Docker-backed fixture expose runtime-shaped integration values.
 # pyright: reportMissingParameterType=false, reportMissingTypeStubs=false
 # pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false
-# pyright: reportUnknownParameterType=false, reportUnknownVariableType=false
+# pyright: reportUnknownLambdaType=false, reportUnknownParameterType=false
+# pyright: reportUnknownVariableType=false
 
 from __future__ import annotations
 
+import json
+import os
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 import uuid
 from contextlib import contextmanager
+from pathlib import Path
 
 import boto3
 import pytest
@@ -18,13 +23,18 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from skywright import (
+    ArtifactRecord,
+    CheckpointSnapshot,
     DatasetBatch,
     DatasetCursor,
+    ExecutionAttemptRecord,
     MetricCatalog,
+    TrainingContractViolation,
     run_training_process,
 )
 from skywright.run_store import (
     CheckpointCodec,
+    CheckpointReference,
     RunStoreReader,
     RunStoreRecorder,
     TargetStorage,
@@ -94,16 +104,16 @@ def seaweedfs():
         .stdout.strip()
         .splitlines()[-1]
     )
-    endpoint = f"http://127.0.0.1:{port}"
-    client = boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        region_name="us-east-1",
-        aws_access_key_id="test-access-key",
-        aws_secret_access_key="test-secret-key",
-        config=Config(s3={"addressing_style": "path"}),
-    )
     try:
+        endpoint = f"http://127.0.0.1:{port}"
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            region_name="us-east-1",
+            aws_access_key_id="test-access-key",
+            aws_secret_access_key="test-secret-key",
+            config=Config(s3={"addressing_style": "path"}),
+        )
         deadline = time.monotonic() + 20
         while True:
             try:
@@ -115,12 +125,69 @@ def seaweedfs():
                 time.sleep(0.1)
         yield endpoint, client
     finally:
-        subprocess.run(
-            ["docker", "rm", "-f", container],
-            check=False,
-            text=True,
-            capture_output=True,
+        try:
+            service_logs = Path("target/service-logs")
+            service_logs.mkdir(parents=True, exist_ok=True)
+            logs = subprocess.run(
+                ["docker", "logs", container],
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+            service_logs.joinpath(f"seaweedfs-{container[:12]}.log").write_text(
+                logs.stdout + logs.stderr,
+                encoding="utf-8",
+            )
+        finally:
+            subprocess.run(
+                ["docker", "rm", "-f", container],
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+
+def test_readiness_failure_retains_diagnostics_and_removes_service(
+    tmp_path, monkeypatch
+) -> None:
+    fake_docker = tmp_path / "docker"
+    removed = tmp_path / "removed"
+    fake_docker.write_text(
+        """#!/bin/sh
+case "$1" in
+  run) echo container-id ;;
+  logs) echo readiness-failed ;;
+  rm) printf removed > "$SKYWRIGHT_FAKE_DOCKER_STATE" ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    monkeypatch.setenv("SKYWRIGHT_FAKE_DOCKER_STATE", str(removed))
+
+    class UnreadyClient:
+        def list_buckets(self):
+            raise RuntimeError("service never became ready")
+
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: UnreadyClient())
+    moments = iter((0.0, 21.0))
+    monkeypatch.setattr(time, "monotonic", lambda: next(moments))
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+
+    with (
+        pytest.raises(RuntimeError, match="service never became ready"),
+        seaweedfs(),
+    ):
+        pytest.fail("an unready service must not be yielded")
+
+    assert removed.read_text(encoding="utf-8") == "removed"
+    assert (
+        Path("target/service-logs/seaweedfs-container-id.log").read_text(
+            encoding="utf-8"
         )
+        == "readiness-failed\n"
+    )
 
 
 @pytest.mark.system
@@ -218,8 +285,183 @@ def test_production_run_store_conforms_against_pinned_seaweedfs(tmp_path) -> Non
                 Bucket=bucket, Key="conditional", Body=b"two", IfNoneMatch="*"
             )
         assert conflict.value.response["ResponseMetadata"]["HTTPStatusCode"] == 412
+
+        qualification_target = TargetStorage(
+            "seaweedfs",
+            endpoint,
+            bucket,
+            "us-east-1",
+            "project",
+            "qualification",
+        )
+        qualification_store = RunStoreRecorder(
+            qualification_target,
+            client=client,
+            checkpoint_codec=CheckpointCodec(staging_directory=tmp_path),
+            multipart_threshold=1,
+            multipart_part_size=5 * 1024 * 1024,
+        )
+        qualification_store.publish_attempt(
+            ExecutionAttemptRecord(
+                "123e4567-e89b-12d3-a456-426614174000",
+                "qualification",
+                "project@digest",
+                None,
+            )
+        )
+        qualification_store.publish_artifact(ArtifactRecord("result", b"same", 1))
+        qualification_store.publish_artifact(ArtifactRecord("result", b"same", 1))
+        with pytest.raises(
+            TrainingContractViolation, match="run-output/immutable-identity"
+        ):
+            qualification_store.publish_artifact(
+                ArtifactRecord("result", b"different", 1)
+            )
+
+        references = [
+            qualification_store.publish_checkpoint(
+                CheckpointSnapshot(
+                    step,
+                    {"value": step},
+                    dataset_cursor=DatasetCursor(ordering_fingerprint="ordering"),
+                    run_id="qualification",
+                    project_version="project@digest",
+                )
+            )
+            for step in range(1, 5)
+        ]
+        qualification_reader = RunStoreReader(
+            qualification_target,
+            client=client,
+            checkpoint_codec=CheckpointCodec(staging_directory=tmp_path),
+        )
+        qualification_reader.prune_checkpoints(
+            retention=2,
+            keep_every_nth=3,
+            final_reference=references[0],
+        )
+        assert [item.step for item in qualification_reader.list_checkpoints()] == [
+            1,
+            3,
+            4,
+        ]
+
+        newest = CheckpointReference.parse(references[-1])
+        newest_key = qualification_store.protocol.checkpoint_key(
+            newest.step, newest.digest
+        )
+        newest_object = client.get_object(Bucket=bucket, Key=newest_key)
+        client.put_object(
+            Bucket=bucket,
+            Key=newest_key,
+            Body=newest_object["Body"].read() + b"corrupt",
+            Metadata=newest_object["Metadata"],
+            ContentType=newest_object["ContentType"],
+        )
+        resolution = qualification_reader.resolve_latest_valid(
+            project_version="project@digest",
+            ordering_fingerprint="ordering",
+        )
+        assert resolution.checkpoint.reference == references[2]
+        assert [(item.step, item.code) for item in resolution.rejected] == [
+            (4, "RUN_STORE_DIGEST_MISMATCH")
+        ]
+
+        pending_key = qualification_store.protocol.run_prefix + "checkpoints/pending"
+        pending = client.create_multipart_upload(Bucket=bucket, Key=pending_key)
+        client.upload_part(
+            Bucket=bucket,
+            Key=pending_key,
+            UploadId=pending["UploadId"],
+            PartNumber=1,
+            Body=b"pending",
+        )
+        incomplete = qualification_reader.list_incomplete_uploads()
+        assert [(item.key, item.part_numbers) for item in incomplete] == [
+            (pending_key, (1,))
+        ]
+        qualification_reader.abort_incomplete_upload(incomplete[0])
+        assert qualification_reader.list_incomplete_uploads() == ()
         client.delete_object(Bucket=bucket, Key="conditional")
         assert not any(
             item["Key"] == "conditional"
             for item in client.list_objects_v2(Bucket=bucket).get("Contents", ())
         )
+
+
+@pytest.mark.system
+def test_training_lifecycle_scenarios_persist_to_pinned_seaweedfs(tmp_path) -> None:
+    scenario_runner = Path(__file__).parent / "support/run_store_training_scenario.py"
+    with seaweedfs() as (endpoint, client):
+        bucket = f"skywright-{uuid.uuid4().hex}"
+        client.create_bucket(Bucket=bucket)
+
+        def run_scenario(scenario: str, run_id: str) -> dict[str, object]:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(scenario_runner),
+                    scenario,
+                    "--endpoint",
+                    endpoint,
+                    "--bucket",
+                    bucket,
+                    "--run-id",
+                    run_id,
+                    "--staging-directory",
+                    str(tmp_path / f"{run_id}-{scenario}"),
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            return json.loads(completed.stdout)
+
+        interrupted = run_scenario("interrupted", "resume-run")
+        assert interrupted == {
+            "cause": "interrupted",
+            "checkpoint": interrupted["checkpoint"],
+            "durable_step": 1,
+            "initial_state": 0,
+            "last_step": 1,
+            "outcome": "interrupted",
+            "resumed": False,
+            "terminal_report_closed_writer": True,
+        }
+        assert isinstance(interrupted["checkpoint"], str)
+
+        resumed = run_scenario("resume", "resume-run")
+        assert resumed == {
+            "cause": "completed",
+            "checkpoint": resumed["checkpoint"],
+            "durable_step": 2,
+            "initial_state": 1,
+            "last_step": 2,
+            "outcome": "completed",
+            "resumed": True,
+            "terminal_report_closed_writer": True,
+        }
+
+        cancelled = run_scenario("cancelled", "cancelled-run")
+        assert cancelled == {
+            "cause": "cancelled",
+            "checkpoint": None,
+            "durable_step": None,
+            "initial_state": 0,
+            "last_step": 1,
+            "outcome": "cancelled",
+            "resumed": False,
+            "terminal_report_closed_writer": True,
+        }
+
+        failed = run_scenario("failed", "failed-run")
+        assert failed == {
+            "cause": "training_project_failure",
+            "checkpoint": None,
+            "durable_step": None,
+            "initial_state": 0,
+            "last_step": 1,
+            "outcome": "failed",
+            "resumed": False,
+            "terminal_report_closed_writer": True,
+        }
