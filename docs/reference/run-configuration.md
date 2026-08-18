@@ -8,6 +8,7 @@ Generated from the content-addressed Skywright Configuration Schema. Do not edit
 | `dataset.ordering.policy` | `"string"` | default `"deterministic-shuffle"`; enum `["deterministic-shuffle"]` | policy name | must-match | Selects the library-owned Dataset Item Sequence ordering policy. |
 | `checkpoint.cadence` | `"integer"` | default `100`; minimum `1` | Steps | may-change | Maximum completed Steps between periodic durable checkpoints. |
 | `checkpoint.retention` | `"integer"` | default `3`; minimum `1` | checkpoints | may-change | Minimum number of newest periodic checkpoints retained by the library. |
+| `checkpoint.keepEveryNth` | `["integer","null"]` | default `null`; minimum `1` | Steps | may-change | Optional Step divisor whose Checkpoints remain protected in addition to newest retention. |
 | `metrics.flushInterval` | `"number"` | default `10`; exclusiveMinimum `0` | seconds | may-change | Maximum wall-clock interval between flushing pending metric events. |
 | `metrics.segmentRoll` | `"integer"` | default `1000`; minimum `1` | events | may-change | Maximum metric events written before rolling a TensorBoard event segment. |
 | `metrics.systemSamplingInterval` | `"number"` | default `10`; exclusiveMinimum `0` | seconds | may-change | Wall-clock interval between library-owned system metric observations. |
