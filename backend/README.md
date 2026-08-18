@@ -82,3 +82,63 @@ identity is available from `GET /actuator/info` while it is running.
 
 The separate [backend deployment module](../backend-deployment/README.md) consumes this exact JAR
 to build the production OCI image.
+
+## PostgreSQL persistence
+
+PostgreSQL 18 is the only supported metadata database. Tests consume the repository pin
+`postgresql.container.image` from the root Maven model; deployment work must consume that same
+property rather than copying a tag or digest. A database provisioner creates the database, a
+`skywright` schema owned by the migration role, and a separate runtime role. Liquibase then owns
+all objects inside that schema, including its history tables. Neither role uses `public` for
+Skywright objects.
+
+Supply the two externally managed credentials through these environment variables:
+
+- `SKYWRIGHT_DATABASE_MIGRATION_URL`, `SKYWRIGHT_DATABASE_MIGRATION_USERNAME`, and
+  `SKYWRIGHT_DATABASE_MIGRATION_PASSWORD` identify the schema-owner role used during startup and
+  through short-lived, read-only schema-compatibility checks; it is never the application pool.
+- `SKYWRIGHT_DATABASE_RUNTIME_URL`, `SKYWRIGHT_DATABASE_RUNTIME_USERNAME`, and
+  `SKYWRIGHT_DATABASE_RUNTIME_PASSWORD` identify the restricted application role used by
+  Hibernate after migration.
+
+The runtime pool bounds connection acquisition to two seconds, and PostgreSQL JDBC URLs must bound
+connection and socket establishment to five seconds (for
+example, `?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true`). Missing configuration,
+unreachable PostgreSQL, Liquibase validation or checksum failure, migration failure, and Hibernate
+mapping mismatch all stop startup. At runtime, `/livez` remains independent of PostgreSQL while
+`/readyz` and `/actuator/health` include database connectivity, Liquibase history and checksum
+validation through a short-lived migration connection, and Hibernate schema validation. They
+recover only after connectivity and schema compatibility return.
+Database-backed request failures map to a `SKYWRIGHT_CAPABILITY_UNAVAILABLE` problem that names
+PostgreSQL without exposing driver diagnostics. Only failures with a recognized transient network,
+deadlock, serialization, or transient-resource cause set `retryable` to `true`.
+
+Persistence changes follow these conventions:
+
+- Add immutable, issue-numbered changesets through
+  `db/changelog/db.changelog-master.yaml`; prefer one declarative change type per changeset.
+  Grant the runtime role only the DML privileges each application table actually requires; it has
+  no default access to Liquibase history or future tables.
+  Essential PostgreSQL SQL that Liquibase Community cannot express needs a separate reviewed undo
+  file registered as its rollback and an update/rollback/update PostgreSQL test.
+- Keep generated HTTP DTOs, domain objects, and JPA entities separate, with explicit mappings.
+  Application code uses Spring Data repositories, JPQL, or Criteria API only—never JDBC, native
+  queries, or handwritten application SQL.
+- Application services own one `@Transactional` boundary per use case. Repository default
+  transactions and Open EntityManager in View are disabled. Use optimistic versions for mutable
+  entities and database constraints for relational invariants.
+- Store application UUIDv4 identities as PostgreSQL `uuid`, instants as UTC `timestamptz(6)`, and
+  JSON documents as `jsonb` only when the whole value is canonically JSON. Relational identity,
+  relationships, invariants, ordering, and routine reporting remain typed columns.
+- Keep Skywright-originated records and Retained SkyPilot Facts in separate provenance-owned
+  tables. Their only permitted cross-provenance relationship is the Skywright-owned Run identity.
+
+The persistent local database resource and its narrowly scoped reset command belong to the
+Skaffold environment in issue #82; it must preserve this image pin, role split, schema contract,
+and changelog rather than create another database topology.
+
+This foundation is the initial persistence release, so there is no published database-bearing
+application release to use as a preceding-release baseline; its cross-version qualification is
+recorded as not applicable. PostgreSQL qualification executes the complete changelog as update,
+rollback, and update on the pinned engine. Later consumer releases add their preceding release
+artifact and representative domain operations to this compatibility seam.

@@ -34,14 +34,35 @@ final class ProductionImageIT {
 
 	private String runningContainer;
 
+	private String databaseContainer;
+
+	private String network;
+
+	private final String migrationPassword = UUID.randomUUID().toString();
+
+	private final String runtimePassword = UUID.randomUUID().toString();
+
 	private URI baseUri;
 
 	@BeforeAll
 	void startProductionImage() throws Exception {
+		network = containerName("network");
+		databaseContainer = containerName("database");
+		docker("network", "create", network);
+		docker("run", "--detach", "--name", databaseContainer, "--network", network, "--env", "POSTGRES_DB=skywright",
+				"--env", "POSTGRES_USER=skywright_migrator", "--env", "POSTGRES_PASSWORD=" + migrationPassword,
+				postgresqlImage());
+		awaitPostgreSql(databaseContainer, STARTUP_TIMEOUT);
+		docker("exec", databaseContainer, "psql", "--username", "skywright_migrator", "--dbname", "skywright", "--set",
+				"ON_ERROR_STOP=1", "--command",
+				"CREATE ROLE skywright_runtime LOGIN PASSWORD '" + runtimePassword
+						+ "'; CREATE SCHEMA skywright AUTHORIZATION skywright_migrator;"
+						+ " GRANT USAGE ON SCHEMA skywright TO skywright_runtime;");
 		runningContainer = containerName("running");
-		docker("run", "--detach", "--name", runningContainer, "--read-only", "--tmpfs",
-				"/tmp:rw,noexec,nosuid,size=64m", "--env", "SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=production", "--publish",
-				"127.0.0.1::8080", imageName());
+		var arguments = applicationContainerArguments(runningContainer);
+		arguments.addAll(List.of("--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "--publish",
+				"127.0.0.1::8080", imageName()));
+		docker(arguments.toArray(String[]::new));
 		var port = awaitPublishedPort(runningContainer, STARTUP_TIMEOUT);
 		baseUri = URI.create("http://127.0.0.1:" + port);
 		awaitStatus("/readyz", 200, STARTUP_TIMEOUT);
@@ -51,6 +72,12 @@ final class ProductionImageIT {
 	void removeProductionImage() {
 		if (runningContainer != null) {
 			dockerIgnoringFailure("rm", "--force", runningContainer);
+		}
+		if (databaseContainer != null) {
+			dockerIgnoringFailure("rm", "--force", databaseContainer);
+		}
+		if (network != null) {
+			dockerIgnoringFailure("network", "rm", network);
 		}
 	}
 
@@ -111,8 +138,11 @@ final class ProductionImageIT {
 		var container = containerName("invalid-configuration");
 		var sensitiveValue = "production-private-token!";
 		try {
-			docker("create", "--name", container, "--env", "SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=" + sensitiveValue,
-					imageName());
+			var arguments = applicationContainerArguments(container, sensitiveValue);
+			arguments.set(0, "create");
+			arguments.remove("--detach");
+			arguments.add(imageName());
+			docker(arguments.toArray(String[]::new));
 			docker("start", container);
 			var exitCode = docker("wait", container).strip();
 			var logs = dockerCombinedOutput("logs", container);
@@ -129,8 +159,9 @@ final class ProductionImageIT {
 	void productionProcessTerminatesWithinTheDocumentedStopWindow() throws Exception {
 		var container = containerName("termination");
 		try {
-			docker("run", "--detach", "--name", container, "--env", "SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=production",
-					imageName());
+			var arguments = applicationContainerArguments(container);
+			arguments.add(imageName());
+			docker(arguments.toArray(String[]::new));
 			awaitLogsContaining(container, "Started SkywrightBackendApplication", STARTUP_TIMEOUT);
 
 			var started = Instant.now();
@@ -184,6 +215,47 @@ final class ProductionImageIT {
 			Thread.sleep(Duration.ofMillis(100));
 		}
 		throw new AssertionError("Container runtime did not publish the application port");
+	}
+
+	private static void awaitPostgreSql(String container, Duration timeout) throws Exception {
+		var deadline = Instant.now().plus(timeout);
+		Instant continuouslyReadySince = null;
+		while (Instant.now().isBefore(deadline)) {
+			try {
+				docker("exec", container, "pg_isready", "--username", "skywright_migrator", "--dbname", "skywright");
+				if (continuouslyReadySince == null) {
+					continuouslyReadySince = Instant.now();
+				}
+				else if (Duration.between(continuouslyReadySince, Instant.now())
+					.compareTo(Duration.ofSeconds(1)) >= 0) {
+					return;
+				}
+			}
+			catch (AssertionError ignored) {
+				// PostgreSQL is still starting.
+				continuouslyReadySince = null;
+			}
+			Thread.sleep(Duration.ofMillis(100));
+		}
+		throw new AssertionError(
+				"PostgreSQL did not become ready within " + timeout + ":\n" + dockerCombinedOutput("logs", container));
+	}
+
+	private ArrayList<String> applicationContainerArguments(String container) {
+		return applicationContainerArguments(container, "production");
+	}
+
+	private ArrayList<String> applicationContainerArguments(String container, String deploymentEnvironment) {
+		var databaseUrl = "jdbc:postgresql://" + databaseContainer
+				+ ":5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true";
+		return new ArrayList<>(List.of("run", "--detach", "--name", container, "--network", network, "--env",
+				"SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=" + deploymentEnvironment, "--env",
+				"SKYWRIGHT_DATABASE_MIGRATION_URL=" + databaseUrl, "--env",
+				"SKYWRIGHT_DATABASE_MIGRATION_USERNAME=skywright_migrator", "--env",
+				"SKYWRIGHT_DATABASE_MIGRATION_PASSWORD=" + migrationPassword, "--env",
+				"SKYWRIGHT_DATABASE_RUNTIME_URL=" + databaseUrl, "--env",
+				"SKYWRIGHT_DATABASE_RUNTIME_USERNAME=skywright_runtime", "--env",
+				"SKYWRIGHT_DATABASE_RUNTIME_PASSWORD=" + runtimePassword));
 	}
 
 	private static String awaitLogsContaining(String container, String expected, Duration timeout) throws Exception {
@@ -246,6 +318,10 @@ final class ProductionImageIT {
 
 	private static String imageName() {
 		return System.getProperty("image.name");
+	}
+
+	private static String postgresqlImage() {
+		return System.getProperty("postgresql.container.image");
 	}
 
 	private static String openApiDocument() {

@@ -19,7 +19,8 @@ that image and verifies its operator-visible runtime contract:
 ./mvnw -pl backend-deployment -am verify
 ```
 
-The verification covers non-root execution, health and application/source identity, the exact
+The verification starts the repository-pinned PostgreSQL image and covers non-root execution,
+health and application/source identity, the exact
 served OpenAPI bytes, structured safe console output, sanitized invalid-configuration failure, and
 bounded graceful termination. It deliberately does not inspect Dockerfile instructions, image
 layers, private JVM details, or internal filesystem layout. CI additionally retains a complete high
@@ -39,7 +40,9 @@ JDK rather than using `jlink`, preserving JVMCI and the future in-process GraalP
 
 ## Run the image
 
-Supply deployment configuration only at runtime. The root filesystem can remain read-only; `/tmp`
+Provision the `skywright` database and schema with separate migration and runtime roles as described
+in [`backend/README.md`](../backend/README.md), then supply deployment configuration only at runtime.
+The root filesystem can remain read-only; `/tmp`
 is the only documented writable location. `JAVA_TOOL_OPTIONS` injects JVM settings without
 replacing the image entry point:
 
@@ -49,6 +52,12 @@ docker run --rm \
   --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --env SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=production \
+  --env SKYWRIGHT_DATABASE_MIGRATION_URL='jdbc:postgresql://postgres:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
+  --env SKYWRIGHT_DATABASE_MIGRATION_USERNAME=skywright_migrator \
+  --env SKYWRIGHT_DATABASE_MIGRATION_PASSWORD='<migration-password>' \
+  --env SKYWRIGHT_DATABASE_RUNTIME_URL='jdbc:postgresql://postgres:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
+  --env SKYWRIGHT_DATABASE_RUNTIME_USERNAME=skywright_runtime \
+  --env SKYWRIGHT_DATABASE_RUNTIME_PASSWORD='<runtime-password>' \
   --env JAVA_TOOL_OPTIONS=-Xss2m \
   --publish 127.0.0.1:8080:8080 \
   skywright-backend:0.1.0-SNAPSHOT
@@ -77,6 +86,12 @@ docker run --rm \
   --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --env SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=local \
+  --env SKYWRIGHT_DATABASE_MIGRATION_URL='jdbc:postgresql://postgres:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
+  --env SKYWRIGHT_DATABASE_MIGRATION_USERNAME=skywright_migrator \
+  --env SKYWRIGHT_DATABASE_MIGRATION_PASSWORD='<migration-password>' \
+  --env SKYWRIGHT_DATABASE_RUNTIME_URL='jdbc:postgresql://postgres:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
+  --env SKYWRIGHT_DATABASE_RUNTIME_USERNAME=skywright_runtime \
+  --env SKYWRIGHT_DATABASE_RUNTIME_PASSWORD='<runtime-password>' \
   --env 'JAVA_TOOL_OPTIONS=-Xss2m -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005' \
   --publish 127.0.0.1:8080:8080 \
   --publish 127.0.0.1:5005:5005 \

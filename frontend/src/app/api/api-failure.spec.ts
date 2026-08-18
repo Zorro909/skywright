@@ -16,6 +16,8 @@ describe('API failure normalization', () => {
         instance: '/api/v1/runs',
         errorCode: 'SKYWRIGHT_INVALID_REQUEST',
         correlationId: 'body-correlation',
+        unavailableSource: 'PostgreSQL',
+        retryable: true,
         fieldViolations: [
           {
             field: 'configuration.batchSize',
@@ -48,6 +50,8 @@ describe('API failure normalization', () => {
       instance: '/api/v1/runs',
       errorCode: 'SKYWRIGHT_INVALID_REQUEST',
       correlationId: 'effective-correlation',
+      unavailableSource: 'PostgreSQL',
+      retryable: true,
       fieldViolations: [
         {
           field: 'configuration.batchSize',

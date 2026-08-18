@@ -1,0 +1,177 @@
+package de.zorro909.skywright.backend.acceptance;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.sql.SQLException;
+import java.time.Duration;
+import org.junit.jupiter.api.Test;
+
+final class DatabaseStartupIT {
+
+	@Test
+	void executableMigratesTheSkywrightSchemaBeforeBecomingReady() throws Exception {
+		try (var database = PostgreSqlFixture.freshDatabase()) {
+			var port = BackendProcess.availablePort();
+			try (var backend = BackendProcess.start(arguments(database, port))) {
+				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
+
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(2);
+				assertThat(database.countTables("public")).isZero();
+			}
+		}
+	}
+
+	@Test
+	void completeChangelogRollsBackAndReappliesOnPostgreSql18() throws Exception {
+		try (var database = PostgreSqlFixture.freshDatabase()) {
+			var port = BackendProcess.availablePort();
+			var arguments = arguments(database, port);
+			var rollbackArguments = java.util.Arrays.copyOf(arguments, arguments.length + 1);
+			rollbackArguments[arguments.length] = "--spring.liquibase.test-rollback-on-update=true";
+			try (var backend = BackendProcess.start(rollbackArguments)) {
+				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
+
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(2);
+			}
+		}
+	}
+
+	@Test
+	void missingDatabaseConfigurationStopsStartup() throws Exception {
+		try (var backend = BackendProcess.start("--server.port=0", "--skywright.deployment.environment=test")) {
+			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
+
+			assertThat(exitCode).isNotZero();
+			assertThat(backend.output()).contains("SKYWRIGHT_DATABASE_MIGRATION_URL")
+				.doesNotContain("Started SkywrightBackendApplication");
+		}
+	}
+
+	@Test
+	void unavailableDatabaseStopsStartup() throws Exception {
+		var unavailablePort = BackendProcess.availablePort();
+		var jdbcUrl = "jdbc:postgresql://127.0.0.1:" + unavailablePort + "/skywright";
+		try (var backend = BackendProcess.start("--server.port=0", "--skywright.deployment.environment=test",
+				"--spring.datasource.url=" + jdbcUrl, "--spring.datasource.username=runtime",
+				"--spring.datasource.password=runtime", "--spring.liquibase.url=" + jdbcUrl,
+				"--spring.liquibase.user=migrator", "--spring.liquibase.password=migrator")) {
+			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
+
+			assertThat(exitCode).isNotZero();
+			assertThat(backend.output()).doesNotContain("Started SkywrightBackendApplication");
+		}
+	}
+
+	@Test
+	void runtimeRoleCannotAlterTheSchema() throws Exception {
+		try (var database = PostgreSqlFixture.freshDatabase()) {
+			var port = BackendProcess.availablePort();
+			try (var backend = BackendProcess.start(arguments(database, port))) {
+				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
+
+				assertThatThrownBy(() -> database.executeAsRuntime("CREATE TABLE skywright.forbidden(id uuid)"))
+					.isInstanceOf(SQLException.class)
+					.hasMessageContaining("permission denied");
+			}
+		}
+	}
+
+	@Test
+	void runtimeRoleCannotModifyMigrationHistory() throws Exception {
+		try (var database = PostgreSqlFixture.freshDatabase()) {
+			var port = BackendProcess.availablePort();
+			try (var backend = BackendProcess.start(arguments(database, port))) {
+				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
+
+				assertThatThrownBy(() -> database.executeAsRuntime("DELETE FROM skywright.databasechangelog"))
+					.isInstanceOf(SQLException.class)
+					.hasMessageContaining("permission denied");
+			}
+		}
+	}
+
+	@Test
+	void changedAppliedChangesetStopsStartup() throws Exception {
+		try (var database = PostgreSqlFixture.freshDatabase()) {
+			var firstPort = BackendProcess.availablePort();
+			try (var backend = BackendProcess.start(arguments(database, firstPort))) {
+				BackendProcess.awaitReadiness(firstPort, Duration.ofSeconds(30));
+			}
+			database.executeAsMigrator("UPDATE skywright.databasechangelog SET md5sum = '9:invalid'");
+
+			try (var backend = BackendProcess.start(arguments(database, BackendProcess.availablePort()))) {
+				var exitCode = backend.awaitExit(Duration.ofSeconds(20));
+
+				assertThat(exitCode).isNotZero();
+				assertThat(backend.output()).containsIgnoringCase("validation failed")
+					.doesNotContain("Started SkywrightBackendApplication");
+			}
+		}
+	}
+
+	@Test
+	void incompatibleMigrationHistoryRemovesReadinessAtRuntime() throws Exception {
+		try (var database = PostgreSqlFixture.freshDatabase()) {
+			var port = BackendProcess.availablePort();
+			try (var backend = BackendProcess.start(arguments(database, port))) {
+				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
+				var validChecksum = database.migrationChecksum();
+				database.executeAsMigrator("UPDATE skywright.databasechangelog SET md5sum = '9:invalid'");
+
+				assertThat(get(port, "/livez").statusCode()).isEqualTo(200);
+				assertThat(get(port, "/readyz").statusCode()).isEqualTo(503);
+				assertThat(get(port, "/actuator/health").statusCode()).isEqualTo(503);
+
+				database.executeAsMigrator("UPDATE skywright.databasechangelog SET md5sum = '" + validChecksum + "'");
+				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
+			}
+		}
+	}
+
+	@Test
+	void runtimeOutageKeepsLivenessButRemovesReadinessUntilRecovery() throws Exception {
+		try (var database = PostgreSqlFixture.freshDatabase()) {
+			var port = BackendProcess.availablePort();
+			try (var backend = BackendProcess.start(arguments(database, port))) {
+				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
+				PostgreSqlFixture.pause();
+				try {
+					assertThat(get(port, "/livez").statusCode()).isEqualTo(200);
+					assertThat(get(port, "/readyz").statusCode()).isEqualTo(503);
+					assertThat(get(port, "/actuator/health").statusCode()).isEqualTo(503);
+				}
+				finally {
+					PostgreSqlFixture.unpause();
+				}
+
+				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
+				assertThat(backend.isAlive()).isTrue();
+			}
+		}
+	}
+
+	private String[] arguments(PostgreSqlFixture.Database database, int port) {
+		var databaseArguments = database.backendArguments();
+		var arguments = new String[databaseArguments.size() + 2];
+		arguments[0] = "--server.port=" + port;
+		arguments[1] = "--skywright.deployment.environment=test";
+		for (var index = 0; index < databaseArguments.size(); index++) {
+			arguments[index + 2] = databaseArguments.get(index);
+		}
+		return arguments;
+	}
+
+	private HttpResponse<String> get(int port, String path) throws Exception {
+		var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+			.timeout(Duration.ofSeconds(10))
+			.GET()
+			.build();
+		return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+	}
+
+}

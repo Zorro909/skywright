@@ -13,6 +13,8 @@ export interface SafeProblem {
   readonly errorCode: string;
   readonly correlationId: string;
   readonly fieldViolations: readonly FieldViolation[];
+  readonly unavailableSource?: string;
+  readonly retryable?: boolean;
 }
 
 export type ApiFailure =
@@ -68,6 +70,12 @@ export async function normalizeProblemResponse(
       errorCode: body['errorCode'],
       correlationId,
       fieldViolations: body['fieldViolations'],
+      ...(typeof body['unavailableSource'] === 'string'
+        ? { unavailableSource: body['unavailableSource'] }
+        : {}),
+      ...(typeof body['retryable'] === 'boolean'
+        ? { retryable: body['retryable'] }
+        : {}),
     },
     response,
   };
