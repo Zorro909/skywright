@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "identities": [
+    {
+      "project": "project-α",
+      "run": "run-1",
+      "attempt": "123e4567-e89b-12d3-a456-426614174000",
+      "step": 42,
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "outputName": "plots/loss 100%.png",
+      "runPrefix": "project-%CE%B1/run-1/v1/",
+      "checkpointReference": "skywright-checkpoint:v1:42:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "checkpointKey": "project-%CE%B1/run-1/v1/checkpoints/0000000000000000042/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.safetensors",
+      "artifactKey": "project-%CE%B1/run-1/v1/artifacts/123e4567-e89b-12d3-a456-426614174000/0000000000000000042/plots%2Floss%20100%25.png"
+    }
+  ],
+  "invalidReferences": [
+    "skywright-checkpoint:v2:42:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "skywright-checkpoint:v1:042:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "skywright-checkpoint:v1:42:sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  ]
+}

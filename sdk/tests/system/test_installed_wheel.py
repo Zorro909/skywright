@@ -21,7 +21,7 @@ def test_distribution_paths_expose_equivalent_wheel_contents(
     assert rebuilt_contents == direct_contents
 
 
-def test_wheel_declares_only_the_configuration_validation_stack(
+def test_wheel_declares_the_runtime_and_run_store_dependencies(
     installed_sdk: Path,
     tmp_path: Path,
     isolated_process_environment: dict[str, str],
@@ -36,9 +36,17 @@ from importlib.resources import files
 import skywright
 
 assert version("skywright") == skywright.__version__
-assert metadata("skywright").get_all("Requires-Dist") == ["jsonschema[format]<5,>=4.25"]
+assert metadata("skywright").get_all("Requires-Dist") == [
+    "boto3<2,>=1.40",
+    "jsonschema[format]<5,>=4.25",
+    "numpy<3,>=2.2",
+    "safetensors<1,>=0.6",
+]
 assert files(skywright).joinpath("py.typed").is_file()
+assert importlib.util.find_spec("boto3") is None
 assert importlib.util.find_spec("jsonschema") is None
+assert importlib.util.find_spec("numpy") is None
+assert importlib.util.find_spec("safetensors") is None
 assert importlib.util.find_spec("torch") is None
 print(skywright.__version__)
 """

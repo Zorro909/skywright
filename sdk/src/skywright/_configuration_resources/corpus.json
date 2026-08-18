@@ -10,7 +10,7 @@
       "projectDefaults": {"reproducibility":{"seed":1}},
       "witness": {},
       "submission": {"reproducibility":{"seed":2}},
-      "expectedResolved": {"reproducibility":{"seed":2},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10}}
+      "expectedResolved": {"reproducibility":{"seed":2},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3,"keepEveryNth":null},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10}}
     },
     {
       "name": "recursive-empty-array-null-and-exact-numbers",
@@ -19,7 +19,7 @@
       "projectDefaults": {"project":{"nested":{"a":1,"b":2},"empty":{"preserved":true},"array":[1,2],"nullable":1,"large":9007199254740993,"decimal":0.1}},
       "witness": {},
       "submission": {"project":{"nested":{"b":3,"c":4},"empty":{},"array":[3],"nullable":null}},
-      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"project":{"nested":{"a":1,"b":3,"c":4},"empty":{"preserved":true},"array":[3],"nullable":null,"large":9007199254740993,"decimal":0.1}}
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3,"keepEveryNth":null},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"project":{"nested":{"a":1,"b":3,"c":4},"empty":{"preserved":true},"array":[3],"nullable":null,"large":9007199254740993,"decimal":0.1}}
     },
     {
       "name": "object-and-scalar-replacement-both-directions",
@@ -28,7 +28,7 @@
       "projectDefaults": {"objectToScalar":{"old":true},"scalarToObject":1},
       "witness": {},
       "submission": {"objectToScalar":2,"scalarToObject":{"new":true}},
-      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"objectToScalar":2,"scalarToObject":{"new":true}}
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3,"keepEveryNth":null},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"objectToScalar":2,"scalarToObject":{"new":true}}
     },
     {
       "name": "free-form-map-is-explicitly-admitted",
@@ -37,7 +37,7 @@
       "projectDefaults": {},
       "witness": {},
       "submission": {"labels":{"任意":"value"}},
-      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"labels":{"任意":"value"}}
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3,"keepEveryNth":null},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"labels":{"任意":"value"}}
     },
     {
       "name": "canonically-distinct-property-names-remain-distinct",
@@ -46,7 +46,7 @@
       "projectDefaults": {"é":1,"é":2},
       "witness": {},
       "submission": {},
-      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"é":1,"é":2}
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3,"keepEveryNth":null},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"é":1,"é":2}
     },
     {
       "name": "required-value-is-witnessed-but-not-defaulted",
@@ -64,7 +64,7 @@
       "projectDefaults": {"mode":"on"},
       "witness": {"detail":"ready","token":"bundled"},
       "submission": {"detail":"submitted","token":"present"},
-      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"mode":"on","detail":"submitted","token":"present"}
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3,"keepEveryNth":null},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"mode":"on","detail":"submitted","token":"present"}
     },
     {
       "name": "required-value-can-be-supplied-by-submission",
@@ -73,7 +73,7 @@
       "projectDefaults": {},
       "witness": {"requiredValue":0},
       "submission": {"requiredValue":7},
-      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"requiredValue":7}
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3,"keepEveryNth":null},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"requiredValue":7}
     },
     {
       "name": "unknown-closed-world-property-is-rejected",
@@ -145,7 +145,7 @@
       "projectDefaults": {"project":{"token":"bundled"}},
       "witness": {},
       "submission": {},
-      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"project":{"token":"bundled"}}
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3,"keepEveryNth":null},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"project":{"token":"bundled"}}
     },
     {
       "name": "invalid-bundled-schema-is-rejected",
@@ -165,7 +165,7 @@
       "witness": {},
       "references": {"urn:example:project-rule":{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"urn:example:project-rule","properties":{"project":{"required":["token"]}}}},
       "submission": {},
-      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"project":{"token":"bundled"}}
+      "expectedResolved": {"reproducibility":{"seed":0},"dataset":{"ordering":{"policy":"deterministic-shuffle"}},"checkpoint":{"cadence":100,"retention":3,"keepEveryNth":null},"metrics":{"flushInterval":10,"segmentRoll":1000,"systemSamplingInterval":10},"project":{"token":"bundled"}}
     },
     {
       "name": "object-wide-applicator-cannot-constrain-library-properties",

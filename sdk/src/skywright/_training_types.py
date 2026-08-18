@@ -207,6 +207,16 @@ class ResumeState:
 
 
 @dataclass(frozen=True)
+class CheckpointRejectionEvidence:
+    """One newer corrupt recovery candidate rejected before an attempt starts."""
+
+    step: int
+    reference: str
+    code: str
+    summary: str
+
+
+@dataclass(frozen=True)
 class ExecutionAttemptRecord:
     """Identity and resume evidence created before project code executes."""
 
@@ -214,6 +224,8 @@ class ExecutionAttemptRecord:
     run_id: str
     project_version: str
     seed_checkpoint_step: int | None
+    seed_checkpoint_reference: str | None = None
+    rejected_corrupt_checkpoints: tuple[CheckpointRejectionEvidence, ...] = ()
 
 
 @dataclass(frozen=True)

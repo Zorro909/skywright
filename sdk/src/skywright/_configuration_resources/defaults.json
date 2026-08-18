@@ -1,7 +1,7 @@
 {
   "reproducibility": {"seed": 0},
   "dataset": {"ordering": {"policy": "deterministic-shuffle"}},
-  "checkpoint": {"cadence": 100, "retention": 3},
+  "checkpoint": {"cadence": 100, "retention": 3, "keepEveryNth": null},
   "metrics": {
     "flushInterval": 10,
     "segmentRoll": 1000,

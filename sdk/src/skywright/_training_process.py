@@ -34,6 +34,7 @@ from skywright._training_signals import SignalRequests
 from skywright._training_types import (
     CPU_ACCELERATOR,
     Accelerator,
+    CheckpointRejectionEvidence,
     CheckpointSnapshot,
     ExecutionAttemptRecord,
     ExecutionTerminationCause,
@@ -62,6 +63,7 @@ def run_training_process(
     cancellation_requested: Callable[[], bool] = _never_requested,
     interruption_requested: Callable[[], bool] = _never_requested,
     shutdown_grace_seconds: float = 30.0,
+    rejected_corrupt_checkpoints: tuple[CheckpointRejectionEvidence, ...] = (),
 ) -> TrainingProcessResult:
     """Execute one Training Project through the process's sole Run Context."""
 
@@ -73,6 +75,7 @@ def run_training_process(
             run_id=run_id,
             project_version=project_version,
             seed_checkpoint_step=None,
+            rejected_corrupt_checkpoints=rejected_corrupt_checkpoints,
         )
         return unpublished_failure(attempt, violation, "construction")
     attempt = ExecutionAttemptRecord(
@@ -82,6 +85,12 @@ def run_training_process(
         seed_checkpoint_step=(
             resume_from.step if isinstance(resume_from, CheckpointSnapshot) else None
         ),
+        seed_checkpoint_reference=(
+            resume_from.reference
+            if isinstance(resume_from, CheckpointSnapshot)
+            else None
+        ),
+        rejected_corrupt_checkpoints=rejected_corrupt_checkpoints,
     )
     if not run_id or not project_version:
         violation = TrainingContractViolation(
@@ -130,6 +139,9 @@ def run_training_process(
             attempt,
             seed_checkpoint_step=(
                 resolved_resume.step if resolved_resume is not None else None
+            ),
+            seed_checkpoint_reference=(
+                resolved_resume.reference if resolved_resume is not None else None
             ),
         )
         resolved_recorder.publish_attempt(attempt)

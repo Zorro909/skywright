@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:skywright:configuration-schema:0.1.0",
+  "$id": "urn:skywright:configuration-schema:0.2.0",
   "title": "Skywright Configuration Schema",
   "description": "The library-owned part of a Skywright Run Configuration.",
   "type": "object",
@@ -61,9 +61,17 @@
           "default": 3,
           "x-unit": "checkpoints",
           "x-resume-compatibility": "may-change"
+        },
+        "keepEveryNth": {
+          "description": "Optional Step divisor whose Checkpoints remain protected in addition to newest retention.",
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "default": null,
+          "x-unit": "Steps",
+          "x-resume-compatibility": "may-change"
         }
       },
-      "required": ["cadence", "retention"],
+      "required": ["cadence", "retention", "keepEveryNth"],
       "additionalProperties": false
     },
     "metrics": {

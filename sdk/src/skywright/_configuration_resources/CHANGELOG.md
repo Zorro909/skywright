@@ -6,6 +6,14 @@ guidance. Published schema bytes are immutable; a change always creates a new sc
 digest. The backend retains an explicit trusted copy of every supported historical identity and
 reports an unlisted identity as not runnable.
 
+## 0.2.0
+
+- Added nullable `checkpoint.keepEveryNth`, defaulting to `null`, so retention can protect
+  Checkpoints whose Step is divisible by an explicit positive interval.
+
+Migration: existing submissions resolve the new property to `null`; resume may change it without
+changing Dataset ordering identity.
+
 ## 0.1.0
 
 - Introduced `reproducibility.seed`, `dataset.ordering.policy`, `checkpoint.cadence`,
