@@ -16,11 +16,11 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
-import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
+import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
@@ -35,8 +35,8 @@ class RunStoreS3IT {
 		try (SeaweedFs service = SeaweedFs.start()) {
 			var credentials = StaticCredentialsProvider.create(AwsBasicCredentials.create("test-key", "test-secret"));
 			String bucket = "skywright-" + UUID.randomUUID().toString();
-			try (S3Client writer = S3Client.builder()
-				.httpClientBuilder(UrlConnectionHttpClient.builder())
+			try (S3AsyncClient writer = S3AsyncClient.builder()
+				.httpClientBuilder(NettyNioAsyncHttpClient.builder())
 				.endpointOverride(service.endpoint())
 				.region(Region.US_EAST_1)
 				.credentialsProvider(credentials)
@@ -45,18 +45,20 @@ class RunStoreS3IT {
 						S3Configuration.builder().pathStyleAccessEnabled(true).chunkedEncodingEnabled(false).build())
 				.build()) {
 				service.awaitReady(writer);
-				writer.createBucket(CreateBucketRequest.builder().bucket(bucket).build());
+				writer.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).join();
 				RunStoreProtocol protocol = new RunStoreProtocol("project", "run");
 				String key = protocol.artifactKey("123e4567-e89b-12d3-a456-426614174000", 1, "reports/final.txt");
 				byte[] body = "finished".getBytes(StandardCharsets.UTF_8);
-				writer.putObject(PutObjectRequest.builder()
-					.bucket(bucket)
-					.key(key)
-					.contentType("application/octet-stream")
-					.metadata(Map.of("skywright-sha256", sha256(body), "skywright-size", Integer.toString(body.length),
-							"skywright-kind", "artifact", "skywright-schema", "v1", "skywright-media-type",
-							"application/octet-stream"))
-					.build(), RequestBody.fromBytes(body));
+				writer
+					.putObject(PutObjectRequest.builder()
+						.bucket(bucket)
+						.key(key)
+						.contentType("application/octet-stream")
+						.metadata(Map.of("skywright-sha256", sha256(body), "skywright-size",
+								Integer.toString(body.length), "skywright-kind", "artifact", "skywright-schema", "v1",
+								"skywright-media-type", "application/octet-stream"))
+						.build(), AsyncRequestBody.fromBytes(body))
+					.join();
 
 				ResolvedTargetStorage target = new ResolvedTargetStorage("seaweedfs", service.endpoint(), bucket,
 						Region.US_EAST_1, true, credentials, "project", "run");
@@ -98,11 +100,11 @@ class RunStoreS3IT {
 			return new SeaweedFs(output[output.length - 1], URI.create("http://127.0.0.1:" + port));
 		}
 
-		void awaitReady(S3Client client) throws Exception {
+		void awaitReady(S3AsyncClient client) throws Exception {
 			long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
 			while (true) {
 				try {
-					client.listBuckets();
+					client.listBuckets().join();
 					return;
 				}
 				catch (RuntimeException failure) {

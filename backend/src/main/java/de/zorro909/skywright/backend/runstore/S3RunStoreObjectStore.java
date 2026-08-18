@@ -7,11 +7,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
 import software.amazon.awssdk.core.ResponseBytes;
-import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
-import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
+import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
@@ -25,7 +26,7 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 
 	private final ResolvedTargetStorage target;
 
-	private final S3Client client;
+	private final S3AsyncClient client;
 
 	private final S3Presigner presigner;
 
@@ -50,8 +51,8 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 			.apiCallTimeout(control.requestTimeout())
 			.apiCallAttemptTimeout(control.requestTimeout())
 			.build();
-		this.client = S3Client.builder()
-			.httpClientBuilder(UrlConnectionHttpClient.builder())
+		this.client = S3AsyncClient.builder()
+			.httpClientBuilder(NettyNioAsyncHttpClient.builder())
 			.endpointOverride(target.endpoint())
 			.region(target.region())
 			.credentialsProvider(target.credentials())
@@ -76,11 +77,13 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 			Instant started = Instant.now();
 			ListObjectsV2Response page;
 			try {
-				page = this.client.listObjectsV2(ListObjectsV2Request.builder()
-					.bucket(this.target.bucket())
-					.prefix(prefix)
-					.continuationToken(continuation)
-					.build());
+				page = this.client
+					.listObjectsV2(ListObjectsV2Request.builder()
+						.bucket(this.target.bucket())
+						.prefix(prefix)
+						.continuationToken(continuation)
+						.build())
+					.join();
 				measure("ListObjectsV2", 0, "control", started, true);
 			}
 			catch (RuntimeException failure) {
@@ -100,7 +103,9 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 		Instant started = Instant.now();
 		try {
 			ResponseBytes<GetObjectResponse> response = this.client
-				.getObjectAsBytes(GetObjectRequest.builder().bucket(this.target.bucket()).key(key).build());
+				.getObject(GetObjectRequest.builder().bucket(this.target.bucket()).key(key).build(),
+						AsyncResponseTransformer.toBytes())
+				.join();
 			measure("GetObject", response.asByteArray().length, "read", started, true);
 			return new RunStoreObject(key, response.asByteArray(), response.response().contentType(),
 					response.response().metadata());
