@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
 import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -50,6 +51,7 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 			.apiCallAttemptTimeout(control.requestTimeout())
 			.build();
 		this.client = S3Client.builder()
+			.httpClientBuilder(UrlConnectionHttpClient.builder())
 			.endpointOverride(target.endpoint())
 			.region(target.region())
 			.credentialsProvider(target.credentials())

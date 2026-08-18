@@ -16,6 +16,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
 import software.amazon.awssdk.regions.Region;
@@ -35,6 +36,7 @@ class RunStoreS3IT {
 			var credentials = StaticCredentialsProvider.create(AwsBasicCredentials.create("test-key", "test-secret"));
 			String bucket = "skywright-" + UUID.randomUUID().toString();
 			try (S3Client writer = S3Client.builder()
+				.httpClientBuilder(UrlConnectionHttpClient.builder())
 				.endpointOverride(service.endpoint())
 				.region(Region.US_EAST_1)
 				.credentialsProvider(credentials)
