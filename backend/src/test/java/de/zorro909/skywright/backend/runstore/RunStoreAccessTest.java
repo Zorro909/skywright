@@ -21,6 +21,9 @@ class RunStoreAccessTest {
 		RunStoreProtocol protocol = new RunStoreProtocol("project", "run");
 		String key = protocol.artifactKey("123e4567-e89b-12d3-a456-426614174000", 7, "plots/loss.png");
 		objects.put(key, "artifact".getBytes(StandardCharsets.UTF_8), "application/octet-stream", "artifact");
+		byte[] checkpoint = "large-checkpoint".getBytes(StandardCharsets.UTF_8);
+		objects.put(protocol.checkpointKey(7, sha256(checkpoint)), checkpoint, "application/octet-stream",
+				"checkpoint");
 		RunStoreAccess access = new RunStoreAccess(protocol, objects);
 
 		assertThat(access.listOutputs())
@@ -28,6 +31,8 @@ class RunStoreAccessTest {
 					"application/octet-stream", sha256("artifact".getBytes(StandardCharsets.UTF_8))));
 		assertThat(access.presignDownload(key, 900))
 			.isEqualTo(URI.create("https://download.invalid/exact?expires=900"));
+		assertThat(objects.listedPrefixes).containsExactly(protocol.runPrefix() + "artifacts/",
+				protocol.runPrefix() + "samples/");
 	}
 
 	@Test
@@ -73,6 +78,8 @@ class RunStoreAccessTest {
 
 		private final Map<String, RunStoreObject> objects = new LinkedHashMap<>();
 
+		private final List<String> listedPrefixes = new ArrayList<>();
+
 		void put(String key, byte[] bytes, String contentType, String kind) {
 			this.objects.put(key,
 					new RunStoreObject(key, bytes, contentType,
@@ -87,6 +94,7 @@ class RunStoreAccessTest {
 
 		@Override
 		public List<RunStoreObject> list(String prefix) {
+			this.listedPrefixes.add(prefix);
 			return this.objects.values().stream().filter(item -> item.key().startsWith(prefix)).toList();
 		}
 

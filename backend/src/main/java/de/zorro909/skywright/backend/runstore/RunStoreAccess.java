@@ -32,19 +32,23 @@ public final class RunStoreAccess {
 
 	public List<RunStoreOutput> listOutputs() {
 		List<RunStoreOutput> outputs = new ArrayList<>();
-		for (RunStoreObject object : this.objects.list(this.protocol.runPrefix())) {
-			String suffix = object.key().substring(this.protocol.runPrefix().length());
-			Matcher match = OUTPUT.matcher(suffix);
-			if (!match.matches()) {
-				continue;
+		for (RunStoreOutputKind expectedKind : RunStoreOutputKind.values()) {
+			String outputPrefix = this.protocol.runPrefix() + expectedKind.keySegment() + "/";
+			for (RunStoreObject object : this.objects.list(outputPrefix)) {
+				String suffix = object.key().substring(this.protocol.runPrefix().length());
+				Matcher match = OUTPUT.matcher(suffix);
+				if (!match.matches()) {
+					continue;
+				}
+				validate(object);
+				RunStoreOutputKind kind = RunStoreOutputKind.fromKeySegment(match.group(1));
+				if (kind != expectedKind || !kind.metadataValue().equals(object.metadata().get("skywright-kind"))) {
+					throw new RunStoreIntegrityException("RUN_STORE_METADATA_MISMATCH: object kind differs from key");
+				}
+				outputs
+					.add(new RunStoreOutput(kind, Long.parseLong(match.group(2)), decode(match.group(3)), object.key(),
+							object.bytes().length, object.contentType(), object.metadata().get("skywright-sha256")));
 			}
-			validate(object);
-			RunStoreOutputKind kind = RunStoreOutputKind.fromKeySegment(match.group(1));
-			if (!kind.metadataValue().equals(object.metadata().get("skywright-kind"))) {
-				throw new RunStoreIntegrityException("RUN_STORE_METADATA_MISMATCH: object kind differs from key");
-			}
-			outputs.add(new RunStoreOutput(kind, Long.parseLong(match.group(2)), decode(match.group(3)), object.key(),
-					object.bytes().length, object.contentType(), object.metadata().get("skywright-sha256")));
 		}
 		outputs.sort(Comparator.comparingLong(RunStoreOutput::step)
 			.thenComparing(RunStoreOutput::kind)
