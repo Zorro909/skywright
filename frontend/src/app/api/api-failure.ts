@@ -151,6 +151,8 @@ function isSafeProblem(value: Record<string, unknown>): value is Record<
     isOptionalNumber(value['status']) &&
     isOptionalString(value['detail']) &&
     isOptionalString(value['instance']) &&
+    isOptionalString(value['unavailableSource']) &&
+    isOptionalBoolean(value['retryable']) &&
     typeof value['errorCode'] === 'string' &&
     SKYWRIGHT_ERROR_CODE.test(value['errorCode']) &&
     typeof value['correlationId'] === 'string' &&
@@ -179,4 +181,8 @@ function isOptionalString(value: unknown): boolean {
 
 function isOptionalNumber(value: unknown): boolean {
   return value === undefined || typeof value === 'number';
+}
+
+function isOptionalBoolean(value: unknown): boolean {
+  return value === undefined || typeof value === 'boolean';
 }
