@@ -9,5 +9,5 @@ import software.amazon.awssdk.regions.Region;
  * behavior.
  */
 public record ResolvedTargetStorage(String storageId, URI endpoint, String bucket, Region region,
-		boolean pathStyleAccess, AwsCredentialsProvider credentials) {
+		boolean pathStyleAccess, AwsCredentialsProvider credentials, String trainingProjectId, String runId) {
 }

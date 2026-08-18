@@ -1,7 +1,5 @@
 package de.zorro909.skywright.backend.runstore;
 
-import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -47,7 +45,7 @@ public final class RunStoreProtocol {
 		if (value == null || value.isEmpty() || value.indexOf('\0') >= 0) {
 			throw new IllegalArgumentException("Output name must be non-empty Unicode text");
 		}
-		return encode(value);
+		return PercentCodec.encode(value);
 	}
 
 	private static String step(long value) {
@@ -81,23 +79,7 @@ public final class RunStoreProtocol {
 				|| value.indexOf('\0') >= 0) {
 			throw new IllegalArgumentException(label + " must be a non-empty portable key component");
 		}
-		return encode(value);
-	}
-
-	private static String encode(String value) {
-		ByteArrayOutputStream result = new ByteArrayOutputStream();
-		for (byte item : value.getBytes(StandardCharsets.UTF_8)) {
-			int octet = item & 0xff;
-			if ((octet >= 'A' && octet <= 'Z') || (octet >= 'a' && octet <= 'z') || (octet >= '0' && octet <= '9')
-					|| octet == '-' || octet == '.' || octet == '_' || octet == '~') {
-				result.write(octet);
-			}
-			else {
-				String encoded = "%%%02X".formatted(octet);
-				result.writeBytes(encoded.getBytes(StandardCharsets.US_ASCII));
-			}
-		}
-		return result.toString(StandardCharsets.US_ASCII);
+		return PercentCodec.encode(value);
 	}
 
 }
