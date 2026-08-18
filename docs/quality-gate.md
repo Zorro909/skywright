@@ -17,11 +17,10 @@ scripts/quality plan --format json --changed-file frontend/src/app/app.ts
 ```
 
 Root files, wrappers, GitHub automation, and unknown top-level paths fail safe by selecting every
-check. API, backend, frontend, SDK, future shared-fixture, and future Environment Profile paths fan
-out to their affected active checks. API, backend, frontend, and shared-fixture changes select both
-the complete-application and production-image checks. Documentation-only changes retain the visible
-aggregate result without running build-heavy work. Tickets #118 through #120 add release, fixture,
-and integration checks to this same interface as those capabilities become available.
+check. API, backend, frontend, SDK, shared-fixture (including `protocol/`), and Environment Profile
+paths fan out to their affected active checks. API, backend, frontend, and shared-fixture changes
+select both the complete-application and production-image checks. Documentation-only changes retain
+the visible aggregate result without running build-heavy work.
 
 ## GitHub Actions contract
 
@@ -56,6 +55,27 @@ their tools. Keys include the runner platform, tool version supplied by the setu
 owning lockfile where applicable. Generated sources, compiled output, distributions, images, test
 results, and publication inputs are never restored as build authority. Pull-request caches are not
 used as trusted release inputs; release workflows build and verify from the exact tag commit.
+
+The expensive pull-request lanes have the following elapsed-time budgets on GitHub-hosted
+`ubuntu-24.04` runners. A warm run restores the exact Maven, pnpm, and Playwright keys from the base
+branch; a cold run starts without those entries. Measure from job start through report upload, and
+record a representative warm and cold run in the implementing issue whenever the toolchain or these
+budgets change.
+
+| Lane | Warm cache | Cold cache |
+| --- | ---: | ---: |
+| Java and backend | 15 minutes | 25 minutes |
+| Frontend | 12 minutes | 25 minutes |
+| Complete application | 20 minutes | 35 minutes |
+| Production backend image and scan | 25 minutes | 40 minutes |
+
+Chromium operating-system dependency setup and a cold Chromium download are separately named steps;
+each has a hard 10-minute limit and emits its phase before invoking Playwright. Exceeding either
+limit is a failed job, not an indefinitely stalled setup. The pnpm store caches downloads only, and
+the Playwright cache contains only browser downloads; `node_modules`, generated sources, compiled
+resources, reports, and images remain uncached build outputs. The setup action installs the locked
+frontend dependencies once; CI passes that fact to `scripts/quality`, and Maven skips its own install
+execution while still generating and packaging a fresh frontend artifact.
 
 Machine-readable test, coverage, security, and failure diagnostics are uploaded with `always()`
 when their job ran. Test, coverage, security, and diagnostic reports are retained for 90 days.

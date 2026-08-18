@@ -35,6 +35,7 @@ jobs:
       java_version: ${{ steps.plan.outputs.java_version }}
       node_version: ${{ steps.plan.outputs.node_version }}
       pnpm_version: ${{ steps.plan.outputs.pnpm_version }}
+      playwright_version: ${{ steps.plan.outputs.playwright_version }}
       uv_version: ${{ steps.plan.outputs.uv_version }}
     steps:
       - name: Check out the tested revision
@@ -101,8 +102,10 @@ jobs:
         with:
           node-version: ${{ needs.plan.outputs.node_version }}
           pnpm-version: ${{ needs.plan.outputs.pnpm_version }}
+          playwright-version: ${{ needs.plan.outputs.playwright_version }}
+          install-browser: false
       - name: Run Java verification
-        run: scripts/quality run java
+        run: scripts/quality run java --frontend-dependencies-ready
       - name: Retain Java test and diagnostic reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -133,8 +136,10 @@ jobs:
         with:
           node-version: ${{ needs.plan.outputs.node_version }}
           pnpm-version: ${{ needs.plan.outputs.pnpm_version }}
+          playwright-version: ${{ needs.plan.outputs.playwright_version }}
+          install-browser: true
       - name: Run frontend verification
-        run: scripts/quality run frontend
+        run: scripts/quality run frontend --frontend-dependencies-ready
       - name: Retain frontend test and diagnostic reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -169,8 +174,10 @@ jobs:
         with:
           node-version: ${{ needs.plan.outputs.node_version }}
           pnpm-version: ${{ needs.plan.outputs.pnpm_version }}
+          playwright-version: ${{ needs.plan.outputs.playwright_version }}
+          install-browser: true
       - name: Qualify the complete application
-        run: scripts/quality run application
+        run: scripts/quality run application --frontend-dependencies-ready
       - name: Retain application test, coverage, and diagnostic reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -209,9 +216,11 @@ jobs:
         with:
           node-version: ${{ needs.plan.outputs.node_version }}
           pnpm-version: ${{ needs.plan.outputs.pnpm_version }}
+          playwright-version: ${{ needs.plan.outputs.playwright_version }}
+          install-browser: false
       - name: Build and exercise the production image
         id: build_image
-        run: scripts/quality run image
+        run: scripts/quality run image --frontend-dependencies-ready
       - name: Prepare image security reports
         if: steps.build_image.outcome == 'success'
         run: mkdir --parents security-results

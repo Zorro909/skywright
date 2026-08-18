@@ -1,5 +1,5 @@
 name: Set up frontend toolchain
-description: Install the exact Node, pnpm, dependency, and Chromium prerequisites.
+description: Install and cache the exact frontend prerequisites selected by the caller.
 inputs:
   node-version:
     description: Exact supported Node version
@@ -7,6 +7,13 @@ inputs:
   pnpm-version:
     description: Exact supported pnpm version
     required: true
+  playwright-version:
+    description: Exact supported Playwright browser version
+    required: true
+  install-browser:
+    description: Install Chromium and its operating-system dependencies
+    required: false
+    default: 'false'
 runs:
   using: composite
   steps:
@@ -17,8 +24,38 @@ runs:
     - name: Set up pnpm
       shell: bash
       run: npm install --global "pnpm@${{ inputs.pnpm-version }}"
-    - name: Install frontend and browser prerequisites
+    - name: Locate the pnpm store
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm --silent store path)" >> "$GITHUB_OUTPUT"
+    - name: Cache pnpm downloads
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: ${{ runner.os }}-node-${{ inputs.node-version }}-pnpm-${{ inputs.pnpm-version }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+    - name: Install frontend dependencies
+      shell: bash
+      run: pnpm --dir frontend install --frozen-lockfile
+    - name: Cache Playwright Chromium
+      id: playwright-cache
+      if: inputs.install-browser == 'true'
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-node-${{ inputs.node-version }}-pnpm-${{ inputs.pnpm-version }}-playwright-${{ inputs.playwright-version }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+    - name: Install Chromium operating-system dependencies
+      if: inputs.install-browser == 'true'
       shell: bash
       run: |
-        pnpm --dir frontend install --frozen-lockfile
-        pnpm --dir frontend exec playwright install --with-deps chromium
+        echo "Installing Chromium operating-system dependencies (10 minute limit)"
+        timeout --verbose --kill-after=30s 10m \
+          pnpm --dir frontend exec playwright install-deps chromium
+    - name: Install Playwright Chromium on cache miss
+      if: inputs.install-browser == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: '120000'
+      run: |
+        echo "Downloading Playwright Chromium ${{ inputs.playwright-version }} (10 minute limit)"
+        timeout --verbose --kill-after=30s 10m \
+          pnpm --dir frontend exec playwright install chromium
