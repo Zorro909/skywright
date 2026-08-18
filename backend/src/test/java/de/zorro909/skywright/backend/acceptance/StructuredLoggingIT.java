@@ -30,8 +30,8 @@ final class StructuredLoggingIT {
 	void correlatedRequestIsRecordedAsSafeStructuredConsoleEvent() throws Exception {
 		var port = BackendProcess.availablePort();
 		var correlationId = "acceptance-correlation";
-		try (var backend = BackendProcess.start(runtimeDirectory, Map.of(), List.of(), "--server.port=" + port,
-				"--skywright.deployment.environment=acceptance")) {
+		try (var backend = BackendProcess.startWithDatabase(runtimeDirectory, Map.of(), List.of(),
+				"--server.port=" + port, "--skywright.deployment.environment=acceptance")) {
 			BackendProcess.awaitReadiness(port, Duration.ofSeconds(20));
 			var request = HttpRequest
 				.newBuilder(URI.create("http://127.0.0.1:" + port + "/readyz?key=hidden-query-value"))
@@ -67,8 +67,9 @@ final class StructuredLoggingIT {
 	@Test
 	void localProfileUsesReadableConsoleWithoutChangingReadiness() throws Exception {
 		var port = BackendProcess.availablePort();
-		try (var backend = BackendProcess.start(runtimeDirectory, Map.of(), List.of(), "--server.port=" + port,
-				"--skywright.deployment.environment=local", "--spring.profiles.active=local")) {
+		try (var backend = BackendProcess.startWithDatabase(runtimeDirectory, Map.of(), List.of(),
+				"--server.port=" + port, "--skywright.deployment.environment=local",
+				"--spring.profiles.active=local")) {
 			BackendProcess.awaitReadiness(port, Duration.ofSeconds(20));
 
 			assertThat(backend.isAlive()).isTrue();
@@ -83,7 +84,8 @@ final class StructuredLoggingIT {
 			for (var line : lines(backend)) {
 				try {
 					var event = JSON.readTree(line);
-					if (correlationId.equals(event.path("correlationId").asText())) {
+					if (correlationId.equals(event.path("correlationId").asText())
+							&& !event.path("http").path("request").path("method").asText().isEmpty()) {
 						return event;
 					}
 				}

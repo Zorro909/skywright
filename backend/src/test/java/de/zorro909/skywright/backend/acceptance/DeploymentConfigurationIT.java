@@ -22,7 +22,8 @@ final class DeploymentConfigurationIT {
 		var configurationFile = temporaryDirectory.resolve("application.properties");
 		Files.writeString(configurationFile, "skywright.deployment.environment=invalid_file!\n");
 		var port = BackendProcess.availablePort();
-		try (var backend = BackendProcess.start(Map.of("SKYWRIGHT_DEPLOYMENT_ENVIRONMENT", "invalid_environment!"),
+		try (var backend = BackendProcess.startWithDatabase(null,
+				Map.of("SKYWRIGHT_DEPLOYMENT_ENVIRONMENT", "invalid_environment!"),
 				List.of("-Dskywright.deployment.environment=invalid_system!"),
 				"--spring.config.additional-location=" + configurationFile.toUri(), "--server.port=" + port,
 				"--skywright.deployment.environment=acceptance")) {
@@ -46,7 +47,7 @@ final class DeploymentConfigurationIT {
 
 	@Test
 	void unrelatedConfigurationFailuresUseTheirOwnDiagnostics() throws Exception {
-		try (var backend = BackendProcess.start("--skywright.deployment.environment=test",
+		try (var backend = BackendProcess.startWithDatabase("--skywright.deployment.environment=test",
 				"--server.port=not-a-port")) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
 
@@ -57,7 +58,7 @@ final class DeploymentConfigurationIT {
 
 	@Test
 	void missingRequiredDeploymentConfigurationStopsStartupBeforeReadiness() throws Exception {
-		try (var backend = BackendProcess.start("--server.port=0")) {
+		try (var backend = BackendProcess.startWithDatabase("--server.port=0")) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
 
 			assertThat(exitCode).isNotZero();
@@ -69,7 +70,7 @@ final class DeploymentConfigurationIT {
 	@Test
 	void invalidDeploymentConfigurationIsDiagnosedWithoutEchoingItsValue() throws Exception {
 		var sensitiveValue = "production-private-token!";
-		try (var backend = BackendProcess.start("--debug", "--server.port=0",
+		try (var backend = BackendProcess.startWithDatabase("--debug", "--server.port=0",
 				"--skywright.deployment.environment=" + sensitiveValue)) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
 
@@ -84,8 +85,8 @@ final class DeploymentConfigurationIT {
 	@Test
 	void unknownDeploymentConfigurationIsRejectedWithoutEchoingItsValue() throws Exception {
 		var sensitiveValue = "unknown-private-token";
-		try (var backend = BackendProcess.start("--server.port=0", "--skywright.deployment.environment=test",
-				"--skywright.deployment.unexpected=" + sensitiveValue)) {
+		try (var backend = BackendProcess.startWithDatabase("--server.port=0",
+				"--skywright.deployment.environment=test", "--skywright.deployment.unexpected=" + sensitiveValue)) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
 
 			assertThat(exitCode).isNotZero();

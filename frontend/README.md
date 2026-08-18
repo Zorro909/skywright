@@ -66,6 +66,10 @@ generate-resources phase always unpacks the API artifact and generates the TypeS
 before compilation.
 
 The final two commands build the frontend JAR, embed it in the executable Spring JAR, then start
-that packaged application and drive the shell in Chromium. The frontend artifact is written to
+that packaged application with a disposable PostgreSQL container and drive the shell in Chromium.
+The harness requires a Docker-compatible `docker` CLI; set `SKYWRIGHT_CONTAINER_CLI` when its
+executable has a different name. It owns database startup, isolated roles and schema, failure-log
+capture, and cleanup while using the exact PostgreSQL image pinned by the root Maven build.
+The frontend artifact is written to
 `frontend/target/skywright-web-0.1.0-SNAPSHOT.jar`; the packaged entry point is
 `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`.

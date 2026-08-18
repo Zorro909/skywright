@@ -13,6 +13,8 @@ export interface SafeProblem {
   readonly errorCode: string;
   readonly correlationId: string;
   readonly fieldViolations: readonly FieldViolation[];
+  readonly unavailableSource?: string;
+  readonly retryable?: boolean;
 }
 
 export type ApiFailure =
@@ -68,6 +70,12 @@ export async function normalizeProblemResponse(
       errorCode: body['errorCode'],
       correlationId,
       fieldViolations: body['fieldViolations'],
+      ...(typeof body['unavailableSource'] === 'string'
+        ? { unavailableSource: body['unavailableSource'] }
+        : {}),
+      ...(typeof body['retryable'] === 'boolean'
+        ? { retryable: body['retryable'] }
+        : {}),
     },
     response,
   };
@@ -143,6 +151,8 @@ function isSafeProblem(value: Record<string, unknown>): value is Record<
     isOptionalNumber(value['status']) &&
     isOptionalString(value['detail']) &&
     isOptionalString(value['instance']) &&
+    isOptionalString(value['unavailableSource']) &&
+    isOptionalBoolean(value['retryable']) &&
     typeof value['errorCode'] === 'string' &&
     SKYWRIGHT_ERROR_CODE.test(value['errorCode']) &&
     typeof value['correlationId'] === 'string' &&
@@ -171,4 +181,8 @@ function isOptionalString(value: unknown): boolean {
 
 function isOptionalNumber(value: unknown): boolean {
   return value === undefined || typeof value === 'number';
+}
+
+function isOptionalBoolean(value: unknown): boolean {
+  return value === undefined || typeof value === 'boolean';
 }

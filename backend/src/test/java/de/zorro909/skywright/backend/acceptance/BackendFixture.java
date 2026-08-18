@@ -20,8 +20,11 @@ final class BackendFixture implements AutoCloseable {
 
 	private final URI baseUri;
 
-	private BackendFixture(ConfigurableApplicationContext application) {
+	private final PostgreSqlFixture.Database database;
+
+	private BackendFixture(ConfigurableApplicationContext application, PostgreSqlFixture.Database database) {
 		this.application = application;
+		this.database = database;
 		var server = (WebServerApplicationContext) application;
 		this.baseUri = URI.create("http://127.0.0.1:" + server.getWebServer().getPort());
 	}
@@ -37,10 +40,24 @@ final class BackendFixture implements AutoCloseable {
 	}
 
 	private static BackendFixture start(SpringApplicationBuilder builder) {
-		var application = builder.web(WebApplicationType.SERVLET)
-			.properties("server.port=0", "skywright.deployment.environment=test")
-			.run();
-		return new BackendFixture(application);
+		try {
+			var database = PostgreSqlFixture.freshDatabase();
+			try {
+				var properties = new java.util.ArrayList<>(java.util.List.of(database.springProperties()));
+				properties.add("server.port=0");
+				properties.add("skywright.deployment.environment=test");
+				var arguments = properties.stream().map(property -> "--" + property).toArray(String[]::new);
+				var application = builder.web(WebApplicationType.SERVLET).run(arguments);
+				return new BackendFixture(application, database);
+			}
+			catch (RuntimeException exception) {
+				database.close();
+				throw exception;
+			}
+		}
+		catch (java.sql.SQLException exception) {
+			throw new IllegalStateException("Could not provision the test database", exception);
+		}
 	}
 
 	HttpResponse<String> get(String path) throws IOException, InterruptedException {
@@ -49,8 +66,9 @@ final class BackendFixture implements AutoCloseable {
 	}
 
 	@Override
-	public void close() {
+	public void close() throws Exception {
 		application.close();
+		database.close();
 	}
 
 }

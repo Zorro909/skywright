@@ -16,6 +16,8 @@ describe('API failure normalization', () => {
         instance: '/api/v1/runs',
         errorCode: 'SKYWRIGHT_INVALID_REQUEST',
         correlationId: 'body-correlation',
+        unavailableSource: 'PostgreSQL',
+        retryable: true,
         fieldViolations: [
           {
             field: 'configuration.batchSize',
@@ -48,6 +50,8 @@ describe('API failure normalization', () => {
       instance: '/api/v1/runs',
       errorCode: 'SKYWRIGHT_INVALID_REQUEST',
       correlationId: 'effective-correlation',
+      unavailableSource: 'PostgreSQL',
+      retryable: true,
       fieldViolations: [
         {
           field: 'configuration.batchSize',
@@ -86,5 +90,29 @@ describe('API failure normalization', () => {
     Object.defineProperty(first, 'cause', { value: second });
 
     expect(apiFailureFrom(first)).toBeUndefined();
+  });
+
+  it('rejects Problem failures with unsafe availability field types', () => {
+    const response = new Response();
+    const problem = {
+      errorCode: 'SKYWRIGHT_CAPABILITY_UNAVAILABLE',
+      correlationId: 'request-availability',
+      fieldViolations: [],
+    };
+
+    expect(
+      isApiFailure({
+        kind: 'problem',
+        response,
+        problem: { ...problem, retryable: 'false' },
+      }),
+    ).toBe(false);
+    expect(
+      isApiFailure({
+        kind: 'problem',
+        response,
+        problem: { ...problem, unavailableSource: {} },
+      }),
+    ).toBe(false);
   });
 });

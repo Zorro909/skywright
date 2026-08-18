@@ -106,6 +106,8 @@ components:
         - errorCode
         - correlationId
         - fieldViolations
+        - unavailableSource
+        - retryable
       properties:
         type:
           type: string
@@ -132,6 +134,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/FieldViolation'
+        unavailableSource:
+          type:
+            - string
+            - 'null'
+          description: The named unavailable dependency for a capability-unavailable problem.
+        retryable:
+          type: boolean
+          description: Whether retrying after dependency recovery may succeed.
   responses:
     Problem:
       description: The request failed safely.

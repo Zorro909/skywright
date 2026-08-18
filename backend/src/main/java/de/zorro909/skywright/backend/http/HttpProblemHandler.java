@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 @RestControllerAdvice
 public final class HttpProblemHandler extends ResponseEntityExceptionHandler {
@@ -25,6 +27,13 @@ public final class HttpProblemHandler extends ResponseEntityExceptionHandler {
 		logger.error("Unhandled HTTP failure with correlation ID "
 				+ RequestCorrelationFilter.correlationIdFrom(request.getRequest()), exception);
 		return problemResponse(exception, new HttpHeaders(), HttpStatus.INTERNAL_SERVER_ERROR, request);
+	}
+
+	@ExceptionHandler({ DataAccessResourceFailureException.class, CannotCreateTransactionException.class })
+	ResponseEntity<Object> handleDatabaseUnavailable(Exception exception, ServletWebRequest request) {
+		logger.warn("PostgreSQL is unavailable for request with correlation ID "
+				+ RequestCorrelationFilter.correlationIdFrom(request.getRequest()));
+		return problemResponse(exception, new HttpHeaders(), HttpStatus.SERVICE_UNAVAILABLE, request);
 	}
 
 	private ResponseEntity<Object> problemResponse(Exception exception, HttpHeaders sourceHeaders,

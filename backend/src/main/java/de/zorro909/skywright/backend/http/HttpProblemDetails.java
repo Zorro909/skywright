@@ -2,8 +2,11 @@ package de.zorro909.skywright.backend.http;
 
 import de.zorro909.skywright.backend.boundary.generated.model.FieldViolation;
 import de.zorro909.skywright.backend.boundary.generated.model.Problem;
+import de.zorro909.skywright.backend.persistence.failure.DatabaseFailureClassifier;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -15,8 +18,12 @@ final class HttpProblemDetails {
 
 	static Problem from(Exception exception, HttpStatusCode status, HttpServletRequest request) {
 		var metadata = metadata(status);
+		var databaseUnavailable = exception instanceof DataAccessResourceFailureException
+				|| exception instanceof CannotCreateTransactionException;
 		return new Problem("about:blank", title(status), status.value(), metadata.detail(), request.getRequestURI(),
-				metadata.errorCode(), RequestCorrelationFilter.correlationIdFrom(request), fieldViolations(exception));
+				metadata.errorCode(), RequestCorrelationFilter.correlationIdFrom(request), fieldViolations(exception),
+				databaseUnavailable ? "PostgreSQL" : null,
+				databaseUnavailable && DatabaseFailureClassifier.isRecognizedTransient(exception));
 	}
 
 	private static String title(HttpStatusCode status) {
@@ -34,6 +41,8 @@ final class HttpProblemDetails {
 					"SKYWRIGHT_HTTP_NOT_ACCEPTABLE");
 			case 415 ->
 				new Metadata("The request media type is not supported.", "SKYWRIGHT_HTTP_UNSUPPORTED_MEDIA_TYPE");
+			case 503 ->
+				new Metadata("A required capability is temporarily unavailable.", "SKYWRIGHT_CAPABILITY_UNAVAILABLE");
 			default -> status.is5xxServerError()
 					? new Metadata("The server could not complete the request.", "SKYWRIGHT_HTTP_INTERNAL_ERROR")
 					: new Metadata("The HTTP request could not be completed.", "SKYWRIGHT_HTTP_REQUEST_FAILED");

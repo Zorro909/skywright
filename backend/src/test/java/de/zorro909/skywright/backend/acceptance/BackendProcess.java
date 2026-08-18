@@ -26,15 +26,40 @@ final class BackendProcess implements AutoCloseable {
 
 	private final Thread outputReader;
 
+	private final PostgreSqlFixture.Database database;
+
 	private volatile boolean closing;
 
-	private BackendProcess(Process process) {
+	private BackendProcess(Process process, PostgreSqlFixture.Database database) {
 		this.process = process;
+		this.database = database;
 		this.outputReader = Thread.ofPlatform().daemon().start(this::readOutput);
 	}
 
 	static BackendProcess start(String... arguments) throws IOException {
 		return start(Map.of(), List.of(), arguments);
+	}
+
+	static BackendProcess startWithDatabase(String... arguments) throws Exception {
+		return startWithDatabase(null, Map.of(), List.of(), arguments);
+	}
+
+	static BackendProcess startWithDatabase(Path workingDirectory, Map<String, String> environment,
+			List<String> jvmArguments, String... arguments) throws Exception {
+		var database = PostgreSqlFixture.freshDatabase();
+		var databaseArguments = database.backendArguments();
+		var allArguments = new String[arguments.length + databaseArguments.size()];
+		System.arraycopy(arguments, 0, allArguments, 0, arguments.length);
+		for (var index = 0; index < databaseArguments.size(); index++) {
+			allArguments[arguments.length + index] = databaseArguments.get(index);
+		}
+		try {
+			return start(database, workingDirectory, environment, jvmArguments, allArguments);
+		}
+		catch (IOException exception) {
+			database.close();
+			throw exception;
+		}
 	}
 
 	static BackendProcess start(Map<String, String> environment, List<String> jvmArguments, String... arguments)
@@ -44,6 +69,11 @@ final class BackendProcess implements AutoCloseable {
 
 	static BackendProcess start(Path workingDirectory, Map<String, String> environment, List<String> jvmArguments,
 			String... arguments) throws IOException {
+		return start(null, workingDirectory, environment, jvmArguments, arguments);
+	}
+
+	private static BackendProcess start(PostgreSqlFixture.Database database, Path workingDirectory,
+			Map<String, String> environment, List<String> jvmArguments, String... arguments) throws IOException {
 		var command = new ArrayList<String>();
 		command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
 		command.addAll(jvmArguments);
@@ -57,7 +87,7 @@ final class BackendProcess implements AutoCloseable {
 		processBuilder.environment().remove("SKYWRIGHT_DEPLOYMENT_ENVIRONMENT");
 		processBuilder.environment().putAll(environment);
 		var process = processBuilder.start();
-		return new BackendProcess(process);
+		return new BackendProcess(process, database);
 	}
 
 	boolean isAlive() {
@@ -118,7 +148,7 @@ final class BackendProcess implements AutoCloseable {
 	}
 
 	@Override
-	public void close() throws InterruptedException {
+	public void close() throws Exception {
 		closing = true;
 		if (process.isAlive()) {
 			process.destroy();
@@ -128,6 +158,9 @@ final class BackendProcess implements AutoCloseable {
 			}
 		}
 		outputReader.join(Duration.ofSeconds(5));
+		if (database != null) {
+			database.close();
+		}
 	}
 
 }

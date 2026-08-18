@@ -1,0 +1,9 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-79-persistence-foundation
+      author: skywright
+      logicalFilePath: db/changelog/versions/0001-persistence-foundation.yaml
+      comment: Establish the immutable persistence changelog without introducing domain tables.
+      changes:
+        - tagDatabase:
+            tag: persistence-foundation-v1
