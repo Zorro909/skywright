@@ -1,13 +1,16 @@
 # boto3 and the Docker-backed fixture expose runtime-shaped integration values.
 # pyright: reportMissingParameterType=false, reportMissingTypeStubs=false
 # pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false
-# pyright: reportUnknownParameterType=false, reportUnknownVariableType=false
+# pyright: reportUnknownLambdaType=false, reportUnknownParameterType=false
+# pyright: reportUnknownVariableType=false
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 import uuid
@@ -384,3 +387,81 @@ def test_production_run_store_conforms_against_pinned_seaweedfs(tmp_path) -> Non
             item["Key"] == "conditional"
             for item in client.list_objects_v2(Bucket=bucket).get("Contents", ())
         )
+
+
+@pytest.mark.system
+def test_training_lifecycle_scenarios_persist_to_pinned_seaweedfs(tmp_path) -> None:
+    scenario_runner = Path(__file__).parent / "support/run_store_training_scenario.py"
+    with seaweedfs() as (endpoint, client):
+        bucket = f"skywright-{uuid.uuid4().hex}"
+        client.create_bucket(Bucket=bucket)
+
+        def run_scenario(scenario: str, run_id: str) -> dict[str, object]:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(scenario_runner),
+                    scenario,
+                    "--endpoint",
+                    endpoint,
+                    "--bucket",
+                    bucket,
+                    "--run-id",
+                    run_id,
+                    "--staging-directory",
+                    str(tmp_path / f"{run_id}-{scenario}"),
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            return json.loads(completed.stdout)
+
+        interrupted = run_scenario("interrupted", "resume-run")
+        assert interrupted == {
+            "cause": "interrupted",
+            "checkpoint": interrupted["checkpoint"],
+            "durable_step": 1,
+            "initial_state": 0,
+            "last_step": 1,
+            "outcome": "interrupted",
+            "resumed": False,
+            "terminal_report_closed_writer": True,
+        }
+        assert isinstance(interrupted["checkpoint"], str)
+
+        resumed = run_scenario("resume", "resume-run")
+        assert resumed == {
+            "cause": "completed",
+            "checkpoint": resumed["checkpoint"],
+            "durable_step": 2,
+            "initial_state": 1,
+            "last_step": 2,
+            "outcome": "completed",
+            "resumed": True,
+            "terminal_report_closed_writer": True,
+        }
+
+        cancelled = run_scenario("cancelled", "cancelled-run")
+        assert cancelled == {
+            "cause": "cancelled",
+            "checkpoint": None,
+            "durable_step": None,
+            "initial_state": 0,
+            "last_step": 1,
+            "outcome": "cancelled",
+            "resumed": False,
+            "terminal_report_closed_writer": True,
+        }
+
+        failed = run_scenario("failed", "failed-run")
+        assert failed == {
+            "cause": "training_project_failure",
+            "checkpoint": None,
+            "durable_step": None,
+            "initial_state": 0,
+            "last_step": 1,
+            "outcome": "failed",
+            "resumed": False,
+            "terminal_report_closed_writer": True,
+        }

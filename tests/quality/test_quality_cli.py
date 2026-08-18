@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import importlib.machinery
+import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 QUALITY = REPOSITORY / "scripts" / "quality"
@@ -207,6 +213,7 @@ class PlanningTest(unittest.TestCase):
     def test_dependency_backed_implementation_paths_select_integration(self) -> None:
         for path in (
             "backend/src/main/java/de/zorro909/skywright/backend/persistence/Store.java",
+            "backend/src/main/resources/application.properties",
             "sdk/src/skywright/_run_store/implementation.py",
         ):
             with self.subTest(path=path):
@@ -341,6 +348,47 @@ class AggregationTest(unittest.TestCase):
 
 
 class LocalRunnerTest(unittest.TestCase):
+    def test_native_suite_failure_fails_the_integration_component(self) -> None:
+        loader = importlib.machinery.SourceFileLoader("quality_cli", str(QUALITY))
+        specification = importlib.util.spec_from_loader(loader.name, loader)
+        assert specification is not None
+        quality_cli = importlib.util.module_from_spec(specification)
+        sys.modules[loader.name] = quality_cli
+        with mock.patch.object(sys, "path", [str(QUALITY.parent), *sys.path]):
+            loader.exec_module(quality_cli)
+        arguments = SimpleNamespace(
+            check=["integration"],
+            dry_run=False,
+            frontend_dependencies_ready=True,
+        )
+
+        for failing_command in (("native-java",), ("native-python",)):
+            with self.subTest(failing_command=failing_command):
+                commands = (("native-java",), ("native-python",))
+
+                def run_native(command, _failing_command=failing_command, **_kwargs):
+                    if command == _failing_command:
+                        raise subprocess.CalledProcessError(17, command)
+                    return subprocess.CompletedProcess(command, 0)
+
+                output = io.StringIO()
+                with (
+                    mock.patch.object(quality_cli, "check_prerequisites"),
+                    mock.patch.object(
+                        quality_cli, "commands_for", return_value=commands
+                    ),
+                    mock.patch.object(
+                        quality_cli.subprocess, "run", side_effect=run_native
+                    ),
+                    redirect_stdout(output),
+                ):
+                    result = quality_cli.run_command(arguments)
+
+                self.assertEqual(result, 1)
+                self.assertIn(
+                    "FAILED integration: native command exited 17", output.getvalue()
+                )
+
     def test_integration_fails_explicitly_when_container_cli_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             completed = run_quality(
