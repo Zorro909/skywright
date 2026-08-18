@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING as _TYPE_CHECKING
 from skywright._training import (
     Accelerator,
     ArtifactRecord,
+    CheckpointRejectionEvidence,
     CheckpointSnapshot,
     CheckpointState,
     DatasetAccess,
@@ -34,10 +35,11 @@ from skywright._training import (
 if _TYPE_CHECKING:
     from skywright import configuration as configuration
     from skywright import metrics as metrics
+    from skywright import run_store as run_store
 
 
 def __getattr__(name: str) -> object:
-    if name in {"configuration", "metrics"}:
+    if name in {"configuration", "metrics", "run_store"}:
         module = _import_module(f"skywright.{name}")
         globals()[name] = module
         return module
@@ -47,6 +49,7 @@ def __getattr__(name: str) -> object:
 __all__ = (
     "Accelerator",
     "ArtifactRecord",
+    "CheckpointRejectionEvidence",
     "CheckpointSnapshot",
     "CheckpointState",
     "DatasetAccess",
@@ -71,6 +74,7 @@ __all__ = (
     "__version__",
     "configuration",
     "metrics",
+    "run_store",
     "run_training_process",
     "version",
 )
