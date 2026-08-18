@@ -52,7 +52,7 @@ def load_toolchain() -> dict[str, str]:
 
 
 TOOLCHAIN = load_toolchain()
-LOCAL_CHECKS = ("application", "image", "java", "frontend", "sdk")
+LOCAL_CHECKS = ("application", "image", "java", "frontend", "profile", "sdk")
 CHECKS = (*LOCAL_CHECKS, "security")
 ALL_CHECKS = frozenset(CHECKS)
 CATEGORY_CHECKS = {
@@ -61,9 +61,9 @@ CATEGORY_CHECKS = {
     "documentation": frozenset(),
     "fixture": frozenset(("application", "image", "java", "sdk", "security")),
     "frontend": frozenset(("application", "image", "frontend", "security")),
-    "profile": frozenset(("sdk", "security")),
+    "profile": frozenset(("profile", "security")),
     "project-action": frozenset(("sdk", "security")),
-    "sdk": frozenset(("sdk", "security")),
+    "sdk": frozenset(("profile", "sdk", "security")),
     "shared-tooling": ALL_CHECKS,
 }
 COMMANDS = {
@@ -99,6 +99,7 @@ COMMANDS = {
         ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
         ("pnpm", "--dir", "frontend", "run", "verify"),
     ),
+    "profile": (("environment-profiles/scripts/check",),),
     "sdk": (
         ("sdk/scripts/verify",),
         (".github/actions/publish-training-project/scripts/check",),
@@ -385,7 +386,7 @@ def check_prerequisites(check: str) -> None:
         require_frontend()
     elif check == "sdk":
         require_uv()
-    if check == "image":
+    if check in {"image", "profile"}:
         require_container_runtime()
 
 
@@ -419,10 +420,7 @@ def run_command(arguments: argparse.Namespace) -> int:
                 subprocess.run(
                     command, cwd=REPOSITORY, check=True, env=os.environ.copy()
                 )
-                if (
-                    check in {"application", "image", "java", "frontend"}
-                    and index == 0
-                ):
+                if check in {"application", "image", "java", "frontend"} and index == 0:
                     require_browser()
             print(f"PASSED {check}")
         except (PrerequisiteError, subprocess.CalledProcessError) as error:
