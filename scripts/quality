@@ -53,19 +53,29 @@ def load_toolchain() -> dict[str, str]:
 
 
 TOOLCHAIN = load_toolchain()
-LOCAL_CHECKS = ("application", "image", "java", "frontend", "profile", "sdk")
+LOCAL_CHECKS = (
+    "application",
+    "image",
+    "integration",
+    "java",
+    "frontend",
+    "profile",
+    "sdk",
+)
 CHECKS = (*LOCAL_CHECKS, "security")
 ALL_CHECKS = frozenset(CHECKS)
 BROWSER_CHECKS = frozenset(("application", "frontend"))
 CATEGORY_CHECKS = {
-    "api": frozenset(("application", "image", "java", "frontend", "security")),
-    "backend": frozenset(("application", "image", "java", "security")),
+    "api": frozenset(
+        ("application", "image", "integration", "java", "frontend", "security")
+    ),
+    "backend": frozenset(("application", "image", "integration", "java", "security")),
     "documentation": frozenset(),
     "fixture": frozenset(("application", "image", "java", "sdk", "security")),
     "frontend": frozenset(("application", "image", "frontend", "security")),
     "profile": frozenset(("profile", "security")),
     "project-action": frozenset(("sdk", "security")),
-    "sdk": frozenset(("profile", "sdk", "security")),
+    "sdk": frozenset(("integration", "profile", "sdk", "security")),
     "shared-tooling": ALL_CHECKS,
 }
 FRONTEND_INSTALL = ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile")
@@ -77,6 +87,7 @@ COMMANDS = {
             "--batch-mode",
             "-DskipFrontendInstall=true",
             "-DskipFrontendTests=true",
+            "-DexcludedGroups=real-service",
             "-pl",
             "backend",
             "-am",
@@ -87,6 +98,7 @@ COMMANDS = {
             "--batch-mode",
             "-DskipFrontendInstall=true",
             "-DskipFrontendTests=true",
+            "-DexcludedGroups=real-service",
             "-pl",
             "frontend",
             "-am",
@@ -101,6 +113,7 @@ COMMANDS = {
             "--batch-mode",
             "-DskipFrontendInstall=true",
             "-DskipFrontendTests=true",
+            "-DexcludedGroups=real-service",
             "-pl",
             "backend-deployment",
             "-am",
@@ -114,11 +127,27 @@ COMMANDS = {
             "--batch-mode",
             "-DskipFrontendInstall=true",
             "-DskipFrontendTests=true",
+            "-DexcludedGroups=real-service",
             "-pl",
             "backend",
             "-am",
             "verify",
         ),
+    ),
+    "integration": (
+        FRONTEND_INSTALL,
+        (
+            "./mvnw",
+            "--batch-mode",
+            "-DskipFrontendInstall=true",
+            "-DskipFrontendTests=true",
+            "-Dgroups=real-service",
+            "-pl",
+            "backend",
+            "-am",
+            "verify",
+        ),
+        ("sdk/scripts/integration",),
     ),
     "frontend": (
         FRONTEND_INSTALL,
@@ -194,6 +223,8 @@ class QualityPlan:
 
 def category_for(path: str) -> str:
     normalized = path.removeprefix("./")
+    if normalized == "sdk/src/skywright/_configuration_resources/corpus.json":
+        return "fixture"
     if (
         normalized.startswith(("docs/", ".github/ISSUE_TEMPLATE/"))
         or normalized
@@ -240,6 +271,11 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         if not materialized_paths
         else frozenset().union(*(CATEGORY_CHECKS[category] for category in categories))
     )
+    if any(
+        path.removeprefix("./").startswith("protocol/run-store/")
+        for path in materialized_paths
+    ):
+        applicable = applicable.union(("integration",))
     return QualityPlan(
         changed_files=tuple(materialized_paths),
         categories=tuple(categories or ["complete"]),
@@ -413,7 +449,12 @@ def require_container_runtime() -> None:
 
 
 def check_prerequisites(check: str) -> None:
-    if check in {"application", "image", "java"}:
+    if check == "integration":
+        require_container_runtime()
+        require_java()
+        require_frontend()
+        require_uv()
+    elif check in {"application", "image", "java"}:
         require_java()
         require_frontend()
     elif check == "frontend":

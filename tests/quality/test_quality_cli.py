@@ -45,6 +45,7 @@ class PlanningTest(unittest.TestCase):
                 "application": True,
                 "frontend": True,
                 "image": True,
+                "integration": True,
                 "java": True,
                 "profile": True,
                 "sdk": True,
@@ -60,6 +61,7 @@ class PlanningTest(unittest.TestCase):
                     "application": True,
                     "frontend": True,
                     "image": True,
+                    "integration": True,
                     "java": True,
                     "profile": False,
                     "sdk": False,
@@ -72,6 +74,7 @@ class PlanningTest(unittest.TestCase):
                     "application": True,
                     "frontend": False,
                     "image": True,
+                    "integration": True,
                     "java": True,
                     "profile": False,
                     "sdk": False,
@@ -84,6 +87,7 @@ class PlanningTest(unittest.TestCase):
                     "application": True,
                     "frontend": True,
                     "image": True,
+                    "integration": False,
                     "java": False,
                     "profile": False,
                     "sdk": False,
@@ -96,6 +100,7 @@ class PlanningTest(unittest.TestCase):
                     "application": False,
                     "frontend": False,
                     "image": False,
+                    "integration": True,
                     "java": False,
                     "profile": True,
                     "sdk": True,
@@ -108,6 +113,7 @@ class PlanningTest(unittest.TestCase):
                     "application": True,
                     "frontend": False,
                     "image": True,
+                    "integration": False,
                     "java": True,
                     "profile": False,
                     "sdk": True,
@@ -120,6 +126,7 @@ class PlanningTest(unittest.TestCase):
                     "application": True,
                     "frontend": False,
                     "image": True,
+                    "integration": True,
                     "java": True,
                     "profile": False,
                     "sdk": True,
@@ -132,6 +139,7 @@ class PlanningTest(unittest.TestCase):
                     "application": False,
                     "frontend": False,
                     "image": False,
+                    "integration": False,
                     "java": False,
                     "profile": True,
                     "sdk": False,
@@ -144,6 +152,7 @@ class PlanningTest(unittest.TestCase):
                     "application": False,
                     "frontend": False,
                     "image": False,
+                    "integration": False,
                     "java": False,
                     "profile": False,
                     "sdk": True,
@@ -156,6 +165,7 @@ class PlanningTest(unittest.TestCase):
                     "application": False,
                     "frontend": False,
                     "image": False,
+                    "integration": False,
                     "java": False,
                     "profile": False,
                     "sdk": False,
@@ -176,6 +186,24 @@ class PlanningTest(unittest.TestCase):
                     applicability,
                 )
 
+    def test_real_structural_overlay_corpus_is_a_shared_fixture(self) -> None:
+        plan = self.plan("sdk/src/skywright/_configuration_resources/corpus.json")
+
+        self.assertEqual(plan["categories"], ["fixture"])
+        self.assertEqual(
+            {name: check["applicable"] for name, check in plan["checks"].items()},
+            {
+                "application": True,
+                "frontend": False,
+                "image": True,
+                "integration": False,
+                "java": True,
+                "profile": False,
+                "sdk": True,
+                "security": True,
+            },
+        )
+
     def test_mixed_backend_sdk_and_protocol_fixture_change_unions_their_fan_out(
         self,
     ) -> None:
@@ -192,6 +220,7 @@ class PlanningTest(unittest.TestCase):
                 "application": True,
                 "frontend": False,
                 "image": True,
+                "integration": True,
                 "java": True,
                 "profile": True,
                 "sdk": True,
@@ -257,6 +286,7 @@ class AggregationTest(unittest.TestCase):
                     plan,
                     "application=success",
                     "image=success",
+                    "integration=success",
                     f"java={outcome}",
                     "frontend=skipped",
                     "sdk=skipped",
@@ -265,8 +295,72 @@ class AggregationTest(unittest.TestCase):
                 self.assertNotEqual(completed.returncode, 0)
                 self.assertIn(f"FAILED java ({outcome})", completed.stdout)
 
+    def test_integration_must_succeed_when_applicable(self) -> None:
+        plan = json.loads(
+            run_quality(
+                "plan", "--format", "json", "--changed-file", "backend/App.java"
+            ).stdout
+        )
+        other_results = (
+            "application=success",
+            "image=success",
+            "java=success",
+            "frontend=skipped",
+            "sdk=skipped",
+            "security=success",
+        )
+
+        succeeded = self.aggregate(plan, *other_results, "integration=success")
+        self.assertEqual(succeeded.returncode, 0, succeeded.stdout)
+
+        for outcome in ("failure", "cancelled", "skipped", "missing"):
+            with self.subTest(outcome=outcome):
+                integration_result = (
+                    () if outcome == "missing" else (f"integration={outcome}",)
+                )
+                completed = self.aggregate(plan, *other_results, *integration_result)
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn(f"FAILED integration ({outcome})", completed.stdout)
+
 
 class LocalRunnerTest(unittest.TestCase):
+    def test_integration_fails_explicitly_when_container_cli_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            completed = run_quality(
+                "run",
+                "integration",
+                "--dry-run",
+                check=False,
+                env={**os.environ, "PATH": temporary_directory},
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "FAILED integration: required executable 'docker' is unavailable",
+            completed.stdout,
+        )
+
+    def test_integration_fails_explicitly_when_container_daemon_is_unavailable(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fake_docker = Path(temporary_directory) / "docker"
+            fake_docker.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            fake_docker.chmod(0o755)
+            completed = run_quality(
+                "run",
+                "integration",
+                "--dry-run",
+                check=False,
+                env={**os.environ, "PATH": temporary_directory},
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "FAILED integration: required Docker-compatible container runtime is unavailable",
+            completed.stdout,
+        )
+
     def test_missing_frontend_tools_fail_explicitly_without_hiding_other_checks(
         self,
     ) -> None:

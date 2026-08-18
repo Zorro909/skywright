@@ -8,11 +8,14 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
@@ -25,6 +28,7 @@ import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
+@Tag("real-service")
 class RunStoreS3IT {
 
 	private static final String IMAGE = "docker.io/chrislusf/seaweedfs:4.42@sha256:"
@@ -118,7 +122,17 @@ class RunStoreS3IT {
 
 		@Override
 		public void close() throws Exception {
-			new ProcessBuilder("docker", "rm", "-f", this.container).start().waitFor();
+			try {
+				Process logs = new ProcessBuilder("docker", "logs", this.container).redirectErrorStream(true).start();
+				byte[] output = logs.getInputStream().readAllBytes();
+				logs.waitFor();
+				Path directory = Path.of("target/service-logs");
+				Files.createDirectories(directory);
+				Files.write(directory.resolve("seaweedfs-" + this.container.substring(0, 12) + ".log"), output);
+			}
+			finally {
+				new ProcessBuilder("docker", "rm", "-f", this.container).start().waitFor();
+			}
 		}
 	}
 

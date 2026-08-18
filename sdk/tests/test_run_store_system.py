@@ -11,6 +11,7 @@ import time
 import urllib.request
 import uuid
 from contextlib import contextmanager
+from pathlib import Path
 
 import boto3
 import pytest
@@ -115,6 +116,18 @@ def seaweedfs():
                 time.sleep(0.1)
         yield endpoint, client
     finally:
+        service_logs = Path("target/service-logs")
+        service_logs.mkdir(parents=True, exist_ok=True)
+        logs = subprocess.run(
+            ["docker", "logs", container],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        service_logs.joinpath(f"seaweedfs-{container[:12]}.log").write_text(
+            logs.stdout + logs.stderr,
+            encoding="utf-8",
+        )
         subprocess.run(
             ["docker", "rm", "-f", container],
             check=False,

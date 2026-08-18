@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+mkdir -p target/test-results
+
+uv run --locked --group ml-test pytest tests/test_run_store_system.py \
+  --junitxml target/test-results/integration.xml

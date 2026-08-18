@@ -1,6 +1,8 @@
 package de.zorro909.skywright.backend.configurationcontract;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -177,6 +179,16 @@ class ConfigurationContractTest {
 			.isThrownBy(() -> this.contracts.compile(applicatorBypass))
 			.satisfies(error -> assertThat(error.errors()).containsExactly(new ConfigurationError(
 					"CONFIG_OWNERSHIP_COLLISION", "project-schema", "/reproducibility/seed", "properties")));
+	}
+
+	@Test
+	void packagedCorpusIsByteIdenticalToTheCanonicalSdkResource() throws IOException {
+		byte[] canonical = Files.readAllBytes(Path.of("../sdk/src/skywright/_configuration_resources/corpus.json"));
+		byte[] packaged = ConfigurationContractTest.class
+			.getResourceAsStream("/META-INF/skywright/configuration/corpus.json")
+			.readAllBytes();
+
+		assertThat(packaged).isEqualTo(canonical);
 	}
 
 	@Test
