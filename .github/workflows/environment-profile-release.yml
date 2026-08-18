@@ -1,0 +1,482 @@
+name: Environment Profile Release
+
+on:
+  push:
+    tags:
+      - 'profile-v*'
+
+concurrency:
+  group: environment-profile-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate profile release policy
+    runs-on: ubuntu-24.04
+    outputs:
+      source_revision: ${{ steps.release.outputs.source_revision }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Check out the exact tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Fetch the publication authority
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+      - name: Reject tags that do not satisfy the release contract
+        id: release
+        env:
+          TAG: ${{ github.ref_name }}
+          TAG_COMMIT: ${{ github.sha }}
+        run: |
+          python3 environment-profiles/release_support.py validate \
+            --tag "$TAG" \
+            --main-ref origin/main \
+            --expected-revision "$TAG_COMMIT" \
+            --output release.json
+          jq --raw-output '"source_revision=\(.source_revision)\nversion=\(.version)"' \
+            release.json >> "$GITHUB_OUTPUT"
+          scripts/quality identity \
+            --event tag \
+            --tested-revision "$TAG_COMMIT" \
+            --tag-commit "$(git rev-parse "$TAG^{commit}")"
+
+  qualify:
+    name: Qualify ${{ matrix.backend }} profile
+    needs: validate
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        backend:
+          - cuda
+          - rocm
+    steps:
+      - name: Check out the exact tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Fetch the publication authority
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+      - name: Revalidate committed release inputs
+        env:
+          SOURCE_REVISION: ${{ needs.validate.outputs.source_revision }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 environment-profiles/release_support.py validate \
+            --tag "$TAG" \
+            --main-ref origin/main \
+            --expected-revision "$SOURCE_REVISION" \
+            --output release.json
+      - name: Install the registry transport
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+      - name: Acquire the exact profile image once
+        env:
+          BACKEND: ${{ matrix.backend }}
+          SOURCE_REVISION: ${{ needs.validate.outputs.source_revision }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          sdk_version="$(jq --raw-output .sdk environment-profiles/manifest.json)"
+          image="ghcr.io/zorro909/skywright-environment:$VERSION-$BACKEND"
+          mkdir --parents "release/$BACKEND"
+          archive="release/$BACKEND/$BACKEND.oci.tar"
+          if skopeo inspect "docker://$image" > /dev/null 2>&1; then
+            # Reruns after a partial publication qualify the already-published
+            # immutable bytes instead of producing a potentially new digest.
+            skopeo copy "docker://$image" "oci-archive:$archive:$image"
+            skopeo copy "oci-archive:$archive" "docker-daemon:$image"
+          else
+            docker build \
+              --platform linux/amd64 \
+              --file "environment-profiles/$BACKEND/Containerfile" \
+              --build-arg "SKYWRIGHT_SOURCE_REVISION=$SOURCE_REVISION" \
+              --build-arg "SKYWRIGHT_SDK_VERSION=$sdk_version" \
+              --tag "$image" \
+              sdk
+          fi
+      - name: Exercise the installed runtime without accelerator hardware
+        env:
+          BACKEND: ${{ matrix.backend }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          image="ghcr.io/zorro909/skywright-environment:$VERSION-$BACKEND"
+          docker run --rm --network=none "$image" skywright-runtime --help
+          docker run --rm --network=none "$image" skywright-runtime --version
+          docker image inspect "$image" > "release/$BACKEND/image-inspect.json"
+          docker run --rm --network=none "$image" python -c \
+            "import importlib.metadata,json,platform,torch; from skywright._build_info import SOURCE_REVISION; v=importlib.metadata.version('skywright'); print(json.dumps({'accelerator_available':torch.cuda.is_available(),'architecture':platform.machine(),'pytorch':torch.__version__.split('+')[0],'runtime_command_version':v,'sdk':v,'source_revision':SOURCE_REVISION},sort_keys=True))" \
+            > "release/$BACKEND/runtime-facts.json"
+          jq '.[0]' "release/$BACKEND/image-inspect.json" > "release/$BACKEND/image.json"
+          python3 environment-profiles/release_support.py qualify-image \
+            --release release.json \
+            --definitions environment-profiles/manifest.json \
+            --backend "$BACKEND" \
+            --inspect "release/$BACKEND/image.json" \
+            --facts "release/$BACKEND/runtime-facts.json" \
+            --output "release/$BACKEND/evidence.json"
+      - name: Generate the SPDX JSON SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/zorro909/skywright-environment:${{ needs.validate.outputs.version }}-${{ matrix.backend }}
+          format: spdx-json
+          output: release/${{ matrix.backend }}/${{ matrix.backend }}.spdx.json
+          scanners: vuln
+      - name: Verify SPDX JSON and reject fixable high or critical vulnerabilities
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: jq --exit-status '.spdxVersion == "SPDX-2.3"' "release/$BACKEND/$BACKEND.spdx.json"
+      - name: Enforce the vulnerability policy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/zorro909/skywright-environment:${{ needs.validate.outputs.version }}-${{ matrix.backend }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Preserve the exact qualified OCI image
+        env:
+          BACKEND: ${{ matrix.backend }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          image="ghcr.io/zorro909/skywright-environment:$VERSION-$BACKEND"
+          archive="release/$BACKEND/$BACKEND.oci.tar"
+          if [[ ! -f "$archive" ]]; then
+            skopeo copy "docker-daemon:$image" "oci-archive:$archive:$image"
+          fi
+          digest="$(skopeo inspect --format '{{.Digest}}' "oci-archive:$archive")"
+          jq --arg digest "$digest" --arg image "$image" \
+            '. + {digest:$digest,image:$image}' \
+            "release/$BACKEND/evidence.json" > "release/$BACKEND/evidence.complete.json"
+          mv "release/$BACKEND/evidence.complete.json" "release/$BACKEND/evidence.json"
+          cd "release/$BACKEND"
+          sha256sum "$BACKEND.oci.tar" "$BACKEND.spdx.json" evidence.json > SHA256SUMS
+      - name: Hand off only the qualified artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: environment-profile-${{ matrix.backend }}
+          path: |
+            release/${{ matrix.backend }}/${{ matrix.backend }}.oci.tar
+            release/${{ matrix.backend }}/${{ matrix.backend }}.spdx.json
+            release/${{ matrix.backend }}/evidence.json
+            release/${{ matrix.backend }}/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish coordinated Environment Profile Release
+    needs:
+      - validate
+      - qualify
+    runs-on: ubuntu-24.04
+    environment: environment-profile-release
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+      packages: write
+    steps:
+      - name: Check out the exact tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Fetch the publication authority
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+      - name: Revalidate the protected source
+        env:
+          SOURCE_REVISION: ${{ needs.validate.outputs.source_revision }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
+          python3 environment-profiles/release_support.py validate \
+            --tag "$TAG" \
+            --main-ref origin/main \
+            --expected-revision "$SOURCE_REVISION" \
+            --output release.json
+      - name: Receive the exact qualified artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: environment-profile-*
+          path: release/handoff
+      - name: Verify exact checksummed handoff
+        run: |
+          for backend in cuda rocm; do
+            directory="release/handoff/environment-profile-$backend"
+            python3 environment-profiles/release_support.py verify-handoff \
+              --directory "$directory" \
+              --checksums "$directory/SHA256SUMS" \
+              --expected "$backend.oci.tar" \
+              --expected "$backend.spdx.json" \
+              --expected evidence.json
+          done
+      - name: Install the registry transport
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+      - name: Authenticate with short-lived package identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "$GH_TOKEN" | skopeo login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Reject collisions and repair missing matching images
+        id: publish_images
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          for backend in cuda rocm; do
+            archive="release/handoff/environment-profile-$backend/$backend.oci.tar"
+            image="ghcr.io/zorro909/skywright-environment:$VERSION-$backend"
+            expected="$(jq --raw-output .digest "release/handoff/environment-profile-$backend/evidence.json")"
+            if existing="$(skopeo inspect --format '{{.Digest}}' "docker://$image" 2>/dev/null)"; then
+              if [[ "$existing" != "$expected" ]]; then
+                echo "Conflicting content exists for immutable $image: $existing != $expected" >&2
+                exit 1
+              fi
+            else
+              skopeo copy "oci-archive:$archive" "docker://$image"
+            fi
+            published="$(skopeo inspect --format '{{.Digest}}' "docker://$image")"
+            test "$published" = "$expected"
+            echo "$backend=$published" >> "$GITHUB_OUTPUT"
+          done
+      - name: Require both images to be publicly digest-readable
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          skopeo logout ghcr.io
+          for backend in cuda rocm; do
+            evidence="release/handoff/environment-profile-$backend/evidence.json"
+            digest="$(jq --raw-output .digest "$evidence")"
+            skopeo inspect "docker://ghcr.io/zorro909/skywright-environment@$digest" > /dev/null || {
+              echo "GHCR package is not public. Make skywright-environment public, then rerun this exact workflow." >&2
+              exit 1
+            }
+          done
+      - name: Inspect an existing partial or complete GitHub Release
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir --parents release/existing release/evidence
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets,body,isDraft,name > release/existing.json 2>/dev/null; then
+            echo 'release=true' >> "$GITHUB_OUTPUT"
+            jq --raw-output '"draft=\(.isDraft)"' release/existing.json >> "$GITHUB_OUTPUT"
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release/existing
+          else
+            echo 'release=false' >> "$GITHUB_OUTPUT"
+            echo 'draft=true' >> "$GITHUB_OUTPUT"
+            printf '{"assets":[],"body":"","isDraft":true,"name":""}\n' > release/existing.json
+          fi
+          for asset in cuda.provenance.intoto.jsonl cuda.sbom.intoto.jsonl rocm.provenance.intoto.jsonl rocm.sbom.intoto.jsonl; do
+            key="${asset//./_}"
+            if [[ -f "release/existing/$asset" ]]; then
+              cp "release/existing/$asset" "release/evidence/$asset"
+              echo "$key=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$key=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+      - name: Reject a discoverable partial release or conflicting title
+        if: steps.existing.outputs.release == 'true'
+        env:
+          DRAFT: ${{ steps.existing.outputs.draft }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          expected_title="Environment Profiles $VERSION"
+          test "$(jq --raw-output .name release/existing.json)" = "$expected_title" || {
+            echo "Existing release has a conflicting title" >&2
+            exit 1
+          }
+          python3 environment-profiles/release_support.py notes \
+            --release release.json \
+            --output release/evidence/RELEASE.md
+          jq --raw-output .body release/existing.json > release/existing/RELEASE.md
+          cmp --silent release/existing/RELEASE.md release/evidence/RELEASE.md || {
+            echo "Existing release has conflicting notes" >&2
+            exit 1
+          }
+          if [[ "$DRAFT" != 'true' ]]; then
+            expected=(
+              SHA256SUMS environment-profile-release-manifest.json
+              cuda.spdx.json cuda.provenance.intoto.jsonl cuda.sbom.intoto.jsonl
+              rocm.spdx.json rocm.provenance.intoto.jsonl rocm.sbom.intoto.jsonl
+            )
+            for asset in "${expected[@]}"; do
+              jq --exit-status --arg asset "$asset" \
+                '.assets | any(.name == $asset)' release/existing.json > /dev/null || {
+                echo "Discoverable release is incomplete; refusing in-place repair: $asset is missing" >&2
+                exit 1
+              }
+            done
+          fi
+      - name: Attest CUDA provenance
+        id: cuda_provenance
+        if: steps.existing.outputs.cuda_provenance_intoto_jsonl != 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ghcr.io/zorro909/skywright-environment
+          subject-digest: ${{ steps.publish_images.outputs.cuda }}
+          push-to-registry: true
+      - name: Materialize CUDA provenance
+        if: steps.existing.outputs.cuda_provenance_intoto_jsonl != 'true'
+        env:
+          BUNDLE: ${{ steps.cuda_provenance.outputs.bundle-path }}
+        run: cp "$BUNDLE" release/evidence/cuda.provenance.intoto.jsonl
+      - name: Attest CUDA SBOM
+        id: cuda_sbom
+        if: steps.existing.outputs.cuda_sbom_intoto_jsonl != 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ghcr.io/zorro909/skywright-environment
+          subject-digest: ${{ steps.publish_images.outputs.cuda }}
+          sbom-path: release/handoff/environment-profile-cuda/cuda.spdx.json
+          push-to-registry: true
+      - name: Materialize CUDA SBOM attestation
+        if: steps.existing.outputs.cuda_sbom_intoto_jsonl != 'true'
+        env:
+          BUNDLE: ${{ steps.cuda_sbom.outputs.bundle-path }}
+        run: cp "$BUNDLE" release/evidence/cuda.sbom.intoto.jsonl
+      - name: Attest ROCm provenance
+        id: rocm_provenance
+        if: steps.existing.outputs.rocm_provenance_intoto_jsonl != 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ghcr.io/zorro909/skywright-environment
+          subject-digest: ${{ steps.publish_images.outputs.rocm }}
+          push-to-registry: true
+      - name: Materialize ROCm provenance
+        if: steps.existing.outputs.rocm_provenance_intoto_jsonl != 'true'
+        env:
+          BUNDLE: ${{ steps.rocm_provenance.outputs.bundle-path }}
+        run: cp "$BUNDLE" release/evidence/rocm.provenance.intoto.jsonl
+      - name: Attest ROCm SBOM
+        id: rocm_sbom
+        if: steps.existing.outputs.rocm_sbom_intoto_jsonl != 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ghcr.io/zorro909/skywright-environment
+          subject-digest: ${{ steps.publish_images.outputs.rocm }}
+          sbom-path: release/handoff/environment-profile-rocm/rocm.spdx.json
+          push-to-registry: true
+      - name: Materialize ROCm SBOM attestation
+        if: steps.existing.outputs.rocm_sbom_intoto_jsonl != 'true'
+        env:
+          BUNDLE: ${{ steps.rocm_sbom.outputs.bundle-path }}
+        run: cp "$BUNDLE" release/evidence/rocm.sbom.intoto.jsonl
+      - name: Verify provenance and SPDX attestations before discovery
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ needs.validate.outputs.source_revision }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          signer='Zorro909/skywright/.github/workflows/environment-profile-release.yml'
+          for backend in cuda rocm; do
+            digest="$(jq --raw-output .digest "release/handoff/environment-profile-$backend/evidence.json")"
+            subject="oci://ghcr.io/zorro909/skywright-environment@$digest"
+            common=(
+              --repo "$GITHUB_REPOSITORY"
+              --signer-workflow "$signer"
+              --source-digest "$SOURCE_REVISION"
+              --source-ref "refs/tags/$TAG"
+            )
+            gh attestation verify "$subject" \
+              --bundle "release/evidence/$backend.provenance.intoto.jsonl" \
+              "${common[@]}"
+            gh attestation verify "$subject" \
+              --bundle "release/evidence/$backend.sbom.intoto.jsonl" \
+              --predicate-type https://spdx.dev/Document/v2.3 \
+              "${common[@]}"
+          done
+      - name: Bind exact digests and supply-chain evidence into the release manifest
+        env:
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          SOURCE_REVISION: ${{ needs.validate.outputs.source_revision }}
+        run: |
+          for backend in cuda rocm; do
+            input="release/handoff/environment-profile-$backend/evidence.json"
+            sbom="release/handoff/environment-profile-$backend/$backend.spdx.json"
+            provenance="release/evidence/$backend.provenance.intoto.jsonl"
+            sbom_attestation="release/evidence/$backend.sbom.intoto.jsonl"
+            jq \
+              --arg provenance "$backend.provenance.intoto.jsonl" \
+              --arg provenance_sha256 "$(sha256sum "$provenance" | cut --delimiter=' ' --fields=1)" \
+              --arg sbom "$backend.spdx.json" \
+              --arg sbom_attestation "$backend.sbom.intoto.jsonl" \
+              --arg sbom_attestation_sha256 "$(sha256sum "$sbom_attestation" | cut --delimiter=' ' --fields=1)" \
+              --arg sbom_sha256 "$(sha256sum "$sbom" | cut --delimiter=' ' --fields=1)" \
+              '. + {provenance:$provenance,provenance_sha256:$provenance_sha256,sbom:$sbom,sbom_attestation:$sbom_attestation,sbom_attestation_sha256:$sbom_attestation_sha256,sbom_sha256:$sbom_sha256}' \
+              "$input" > "release/evidence/$backend.evidence.json"
+            cp "$sbom" "release/evidence/$backend.spdx.json"
+          done
+          workflow_run_id="$RUN_ID"
+          workflow_run_attempt="$RUN_ATTEMPT"
+          existing_manifest="release/existing/environment-profile-release-manifest.json"
+          if [[ -f "$existing_manifest" ]]; then
+            workflow_run_id="$(jq --raw-output .workflow.run_id "$existing_manifest")"
+            workflow_run_attempt="$(jq --raw-output .workflow.run_attempt "$existing_manifest")"
+          fi
+          python3 environment-profiles/release_support.py manifest \
+            --release release.json \
+            --definitions environment-profiles/manifest.json \
+            --evidence cuda=release/evidence/cuda.evidence.json \
+            --evidence rocm=release/evidence/rocm.evidence.json \
+            --workflow-name 'Environment Profile Release' \
+            --workflow-path .github/workflows/environment-profile-release.yml \
+            --workflow-revision "$SOURCE_REVISION" \
+            --workflow-run-id "$workflow_run_id" \
+            --workflow-run-attempt "$workflow_run_attempt" \
+            --output release/evidence/environment-profile-release-manifest.json
+          python3 environment-profiles/release_support.py notes \
+            --release release.json \
+            --output release/evidence/RELEASE.md
+          cd release/evidence
+          sha256sum \
+            environment-profile-release-manifest.json \
+            cuda.spdx.json cuda.provenance.intoto.jsonl cuda.sbom.intoto.jsonl \
+            rocm.spdx.json rocm.provenance.intoto.jsonl rocm.sbom.intoto.jsonl \
+            > SHA256SUMS
+      - name: Reject existing release-asset collisions
+        if: steps.existing.outputs.release == 'true'
+        run: |
+          for existing in release/existing/*; do
+            name="$(basename "$existing")"
+            candidate="release/evidence/$name"
+            if [[ ! -f "$candidate" ]] || ! cmp --silent "$existing" "$candidate"; then
+              echo "Conflicting content exists for immutable release asset $name" >&2
+              exit 1
+            fi
+          done
+      - name: Create a non-discoverable release container
+        if: steps.existing.outputs.release != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Environment Profiles $VERSION" \
+            --notes-file release/evidence/RELEASE.md \
+            --draft \
+            --verify-tag
+      - name: Complete an interrupted matching release in safe order
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for path in \
+            release/evidence/*.spdx.json \
+            release/evidence/*.intoto.jsonl \
+            release/evidence/SHA256SUMS \
+            release/evidence/environment-profile-release-manifest.json; do
+            name="$(basename "$path")"
+            if [[ ! -f "release/existing/$name" ]]; then
+              gh release upload "$TAG" "$path" --repo "$GITHUB_REPOSITORY"
+            fi
+          done
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

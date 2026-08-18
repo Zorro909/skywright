@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Build and qualify both maintained Environment Profiles without accelerator hardware."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+from types import ModuleType
+
+import tomllib
+
+REPOSITORY = Path(__file__).resolve().parents[2]
+PROFILES = REPOSITORY / "environment-profiles"
+
+
+def run(*arguments: str, capture: bool = False) -> str:
+    completed = subprocess.run(
+        arguments,
+        cwd=REPOSITORY,
+        check=True,
+        capture_output=capture,
+        text=True,
+    )
+    return completed.stdout.strip() if capture else ""
+
+
+def release_support() -> ModuleType:
+    path = PROFILES / "release_support.py"
+    specification = importlib.util.spec_from_file_location(
+        "profile_release_support", path
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def main() -> int:
+    run(
+        sys.executable,
+        "-m",
+        "unittest",
+        "environment-profiles/tests/test_release_support.py",
+    )
+    definitions = json.loads((PROFILES / "manifest.json").read_text(encoding="utf-8"))
+    with (REPOSITORY / "sdk" / "pyproject.toml").open("rb") as source:
+        sdk_version = tomllib.load(source)["project"]["version"]
+    if definitions["sdk"] != sdk_version:
+        raise RuntimeError(
+            f"profile SDK {definitions['sdk']} does not match sdk/pyproject.toml {sdk_version}"
+        )
+    source_revision = run("git", "rev-parse", "HEAD", capture=True)
+    version = (PROFILES / "VERSION").read_text(encoding="utf-8").strip()
+    support = release_support()
+    release = support.ValidatedRelease(
+        source_revision,
+        f"profile-v{version}",
+        version,
+        f"Environment Profiles {version}",
+    )
+    target = PROFILES / "target" / "qualification"
+    target.mkdir(parents=True, exist_ok=True)
+
+    for backend in ("cuda", "rocm"):
+        image = f"skywright-environment-profile:{backend}-check"
+        run(
+            "docker",
+            "build",
+            "--file",
+            str(PROFILES / backend / "Containerfile"),
+            "--build-arg",
+            f"SKYWRIGHT_SOURCE_REVISION={source_revision}",
+            "--build-arg",
+            f"SKYWRIGHT_SDK_VERSION={sdk_version}",
+            "--tag",
+            image,
+            str(REPOSITORY / "sdk"),
+        )
+        run(
+            "docker",
+            "run",
+            "--rm",
+            "--network=none",
+            image,
+            "skywright-runtime",
+            "--help",
+        )
+        run(
+            "docker",
+            "run",
+            "--rm",
+            "--network=none",
+            image,
+            "skywright-runtime",
+            "--version",
+        )
+        facts_text = run(
+            "docker",
+            "run",
+            "--rm",
+            "--network=none",
+            image,
+            "python",
+            "-c",
+            (
+                "import importlib.metadata,json,platform,torch;"
+                "from skywright._build_info import SOURCE_REVISION;"
+                "v=importlib.metadata.version('skywright');"
+                "print(json.dumps({'accelerator_available':torch.cuda.is_available(),"
+                "'architecture':platform.machine(),'pytorch':torch.__version__.split('+')[0],"
+                "'runtime_command_version':v,'sdk':v,'source_revision':SOURCE_REVISION},sort_keys=True))"
+            ),
+            capture=True,
+        )
+        inspect = json.loads(run("docker", "image", "inspect", image, capture=True))[0]
+        facts = json.loads(facts_text)
+        evidence = support.qualify_image(release, definitions, backend, inspect, facts)
+        (target / f"{backend}.json").write_text(
+            json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        print(f"PASSED {backend}: {image}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

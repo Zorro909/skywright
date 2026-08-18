@@ -1,17 +1,25 @@
-FROM rocm/pytorch:rocm7.14_ubuntu24.04_py3.12_pytorch_release_2.12.0@sha256:c38eeda81d85f00fbe35d3d50ce42ce59c524e87d810624f4eb5c52fddb3b9ad
+FROM docker.io/rocm/pytorch:rocm7.14_ubuntu24.04_py3.12_pytorch_release_2.12.0@sha256:c38eeda81d85f00fbe35d3d50ce42ce59c524e87d810624f4eb5c52fddb3b9ad
 
 ARG SKYWRIGHT_SOURCE_REVISION
+ARG SKYWRIGHT_SDK_VERSION
 LABEL org.opencontainers.image.source="https://github.com/Zorro909/skywright"
 LABEL org.opencontainers.image.revision="${SKYWRIGHT_SOURCE_REVISION}"
 LABEL org.skywright.accelerator-backend="rocm"
 LABEL org.skywright.accelerator-runtime="7.14"
 LABEL org.skywright.architecture="linux/amd64"
+LABEL org.skywright.base-image="docker.io/rocm/pytorch:rocm7.14_ubuntu24.04_py3.12_pytorch_release_2.12.0@sha256:c38eeda81d85f00fbe35d3d50ce42ce59c524e87d810624f4eb5c52fddb3b9ad"
+LABEL org.skywright.pytorch="2.12.0"
+LABEL org.skywright.sdk="${SKYWRIGHT_SDK_VERSION}"
 
-COPY sdk /tmp/skywright-sdk
-RUN python -m pip install --no-cache-dir uv==0.8.8 \
+COPY . /tmp/skywright-sdk
+RUN python -m pip install --break-system-packages --no-cache-dir uv==0.8.8 \
     && uv venv --system-site-packages /opt/skywright \
     && UV_PROJECT_ENVIRONMENT=/opt/skywright uv sync \
         --project /tmp/skywright-sdk --locked --no-dev --no-editable \
+    && base_packages="$(/opt/venv/bin/python -c 'import site; print(site.getsitepackages()[0])')" \
+    && profile_packages="$(/opt/skywright/bin/python -c 'import site; print(site.getsitepackages()[0])')" \
+    && printf '%s\n' "$base_packages" > "$profile_packages/environment-profile-base.pth" \
+    && python -m pip uninstall --break-system-packages --yes uv \
     && rm -rf /tmp/skywright-sdk /root/.cache
 
 ENV VIRTUAL_ENV="/opt/skywright"
