@@ -166,8 +166,11 @@ jobs:
           name: integration-reports
           path: |
             **/target/failsafe-reports/**
+            **/target/site/jacoco/**
+            **/target/site/jacoco-it/**
             **/target/service-logs/**
             sdk/target/test-results/**
+            sdk/target/coverage/**
           if-no-files-found: ignore
           retention-days: 90
 

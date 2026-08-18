@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.runstore;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.ServerSocket;
 import java.net.URI;
@@ -63,6 +64,19 @@ class RunStoreS3IT {
 								"skywright-media-type", "application/octet-stream"))
 						.build(), AsyncRequestBody.fromBytes(body))
 					.join();
+				byte[] checkpoint = "checkpoint".getBytes(StandardCharsets.UTF_8);
+				String checkpointDigest = sha256(checkpoint);
+				String checkpointKey = protocol.checkpointKey(1, checkpointDigest);
+				writer
+					.putObject(PutObjectRequest.builder()
+						.bucket(bucket)
+						.key(checkpointKey)
+						.contentType("application/octet-stream")
+						.metadata(Map.of("skywright-sha256", checkpointDigest, "skywright-size",
+								Integer.toString(checkpoint.length), "skywright-kind", "checkpoint", "skywright-schema",
+								"v1"))
+						.build(), AsyncRequestBody.fromBytes(checkpoint))
+					.join();
 
 				ResolvedTargetStorage target = new ResolvedTargetStorage("seaweedfs", service.endpoint(), bucket,
 						Region.US_EAST_1, true, credentials, "project", "run");
@@ -70,12 +84,24 @@ class RunStoreS3IT {
 					RunStoreAccess access = new RunStoreAccess(protocol, objects);
 					assertThat(access.listOutputs()).extracting(RunStoreOutput::name)
 						.containsExactly("reports/final.txt");
+					assertThat(access.resolveCheckpoint("skywright-checkpoint:v1:1:sha256:" + checkpointDigest).bytes())
+						.containsExactly(checkpoint);
 					URI download = access.presignDownload(key, 60);
 					HttpResponse<byte[]> response = HttpClient.newHttpClient()
 						.send(HttpRequest.newBuilder(download).timeout(Duration.ofSeconds(5)).build(),
 								HttpResponse.BodyHandlers.ofByteArray());
 					assertThat(response.body()).isEqualTo(body);
 					assertThat(objects.measurements()).isNotEmpty();
+
+					writer.putObject(PutObjectRequest.builder()
+						.bucket(bucket)
+						.key(key)
+						.contentType("application/octet-stream")
+						.metadata(Map.of("skywright-sha256", sha256(body), "skywright-size",
+								Integer.toString(body.length), "skywright-kind", "artifact", "skywright-schema", "v1"))
+						.build(), AsyncRequestBody.fromBytes("corrupt".getBytes(StandardCharsets.UTF_8))).join();
+					assertThatThrownBy(access::listOutputs).isInstanceOf(RunStoreIntegrityException.class)
+						.hasMessageContaining("RUN_STORE_DIGEST_MISMATCH");
 				}
 			}
 		}

@@ -66,16 +66,14 @@ CHECKS = (*LOCAL_CHECKS, "security")
 ALL_CHECKS = frozenset(CHECKS)
 BROWSER_CHECKS = frozenset(("application", "frontend"))
 CATEGORY_CHECKS = {
-    "api": frozenset(
-        ("application", "image", "integration", "java", "frontend", "security")
-    ),
-    "backend": frozenset(("application", "image", "integration", "java", "security")),
+    "api": frozenset(("application", "image", "java", "frontend", "security")),
+    "backend": frozenset(("application", "image", "java", "security")),
     "documentation": frozenset(),
     "fixture": frozenset(("application", "image", "java", "sdk", "security")),
     "frontend": frozenset(("application", "image", "frontend", "security")),
     "profile": frozenset(("profile", "security")),
     "project-action": frozenset(("sdk", "security")),
-    "sdk": frozenset(("integration", "profile", "sdk", "security")),
+    "sdk": frozenset(("profile", "sdk", "security")),
     "shared-tooling": ALL_CHECKS,
 }
 FRONTEND_INSTALL = ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile")
@@ -271,9 +269,29 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         if not materialized_paths
         else frozenset().union(*(CATEGORY_CHECKS[category] for category in categories))
     )
+    integration_prefixes = (
+        "backend/src/main/java/de/zorro909/skywright/backend/availability/",
+        "backend/src/main/java/de/zorro909/skywright/backend/persistence/",
+        "backend/src/main/java/de/zorro909/skywright/backend/runstore/",
+        "backend/src/main/resources/db/",
+        "backend/src/test/java/de/zorro909/skywright/backend/acceptance/",
+        "backend/src/test/java/de/zorro909/skywright/backend/runstore/",
+        "protocol/run-store/",
+        "sdk/src/skywright/_run_store/",
+        "sdk/src/skywright/run_store.py",
+        "sdk/src/skywright/_training_process.py",
+        "sdk/tests/test_run_store",
+    )
+    integration_files = {
+        "backend/pom.xml",
+        "sdk/pyproject.toml",
+        "sdk/uv.lock",
+        "sdk/scripts/integration",
+    }
     if any(
-        path.removeprefix("./").startswith("protocol/run-store/")
+        normalized in integration_files or normalized.startswith(integration_prefixes)
         for path in materialized_paths
+        if (normalized := path.removeprefix("./"))
     ):
         applicable = applicable.union(("integration",))
     return QualityPlan(

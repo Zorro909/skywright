@@ -61,7 +61,7 @@ class PlanningTest(unittest.TestCase):
                     "application": True,
                     "frontend": True,
                     "image": True,
-                    "integration": True,
+                    "integration": False,
                     "java": True,
                     "profile": False,
                     "sdk": False,
@@ -74,7 +74,7 @@ class PlanningTest(unittest.TestCase):
                     "application": True,
                     "frontend": False,
                     "image": True,
-                    "integration": True,
+                    "integration": False,
                     "java": True,
                     "profile": False,
                     "sdk": False,
@@ -100,7 +100,7 @@ class PlanningTest(unittest.TestCase):
                     "application": False,
                     "frontend": False,
                     "image": False,
-                    "integration": True,
+                    "integration": False,
                     "java": False,
                     "profile": True,
                     "sdk": True,
@@ -204,6 +204,15 @@ class PlanningTest(unittest.TestCase):
             },
         )
 
+    def test_dependency_backed_implementation_paths_select_integration(self) -> None:
+        for path in (
+            "backend/src/main/java/de/zorro909/skywright/backend/persistence/Store.java",
+            "sdk/src/skywright/_run_store/implementation.py",
+        ):
+            with self.subTest(path=path):
+                plan = self.plan(path)
+                self.assertTrue(plan["checks"]["integration"]["applicable"])
+
     def test_mixed_backend_sdk_and_protocol_fixture_change_unions_their_fan_out(
         self,
     ) -> None:
@@ -276,7 +285,11 @@ class AggregationTest(unittest.TestCase):
     def test_every_non_success_outcome_fails_an_applicable_check(self) -> None:
         plan = json.loads(
             run_quality(
-                "plan", "--format", "json", "--changed-file", "backend/App.java"
+                "plan",
+                "--format",
+                "json",
+                "--changed-file",
+                "backend/src/main/java/de/zorro909/skywright/backend/persistence/Store.java",
             ).stdout
         )
 
@@ -298,7 +311,11 @@ class AggregationTest(unittest.TestCase):
     def test_integration_must_succeed_when_applicable(self) -> None:
         plan = json.loads(
             run_quality(
-                "plan", "--format", "json", "--changed-file", "backend/App.java"
+                "plan",
+                "--format",
+                "json",
+                "--changed-file",
+                "backend/src/main/java/de/zorro909/skywright/backend/persistence/Store.java",
             ).stdout
         )
         other_results = (
