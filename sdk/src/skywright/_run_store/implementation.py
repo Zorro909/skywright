@@ -4,7 +4,8 @@
 # runtime-shaped values are not fully described by their published type metadata.
 # Keep strict checking for concrete incompatibilities while containing Unknown at
 # this private integration boundary.
-# pyright: reportMissingTypeStubs=false, reportUnknownArgumentType=false
+# pyright: reportMissingImports=false, reportMissingTypeStubs=false
+# pyright: reportUnknownArgumentType=false
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 
 from __future__ import annotations

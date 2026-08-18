@@ -1,6 +1,7 @@
 # Test doubles intentionally model boto3's runtime-shaped response dictionaries.
 # pyright: reportMissingParameterType=false, reportMissingTypeArgument=false
-# pyright: reportMissingTypeStubs=false, reportUnknownArgumentType=false
+# pyright: reportMissingImports=false, reportMissingTypeStubs=false
+# pyright: reportUnknownArgumentType=false
 # pyright: reportUnknownMemberType=false, reportUnknownParameterType=false
 # pyright: reportUnknownVariableType=false
 
