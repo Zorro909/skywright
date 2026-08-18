@@ -64,6 +64,10 @@ _Avoid_: Execution Termination Cause, Run Lifecycle State, diagnostic exit code
 A pre-registered, credentialed storage destination that Skywright addresses but never creates. Many Storage Locations live within one; datasets and run outputs never share one.
 _Avoid_: Bucket, provider, storage backend
 
+**Target Class**:
+One of the four execution categories for which Skywright resolves defaults: local single-GPU, local multi-GPU, cloud on-demand, or cloud spot.
+_Avoid_: Provider, accelerator backend, instance type
+
 **Storage Location**:
 A concrete path within one Target Storage, and the single addressing concept for durable content — whether that content is a Dataset's payload or one run's Run Store. Training Project code never sees its storage protocol.
 _Avoid_: Dataset Location, path, URL
@@ -345,7 +349,7 @@ The mandatory durable home for a run's checkpoints, samples, artifacts, metrics,
 _Avoid_: Bucket, output directory
 
 **Repatriation**:
-The move of a terminal run's Run Store to a configured destination Target Storage, copying and verifying before anything is deleted. It is a no-op when the run already executed against that destination, and a failure leaves the store where it is rather than degrading the run.
+The move of a terminal run's Run Store to the destination Target Storage configured for its Target Class, copying and verifying before anything is deleted. It is a no-op when the run already executed against that destination, and a failure leaves the store where it is rather than degrading the run.
 _Avoid_: Backup, archive, sync
 
 **Transfer Worker**:
