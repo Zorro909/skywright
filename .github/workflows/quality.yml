@@ -105,7 +105,7 @@ jobs:
           playwright-version: ${{ needs.plan.outputs.playwright_version }}
           install-browser: false
       - name: Run Java verification
-        run: scripts/quality run java
+        run: scripts/quality run java --frontend-dependencies-ready
       - name: Retain Java test and diagnostic reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -139,7 +139,7 @@ jobs:
           playwright-version: ${{ needs.plan.outputs.playwright_version }}
           install-browser: true
       - name: Run frontend verification
-        run: scripts/quality run frontend
+        run: scripts/quality run frontend --frontend-dependencies-ready
       - name: Retain frontend test and diagnostic reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -177,7 +177,7 @@ jobs:
           playwright-version: ${{ needs.plan.outputs.playwright_version }}
           install-browser: true
       - name: Qualify the complete application
-        run: scripts/quality run application
+        run: scripts/quality run application --frontend-dependencies-ready
       - name: Retain application test, coverage, and diagnostic reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -220,7 +220,7 @@ jobs:
           install-browser: false
       - name: Build and exercise the production image
         id: build_image
-        run: scripts/quality run image
+        run: scripts/quality run image --frontend-dependencies-ready
       - name: Prepare image security reports
         if: steps.build_image.outcome == 'success'
         run: mkdir --parents security-results

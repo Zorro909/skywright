@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import re
+import runpy
+import sys
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -10,6 +13,11 @@ ACTION = (REPOSITORY / ".github/actions/setup-frontend/action.yml").read_text(
     encoding="utf-8"
 )
 WORKFLOW = (REPOSITORY / ".github/workflows/quality.yml").read_text(encoding="utf-8")
+sys.path.insert(0, str(REPOSITORY / "scripts"))
+try:
+    QUALITY_IMPLEMENTATION = runpy.run_path(str(REPOSITORY / "scripts/quality"))
+finally:
+    sys.path.pop(0)
 
 
 def named_step(source: str, name: str) -> str:
@@ -73,6 +81,21 @@ class FrontendSetupContractTest(unittest.TestCase):
 
 
 class QualityWorkflowContractTest(unittest.TestCase):
+    def test_maven_frontend_install_can_be_skipped_after_ci_setup(self) -> None:
+        pom = ET.parse(REPOSITORY / "frontend/pom.xml")
+        namespace = {"m": "http://maven.apache.org/POM/4.0.0"}
+        execution = next(
+            execution
+            for execution in pom.findall(".//m:execution", namespace)
+            if execution.findtext("m:id", namespaces=namespace)
+            == "install-web-dependencies"
+        )
+
+        self.assertEqual(
+            execution.findtext("m:configuration/m:skip", namespaces=namespace),
+            "${skipFrontendInstall}",
+        )
+
     def test_only_browser_verification_lanes_install_browser_dependencies(self) -> None:
         for name in ("frontend", "application"):
             with self.subTest(job=name):
@@ -85,28 +108,56 @@ class QualityWorkflowContractTest(unittest.TestCase):
     def test_maven_lanes_skip_frontend_tests_but_keep_their_artifact_boundaries(
         self,
     ) -> None:
-        quality_source = (REPOSITORY / "scripts/quality").read_text(encoding="utf-8")
+        commands_for = QUALITY_IMPLEMENTATION["commands_for"]
         for check in ("java", "application", "image"):
-            command_block = re.search(
-                rf'    "{check}": \((.*?)\n    \),', quality_source, re.DOTALL
+            commands = commands_for(check, frontend_dependencies_ready=True)
+            flattened_arguments = {
+                argument for command in commands for argument in command
+            }
+            self.assertIn("-DskipFrontendInstall=true", flattened_arguments)
+            self.assertIn("-DskipFrontendTests=true", flattened_arguments)
+            self.assertNotIn(
+                QUALITY_IMPLEMENTATION["FRONTEND_INSTALL"], commands
             )
-            self.assertIsNotNone(command_block, check)
-            self.assertIn('"-DskipFrontendTests=true"', command_block.group(1))
 
-        self.assertIn('"-Ppackaged-acceptance"', quality_source)
-        self.assertIn('"backend-deployment"', quality_source)
+        application_arguments = {
+            argument
+            for command in commands_for(
+                "application", frontend_dependencies_ready=True
+            )
+            for argument in command
+        }
+        image_arguments = {
+            argument
+            for command in commands_for("image", frontend_dependencies_ready=True)
+            for argument in command
+        }
+        self.assertIn("-Ppackaged-acceptance", application_arguments)
+        self.assertIn("backend-deployment", image_arguments)
+
+    def test_local_lane_installs_frontend_dependencies_exactly_once(self) -> None:
+        commands_for = QUALITY_IMPLEMENTATION["commands_for"]
+        frontend_install = QUALITY_IMPLEMENTATION["FRONTEND_INSTALL"]
+
+        for check in ("java", "application", "image", "frontend"):
+            with self.subTest(check=check):
+                self.assertEqual(
+                    commands_for(
+                        check, frontend_dependencies_ready=False
+                    ).count(frontend_install),
+                    1,
+                )
 
     def test_local_runner_requires_a_browser_only_at_browser_seams(self) -> None:
-        quality_source = (REPOSITORY / "scripts/quality").read_text(encoding="utf-8")
+        self.assertEqual(
+            QUALITY_IMPLEMENTATION["BROWSER_CHECKS"],
+            frozenset(("application", "frontend")),
+        )
 
-        self.assertIn(
-            'BROWSER_CHECKS = frozenset(("application", "frontend"))',
-            quality_source,
-        )
-        self.assertNotIn(
-            'check in {"application", "image", "java", "frontend"}',
-            quality_source,
-        )
+    def test_ci_lanes_declare_preinstalled_frontend_dependencies(self) -> None:
+        for name in ("java", "frontend", "application", "image"):
+            with self.subTest(job=name):
+                self.assertIn("--frontend-dependencies-ready", job(WORKFLOW, name))
 
 
 if __name__ == "__main__":

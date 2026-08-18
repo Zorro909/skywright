@@ -68,12 +68,14 @@ CATEGORY_CHECKS = {
     "sdk": frozenset(("profile", "sdk", "security")),
     "shared-tooling": ALL_CHECKS,
 }
+FRONTEND_INSTALL = ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile")
 COMMANDS = {
     "application": (
-        ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
+        FRONTEND_INSTALL,
         (
             "./mvnw",
             "--batch-mode",
+            "-DskipFrontendInstall=true",
             "-DskipFrontendTests=true",
             "-pl",
             "backend",
@@ -83,6 +85,7 @@ COMMANDS = {
         (
             "./mvnw",
             "--batch-mode",
+            "-DskipFrontendInstall=true",
             "-DskipFrontendTests=true",
             "-pl",
             "frontend",
@@ -92,10 +95,11 @@ COMMANDS = {
         ),
     ),
     "image": (
-        ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
+        FRONTEND_INSTALL,
         (
             "./mvnw",
             "--batch-mode",
+            "-DskipFrontendInstall=true",
             "-DskipFrontendTests=true",
             "-pl",
             "backend-deployment",
@@ -104,10 +108,11 @@ COMMANDS = {
         ),
     ),
     "java": (
-        ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
+        FRONTEND_INSTALL,
         (
             "./mvnw",
             "--batch-mode",
+            "-DskipFrontendInstall=true",
             "-DskipFrontendTests=true",
             "-pl",
             "backend",
@@ -116,7 +121,7 @@ COMMANDS = {
         ),
     ),
     "frontend": (
-        ("pnpm", "--dir", "frontend", "install", "--frozen-lockfile"),
+        FRONTEND_INSTALL,
         ("pnpm", "--dir", "frontend", "run", "verify"),
     ),
     "profile": (("environment-profiles/scripts/check",),),
@@ -125,6 +130,15 @@ COMMANDS = {
         (".github/actions/publish-training-project/scripts/check",),
     ),
 }
+
+
+def commands_for(
+    check: str, *, frontend_dependencies_ready: bool
+) -> tuple[tuple[str, ...], ...]:
+    commands = COMMANDS[check]
+    if frontend_dependencies_ready:
+        return tuple(command for command in commands if command != FRONTEND_INSTALL)
+    return commands
 
 
 class PrerequisiteError(RuntimeError):
@@ -435,12 +449,17 @@ def run_command(arguments: argparse.Namespace) -> int:
                     require_browser()
                 print(f"PASSED {check}: prerequisites available (dry run)")
                 continue
-            commands = COMMANDS[check]
-            for index, command in enumerate(commands):
+            if check in BROWSER_CHECKS and arguments.frontend_dependencies_ready:
+                require_browser()
+            commands = commands_for(
+                check,
+                frontend_dependencies_ready=arguments.frontend_dependencies_ready,
+            )
+            for command in commands:
                 subprocess.run(
                     command, cwd=REPOSITORY, check=True, env=os.environ.copy()
                 )
-                if check in BROWSER_CHECKS and index == 0:
+                if check in BROWSER_CHECKS and command == FRONTEND_INSTALL:
                     require_browser()
             print(f"PASSED {check}")
         except (PrerequisiteError, subprocess.CalledProcessError) as error:
@@ -546,6 +565,11 @@ def parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="validate prerequisites without running checks",
+    )
+    run_parser.add_argument(
+        "--frontend-dependencies-ready",
+        action="store_true",
+        help="use frontend dependencies installed by the CI setup action",
     )
     run_parser.set_defaults(handler=run_command)
 

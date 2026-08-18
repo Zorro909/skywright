@@ -73,7 +73,9 @@ Chromium operating-system dependency setup and a cold Chromium download are sepa
 each has a hard 10-minute limit and emits its phase before invoking Playwright. Exceeding either
 limit is a failed job, not an indefinitely stalled setup. The pnpm store caches downloads only, and
 the Playwright cache contains only browser downloads; `node_modules`, generated sources, compiled
-resources, reports, and images remain uncached build outputs.
+resources, reports, and images remain uncached build outputs. The setup action installs the locked
+frontend dependencies once; CI passes that fact to `scripts/quality`, and Maven skips its own install
+execution while still generating and packaging a fresh frontend artifact.
 
 Machine-readable test, coverage, security, and failure diagnostics are uploaded with `always()`
 when their job ran. Test, coverage, security, and diagnostic reports are retained for 90 days.
