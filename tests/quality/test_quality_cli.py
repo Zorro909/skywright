@@ -215,6 +215,7 @@ class PlanningTest(unittest.TestCase):
             "backend/src/main/java/de/zorro909/skywright/backend/persistence/Store.java",
             "backend/src/main/resources/application.properties",
             "sdk/src/skywright/_run_store/implementation.py",
+            "sdk/tests/support/run_store_training_scenario.py",
         ):
             with self.subTest(path=path):
                 plan = self.plan(path)

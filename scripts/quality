@@ -281,6 +281,7 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         "sdk/src/skywright/run_store.py",
         "sdk/src/skywright/_training_process.py",
         "sdk/tests/test_run_store",
+        "sdk/tests/support/",
     )
     integration_files = {
         "backend/pom.xml",
