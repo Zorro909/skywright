@@ -1,3 +1,8 @@
+# boto3 and the Docker-backed fixture expose runtime-shaped integration values.
+# pyright: reportMissingParameterType=false, reportMissingTypeStubs=false
+# pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false
+# pyright: reportUnknownParameterType=false, reportUnknownVariableType=false
+
 from __future__ import annotations
 
 import socket

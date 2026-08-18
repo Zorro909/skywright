@@ -1,5 +1,12 @@
 """Private implementation behind the portable Run Store deep module."""
 
+# The S3, NumPy, and optional PyTorch adapters necessarily cross libraries whose
+# runtime-shaped values are not fully described by their published type metadata.
+# Keep strict checking for concrete incompatibilities while containing Unknown at
+# this private integration boundary.
+# pyright: reportMissingTypeStubs=false, reportUnknownArgumentType=false
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
+
 from __future__ import annotations
 
 import hashlib
@@ -786,7 +793,9 @@ class RunStoreRecorder:
         operation_control: OperationControl | None = None,
     ) -> None:
         self.target = target
-        self.protocol = RunStoreProtocol(target.training_project_id, target.run_id)
+        self.protocol: RunStoreProtocol = RunStoreProtocol(
+            target.training_project_id, target.run_id
+        )
         self._progress = progress_recorder
         self._codec = checkpoint_codec or CheckpointCodec()
         control = operation_control or OperationControl()
@@ -1231,7 +1240,9 @@ class RunStoreReader:
         operation_control: OperationControl | None = None,
     ) -> None:
         self.target = target
-        self.protocol = RunStoreProtocol(target.training_project_id, target.run_id)
+        self.protocol: RunStoreProtocol = RunStoreProtocol(
+            target.training_project_id, target.run_id
+        )
         self._codec = checkpoint_codec or CheckpointCodec()
         control = operation_control or OperationControl()
         self._client = _S3Gateway(

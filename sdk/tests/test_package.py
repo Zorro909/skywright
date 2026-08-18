@@ -35,8 +35,8 @@ def test_package_root_declares_its_complete_public_surface() -> None:
         "__version__",
         "configuration",
         "metrics",
-        "run_training_process",
         "run_store",
+        "run_training_process",
         "version",
     )
     assert all(hasattr(skywright, name) for name in skywright.__all__)
