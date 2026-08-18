@@ -10,6 +10,6 @@ public interface RunStoreObjectStore {
 
 	RunStoreObject get(String key);
 
-	URI presignGet(String key, int expiresInSeconds);
+	URI presignGet(String key, int expiresInSeconds, String contentType, String filename);
 
 }

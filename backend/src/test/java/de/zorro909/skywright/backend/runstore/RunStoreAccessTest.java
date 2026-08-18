@@ -23,8 +23,9 @@ class RunStoreAccessTest {
 		objects.put(key, "artifact".getBytes(StandardCharsets.UTF_8), "application/octet-stream", "artifact");
 		RunStoreAccess access = new RunStoreAccess(protocol, objects);
 
-		assertThat(access.listOutputs()).containsExactly(new RunStoreOutput("artifact", 7, "plots/loss.png", key, 8,
-				"application/octet-stream", sha256("artifact".getBytes(StandardCharsets.UTF_8))));
+		assertThat(access.listOutputs())
+			.containsExactly(new RunStoreOutput(RunStoreOutputKind.ARTIFACT, 7, "plots/loss.png", key, 8,
+					"application/octet-stream", sha256("artifact".getBytes(StandardCharsets.UTF_8))));
 		assertThat(access.presignDownload(key, 900))
 			.isEqualTo(URI.create("https://download.invalid/exact?expires=900"));
 	}
@@ -95,7 +96,9 @@ class RunStoreAccessTest {
 		}
 
 		@Override
-		public URI presignGet(String key, int expiresInSeconds) {
+		public URI presignGet(String key, int expiresInSeconds, String contentType, String filename) {
+			assertThat(contentType).isEqualTo("application/octet-stream");
+			assertThat(filename).isEqualTo("loss.png");
 			return URI.create("https://download.invalid/exact?expires=" + expiresInSeconds);
 		}
 

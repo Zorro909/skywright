@@ -22,9 +22,14 @@ Datasets and run outputs use separate Target Storages. They agree on nothing tha
 
 ## Layout, writing, and retention
 
-A Run Store is laid out as `<bucket>/<training-project>/<run-id>/{checkpoints,samples,artifacts,metrics}/`, extending ADR 0007's `<run-store>/<run-id>/metrics` with a project level so that one Target Storage can serve several projects under separately scoped credentials and `ListObjectsV2` stays bounded.
+A Run Store has a stable inventory boundary at `<bucket>/<training-project>/<run-id>/` and a
+versioned protocol generation beneath it. Generation v1 is laid out as
+`<bucket>/<training-project>/<run-id>/v1/{attempts,checkpoints,samples,artifacts,progress,metrics}/`,
+extending ADR 0007's `<run-store>/<run-id>/metrics` with a project level and an explicit wire
+generation so incompatible future layouts never migrate immutable stores in place. The stable
+prefix lets `ListObjectsV2` and multipart-upload inventory remain bounded across generations.
 
-A checkpoint is **one object**. `CompleteMultipartUpload` is therefore the publication event, and `C5` holds structurally: a partially written checkpoint never becomes visible, so the fallback the reference-workload spike demonstrated defends against corruption rather than against torn writes. A checksum in object metadata is verified on read, and a rejected checkpoint falls back to its predecessor. Splitting model, optimizer and cursor into separate objects would make "download just the weights" cheap but would reintroduce a torn state and require a marker object written last.
+A checkpoint is **one object**. `CompleteMultipartUpload` is therefore the publication event, and `C5` holds structurally: a partially written checkpoint never becomes visible, so the fallback the reference-workload spike demonstrated defends against corruption rather than against torn writes. A checksum in object metadata is verified on read, and a rejected checkpoint falls back to its predecessor. The creating process aborts every upload identity it still knows after failure; deletion inventories `ListMultipartUploads` under the stable Run prefix and aborts every remainder, so no separate upload manifest becomes an authority. Splitting model, optimizer and cursor into separate objects would make "download just the weights" cheap but would reintroduce a torn state and require a marker object written last.
 
 Writes are staged. At a cadence safe point the Run Context snapshots Checkpoint State synchronously and uploads in the background, so the Step safe point blocks only on the snapshot and `C4` can afford a frequent cadence without paying upload stall for it. The **interruption** checkpoint is the exception and is written synchronously: Nebius gives sixty seconds of notice, Verda and RunPod give none, and there is no time to be clever. The consequence is that "checkpointed" and "durable" are different moments, and a preemption during an upload costs that checkpoint.
 

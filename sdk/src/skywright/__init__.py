@@ -74,8 +74,8 @@ __all__ = (
     "__version__",
     "configuration",
     "metrics",
-    "run_training_process",
     "run_store",
+    "run_training_process",
     "version",
 )
 

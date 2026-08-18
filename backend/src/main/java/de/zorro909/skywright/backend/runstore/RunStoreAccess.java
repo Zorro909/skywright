@@ -39,8 +39,8 @@ public final class RunStoreAccess {
 				continue;
 			}
 			validate(object);
-			String kind = match.group(1).equals("artifacts") ? "artifact" : "sample";
-			if (!kind.equals(object.metadata().get("skywright-kind"))) {
+			RunStoreOutputKind kind = RunStoreOutputKind.fromKeySegment(match.group(1));
+			if (!kind.metadataValue().equals(object.metadata().get("skywright-kind"))) {
 				throw new RunStoreIntegrityException("RUN_STORE_METADATA_MISMATCH: object kind differs from key");
 			}
 			outputs.add(new RunStoreOutput(kind, Long.parseLong(match.group(2)), decode(match.group(3)), object.key(),
@@ -68,8 +68,15 @@ public final class RunStoreAccess {
 				|| key.startsWith(prefix + "samples/")) || expiresInSeconds < 1 || expiresInSeconds > 3600) {
 			throw new IllegalArgumentException("only exact immutable outputs can be presigned for 1..3600 seconds");
 		}
-		validate(require(key));
-		return this.objects.presignGet(key, expiresInSeconds);
+		RunStoreObject object = require(key);
+		validate(object);
+		String contentType = object.metadata().getOrDefault("skywright-media-type", object.contentType());
+		String filename = decode(key.substring(key.lastIndexOf('/') + 1));
+		filename = filename.substring(filename.lastIndexOf('/') + 1);
+		if (filename.isBlank() || filename.chars().anyMatch(character -> character < 32)) {
+			filename = "skywright-output";
+		}
+		return this.objects.presignGet(key, expiresInSeconds, contentType, filename);
 	}
 
 	private RunStoreObject require(String key) {

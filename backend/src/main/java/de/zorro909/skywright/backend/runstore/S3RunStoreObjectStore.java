@@ -68,8 +68,13 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 	}
 
 	@Override
-	public URI presignGet(String key, int expiresInSeconds) {
-		GetObjectRequest get = GetObjectRequest.builder().bucket(this.target.bucket()).key(key).build();
+	public URI presignGet(String key, int expiresInSeconds, String contentType, String filename) {
+		GetObjectRequest get = GetObjectRequest.builder()
+			.bucket(this.target.bucket())
+			.key(key)
+			.responseContentType(contentType)
+			.responseContentDisposition("attachment; filename*=UTF-8''" + percentEncode(filename))
+			.build();
 		return URI.create(
 				this.presigner
 					.presignGetObject(GetObjectPresignRequest.builder()
@@ -78,6 +83,21 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 						.build())
 					.url()
 					.toString());
+	}
+
+	private static String percentEncode(String value) {
+		StringBuilder result = new StringBuilder();
+		for (byte item : value.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+			int octet = item & 0xff;
+			if (octet >= 'A' && octet <= 'Z' || octet >= 'a' && octet <= 'z' || octet >= '0' && octet <= '9'
+					|| octet == '-' || octet == '.' || octet == '_' || octet == '~') {
+				result.append((char) octet);
+			}
+			else {
+				result.append("%%%02X".formatted(octet));
+			}
+		}
+		return result.toString();
 	}
 
 	@Override

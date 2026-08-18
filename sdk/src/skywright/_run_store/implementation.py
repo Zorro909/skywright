@@ -5,17 +5,19 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import re
 import struct
 import tempfile
+import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 from typing import Any, BinaryIO, NoReturn, cast
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import numpy as np
 
@@ -626,6 +628,148 @@ class RunStoreConflictError(RunStoreError):
     """An immutable semantic identity already has different content."""
 
 
+class RunStoreDeadlineError(RunStoreError):
+    """The caller-owned operation deadline expired."""
+
+
+class RunStoreCancelledError(RunStoreError):
+    """The caller cancelled an in-flight Run Store operation."""
+
+
+@dataclass(frozen=True)
+class OperationControl:
+    """Caller-owned cancellation and absolute monotonic deadline."""
+
+    deadline: float | None = None
+    cancellation_requested: Callable[[], bool] = lambda: False
+
+
+@dataclass(frozen=True)
+class OperationMeasurement:
+    """One non-secret provider request measurement retained for cost accounting."""
+
+    operation: str
+    bytes: int
+    direction: str
+    request_number: int
+    run_id: str
+    timestamp: float
+    provenance: str
+    succeeded: bool
+
+
+class _S3Gateway:
+    _RETRYABLE = frozenset(
+        {
+            "get_object",
+            "list_objects_v2",
+            "list_multipart_uploads",
+            "list_parts",
+            "upload_part",
+            "delete_object",
+            "abort_multipart_upload",
+        }
+    )
+
+    def __init__(
+        self, client: Any, target: TargetStorage, control: OperationControl
+    ) -> None:
+        self._client = client
+        self._target = target
+        self._control = control
+        self.measurements: list[OperationMeasurement] = []
+
+    def __getattr__(self, operation: str) -> Any:
+        provider_operation = getattr(self._client, operation)
+
+        def invoke(**request: object) -> Any:
+            attempt = 0
+            while True:
+                self._check_control()
+                attempt += 1
+                started = time.time()
+                transferred = _request_bytes(request)
+                direction = (
+                    "write"
+                    if operation
+                    in {
+                        "put_object",
+                        "upload_part",
+                        "complete_multipart_upload",
+                    }
+                    else "read"
+                    if operation == "get_object"
+                    else "control"
+                )
+                try:
+                    response = provider_operation(**request)
+                    if operation == "get_object":
+                        transferred = int(response.get("ContentLength", 0))
+                    self._measure(
+                        operation, transferred, direction, attempt, started, True
+                    )
+                    return response
+                except Exception as failure:
+                    self._measure(
+                        operation, transferred, direction, attempt, started, False
+                    )
+                    conditional_put = operation == "put_object" and (
+                        request.get("IfNoneMatch") == "*" or "IfMatch" in request
+                    )
+                    if not _is_transient_failure(failure) or not (
+                        operation in self._RETRYABLE or conditional_put
+                    ):
+                        raise
+                    if attempt >= 8:
+                        raise
+                    delay = min(0.05 * (2 ** (attempt - 1)), 1.0) * random.uniform(
+                        0.5, 1.5
+                    )
+                    if (
+                        self._control.deadline is not None
+                        and time.monotonic() + delay >= self._control.deadline
+                    ):
+                        raise RunStoreDeadlineError(
+                            "Run Store retry would exceed the caller-owned deadline"
+                        ) from failure
+                    time.sleep(delay)
+
+        return invoke
+
+    def _check_control(self) -> None:
+        if self._control.cancellation_requested():
+            raise RunStoreCancelledError(
+                "Run Store operation was cancelled by its caller"
+            )
+        if (
+            self._control.deadline is not None
+            and time.monotonic() >= self._control.deadline
+        ):
+            raise RunStoreDeadlineError("Run Store operation deadline expired")
+
+    def _measure(
+        self,
+        operation: str,
+        transferred: int,
+        direction: str,
+        attempt: int,
+        timestamp: float,
+        succeeded: bool,
+    ) -> None:
+        self.measurements.append(
+            OperationMeasurement(
+                operation,
+                transferred,
+                direction,
+                attempt,
+                self._target.run_id,
+                timestamp,
+                self._target.storage_id,
+                succeeded,
+            )
+        )
+
+
 class RunStoreRecorder:
     """S3-backed production implementation of ``TrainingProcessRecorder``."""
 
@@ -639,16 +783,25 @@ class RunStoreRecorder:
         session_factory: Any | None = None,
         multipart_threshold: int = 64 * 1024 * 1024,
         multipart_part_size: int = 64 * 1024 * 1024,
+        operation_control: OperationControl | None = None,
     ) -> None:
         self.target = target
         self.protocol = RunStoreProtocol(target.training_project_id, target.run_id)
         self._progress = progress_recorder
         self._codec = checkpoint_codec or CheckpointCodec()
-        self._client = client or _s3_client(target, session_factory)
+        self._client = _S3Gateway(
+            client or _s3_client(target, session_factory),
+            target,
+            operation_control or OperationControl(),
+        )
         self._attempt: ExecutionAttemptRecord | None = None
         self._closed = False
         self._multipart_threshold = multipart_threshold
         self._multipart_part_size = multipart_part_size
+
+    @property
+    def measurements(self) -> tuple[OperationMeasurement, ...]:
+        return tuple(self._client.measurements)
 
     def publish_attempt(self, attempt: ExecutionAttemptRecord) -> None:
         if attempt.run_id != self.target.run_id:
@@ -915,9 +1068,12 @@ class RunStoreRecorder:
             )
             completed = True
         except Exception as failure:
-            if _is_precondition_failure(failure):
-                existing = self._read_verified(key)
-                if (
+            if _is_precondition_failure(failure) or _is_transient_failure(failure):
+                try:
+                    existing = self._read_verified(key)
+                except Exception:
+                    existing = None
+                if existing is not None and (
                     len(existing) == staged.size
                     and hashlib.sha256(existing).hexdigest() == staged.digest
                 ):
@@ -986,6 +1142,32 @@ def _is_precondition_failure(failure: Exception) -> bool:
     }
 
 
+def _is_transient_failure(failure: Exception) -> bool:
+    response = getattr(failure, "response", {})
+    code = response.get("Error", {}).get("Code")
+    status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return (
+        isinstance(failure, (OSError, TimeoutError))
+        or code
+        in {
+            "SlowDown",
+            "Throttling",
+            "RequestTimeout",
+            "InternalError",
+            "ServiceUnavailable",
+        }
+        or status in {429, 500, 502, 503, 504}
+    )
+
+
+def _request_bytes(request: Mapping[str, object]) -> int:
+    length = request.get("ContentLength")
+    if isinstance(length, int):
+        return length
+    body = request.get("Body")
+    return len(body) if isinstance(body, bytes) else 0
+
+
 @dataclass(frozen=True, order=True)
 class CheckpointSummary:
     """Immutable Checkpoint identity discoverable without decoding its State."""
@@ -1004,6 +1186,15 @@ class CheckpointResolution:
     rejected: tuple[CheckpointRejectionEvidence, ...]
 
 
+@dataclass(frozen=True)
+class MultipartUpload:
+    """Incomplete provider upload discoverable beneath the stable Run prefix."""
+
+    key: str
+    upload_id: str
+    part_numbers: tuple[int, ...]
+
+
 class RunStoreReader:
     """Checkpoint discovery, exact reads, corruption fallback, and retention."""
 
@@ -1014,11 +1205,20 @@ class RunStoreReader:
         checkpoint_codec: CheckpointCodec | None = None,
         client: Any | None = None,
         session_factory: Any | None = None,
+        operation_control: OperationControl | None = None,
     ) -> None:
         self.target = target
         self.protocol = RunStoreProtocol(target.training_project_id, target.run_id)
         self._codec = checkpoint_codec or CheckpointCodec()
-        self._client = client or _s3_client(target, session_factory)
+        self._client = _S3Gateway(
+            client or _s3_client(target, session_factory),
+            target,
+            operation_control or OperationControl(),
+        )
+
+    @property
+    def measurements(self) -> tuple[OperationMeasurement, ...]:
+        return tuple(self._client.measurements)
 
     def list_checkpoints(self) -> tuple[CheckpointSummary, ...]:
         prefix = f"{self.protocol.run_prefix}checkpoints/"
@@ -1045,7 +1245,13 @@ class RunStoreReader:
             seen.add(item.step)
         return tuple(summaries)
 
-    def read_exact(self, reference: str) -> CheckpointSnapshot:
+    def read_exact(
+        self,
+        reference: str,
+        *,
+        project_version: str | None = None,
+        ordering_fingerprint: str | None = None,
+    ) -> CheckpointSnapshot:
         parsed = CheckpointReference.parse(reference)
         key = self.protocol.checkpoint_key(parsed.step, parsed.digest)
         body = self._read_verified(key, parsed.digest)
@@ -1057,9 +1263,28 @@ class RunStoreReader:
             os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "wb") as stream:
                 stream.write(body)
-            return self._codec.deserialize(path, expected_digest=parsed.digest)
+            checkpoint = self._codec.deserialize(path, expected_digest=parsed.digest)
         finally:
             path.unlink(missing_ok=True)
+        if checkpoint.run_id != self.target.run_id:
+            raise RunStoreError(
+                "RUN_STORE_WRONG_RUN: Checkpoint belongs to another Run"
+            )
+        if (
+            project_version is not None
+            and checkpoint.project_version != project_version
+        ):
+            raise RunStoreError(
+                "RUN_STORE_INCOMPATIBLE_PROJECT_VERSION: Checkpoint Training Project Version differs"
+            )
+        if (
+            ordering_fingerprint is not None
+            and checkpoint.dataset_cursor.ordering_fingerprint != ordering_fingerprint
+        ):
+            raise RunStoreError(
+                "RUN_STORE_INCOMPATIBLE_ORDERING: Dataset ordering fingerprint differs"
+            )
+        return checkpoint
 
     def resolve_latest_valid(
         self,
@@ -1070,11 +1295,22 @@ class RunStoreReader:
         rejected: list[CheckpointRejectionEvidence] = []
         for candidate in reversed(self.list_checkpoints()):
             try:
-                checkpoint = self.read_exact(candidate.reference)
-            except (RunStoreIntegrityError, ValueError) as failure:
+                checkpoint = self.read_exact(
+                    candidate.reference,
+                    project_version=project_version,
+                    ordering_fingerprint=ordering_fingerprint,
+                )
+            except (
+                RunStoreIntegrityError,
+                ValueError,
+                KeyError,
+                TypeError,
+                OverflowError,
+                IndexError,
+            ) as failure:
                 code = _integrity_code(failure)
                 if code is None:
-                    raise
+                    code = "RUN_STORE_MALFORMED_SAFETENSORS"
                 rejected.append(
                     CheckpointRejectionEvidence(
                         candidate.step,
@@ -1084,18 +1320,6 @@ class RunStoreReader:
                     )
                 )
                 continue
-            if checkpoint.run_id != self.target.run_id:
-                raise RunStoreError(
-                    "RUN_STORE_WRONG_RUN: Checkpoint belongs to another Run"
-                )
-            if checkpoint.project_version != project_version:
-                raise RunStoreError(
-                    "RUN_STORE_INCOMPATIBLE_PROJECT_VERSION: Checkpoint Training Project Version differs"
-                )
-            if checkpoint.dataset_cursor.ordering_fingerprint != ordering_fingerprint:
-                raise RunStoreError(
-                    "RUN_STORE_INCOMPATIBLE_ORDERING: Dataset ordering fingerprint differs"
-                )
             return CheckpointResolution(checkpoint, tuple(rejected))
         raise RunStoreIntegrityError(
             "RUN_STORE_NO_VALID_CHECKPOINT: every discovered Checkpoint is corrupt or missing"
@@ -1147,14 +1371,77 @@ class RunStoreReader:
             raise ValueError(
                 "only exact immutable outputs can be presigned for 1..3600 seconds"
             )
-        self._read_verified(key)
+        _, response = self._read_verified_object(key)
+        media_type = response.get("Metadata", {}).get(
+            "skywright-media-type",
+            response.get("ContentType", "application/octet-stream"),
+        )
+        encoded_component = key.rsplit("/", 1)[-1]
+        filename = unquote(encoded_component).rsplit("/", 1)[-1]
+        if not filename or any(ord(character) < 32 for character in filename):
+            filename = "skywright-output"
         return self._client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": self.target.bucket, "Key": key},
+            ClientMethod="get_object",
+            Params={
+                "Bucket": self.target.bucket,
+                "Key": key,
+                "ResponseContentType": media_type,
+                "ResponseContentDisposition": (
+                    "attachment; filename*=UTF-8''" + quote(filename, safe="-._~")
+                ),
+            },
             ExpiresIn=expires_in,
         )
 
+    def list_incomplete_uploads(self) -> tuple[MultipartUpload, ...]:
+        result: list[MultipartUpload] = []
+        key_marker: str | None = None
+        upload_marker: str | None = None
+        stable_prefix = self.protocol.run_prefix.rsplit("v1/", 1)[0]
+        while True:
+            request: dict[str, object] = {
+                "Bucket": self.target.bucket,
+                "Prefix": stable_prefix,
+            }
+            if key_marker is not None:
+                request["KeyMarker"] = key_marker
+            if upload_marker is not None:
+                request["UploadIdMarker"] = upload_marker
+            response = self._client.list_multipart_uploads(**request)
+            for upload in response.get("Uploads", ()):
+                parts = self._client.list_parts(
+                    Bucket=self.target.bucket,
+                    Key=upload["Key"],
+                    UploadId=upload["UploadId"],
+                )
+                result.append(
+                    MultipartUpload(
+                        upload["Key"],
+                        upload["UploadId"],
+                        tuple(part["PartNumber"] for part in parts.get("Parts", ())),
+                    )
+                )
+            if not response.get("IsTruncated"):
+                return tuple(result)
+            key_marker = response["NextKeyMarker"]
+            upload_marker = response["NextUploadIdMarker"]
+
+    def abort_incomplete_upload(self, upload: MultipartUpload) -> None:
+        stable_prefix = self.protocol.run_prefix.rsplit("v1/", 1)[0]
+        if not upload.key.startswith(stable_prefix):
+            raise ValueError("multipart upload is outside this Run Store")
+        self._client.abort_multipart_upload(
+            Bucket=self.target.bucket,
+            Key=upload.key,
+            UploadId=upload.upload_id,
+        )
+
     def _read_verified(self, key: str, digest: str | None = None) -> bytes:
+        return self._read_verified_object(key, digest)[0]
+
+    def _read_verified_object(
+        self, key: str, digest: str | None = None
+    ) -> tuple[bytes, Mapping[str, Any]]:
         try:
             response = self._client.get_object(Bucket=self.target.bucket, Key=key)
         except KeyError as failure:
@@ -1171,7 +1458,7 @@ class RunStoreReader:
             or (digest is not None and digest != actual)
         ):
             raise RunStoreIntegrityError(f"RUN_STORE_DIGEST_MISMATCH: {key}")
-        return body
+        return body, response
 
     def _list(self, prefix: str) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []

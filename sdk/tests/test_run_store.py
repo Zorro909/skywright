@@ -21,6 +21,8 @@ from skywright import (
 from skywright.run_store import (
     CheckpointCodec,
     CheckpointReference,
+    OperationControl,
+    RunStoreCancelledError,
     RunStoreProtocol,
     RunStoreReader,
     RunStoreRecorder,
@@ -75,8 +77,8 @@ class MemoryS3:
         self.objects.pop(request["Key"], None)
         return {}
 
-    def generate_presigned_url(self, operation, Params, ExpiresIn):
-        assert operation == "get_object"
+    def generate_presigned_url(self, ClientMethod, Params, ExpiresIn):
+        assert ClientMethod == "get_object"
         return f"https://download.invalid/{Params['Key']}?expires={ExpiresIn}"
 
     def create_multipart_upload(self, **request):
@@ -105,6 +107,24 @@ class MemoryS3:
     def abort_multipart_upload(self, **request):
         self.uploads.pop(request["UploadId"], None)
         return {}
+
+    def list_multipart_uploads(self, **request):
+        return {
+            "Uploads": [
+                {"Key": upload["Key"], "UploadId": upload_id}
+                for upload_id, upload in self.uploads.items()
+                if upload["Key"].startswith(request["Prefix"])
+            ],
+            "IsTruncated": False,
+        }
+
+    def list_parts(self, **request):
+        upload = self.uploads[request["UploadId"]]
+        return {
+            "Parts": [
+                {"PartNumber": part_number} for part_number in sorted(upload["parts"])
+            ]
+        }
 
 
 class ProgressRecorder:
@@ -502,3 +522,58 @@ def test_checkpoint_multipart_publication_is_atomic_and_cleans_known_failures(
         )
     assert memory.uploads == {}
     assert not any("0000000000000000002" in key for key in memory.objects)
+
+
+def test_reader_inventories_parts_and_aborts_uploads_under_the_stable_run_prefix(
+    tmp_path,
+) -> None:
+    memory = MemoryS3()
+    store = recorder(memory, tmp_path)
+    key = store.protocol.run_prefix + "checkpoints/pending"
+    created = memory.create_multipart_upload(
+        Bucket="runs", Key=key, Metadata={}, ContentType="application/octet-stream"
+    )
+    memory.upload_part(
+        Bucket="runs",
+        Key=key,
+        UploadId=created["UploadId"],
+        PartNumber=1,
+        Body=b"part",
+    )
+    reader = RunStoreReader(store.target, client=memory)
+
+    uploads = reader.list_incomplete_uploads()
+
+    assert [(item.key, item.part_numbers) for item in uploads] == [(key, (1,))]
+    reader.abort_incomplete_upload(uploads[0])
+    assert reader.list_incomplete_uploads() == ()
+
+
+def test_operations_honor_cancellation_and_retain_non_secret_measurements(
+    tmp_path,
+) -> None:
+    memory = MemoryS3()
+    store = recorder(memory, tmp_path)
+    store.publish_attempt(
+        ExecutionAttemptRecord(
+            "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+        )
+    )
+
+    assert store.measurements[-1].operation == "put_object"
+    assert store.measurements[-1].run_id == "run"
+    assert store.measurements[-1].provenance == "test-storage"
+    cancelled = recorder(
+        MemoryS3(),
+        tmp_path,
+        operation_control=OperationControl(cancellation_requested=lambda: True),
+    )
+    with pytest.raises(RunStoreCancelledError):
+        cancelled.publish_attempt(
+            ExecutionAttemptRecord(
+                "123e4567-e89b-12d3-a456-426614174000",
+                "run",
+                "project@digest",
+                None,
+            )
+        )
