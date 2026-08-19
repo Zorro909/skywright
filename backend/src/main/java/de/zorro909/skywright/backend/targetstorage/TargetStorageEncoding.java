@@ -59,11 +59,12 @@ final class TargetStorageEncoding {
 
 	static TargetStorageAssessment assessment(String encoded) {
 		String[] fields = encoded.split(FIELD, 7);
-		List<TargetStorageBinding> bindings = List.of(fields[5].split("~", -1))
-			.stream()
-			.map(TargetStorageEncoding::decode)
-			.map(TargetStorageEncoding::binding)
-			.toList();
+		List<TargetStorageBinding> bindings = fields[5].isEmpty() ? List.of()
+				: List.of(fields[5].split("~", -1))
+					.stream()
+					.map(TargetStorageEncoding::decode)
+					.map(TargetStorageEncoding::binding)
+					.toList();
 		List<TargetStorageCapabilityResult> capabilities = List.of(fields[6].split(ITEM, -1))
 			.stream()
 			.map(TargetStorageEncoding::capability)

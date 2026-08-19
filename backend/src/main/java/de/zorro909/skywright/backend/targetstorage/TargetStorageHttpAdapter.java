@@ -27,13 +27,9 @@ public class TargetStorageHttpAdapter implements TargetStoragesApi, TargetStorag
 
 	private final TargetStorageQualification qualification;
 
-	private final TargetStorageBindingReadiness bindingReadiness;
-
-	TargetStorageHttpAdapter(TargetStorageRegistry registry, TargetStorageQualification qualification,
-			TargetStorageBindingReadiness bindingReadiness) {
+	TargetStorageHttpAdapter(TargetStorageRegistry registry, TargetStorageQualification qualification) {
 		this.registry = registry;
 		this.qualification = qualification;
-		this.bindingReadiness = bindingReadiness;
 	}
 
 	public ResponseEntity<TargetStorage> createTargetStorage(CreateTargetStorage request) {
@@ -85,6 +81,7 @@ public class TargetStorageHttpAdapter implements TargetStoragesApi, TargetStorag
 			StageTargetStorageRevision request) {
 		this.registry.stageRevision(storageId, request.getExpectedRegistrationRevision(),
 				this.configuration(request.getConfiguration()));
+		this.qualification.qualifyWhenReady(storageId);
 		return ResponseEntity.ok(this.storage(this.registry.get(storageId)));
 	}
 
@@ -146,8 +143,7 @@ public class TargetStorageHttpAdapter implements TargetStoragesApi, TargetStorag
 
 	private TargetStorageBinding binding(TargetStorageBindingReference value) {
 		return new TargetStorageBinding(TargetStorageHttpAdapter.role(value.getRole().getValue()), value.getBindingId(),
-				value.getBindingRevision(), this.bindingReadiness.readiness(value.getBindingId(),
-						value.getBindingRevision(), value.getRole().getValue()));
+				value.getBindingRevision(), de.zorro909.skywright.backend.targetstorage.BindingReadiness.MISSING);
 	}
 
 	private de.zorro909.skywright.backend.boundary.generated.model.TargetStorageAssessment assessment(

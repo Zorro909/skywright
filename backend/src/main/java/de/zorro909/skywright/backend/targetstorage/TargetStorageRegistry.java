@@ -1,7 +1,9 @@
 package de.zorro909.skywright.backend.targetstorage;
 
+import de.zorro909.skywright.backend.runstore.ResolvedTargetStorage;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -10,8 +12,18 @@ public class TargetStorageRegistry {
 
 	private final TargetStorageRepository repository;
 
-	public TargetStorageRegistry(TargetStorageRepository repository) {
+	private final TargetStorageBindingReadiness bindingReadiness;
+
+	private final Optional<TargetStorageCredentialAccess> credentialAccess;
+
+	private final TargetStorageReferenceCheck referenceCheck;
+
+	public TargetStorageRegistry(TargetStorageRepository repository, TargetStorageBindingReadiness bindingReadiness,
+			Optional<TargetStorageCredentialAccess> credentialAccess, TargetStorageReferenceCheck referenceCheck) {
 		this.repository = repository;
+		this.bindingReadiness = bindingReadiness;
+		this.credentialAccess = credentialAccess;
+		this.referenceCheck = referenceCheck;
 	}
 
 	public UUID register(String name, TargetStoragePurpose purpose, String bucket,
@@ -33,12 +45,12 @@ public class TargetStorageRegistry {
 
 	@Transactional(readOnly = true)
 	public List<TargetStorageView> list() {
-		return this.repository.findAll().stream().map(TargetStorageAggregate::view).toList();
+		return this.repository.findAll().stream().map(this::view).toList();
 	}
 
 	@Transactional(readOnly = true)
 	public TargetStorageView get(UUID id) {
-		return this.storage(id).view();
+		return this.view(this.storage(id));
 	}
 
 	public void rename(UUID id, long expectedRegistrationRevision, String name) {
@@ -96,7 +108,7 @@ public class TargetStorageRegistry {
 
 	public void delete(UUID id) {
 		this.storage(id);
-		if (this.repository.hasReferences(id)) {
+		if (this.repository.hasReferences(id) || this.referenceCheck.hasDurableReference(id)) {
 			throw new TargetStorageReferencedException();
 		}
 		this.repository.delete(id);
@@ -135,8 +147,8 @@ public class TargetStorageRegistry {
 	}
 
 	@Transactional(readOnly = true)
-	public TargetStorageDescriptor resolveDescriptor(UUID id) {
-		TargetStorageAggregate storage = this.storage(id);
+	TargetStorageDescriptor resolveDescriptor(UUID id) {
+		TargetStorageAggregate storage = this.requireRunOutput(id);
 		if (storage.activeRevision() == null) {
 			throw new TargetStorageIneligibleException("TARGET_STORAGE_NOT_QUALIFIED",
 					"Target Storage has no active qualified revision");
@@ -144,9 +156,29 @@ public class TargetStorageRegistry {
 		return storage.descriptor();
 	}
 
+	@Transactional(readOnly = true)
+	public ResolvedTargetStorage resolveRunStore(UUID id, TargetStorageRole role, String trainingProjectId,
+			String runId) {
+		TargetStorageAggregate storage = this.storage(id);
+		TargetStorageDescriptor descriptor = this.resolveDescriptor(id);
+		TargetStorageBinding binding = this.currentBindings(storage)
+			.stream()
+			.filter(candidate -> candidate.role() == role && candidate.readiness() == BindingReadiness.READY)
+			.findFirst()
+			.orElseThrow(() -> new TargetStorageIneligibleException("TARGET_STORAGE_BINDING_NOT_READY",
+					"The requested role has no ready Credential Binding"));
+		var provider = this.credentialAccess
+			.flatMap(access -> access.credentials(binding.bindingId(), binding.bindingRevision(), role.wireValue()))
+			.orElseThrow(() -> new TargetStorageIneligibleException("TARGET_STORAGE_CREDENTIAL_UNAVAILABLE",
+					"The requested Credential Projection is temporarily unavailable"));
+		return new ResolvedTargetStorage(descriptor.storageId().toString(), descriptor.endpoint(), descriptor.bucket(),
+				software.amazon.awssdk.regions.Region.of(descriptor.region()), descriptor.pathStyleAccess(), provider,
+				trainingProjectId, runId, descriptor.compatibilityOptions());
+	}
+
 	TargetStorageQualificationRequest qualificationRequest(UUID id) {
 		TargetStorageAggregate storage = this.storage(id);
-		return storage.qualificationRequest();
+		return storage.qualificationRequest(this.currentBindings(storage));
 	}
 
 	private TargetStorageAggregate requireRunOutput(UUID id) {
@@ -159,7 +191,8 @@ public class TargetStorageRegistry {
 	}
 
 	private void requireEligibleRunOutput(UUID id) {
-		if (!this.requireRunOutput(id).eligible()) {
+		TargetStorageAggregate storage = this.requireRunOutput(id);
+		if (!storage.eligible(this.currentBindings(storage))) {
 			throw new TargetStorageIneligibleException("TARGET_STORAGE_INELIGIBLE",
 					"Target Storage is not eligible for new work");
 		}
@@ -169,9 +202,25 @@ public class TargetStorageRegistry {
 		return this.repository.findById(id).orElseThrow(() -> new TargetStorageNotFoundException(id));
 	}
 
+	private TargetStorageView view(TargetStorageAggregate storage) {
+		return storage.view(this.currentBindings(storage));
+	}
+
+	private List<TargetStorageBinding> currentBindings(TargetStorageAggregate storage) {
+		return storage.bindings()
+			.stream()
+			.map(binding -> new TargetStorageBinding(binding.role(), binding.bindingId(), binding.bindingRevision(),
+					this.bindingReadiness.readiness(binding.bindingId(), binding.bindingRevision(),
+							binding.role().wireValue())))
+			.toList();
+	}
+
 	private static void requireText(String value, String field) {
 		if (value == null || value.isBlank()) {
 			throw new IllegalArgumentException(field + " must not be blank");
+		}
+		if (value.length() > 255) {
+			throw new IllegalArgumentException(field + " must not exceed 255 characters");
 		}
 	}
 

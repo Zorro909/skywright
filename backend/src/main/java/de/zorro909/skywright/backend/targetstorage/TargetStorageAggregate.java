@@ -85,8 +85,11 @@ final class TargetStorageAggregate {
 	}
 
 	boolean hasResource(URI endpoint, String resourceBucket) {
-		return this.bucket.equals(resourceBucket)
-				&& this.configurations.values().stream().anyMatch(value -> value.endpoint().equals(endpoint));
+		String resourceKey = TargetStorageConfiguration.resourceKey(endpoint, resourceBucket);
+		return this.configurations.values()
+			.stream()
+			.anyMatch(
+					value -> TargetStorageConfiguration.resourceKey(value.endpoint(), this.bucket).equals(resourceKey));
 	}
 
 	void requireRevision(long expected) {
@@ -147,9 +150,9 @@ final class TargetStorageAggregate {
 		++this.registrationRevision;
 	}
 
-	boolean eligible() {
+	boolean eligible(List<TargetStorageBinding> currentBindings) {
 		return this.activated && this.activeRevision != null && this.availability == CapabilityAvailability.AVAILABLE
-				&& this.bindingsReady();
+				&& TargetStorageAggregate.bindingsReady(currentBindings);
 	}
 
 	TargetStorageDescriptor descriptor() {
@@ -158,22 +161,22 @@ final class TargetStorageAggregate {
 				configuration.pathStyleAccess(), configuration.compatibilityOptions());
 	}
 
-	TargetStorageQualificationRequest qualificationRequest() {
+	TargetStorageQualificationRequest qualificationRequest(List<TargetStorageBinding> currentBindings) {
 		Long revision = this.candidateRevision == null ? this.activeRevision : this.candidateRevision;
 		if (revision == null) {
 			throw new TargetStorageIneligibleException("TARGET_STORAGE_CANDIDATE_MISSING",
 					"Target Storage has no configuration revision to qualify");
 		}
 		return new TargetStorageQualificationRequest(this.id, this.purpose, this.bucket, revision,
-				this.configurations.get(revision), this.bindings);
+				this.configurations.get(revision), currentBindings);
 	}
 
-	TargetStorageView view() {
+	TargetStorageView view(List<TargetStorageBinding> currentBindings) {
 		Long visibleRevision = this.activeRevision == null ? this.candidateRevision : this.activeRevision;
 		return new TargetStorageView(this.id, this.name, this.purpose, this.bucket, this.registrationRevision,
-				this.activated, this.eligible(), this.activeRevision, this.candidateRevision,
+				this.activated, this.eligible(currentBindings), this.activeRevision, this.candidateRevision,
 				visibleRevision == null ? null : this.configurations.get(visibleRevision), this.revisions(),
-				this.bindings, List.copyOf(this.assessments));
+				currentBindings, List.copyOf(this.assessments));
 	}
 
 	private List<TargetStorageRevisionView> revisions() {
@@ -204,13 +207,16 @@ final class TargetStorageAggregate {
 				this.assessments, this.availability);
 	}
 
-	private boolean bindingsReady() {
-		var roles = this.bindings.stream()
+	List<TargetStorageBinding> bindings() {
+		return List.copyOf(this.bindings);
+	}
+
+	private static boolean bindingsReady(List<TargetStorageBinding> bindings) {
+		var roles = bindings.stream()
 			.filter(binding -> binding.readiness() == BindingReadiness.READY)
 			.map(TargetStorageBinding::role)
-			.collect(Collectors.toSet());
-		return roles.containsAll(List.of(TargetStorageRole.TRAINING_PROCESS, TargetStorageRole.BACKEND,
-				TargetStorageRole.TRANSFER_WORKER, TargetStorageRole.METRIC_VIEW));
+			.collect(java.util.stream.Collectors.toSet());
+		return roles.equals(EnumSet.allOf(TargetStorageRole.class));
 	}
 
 	private boolean sameBindingRevisions(List<TargetStorageBinding> assessedBindings) {
@@ -228,9 +234,6 @@ final class TargetStorageAggregate {
 			.collect(Collectors.toCollection(() -> EnumSet.noneOf(TargetStorageRole.class)));
 		if (roles.size() != copy.size()) {
 			throw new IllegalArgumentException("Credential Binding roles must be unique");
-		}
-		if (!roles.equals(EnumSet.allOf(TargetStorageRole.class))) {
-			throw new IllegalArgumentException("All four Credential Binding roles are required");
 		}
 		return copy;
 	}

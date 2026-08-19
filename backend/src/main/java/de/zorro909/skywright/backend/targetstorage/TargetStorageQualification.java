@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.targetstorage;
 
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -24,7 +25,12 @@ final class TargetStorageQualification {
 
 	void qualifyWhenReady(UUID storageId) {
 		TargetStorageQualificationRequest request = this.registry.qualificationRequest(storageId);
-		if (request.bindings().stream().allMatch(binding -> binding.readiness() == BindingReadiness.READY)) {
+		var readyRoles = request.bindings()
+			.stream()
+			.filter(binding -> binding.readiness() == BindingReadiness.READY)
+			.map(TargetStorageBinding::role)
+			.collect(Collectors.toSet());
+		if (readyRoles.equals(java.util.EnumSet.allOf(TargetStorageRole.class))) {
 			this.qualify(storageId);
 		}
 	}

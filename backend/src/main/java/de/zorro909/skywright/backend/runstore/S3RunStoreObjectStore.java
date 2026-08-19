@@ -9,7 +9,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
-import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
@@ -43,10 +42,8 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 	public S3RunStoreObjectStore(ResolvedTargetStorage target, RunStoreOperationControl control) {
 		this.target = target;
 		this.control = control;
-		S3Configuration configuration = S3Configuration.builder()
-			.pathStyleAccessEnabled(target.pathStyleAccess())
-			.chunkedEncodingEnabled(false)
-			.build();
+		S3Configuration configuration = RunStoreS3Compatibility.configuration(target.pathStyleAccess(),
+				target.compatibilityOptions());
 		ClientOverrideConfiguration deadlines = ClientOverrideConfiguration.builder()
 			.apiCallTimeout(control.requestTimeout())
 			.apiCallAttemptTimeout(control.requestTimeout())
@@ -57,7 +54,7 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 			.region(target.region())
 			.credentialsProvider(target.credentials())
 			.serviceConfiguration(configuration)
-			.requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
+			.requestChecksumCalculation(RunStoreS3Compatibility.checksumCalculation(target.compatibilityOptions()))
 			.overrideConfiguration(deadlines)
 			.build();
 		this.presigner = S3Presigner.builder()

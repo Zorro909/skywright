@@ -353,7 +353,6 @@ components:
         expectedRegistrationRevision: { type: integer, format: int64, minimum: 1 }
         bindings:
           type: array
-          minItems: 4
           maxItems: 4
           items: { $ref: '#/components/schemas/TargetStorageBindingReference' }
     CreateTargetStorage:
@@ -367,7 +366,6 @@ components:
         configuration: { $ref: '#/components/schemas/TargetStorageConfiguration' }
         bindings:
           type: array
-          minItems: 4
           maxItems: 4
           items: { $ref: '#/components/schemas/TargetStorageBindingReference' }
     StageTargetStorageRevision:

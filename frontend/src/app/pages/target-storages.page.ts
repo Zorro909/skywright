@@ -90,10 +90,27 @@ const BINDING_ROLES: TargetStorageBindingReference['role'][] = [
             @for (role of bindingRoles; track role) {
               <label>
                 {{ roleLabel(role) }} binding UUID
-                <input [name]="role" type="text" required />
+                <input [name]="role" type="text" />
+              </label>
+              <label>
+                {{ roleLabel(role) }} binding revision
+                <input
+                  [name]="role + '-revision'"
+                  type="number"
+                  min="1"
+                  value="1"
+                />
               </label>
             }
           </fieldset>
+          <label>
+            Chunked encoding option
+            <input name="chunkedEncoding" />
+          </label>
+          <label>
+            Checksum calculation option
+            <input name="checksumCalculation" />
+          </label>
           <button type="submit" [disabled]="busy()">Register candidate</button>
         </form>
       </details>
@@ -235,6 +252,28 @@ const BINDING_ROLES: TargetStorageBindingReference['role'][] = [
                   />
                   Use path-style access
                 </label>
+                <label>
+                  Chunked encoding option
+                  <input
+                    name="chunkedEncoding"
+                    [value]="
+                      storage.configuration?.compatibilityOptions?.[
+                        'chunkedEncoding'
+                      ] ?? ''
+                    "
+                  />
+                </label>
+                <label>
+                  Checksum calculation option
+                  <input
+                    name="checksumCalculation"
+                    [value]="
+                      storage.configuration?.compatibilityOptions?.[
+                        'checksumCalculation'
+                      ] ?? ''
+                    "
+                  />
+                </label>
                 <button type="submit" [disabled]="busy()">
                   Stage revision
                 </button>
@@ -250,10 +289,15 @@ const BINDING_ROLES: TargetStorageBindingReference['role'][] = [
                 @for (role of bindingRoles; track role) {
                   <label>
                     {{ roleLabel(role) }} binding UUID
+                    <input [name]="role" [value]="bindingId(storage, role)" />
+                  </label>
+                  <label>
+                    {{ roleLabel(role) }} binding revision
                     <input
-                      [name]="role"
-                      [value]="bindingId(storage, role)"
-                      required
+                      [name]="role + '-revision'"
+                      type="number"
+                      min="1"
+                      [value]="bindingRevision(storage, role)"
                     />
                   </label>
                 }
@@ -619,6 +663,16 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
     );
   }
 
+  protected bindingRevision(
+    storage: TargetStorage,
+    role: TargetStorageBindingReference['role'],
+  ): number {
+    return (
+      storage.bindings.find((binding) => binding.role === role)
+        ?.bindingRevision ?? 1
+    );
+  }
+
   protected roleLabel(role: TargetStorageBindingReference['role']): string {
     return role
       .split('-')
@@ -645,20 +699,29 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
   }
 
   private configuration(data: FormData): TargetStorageConfiguration {
+    const compatibilityOptions: Record<string, string> = {};
+    for (const option of ['chunkedEncoding', 'checksumCalculation']) {
+      const value = this.value(data, option);
+      if (value !== '') {
+        compatibilityOptions[option] = value;
+      }
+    }
     return {
       endpoint: this.value(data, 'endpoint'),
       region: this.value(data, 'region'),
       pathStyleAccess: data.has('pathStyleAccess'),
-      compatibilityOptions: {},
+      compatibilityOptions,
     };
   }
 
   private bindingReferences(data: FormData): TargetStorageBindingReference[] {
-    return BINDING_ROLES.map((role) => ({
-      role,
-      bindingId: this.value(data, role),
-      bindingRevision: 1,
-    }));
+    return BINDING_ROLES.filter((role) => this.value(data, role) !== '').map(
+      (role) => ({
+        role,
+        bindingId: this.value(data, role),
+        bindingRevision: Number(this.value(data, role + '-revision') || '1'),
+      }),
+    );
   }
 
   private value(data: FormData, name: string): string {

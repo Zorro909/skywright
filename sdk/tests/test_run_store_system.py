@@ -16,6 +16,7 @@ import urllib.request
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TypedDict
 
 import boto3
 import pytest
@@ -77,6 +78,18 @@ class State:
 
     def load_state_dict(self, state):
         self.value = state["value"]
+
+
+class RegisteredStorageConfiguration(TypedDict):
+    endpoint: str
+    region: str
+    pathStyleAccess: bool
+
+
+class RegisteredTargetStorageView(TypedDict):
+    id: str
+    bucket: str
+    configuration: RegisteredStorageConfiguration
 
 
 @contextmanager
@@ -191,10 +204,57 @@ esac
 
 
 @pytest.mark.system
-def test_production_run_store_conforms_against_pinned_seaweedfs(tmp_path) -> None:
+def test_production_run_store_conforms_against_pinned_seaweedfs(
+    tmp_path, monkeypatch
+) -> None:
     with seaweedfs() as (endpoint, client):
         bucket = f"skywright-{uuid.uuid4().hex}"
         client.create_bucket(Bucket=bucket)
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+        monkeypatch.setenv("AWS_REGION", "us-east-1")
+        monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+        registered_view: RegisteredTargetStorageView = {
+            "id": "registered-seaweedfs",
+            "bucket": bucket,
+            "configuration": {
+                "endpoint": endpoint,
+                "region": "us-east-1",
+                "pathStyleAccess": True,
+            },
+        }
+        resolved_registered_target = TargetStorage(
+            registered_view["id"],
+            registered_view["configuration"]["endpoint"],
+            registered_view["bucket"],
+            registered_view["configuration"]["region"],
+            "project",
+            "registered-run",
+            addressing_style="path",
+        )
+        direct_store = RunStoreRecorder(
+            resolved_registered_target,
+            checkpoint_codec=CheckpointCodec(staging_directory=tmp_path),
+        )
+        direct_store.publish_attempt(
+            ExecutionAttemptRecord(
+                "123e4567-e89b-12d3-a456-426614174001",
+                "registered-run",
+                "project@digest",
+                None,
+            )
+        )
+        direct_store.publish_artifact(ArtifactRecord("direct.txt", b"resolved", 8))
+        direct_object = next(
+            item["Key"]
+            for item in client.list_objects_v2(Bucket=bucket)["Contents"]
+            if "/artifacts/" in item["Key"] and item["Key"].endswith("/direct.txt")
+        )
+        assert (
+            client.get_object(Bucket=bucket, Key=direct_object)["Body"].read()
+            == b"resolved"
+        )
+
         target = TargetStorage(
             "seaweedfs",
             endpoint,
@@ -251,7 +311,7 @@ def test_production_run_store_conforms_against_pinned_seaweedfs(tmp_path) -> Non
         artifact_key = next(
             item["Key"]
             for item in client.list_objects_v2(Bucket=bucket)["Contents"]
-            if "/artifacts/" in item["Key"]
+            if item["Key"].startswith("project/run/v1/artifacts/")
         )
         url = reader.presign_download(artifact_key, expires_in=60)
         with urllib.request.urlopen(url, timeout=5) as response:

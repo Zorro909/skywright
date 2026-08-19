@@ -9,19 +9,13 @@ import org.springframework.stereotype.Component;
 @Component
 final class BindingUnavailableQualificationProbe implements TargetStorageQualificationProbe {
 
-	private static final List<String> CAPABILITIES = List.of("put-object", "conditional-create", "conditional-replace",
-			"multipart-create", "multipart-upload", "multipart-list-parts", "multipart-complete", "multipart-abort",
-			"list-multipart-uploads", "ranged-read", "list-objects", "delete-object", "read-after-write",
-			"list-after-write", "list-after-delete", "get-presigning", "metadata-preservation", "checksum-preservation",
-			"cleanup");
-
 	BindingUnavailableQualificationProbe() {
 	}
 
 	@Override
 	public TargetStorageAssessment qualify(TargetStorageQualificationRequest request) {
 		Instant observed = Instant.now();
-		List<TargetStorageCapabilityResult> results = CAPABILITIES.stream()
+		List<TargetStorageCapabilityResult> results = TargetStorageCapabilities.REQUIRED.stream()
 			.map(capability -> TargetStorageCapabilityResult.failure(capability, "credential-binding-unavailable",
 					"A ready backend Credential Binding is required to exercise this capability", Map.of()))
 			.toList();

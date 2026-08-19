@@ -21,20 +21,29 @@ databaseChangeLog:
             tableName: target_storage_configuration
             columns:
               - column: { name: target_storage_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: configuration_order, type: integer, constraints: { nullable: false } }
               - column: { name: encoded_configuration, type: varchar(8192), constraints: { nullable: false } }
         - addForeignKeyConstraint: { baseTableName: target_storage_configuration, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_configuration_storage, onDelete: CASCADE }
         - createTable:
             tableName: target_storage_binding
             columns:
               - column: { name: target_storage_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: binding_order, type: integer, constraints: { nullable: false } }
               - column: { name: encoded_binding, type: varchar(4096), constraints: { nullable: false } }
         - addForeignKeyConstraint: { baseTableName: target_storage_binding, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_binding_storage, onDelete: CASCADE }
         - createTable:
             tableName: target_storage_assessment
             columns:
               - column: { name: target_storage_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: assessment_order, type: integer, constraints: { nullable: false } }
               - column: { name: encoded_assessment, type: varchar(65535), constraints: { nullable: false } }
         - addForeignKeyConstraint: { baseTableName: target_storage_assessment, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_assessment_storage, onDelete: CASCADE }
+        - createTable:
+            tableName: target_storage_resource
+            columns:
+              - column: { name: target_storage_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: resource_key, type: varchar(4096), constraints: { nullable: false, unique: true, uniqueConstraintName: uk_target_storage_resource_key } }
+        - addForeignKeyConstraint: { baseTableName: target_storage_resource, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_resource_storage, onDelete: CASCADE }
         - createTable:
             tableName: target_storage_defaults
             columns:
@@ -44,11 +53,15 @@ databaseChangeLog:
               - column: { name: repatriation_storage_id, type: uuid, constraints: { nullable: false } }
         - addForeignKeyConstraint: { baseTableName: target_storage_defaults, baseColumnNames: execution_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_defaults_execution }
         - addForeignKeyConstraint: { baseTableName: target_storage_defaults, baseColumnNames: repatriation_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_defaults_repatriation }
-        - sql:
-            comment: Grant the configured application role only the DML privileges its JPA boundary requires.
-            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON target_storage, target_storage_configuration, target_storage_binding, target_storage_assessment, target_storage_defaults TO "${runtimeRole}"
+        - sqlFile:
+            path: ../sql/0002-target-storage-grants.sql
+            relativeToChangelogFile: true
       rollback:
+        - sqlFile:
+            path: ../sql/0002-target-storage-grants-rollback.sql
+            relativeToChangelogFile: true
         - dropTable: { tableName: target_storage_defaults }
+        - dropTable: { tableName: target_storage_resource }
         - dropTable: { tableName: target_storage_assessment }
         - dropTable: { tableName: target_storage_binding }
         - dropTable: { tableName: target_storage_configuration }

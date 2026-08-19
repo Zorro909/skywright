@@ -7,14 +7,21 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 
 final class TargetStorageRegistryTest {
 
 	private final InMemoryTargetStorageRepository repository = new InMemoryTargetStorageRepository();
 
-	private final TargetStorageRegistry registry = new TargetStorageRegistry(this.repository);
+	private final AtomicReference<BindingReadiness> readiness = new AtomicReference<>(BindingReadiness.READY);
+
+	private final TargetStorageRegistry registry = new TargetStorageRegistry(this.repository,
+			(bindingId, bindingRevision, consumingRole) -> this.readiness.get(), Optional.empty(), storageId -> false);
 
 	@Test
 	void successfulQualificationPromotesCandidateAndDerivesEligibility() {
@@ -98,6 +105,21 @@ final class TargetStorageRegistryTest {
 	}
 
 	@Test
+	void currentBindingReadinessMakesPreviouslyEligibleStorageUnavailable() {
+		UUID id = eligibleRunOutput();
+		this.registry.assignDefaults(TargetClass.LOCAL_SINGLE_GPU, id, true, id);
+
+		this.readiness.set(BindingReadiness.EXPIRED);
+
+		assertThat(this.registry.get(id).eligible()).isFalse();
+		assertThat(this.registry.get(id).bindings())
+			.allMatch(binding -> binding.readiness() == BindingReadiness.EXPIRED);
+		assertThatThrownBy(() -> this.registry.resolve(TargetClass.LOCAL_SINGLE_GPU, null, null))
+			.isInstanceOf(TargetStorageIneligibleException.class)
+			.hasMessageContaining("TARGET_STORAGE_INELIGIBLE");
+	}
+
+	@Test
 	void purposeAndBucketAreImmutableAndKnownResourceCannotCrossPurposes() {
 		this.registry.register("Datasets", TargetStoragePurpose.DATASET, "shared",
 				configuration("http://storage.example", "eu-central-1"), readyBindings());
@@ -140,6 +162,25 @@ final class TargetStorageRegistryTest {
 	}
 
 	@Test
+	void resolvesTheExistingRunStoreDescriptorWithRoleScopedCredentials() {
+		var provider = StaticCredentialsProvider.create(AwsBasicCredentials.create("access", "secret"));
+		var resolvingRegistry = new TargetStorageRegistry(new InMemoryTargetStorageRepository(),
+				(bindingId, bindingRevision, consumingRole) -> BindingReadiness.READY,
+				Optional.of((bindingId, bindingRevision, consumingRole) -> Optional.of(provider)), storageId -> false);
+		UUID id = resolvingRegistry.register("Run outputs", TargetStoragePurpose.RUN_OUTPUT, "runs",
+				new TargetStorageConfiguration(URI.create("http://storage.example"), "eu-central-1", true,
+						Map.of("chunkedEncoding", "true")),
+				readyBindings());
+		resolvingRegistry.recordQualification(id, successfulAssessment(1));
+
+		var resolved = resolvingRegistry.resolveRunStore(id, TargetStorageRole.BACKEND, "project", "run");
+
+		assertThat(resolved.storageId()).isEqualTo(id.toString());
+		assertThat(resolved.credentials()).isSameAs(provider);
+		assertThat(resolved.compatibilityOptions()).containsEntry("chunkedEncoding", "true");
+	}
+
+	@Test
 	void failureConstructionCannotCarryCredentialValues() {
 		assertThatThrownBy(() -> TargetStorageCapabilityResult.failure("put-object", "access-denied",
 				"The binding cannot perform PutObject", Map.of("secretAccessKey", "do-not-store")))
@@ -148,13 +189,28 @@ final class TargetStorageRegistryTest {
 	}
 
 	@Test
-	void registrationRequiresExactlyOneBindingForEachRole() {
-		assertThatThrownBy(() -> this.registry.register("Run outputs", TargetStoragePurpose.RUN_OUTPUT, "runs",
+	void incompleteRegistrationIsRetainedButIneligible() {
+		UUID id = this.registry.register("Run outputs", TargetStoragePurpose.RUN_OUTPUT, "runs",
 				configuration("http://storage.example", "eu-central-1"),
 				List.of(new TargetStorageBinding(TargetStorageRole.BACKEND, UUID.randomUUID(), 1,
-						BindingReadiness.READY))))
-			.isInstanceOf(IllegalArgumentException.class)
-			.hasMessageContaining("All four Credential Binding roles are required");
+						BindingReadiness.MISSING)));
+
+		assertThat(this.registry.get(id).eligible()).isFalse();
+		assertThat(this.registry.get(id).bindings()).hasSize(1);
+	}
+
+	@Test
+	void assessmentForRegistrationWithoutBindingsRoundTripsThroughPersistenceEncoding() {
+		Instant observed = Instant.parse("2026-08-19T08:00:00Z");
+		var assessment = new TargetStorageAssessment(UUID.randomUUID(), 1, observed, observed,
+				CapabilityAvailability.TRANSIENTLY_UNAVAILABLE, List.of(),
+				TargetStorageCapabilities.REQUIRED.stream()
+					.map(capability -> TargetStorageCapabilityResult.failure(capability, "binding-unavailable",
+							"A ready binding is required", Map.of()))
+					.toList());
+
+		assertThat(TargetStorageEncoding.assessment(TargetStorageEncoding.assessment(assessment)))
+			.isEqualTo(assessment);
 	}
 
 	private UUID eligibleRunOutput() {
@@ -196,7 +252,7 @@ final class TargetStorageRegistryTest {
 	private static TargetStorageAssessment successfulAssessment(long revision) {
 		return new TargetStorageAssessment(UUID.randomUUID(), revision, Instant.parse("2026-08-19T08:00:00Z"),
 				Instant.parse("2026-08-19T08:00:02Z"), CapabilityAvailability.AVAILABLE, readyBindings(),
-				List.of(TargetStorageCapabilityResult.success("put-object")));
+				TargetStorageCapabilities.REQUIRED.stream().map(TargetStorageCapabilityResult::success).toList());
 	}
 
 	private static TargetStorageAssessment failedAssessment(long revision, String code) {

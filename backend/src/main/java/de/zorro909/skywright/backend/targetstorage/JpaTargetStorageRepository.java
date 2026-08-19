@@ -27,7 +27,13 @@ class JpaTargetStorageRepository implements TargetStorageRepository {
 	@Override
 	@Transactional(readOnly = true)
 	public Optional<TargetStorageAggregate> findByResource(URI endpoint, String bucket) {
-		return this.findAll().stream().filter(storage -> storage.hasResource(endpoint, bucket)).findFirst();
+		return this.entityManager
+			.createQuery("select storage from TargetStorageEntity storage join storage.resources resource "
+					+ "where resource = :resource", TargetStorageEntity.class)
+			.setParameter("resource", TargetStorageEntity.resourceKey(endpoint, bucket))
+			.getResultStream()
+			.findFirst()
+			.map(TargetStorageEntity::domain);
 	}
 
 	@Override

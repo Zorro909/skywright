@@ -16,19 +16,18 @@ record TargetStorageAssessment(UUID id, long configurationRevision, Instant obse
 		Objects.requireNonNull(availability, "availability");
 		bindingRevisions = List.copyOf(bindingRevisions);
 		capabilities = List.copyOf(capabilities);
-		if (configurationRevision < 1L || observedUntil.isBefore(observedFrom) || bindingRevisions.isEmpty()
-				|| capabilities.isEmpty()) {
+		if (configurationRevision < 1L || observedUntil.isBefore(observedFrom) || capabilities.isEmpty()) {
 			throw new IllegalArgumentException("invalid Target Storage assessment");
 		}
 		var roles = bindingRevisions.stream()
 			.map(TargetStorageBinding::role)
 			.collect(java.util.stream.Collectors.toCollection(() -> EnumSet.noneOf(TargetStorageRole.class)));
-		if (roles.size() != bindingRevisions.size() || !roles.equals(EnumSet.allOf(TargetStorageRole.class))) {
-			throw new IllegalArgumentException("assessment requires exactly one revision for every binding role");
+		if (roles.size() != bindingRevisions.size()) {
+			throw new IllegalArgumentException("assessment binding roles must be unique");
 		}
-		if (availability == CapabilityAvailability.AVAILABLE
-				&& capabilities.stream().anyMatch(result -> !result.succeeded())) {
-			throw new IllegalArgumentException("available assessment cannot contain failed capabilities");
+		if (availability == CapabilityAvailability.AVAILABLE && (!roles.equals(EnumSet.allOf(TargetStorageRole.class))
+				|| !TargetStorageCapabilities.isCompleteSuccess(capabilities))) {
+			throw new IllegalArgumentException("available assessment requires every binding and capability");
 		}
 	}
 }
