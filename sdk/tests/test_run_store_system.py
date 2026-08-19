@@ -198,6 +198,22 @@ def test_registered_descriptor_uses_standard_credentials_against_pinned_seaweedf
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
         monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+        observed_checksum_modes: list[str] = []
+        standard_session = boto3.Session
+
+        def recording_session(*args, **kwargs):
+            delegate = standard_session(*args, **kwargs)
+
+            class RecordingSession:
+                def client(self, service_name, **client_kwargs):
+                    observed_checksum_modes.append(
+                        client_kwargs["config"].request_checksum_calculation
+                    )
+                    return delegate.client(service_name, **client_kwargs)
+
+            return RecordingSession()
+
+        monkeypatch.setattr(boto3, "Session", recording_session)
         bucket = f"skywright-{uuid.uuid4().hex}"
         client.create_bucket(Bucket=bucket)
         target = TargetStorage(
@@ -207,7 +223,7 @@ def test_registered_descriptor_uses_standard_credentials_against_pinned_seaweedf
             "us-east-1",
             "project",
             "run",
-            compatibility_options={"request_checksum_calculation": "when-required"},
+            compatibility_options={"checksumCalculation": "when-supported"},
         )
         store = RunStoreRecorder(
             target,
@@ -215,6 +231,7 @@ def test_registered_descriptor_uses_standard_credentials_against_pinned_seaweedf
             multipart_threshold=1,
             multipart_part_size=5 * 1024 * 1024,
         )
+        assert observed_checksum_modes == ["when_supported"]
 
         def train(context):
             state = State()

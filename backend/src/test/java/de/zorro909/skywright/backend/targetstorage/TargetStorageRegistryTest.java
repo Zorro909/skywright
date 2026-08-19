@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
 
 final class TargetStorageRegistryTest {
 
@@ -39,7 +40,8 @@ final class TargetStorageRegistryTest {
 		UUID id = eligibleRunOutput();
 		this.registry.stageRevision(id, this.registry.get(id).registrationRevision(),
 				configuration("http://replacement.example", "us-east-1"));
-		this.registry.recordQualification(id, failedAssessment(2, "conditional-create-not-enforced"));
+		this.registry.recordQualification(id,
+				failedAssessment(2, "conditional-create-not-enforced", this.registry.get(id).bindings()));
 
 		TargetStorageView storage = this.registry.get(id);
 		assertThat(storage.activeRevision()).isEqualTo(1);
@@ -55,7 +57,7 @@ final class TargetStorageRegistryTest {
 		UUID id = this.registry.register("Draft", TargetStoragePurpose.RUN_OUTPUT, "draft",
 				configuration("http://storage.example", "eu-central-1"), List.of());
 
-		this.registry.recordQualification(id, failedAssessment(1, "conditional-create-not-enforced"));
+		this.registry.recordQualification(id, failedAssessment(1, "conditional-create-not-enforced", List.of()));
 
 		assertThat(this.registry.get(id).availability()).isEqualTo(CapabilityAvailability.INCOMPATIBLE);
 		assertThat(this.registry.get(id).candidateRevision()).isEqualTo(1);
@@ -81,7 +83,7 @@ final class TargetStorageRegistryTest {
 		this.registry.stageRevision(id, this.registry.get(id).registrationRevision(),
 				configuration("http://candidate-three.example", "us-east-1"));
 
-		this.registry.recordQualification(id, successfulAssessment(2));
+		this.registry.recordQualification(id, successfulAssessment(2, this.registry.get(id).bindings()));
 
 		assertThat(this.registry.get(id).activeRevision()).isEqualTo(1);
 		assertThat(this.registry.get(id).candidateRevision()).isEqualTo(3);
@@ -92,7 +94,8 @@ final class TargetStorageRegistryTest {
 		UUID id = eligibleRunOutput();
 
 		assertThat(this.registry.qualificationRequest(id).configurationRevision()).isEqualTo(1);
-		this.registry.recordQualification(id, failedAssessment(1, "storage-unavailable"));
+		this.registry.recordQualification(id,
+				failedAssessment(1, "storage-unavailable", this.registry.get(id).bindings()));
 
 		assertThat(this.registry.get(id).activeRevision()).isEqualTo(1);
 		assertThat(this.registry.get(id).eligible()).isFalse();
@@ -113,6 +116,25 @@ final class TargetStorageRegistryTest {
 	}
 
 	@Test
+	void qualificationFinishingAfterBindingRotationIsRetainedButCannotChangeEligibility() {
+		UUID id = eligibleRunOutput();
+		TargetStorageQualificationRequest staleRequest = this.registry.qualificationRequest(id);
+		List<TargetStorageBinding> rotated = staleRequest.bindings()
+			.stream()
+			.map(binding -> new TargetStorageBinding(binding.role(), binding.bindingId(), 2, binding.readiness()))
+			.toList();
+		this.registry.replaceBindings(id, this.registry.get(id).registrationRevision(), rotated);
+		TargetStorageAssessment staleAssessment = successfulAssessment(staleRequest.configurationRevision(),
+				staleRequest.bindings());
+
+		this.registry.recordQualification(id, staleAssessment);
+
+		assertThat(this.registry.get(id).assessments()).contains(staleAssessment);
+		assertThat(this.registry.get(id).eligible()).isFalse();
+		assertThat(this.registry.get(id).availability()).isEqualTo(CapabilityAvailability.TRANSIENTLY_UNAVAILABLE);
+	}
+
+	@Test
 	void purposeAndBucketAreImmutableAndKnownResourceCannotCrossPurposes() {
 		this.registry.register("Datasets", TargetStoragePurpose.DATASET, "shared",
 				configuration("http://storage.example", "eu-central-1"), readyBindings());
@@ -121,6 +143,45 @@ final class TargetStorageRegistryTest {
 				configuration("http://storage.example", "eu-central-1"), readyBindings()))
 			.isInstanceOf(TargetStorageConflictException.class)
 			.hasMessageContaining("TARGET_STORAGE_PURPOSE_CONFLICT");
+	}
+
+	@Test
+	void equivalentEndpointSpellingsCannotClaimTheSameBucket() {
+		this.registry.register("Datasets", TargetStoragePurpose.DATASET, "shared",
+				configuration("HTTP://STORAGE.EXAMPLE:80/", "eu-central-1"), readyBindings());
+
+		assertThatThrownBy(() -> this.registry.register("Outputs", TargetStoragePurpose.RUN_OUTPUT, "shared",
+				configuration("http://storage.example", "eu-central-1"), readyBindings()))
+			.isInstanceOf(TargetStorageConflictException.class)
+			.hasMessageContaining("TARGET_STORAGE_PURPOSE_CONFLICT");
+	}
+
+	@Test
+	void descriptorAndCredentialBindingComeFromOneRegistrySnapshotDuringRotation() {
+		UUID id = eligibleRunOutput();
+		TargetStorageBinding expected = this.registry.get(id)
+			.bindings()
+			.stream()
+			.filter(binding -> binding.role() == TargetStorageRole.BACKEND)
+			.findFirst()
+			.orElseThrow();
+		TargetStorageCredentialAccess credentials = (bindingId, bindingRevision, consumingRole) -> {
+			assertThat(bindingId).isEqualTo(expected.bindingId());
+			assertThat(bindingRevision).isEqualTo(expected.bindingRevision());
+			List<TargetStorageBinding> rotated = this.registry.get(id)
+				.bindings()
+				.stream()
+				.map(binding -> new TargetStorageBinding(binding.role(), binding.bindingId(), 2, binding.readiness()))
+				.toList();
+			this.registry.replaceBindings(id, this.registry.get(id).registrationRevision(), rotated);
+			return java.util.Optional.of(AnonymousCredentialsProvider.create());
+		};
+
+		var resolved = new TargetStorageResolver(this.registry, credentials).resolveRunOutput(id, "backend", "project",
+				"run");
+
+		assertThat(resolved.storageId()).isEqualTo(id.toString());
+		assertThat(this.registry.get(id).eligible()).isFalse();
 	}
 
 	@Test
@@ -143,7 +204,7 @@ final class TargetStorageRegistryTest {
 		AtomicInteger probes = new AtomicInteger();
 		var qualification = new TargetStorageQualification(this.registry, request -> {
 			probes.incrementAndGet();
-			return failedAssessment(request.configurationRevision(), "not-available");
+			return failedAssessment(request.configurationRevision(), "not-available", request.bindings());
 		});
 
 		qualification.qualifyWhenReady(incomplete);
@@ -227,10 +288,6 @@ final class TargetStorageRegistryTest {
 				new TargetStorageBinding(TargetStorageRole.METRIC_VIEW, UUID.randomUUID(), 1, BindingReadiness.READY));
 	}
 
-	private static TargetStorageAssessment successfulAssessment(long revision) {
-		return successfulAssessment(revision, readyBindings());
-	}
-
 	private static TargetStorageAssessment successfulAssessment(long revision, List<TargetStorageBinding> bindings) {
 		return new TargetStorageAssessment(UUID.randomUUID(), revision, Instant.parse("2026-08-19T08:00:00Z"),
 				Instant.parse("2026-08-19T08:00:02Z"), CapabilityAvailability.AVAILABLE,
@@ -241,10 +298,11 @@ final class TargetStorageRegistryTest {
 					.toList());
 	}
 
-	private static TargetStorageAssessment failedAssessment(long revision, String code) {
+	private static TargetStorageAssessment failedAssessment(long revision, String code,
+			List<TargetStorageBinding> bindings) {
 		return new TargetStorageAssessment(UUID.randomUUID(), revision, Instant.parse("2026-08-19T08:00:00Z"),
 				Instant.parse("2026-08-19T08:00:02Z"), CapabilityAvailability.INCOMPATIBLE,
-				readyBindings().stream().map(TargetStorageBindingRevision::from).toList(),
+				bindings.stream().map(TargetStorageBindingRevision::from).toList(),
 				RunStoreS3CapabilityFloor.requiredCapabilities()
 					.stream()
 					.map(capability -> "conditional-create".equals(capability)

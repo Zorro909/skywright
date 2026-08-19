@@ -23,8 +23,9 @@ public final class TargetStorageResolver {
 	public ResolvedTargetStorage resolveRunOutput(UUID storageId, String consumingRole, String trainingProjectId,
 			String runId) {
 		TargetStorageRole role = TargetStorageRole.fromWireValue(consumingRole);
-		TargetStorageDescriptor descriptor = this.registry.resolveEligibleRunOutputDescriptor(storageId);
-		TargetStorageBinding binding = this.registry.readyBinding(storageId, role);
+		TargetStorageResolution resolution = this.registry.resolveEligibleRunOutput(storageId, role);
+		TargetStorageDescriptor descriptor = resolution.descriptor();
+		TargetStorageBinding binding = resolution.binding();
 		var provider = this.credentials.credentials(binding.bindingId(), binding.bindingRevision(), role.wireValue())
 			.orElseThrow(() -> new TargetStorageIneligibleException("TARGET_STORAGE_CREDENTIALS_UNAVAILABLE",
 					"The required Credential Projection is unavailable"));

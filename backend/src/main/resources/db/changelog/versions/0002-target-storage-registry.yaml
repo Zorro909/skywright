@@ -25,7 +25,6 @@ databaseChangeLog:
               - column: { name: bucket, type: varchar(255), constraints: { nullable: false } }
               - column: { name: target_storage_id, type: uuid, constraints: { nullable: false } }
               - column: { name: purpose, type: varchar(32), constraints: { nullable: false } }
-        - addForeignKeyConstraint: { baseTableName: target_storage_resource, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_resource_storage, onDelete: CASCADE }
         - createTable:
             tableName: target_storage_configuration
             columns:
@@ -36,9 +35,6 @@ databaseChangeLog:
               - column: { name: region, type: varchar(255), constraints: { nullable: false } }
               - column: { name: path_style_access, type: boolean, constraints: { nullable: false } }
               - column: { name: compatibility_options, type: jsonb, constraints: { nullable: false } }
-        - addForeignKeyConstraint: { baseTableName: target_storage_configuration, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_configuration_storage, onDelete: CASCADE }
-        - addPrimaryKey: { tableName: target_storage_configuration, columnNames: "target_storage_id, configuration_position", constraintName: pk_target_storage_configuration }
-        - addUniqueConstraint: { tableName: target_storage_configuration, columnNames: "target_storage_id, configuration_revision", constraintName: uq_target_storage_configuration_revision }
         - createTable:
             tableName: target_storage_binding
             columns:
@@ -48,9 +44,6 @@ databaseChangeLog:
               - column: { name: binding_id, type: uuid, constraints: { nullable: false } }
               - column: { name: binding_revision, type: bigint, constraints: { nullable: false } }
               - column: { name: readiness, type: varchar(32), constraints: { nullable: false } }
-        - addForeignKeyConstraint: { baseTableName: target_storage_binding, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_binding_storage, onDelete: CASCADE }
-        - addPrimaryKey: { tableName: target_storage_binding, columnNames: "target_storage_id, binding_position", constraintName: pk_target_storage_binding }
-        - addUniqueConstraint: { tableName: target_storage_binding, columnNames: "target_storage_id, role", constraintName: uq_target_storage_binding_role }
         - createTable:
             tableName: target_storage_assessment
             columns:
@@ -63,9 +56,6 @@ databaseChangeLog:
               - column: { name: availability, type: varchar(32), constraints: { nullable: false } }
               - column: { name: binding_revisions, type: jsonb, constraints: { nullable: false } }
               - column: { name: capabilities, type: jsonb, constraints: { nullable: false } }
-        - addForeignKeyConstraint: { baseTableName: target_storage_assessment, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_assessment_storage, onDelete: CASCADE }
-        - addPrimaryKey: { tableName: target_storage_assessment, columnNames: "target_storage_id, assessment_position", constraintName: pk_target_storage_assessment }
-        - addUniqueConstraint: { tableName: target_storage_assessment, columnNames: assessment_id, constraintName: uq_target_storage_assessment_id }
         - createTable:
             tableName: target_storage_defaults
             columns:
@@ -73,8 +63,6 @@ databaseChangeLog:
               - column: { name: execution_storage_id, type: uuid, constraints: { nullable: false } }
               - column: { name: repatriation_enabled, type: boolean, constraints: { nullable: false } }
               - column: { name: repatriation_storage_id, type: uuid, constraints: { nullable: false } }
-        - addForeignKeyConstraint: { baseTableName: target_storage_defaults, baseColumnNames: execution_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_defaults_execution }
-        - addForeignKeyConstraint: { baseTableName: target_storage_defaults, baseColumnNames: repatriation_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_defaults_repatriation }
       rollback:
         - dropTable: { tableName: target_storage_defaults }
         - dropTable: { tableName: target_storage_assessment }
@@ -82,6 +70,48 @@ databaseChangeLog:
         - dropTable: { tableName: target_storage_configuration }
         - dropTable: { tableName: target_storage_resource }
         - dropTable: { tableName: target_storage }
+  - changeSet:
+      id: issue-80-target-storage-registry-primary-keys
+      author: skywright
+      logicalFilePath: db/changelog/versions/0002-target-storage-registry.yaml
+      changes:
+        - addPrimaryKey: { tableName: target_storage_configuration, columnNames: "target_storage_id, configuration_position", constraintName: pk_target_storage_configuration }
+        - addPrimaryKey: { tableName: target_storage_binding, columnNames: "target_storage_id, binding_position", constraintName: pk_target_storage_binding }
+        - addPrimaryKey: { tableName: target_storage_assessment, columnNames: "target_storage_id, assessment_position", constraintName: pk_target_storage_assessment }
+      rollback:
+        - dropPrimaryKey: { tableName: target_storage_assessment, constraintName: pk_target_storage_assessment }
+        - dropPrimaryKey: { tableName: target_storage_binding, constraintName: pk_target_storage_binding }
+        - dropPrimaryKey: { tableName: target_storage_configuration, constraintName: pk_target_storage_configuration }
+  - changeSet:
+      id: issue-80-target-storage-registry-foreign-keys
+      author: skywright
+      logicalFilePath: db/changelog/versions/0002-target-storage-registry.yaml
+      changes:
+        - addForeignKeyConstraint: { baseTableName: target_storage_resource, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_resource_storage, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: target_storage_configuration, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_configuration_storage, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: target_storage_binding, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_binding_storage, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: target_storage_assessment, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_assessment_storage, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: target_storage_defaults, baseColumnNames: execution_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_defaults_execution }
+        - addForeignKeyConstraint: { baseTableName: target_storage_defaults, baseColumnNames: repatriation_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_defaults_repatriation }
+      rollback:
+        - dropForeignKeyConstraint: { baseTableName: target_storage_defaults, constraintName: fk_target_storage_defaults_repatriation }
+        - dropForeignKeyConstraint: { baseTableName: target_storage_defaults, constraintName: fk_target_storage_defaults_execution }
+        - dropForeignKeyConstraint: { baseTableName: target_storage_assessment, constraintName: fk_target_storage_assessment_storage }
+        - dropForeignKeyConstraint: { baseTableName: target_storage_binding, constraintName: fk_target_storage_binding_storage }
+        - dropForeignKeyConstraint: { baseTableName: target_storage_configuration, constraintName: fk_target_storage_configuration_storage }
+        - dropForeignKeyConstraint: { baseTableName: target_storage_resource, constraintName: fk_target_storage_resource_storage }
+  - changeSet:
+      id: issue-80-target-storage-registry-unique-constraints
+      author: skywright
+      logicalFilePath: db/changelog/versions/0002-target-storage-registry.yaml
+      changes:
+        - addUniqueConstraint: { tableName: target_storage_configuration, columnNames: "target_storage_id, configuration_revision", constraintName: uq_target_storage_configuration_revision }
+        - addUniqueConstraint: { tableName: target_storage_binding, columnNames: "target_storage_id, role", constraintName: uq_target_storage_binding_role }
+        - addUniqueConstraint: { tableName: target_storage_assessment, columnNames: assessment_id, constraintName: uq_target_storage_assessment_id }
+      rollback:
+        - dropUniqueConstraint: { tableName: target_storage_assessment, constraintName: uq_target_storage_assessment_id }
+        - dropUniqueConstraint: { tableName: target_storage_binding, constraintName: uq_target_storage_binding_role }
+        - dropUniqueConstraint: { tableName: target_storage_configuration, constraintName: uq_target_storage_configuration_revision }
   - changeSet:
       id: issue-80-target-storage-registry-grants
       author: skywright

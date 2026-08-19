@@ -129,14 +129,14 @@ public class TargetStorageHttpAdapter implements TargetStoragesApi, TargetStorag
 
 	private de.zorro909.skywright.backend.boundary.generated.model.TargetStorageConfiguration configuration(
 			TargetStorageConfiguration value) {
-		return new de.zorro909.skywright.backend.boundary.generated.model.TargetStorageConfiguration(value.endpoint(),
-				value.region(), value.pathStyleAccess(), value.compatibilityOptions());
+		return new de.zorro909.skywright.backend.boundary.generated.model.TargetStorageConfiguration(
+				value.endpoint().toString(), value.region(), value.pathStyleAccess(), value.compatibilityOptions());
 	}
 
 	private TargetStorageConfiguration configuration(
 			de.zorro909.skywright.backend.boundary.generated.model.TargetStorageConfiguration value) {
-		return new TargetStorageConfiguration(value.getEndpoint(), value.getRegion(), value.getPathStyleAccess(),
-				value.getCompatibilityOptions());
+		return new TargetStorageConfiguration(java.net.URI.create(value.getEndpoint()), value.getRegion(),
+				value.getPathStyleAccess(), value.getCompatibilityOptions());
 	}
 
 	private de.zorro909.skywright.backend.boundary.generated.model.TargetStorageBinding binding(

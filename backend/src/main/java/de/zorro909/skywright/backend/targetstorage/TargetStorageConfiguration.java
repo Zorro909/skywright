@@ -9,7 +9,7 @@ record TargetStorageConfiguration(URI endpoint, String region, boolean pathStyle
 		Map<String, String> compatibilityOptions) {
 	TargetStorageConfiguration {
 		Objects.requireNonNull(endpoint, "endpoint");
-		if (!List.of("http", "https").contains(endpoint.getScheme())) {
+		if (!("http".equalsIgnoreCase(endpoint.getScheme()) || "https".equalsIgnoreCase(endpoint.getScheme()))) {
 			throw invalid("endpoint must use http or https");
 		}
 		if (endpoint.getHost() == null || endpoint.getUserInfo() != null || endpoint.getQuery() != null

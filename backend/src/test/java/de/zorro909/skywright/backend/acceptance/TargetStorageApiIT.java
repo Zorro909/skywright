@@ -64,10 +64,16 @@ final class TargetStorageApiIT {
 				assertThat(defaults.body()).contains(storageId, "local-single-gpu");
 
 				var revision = request(port, "POST", "/api/v1/target-storages/" + storageId + "/revisions",
-						revision(storage.endpoint()));
+						revision(storage.endpoint(), 3));
 				assertThat(revision.statusCode()).isEqualTo(200);
 				assertThat(revision.body()).contains("\"activeRevision\":2", "\"candidateRevision\":null",
 						"\"eligible\":true");
+
+				var failedCandidate = request(port, "POST", "/api/v1/target-storages/" + storageId + "/revisions",
+						revision(URI.create("http://127.0.0.1:1"), 5));
+				assertThat(failedCandidate.statusCode()).isEqualTo(200);
+				assertThat(failedCandidate.body()).contains("\"activeRevision\":2", "\"candidateRevision\":3",
+						"\"eligible\":true", "transient-storage-outage", "127.0.0.1:1");
 
 				var conflict = request(port, "POST", "/api/v1/target-storages",
 						registration(storage.endpoint(), bucket, "dataset"));
@@ -75,7 +81,7 @@ final class TargetStorageApiIT {
 				assertThat(conflict.body()).contains("SKYWRIGHT_TARGET_STORAGE_PURPOSE_CONFLICT");
 
 				var deactivated = request(port, "PUT", "/api/v1/target-storages/" + storageId + "/activation",
-						"{\"expectedRegistrationRevision\":5,\"activated\":false}");
+						"{\"expectedRegistrationRevision\":7,\"activated\":false}");
 				assertThat(deactivated.statusCode()).isEqualTo(200);
 				assertThat(deactivated.body()).contains("\"eligible\":false");
 
@@ -141,10 +147,10 @@ final class TargetStorageApiIT {
 				""".formatted(purpose, bucket, endpoint);
 	}
 
-	private static String revision(URI endpoint) {
+	private static String revision(URI endpoint, long expectedRegistrationRevision) {
 		return """
 				{
-				  "expectedRegistrationRevision": 3,
+				  "expectedRegistrationRevision": %d,
 				  "configuration": {
 				    "endpoint": "%s",
 				    "region": "us-east-1",
@@ -152,7 +158,7 @@ final class TargetStorageApiIT {
 				    "compatibilityOptions": {"chunkedEncoding":"disabled"}
 				  }
 				}
-				""".formatted(endpoint);
+				""".formatted(expectedRegistrationRevision, endpoint);
 	}
 
 	private static String defaults(String storageId) {

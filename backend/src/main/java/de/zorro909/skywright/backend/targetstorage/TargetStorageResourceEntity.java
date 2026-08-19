@@ -37,7 +37,7 @@ class TargetStorageResourceEntity {
 			String bucket) {
 		TargetStorageResourceEntity result = new TargetStorageResourceEntity();
 		result.resourceKey = TargetStorageResourceClaim.resourceKey(endpoint, bucket);
-		result.endpoint = endpoint.toString();
+		result.endpoint = TargetStorageResourceClaim.canonicalEndpoint(endpoint);
 		result.bucket = bucket;
 		result.targetStorageId = storageId;
 		result.purpose = purpose;

@@ -180,6 +180,9 @@
               <apiPackage>de.zorro909.skywright.backend.boundary.generated.api</apiPackage>
               <modelPackage>de.zorro909.skywright.backend.boundary.generated.model</modelPackage>
               <output>${project.build.directory}/generated-sources/openapi</output>
+              <typeMappings>
+                <typeMapping>URI=String</typeMapping>
+              </typeMappings>
               <globalProperties>
                 <apis/>
                 <models/>

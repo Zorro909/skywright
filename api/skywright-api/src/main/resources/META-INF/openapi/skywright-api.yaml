@@ -257,6 +257,7 @@ components:
         endpoint:
           type: string
           format: uri
+          maxLength: 2048
           description: An HTTP or HTTPS S3-compatible service endpoint.
         region: { type: string, minLength: 1, maxLength: 255 }
         pathStyleAccess: { type: boolean }

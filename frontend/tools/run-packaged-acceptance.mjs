@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 
 const image = process.env['SKYWRIGHT_POSTGRESQL_IMAGE'];
 
@@ -50,6 +51,24 @@ function run(command, args, options = {}) {
 
 const delay = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function availablePort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        reject(new Error('Could not allocate an acceptance port'));
+        return;
+      }
+      server.close((error) =>
+        error ? reject(error) : resolve(String(address.port)),
+      );
+    });
+  });
+}
 
 async function waitForPostgreSql() {
   let lastFailure;
@@ -155,8 +174,7 @@ GRANT USAGE ON SCHEMA skywright TO runtime;
   const baseUrl = `jdbc:postgresql://127.0.0.1:${port}/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true`;
   const acceptanceEnvironment = {
     ...process.env,
-    SKYWRIGHT_ACCEPTANCE_DATABASE_CONTAINER: containerName,
-    SKYWRIGHT_CONTAINER_CLI: containerCli,
+    SKYWRIGHT_ACCEPTANCE_PORT: await availablePort(),
     SKYWRIGHT_DATABASE_RUNTIME_URL: `${baseUrl}&currentSchema=skywright`,
     SKYWRIGHT_DATABASE_RUNTIME_USERNAME: 'runtime',
     SKYWRIGHT_DATABASE_RUNTIME_PASSWORD: runtimePassword,

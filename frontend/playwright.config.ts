@@ -8,7 +8,7 @@ if (!backendExecutable) {
   );
 }
 
-const port = 18_765;
+const port = Number(process.env['SKYWRIGHT_ACCEPTANCE_PORT'] ?? '18765');
 
 export default defineConfig({
   testDir: './tests/acceptance',
@@ -23,7 +23,7 @@ export default defineConfig({
     browserName: 'chromium',
   },
   webServer: {
-    command: `java -jar ${JSON.stringify(backendExecutable)} --skywright.deployment.environment=acceptance --server.port=${port}`,
+    command: `java -jar ${JSON.stringify(backendExecutable)} --skywright.deployment.environment=acceptance --spring.profiles.active=target-storage-acceptance --server.port=${port}`,
     url: `http://127.0.0.1:${port}/readyz`,
     reuseExistingServer: false,
     timeout: 120_000,

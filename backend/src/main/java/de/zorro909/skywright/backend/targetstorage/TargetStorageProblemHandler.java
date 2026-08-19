@@ -44,11 +44,29 @@ final class TargetStorageProblemHandler {
 	@ExceptionHandler(value = { DataIntegrityViolationException.class })
 	ResponseEntity<Problem> handleResourceConflict(DataIntegrityViolationException failure,
 			HttpServletRequest request) {
+		if (!containsConstraint(failure, "target_storage_resource_pkey")) {
+			Problem problem = new Problem("about:blank", HttpStatus.INTERNAL_SERVER_ERROR.getReasonPhrase(),
+					HttpStatus.INTERNAL_SERVER_ERROR.value(), "The server could not complete the request.",
+					request.getRequestURI(), "SKYWRIGHT_HTTP_INTERNAL_ERROR",
+					RequestCorrelationFilter.correlationIdFrom(request), List.of(), null, false);
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+				.contentType(MediaType.APPLICATION_PROBLEM_JSON)
+				.body(problem);
+		}
 		Problem problem = new Problem("about:blank", HttpStatus.CONFLICT.getReasonPhrase(), HttpStatus.CONFLICT.value(),
 				"The endpoint and bucket are already registered.", request.getRequestURI(),
 				"SKYWRIGHT_TARGET_STORAGE_RESOURCE_CONFLICT", RequestCorrelationFilter.correlationIdFrom(request),
 				List.of(), null, false);
 		return ResponseEntity.status(HttpStatus.CONFLICT).contentType(MediaType.APPLICATION_PROBLEM_JSON).body(problem);
+	}
+
+	private static boolean containsConstraint(Throwable failure, String constraint) {
+		for (Throwable current = failure; current != null; current = current.getCause()) {
+			if (current.getMessage() != null && current.getMessage().contains(constraint)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static HttpStatus status(TargetStorageException failure) {

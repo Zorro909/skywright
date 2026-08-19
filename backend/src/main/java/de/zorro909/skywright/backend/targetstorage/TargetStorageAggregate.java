@@ -121,16 +121,18 @@ final class TargetStorageAggregate {
 			throw new IllegalArgumentException("assessment names an unknown configuration revision");
 		}
 		this.assessments.add(assessment);
-		if (assessment.availability() == CapabilityAvailability.AVAILABLE
+		boolean currentBindings = assessment.bindingRevisions()
+			.equals(this.bindings.stream().map(TargetStorageBindingRevision::from).toList());
+		if (currentBindings && assessment.availability() == CapabilityAvailability.AVAILABLE
 				&& Objects.equals(this.candidateRevision, assessment.configurationRevision())) {
 			this.activeRevision = assessment.configurationRevision();
 			this.candidateRevision = null;
 			this.availability = CapabilityAvailability.AVAILABLE;
 		}
-		else if (Objects.equals(this.activeRevision, assessment.configurationRevision())) {
+		else if (currentBindings && Objects.equals(this.activeRevision, assessment.configurationRevision())) {
 			this.availability = assessment.availability();
 		}
-		else if (this.activeRevision == null
+		else if (currentBindings && this.activeRevision == null
 				&& Objects.equals(this.candidateRevision, assessment.configurationRevision())) {
 			this.availability = assessment.availability();
 		}

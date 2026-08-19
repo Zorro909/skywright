@@ -131,23 +131,19 @@ public class TargetStorageRegistry {
 		return storage.descriptor();
 	}
 
-	TargetStorageDescriptor resolveEligibleRunOutputDescriptor(UUID id) {
+	TargetStorageResolution resolveEligibleRunOutput(UUID id, TargetStorageRole role) {
 		TargetStorageAggregate storage = this.requireRunOutput(id);
 		if (!storage.eligible()) {
 			throw new TargetStorageIneligibleException("TARGET_STORAGE_INELIGIBLE",
 					"Target Storage is not eligible for new work");
 		}
-		return storage.descriptor();
-	}
-
-	TargetStorageBinding readyBinding(UUID id, TargetStorageRole role) {
-		return this.storage(id)
-			.bindings()
+		TargetStorageBinding selectedBinding = storage.bindings()
 			.stream()
 			.filter(binding -> binding.role() == role && binding.readiness() == BindingReadiness.READY)
 			.findFirst()
 			.orElseThrow(() -> new TargetStorageIneligibleException("TARGET_STORAGE_BINDING_UNAVAILABLE",
 					"The required Credential Binding is not ready"));
+		return new TargetStorageResolution(storage.descriptor(), selectedBinding);
 	}
 
 	TargetStorageQualificationRequest qualificationRequest(UUID id) {

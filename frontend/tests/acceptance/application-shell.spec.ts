@@ -1,6 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 
 test('user can navigate the packaged Skywright shell', async ({ page }) => {
@@ -200,8 +199,21 @@ test('operator can assign class defaults and deactivate an eligible registration
     data: qualifiedRegistration,
   });
   expect(created.status()).toBe(201);
-  const storageId = (await created.json()).id as string;
-  seedEligibleRegistration(storageId);
+  const registration = (await created.json()) as {
+    id: string;
+    registrationRevision: number;
+  };
+  const storageId = registration.id;
+  const activated = await request.put(
+    `/api/v1/target-storages/${storageId}/activation`,
+    {
+      data: {
+        expectedRegistrationRevision: registration.registrationRevision,
+        activated: true,
+      },
+    },
+  );
+  expect(activated.status()).toBe(200);
 
   await page.goto('/target-storages');
   const defaultsForm = page
@@ -253,75 +265,6 @@ const qualifiedRegistration = {
     ['metric-view', '00000000-0000-0000-0000-000000000014'],
   ].map(([role, bindingId]) => ({ role, bindingId, bindingRevision: 1 })),
 };
-
-function seedEligibleRegistration(storageId: string) {
-  const container = process.env['SKYWRIGHT_ACCEPTANCE_DATABASE_CONTAINER'];
-  if (!container)
-    throw new Error('acceptance database container is unavailable');
-  const capabilities = [
-    'put-object',
-    'conditional-create',
-    'conditional-replace',
-    'multipart-create',
-    'multipart-upload',
-    'multipart-list-parts',
-    'multipart-complete',
-    'multipart-abort',
-    'ranged-read',
-    'list-objects',
-    'delete-object',
-    'read-after-write',
-    'list-after-write',
-    'list-after-delete',
-    'get-presigning',
-    'metadata-preservation',
-    'checksum-preservation',
-    'list-multipart-uploads',
-    'cleanup',
-  ].map((capability) => ({
-    capability,
-    succeeded: true,
-    failureCode: null,
-    summary: null,
-    observations: {},
-  }));
-  const bindingRevisions = [
-    ['TRAINING_PROCESS', '00000000-0000-0000-0000-000000000011'],
-    ['BACKEND', '00000000-0000-0000-0000-000000000012'],
-    ['TRANSFER_WORKER', '00000000-0000-0000-0000-000000000013'],
-    ['METRIC_VIEW', '00000000-0000-0000-0000-000000000014'],
-  ].map(([role, bindingId]) => ({ role, bindingId, bindingRevision: 1 }));
-  const sql = `
-    UPDATE skywright.target_storage_binding SET readiness = 'READY'
-      WHERE target_storage_id = '${storageId}';
-    UPDATE skywright.target_storage SET registration_revision = 4, activated = true,
-      active_revision = 1, candidate_revision = NULL, availability = 'AVAILABLE'
-      WHERE id = '${storageId}';
-    INSERT INTO skywright.target_storage_assessment
-      (target_storage_id, assessment_position, assessment_id, configuration_revision,
-       observed_from, observed_until, availability, binding_revisions, capabilities)
-    VALUES ('${storageId}', 0, '00000000-0000-0000-0000-000000000080', 1,
-      '2026-08-19T08:00:00Z', '2026-08-19T08:00:02Z', 'AVAILABLE',
-      $json$${JSON.stringify(bindingRevisions)}$json$::jsonb,
-      $json$${JSON.stringify(capabilities)}$json$::jsonb);
-  `;
-  execFileSync(
-    process.env['SKYWRIGHT_CONTAINER_CLI'] ?? 'docker',
-    [
-      'exec',
-      '--interactive',
-      container,
-      'psql',
-      '--set',
-      'ON_ERROR_STOP=1',
-      '--username',
-      'postgres',
-      '--dbname',
-      'skywright',
-    ],
-    { input: sql },
-  );
-}
 
 test('direct application routes boot without rewriting reserved backend URLs', async ({
   page,

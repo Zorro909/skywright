@@ -435,8 +435,6 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 
 		private final Map<String, TargetStorageCapabilityResult> results = new LinkedHashMap<>();
 
-		private boolean transientFailure;
-
 		private boolean permanentFailure;
 
 		private ResultCollector() {
@@ -458,7 +456,6 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 
 		boolean noteFailure(Throwable failure) {
 			boolean transientOutage = ResultCollector.isTransient(failure);
-			this.transientFailure |= transientOutage;
 			this.permanentFailure |= !transientOutage;
 			return transientOutage;
 		}
