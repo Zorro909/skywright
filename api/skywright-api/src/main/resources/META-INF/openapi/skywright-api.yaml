@@ -262,7 +262,14 @@ components:
         pathStyleAccess: { type: boolean }
         compatibilityOptions:
           type: object
-          additionalProperties: { type: string }
+          additionalProperties: false
+          properties:
+            chunkedEncoding:
+              type: string
+              enum: ['true', 'false']
+            checksumCalculation:
+              type: string
+              enum: [when-required, when-supported]
     TargetStorageBinding:
       type: object
       additionalProperties: false
@@ -360,9 +367,9 @@ components:
       additionalProperties: false
       required: [name, purpose, bucket, configuration, bindings]
       properties:
-        name: { type: string, minLength: 1 }
+        name: { type: string, minLength: 1, maxLength: 255 }
         purpose: { $ref: '#/components/schemas/TargetStoragePurpose' }
-        bucket: { type: string, minLength: 1 }
+        bucket: { type: string, minLength: 1, maxLength: 255 }
         configuration: { $ref: '#/components/schemas/TargetStorageConfiguration' }
         bindings:
           type: array

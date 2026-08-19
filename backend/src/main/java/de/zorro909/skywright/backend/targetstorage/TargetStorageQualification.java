@@ -17,10 +17,18 @@ final class TargetStorageQualification {
 	}
 
 	TargetStorageView qualify(UUID storageId) {
+		TargetStorageAssessment assessment = this.qualifyAndRecord(storageId);
+		if (assessment.availability() != CapabilityAvailability.AVAILABLE) {
+			throw new TargetStorageQualificationFailedException(assessment.availability());
+		}
+		return this.registry.get(storageId);
+	}
+
+	private TargetStorageAssessment qualifyAndRecord(UUID storageId) {
 		TargetStorageQualificationRequest request = this.registry.qualificationRequest(storageId);
 		TargetStorageAssessment assessment = this.probe.qualify(request);
 		this.registry.recordQualification(storageId, assessment);
-		return this.registry.get(storageId);
+		return assessment;
 	}
 
 	void qualifyWhenReady(UUID storageId) {
@@ -31,7 +39,7 @@ final class TargetStorageQualification {
 			.map(TargetStorageBinding::role)
 			.collect(Collectors.toSet());
 		if (readyRoles.equals(java.util.EnumSet.allOf(TargetStorageRole.class))) {
-			this.qualify(storageId);
+			this.qualifyAndRecord(storageId);
 		}
 	}
 

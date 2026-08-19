@@ -7,12 +7,15 @@ import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-@RestControllerAdvice
+@RestControllerAdvice(assignableTypes = TargetStorageHttpAdapter.class)
+@Order(Ordered.HIGHEST_PRECEDENCE)
 final class TargetStorageProblemHandler {
 
 	TargetStorageProblemHandler() {
@@ -51,6 +54,17 @@ final class TargetStorageProblemHandler {
 						: "SKYWRIGHT_TARGET_STORAGE_PERSISTENCE_CONFLICT",
 				RequestCorrelationFilter.correlationIdFrom(request), List.of(), null, false);
 		return ResponseEntity.status(HttpStatus.CONFLICT).contentType(MediaType.APPLICATION_PROBLEM_JSON).body(problem);
+	}
+
+	@ExceptionHandler(value = { IllegalArgumentException.class })
+	ResponseEntity<Problem> handleInvalidRequest(IllegalArgumentException failure, HttpServletRequest request) {
+		Problem problem = new Problem("about:blank", HttpStatus.BAD_REQUEST.getReasonPhrase(),
+				HttpStatus.BAD_REQUEST.value(), "The Target Storage request is invalid.", request.getRequestURI(),
+				"SKYWRIGHT_TARGET_STORAGE_INVALID_REQUEST", RequestCorrelationFilter.correlationIdFrom(request),
+				List.of(), null, false);
+		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+			.contentType(MediaType.APPLICATION_PROBLEM_JSON)
+			.body(problem);
 	}
 
 	private static boolean causeContains(Throwable failure, String text) {

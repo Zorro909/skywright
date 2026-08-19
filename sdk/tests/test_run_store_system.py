@@ -16,7 +16,6 @@ import urllib.request
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TypedDict
 
 import boto3
 import pytest
@@ -36,6 +35,7 @@ from skywright import (
 from skywright.run_store import (
     CheckpointCodec,
     CheckpointReference,
+    ResolvedTargetStorageDescriptor,
     RunStoreReader,
     RunStoreRecorder,
     TargetStorage,
@@ -78,18 +78,6 @@ class State:
 
     def load_state_dict(self, state):
         self.value = state["value"]
-
-
-class RegisteredStorageConfiguration(TypedDict):
-    endpoint: str
-    region: str
-    pathStyleAccess: bool
-
-
-class RegisteredTargetStorageView(TypedDict):
-    id: str
-    bucket: str
-    configuration: RegisteredStorageConfiguration
 
 
 @contextmanager
@@ -214,23 +202,18 @@ def test_production_run_store_conforms_against_pinned_seaweedfs(
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
         monkeypatch.setenv("AWS_REGION", "us-east-1")
         monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-        registered_view: RegisteredTargetStorageView = {
-            "id": "registered-seaweedfs",
+        resolved_descriptor: ResolvedTargetStorageDescriptor = {
+            "storageId": "registered-seaweedfs",
+            "endpoint": endpoint,
             "bucket": bucket,
-            "configuration": {
-                "endpoint": endpoint,
-                "region": "us-east-1",
-                "pathStyleAccess": True,
-            },
+            "region": "us-east-1",
+            "pathStyleAccess": True,
+            "compatibilityOptions": {},
         }
-        resolved_registered_target = TargetStorage(
-            registered_view["id"],
-            registered_view["configuration"]["endpoint"],
-            registered_view["bucket"],
-            registered_view["configuration"]["region"],
-            "project",
-            "registered-run",
-            addressing_style="path",
+        resolved_registered_target = TargetStorage.from_resolved_descriptor(
+            resolved_descriptor,
+            training_project_id="project",
+            run_id="registered-run",
         )
         direct_store = RunStoreRecorder(
             resolved_registered_target,

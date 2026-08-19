@@ -6,6 +6,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.Map;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
@@ -39,6 +40,13 @@ final class BackendFixture implements AutoCloseable {
 		return start(builder);
 	}
 
+	static BackendFixture start(Map<String, Object> singletons) {
+		var builder = new SpringApplicationBuilder(SkywrightBackendApplication.class)
+			.initializers(application -> singletons
+				.forEach((name, bean) -> application.getBeanFactory().registerSingleton(name, bean)));
+		return start(builder);
+	}
+
 	private static BackendFixture start(SpringApplicationBuilder builder) {
 		try {
 			var database = PostgreSqlFixture.freshDatabase();
@@ -61,8 +69,24 @@ final class BackendFixture implements AutoCloseable {
 	}
 
 	HttpResponse<String> get(String path) throws IOException, InterruptedException {
-		var request = HttpRequest.newBuilder(baseUri.resolve(path)).GET().build();
+		return request("GET", path, null);
+	}
+
+	HttpResponse<String> request(String method, String path, String body) throws IOException, InterruptedException {
+		var builder = HttpRequest.newBuilder(baseUri.resolve(path));
+		if (body == null) {
+			builder.method(method, HttpRequest.BodyPublishers.noBody());
+		}
+		else {
+			builder.header("Content-Type", "application/json")
+				.method(method, HttpRequest.BodyPublishers.ofString(body));
+		}
+		var request = builder.build();
 		return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+	}
+
+	<T> T bean(Class<T> type) {
+		return this.application.getBean(type);
 	}
 
 	@Override

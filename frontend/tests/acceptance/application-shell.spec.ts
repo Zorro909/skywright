@@ -2,6 +2,22 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
+function problem(errorCode: string) {
+  return {
+    type: 'about:blank',
+    title: 'Conflict',
+    status: 409,
+    detail:
+      'The requested Target Storage operation conflicts with current state.',
+    instance: '/api/v1/target-storages',
+    errorCode,
+    correlationId: 'browser-acceptance',
+    fieldViolations: [],
+    unavailableSource: null,
+    retryable: false,
+  };
+}
+
 test('user can navigate the packaged Skywright shell', async ({ page }) => {
   await page.goto('/');
 
@@ -122,9 +138,15 @@ test('operator can register, qualify, inspect, revise, and delete a Target Stora
   await registration
     .getByLabel('Metric View binding UUID')
     .fill('2ed9cde4-4fbf-4ce9-aa86-1f7d6f9188bf');
+  const creation = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/v1/target-storages') &&
+      response.request().method() === 'POST',
+  );
   await registration
     .getByRole('button', { name: 'Register candidate' })
     .click();
+  const registered = await (await creation).json();
 
   const storage = page.getByRole('article').filter({
     has: page.getByRole('heading', { name: 'Acceptance outputs' }),
@@ -133,10 +155,23 @@ test('operator can register, qualify, inspect, revise, and delete a Target Stora
   await expect(storage.getByText('Candidate revision')).toBeVisible();
   await expect(storage.getByText('missing').first()).toBeVisible();
 
+  await registration.getByLabel('Name').fill('Acceptance outputs');
+  await registration.getByLabel('Endpoint URL').fill('http://storage.invalid');
+  await registration.getByLabel('Bucket').fill('acceptance-outputs');
+  await registration
+    .getByRole('button', { name: 'Register candidate' })
+    .click();
+  await expect(
+    page.getByText('The Target Storage operation could not be completed.'),
+  ).toBeVisible();
+  await expect(registration.getByLabel('Name')).toHaveValue(
+    'Acceptance outputs',
+  );
+
   await storage
     .getByRole('button', { name: 'Qualify current revision' })
     .click();
-  await expect(storage.getByText('Latest qualification')).toBeVisible();
+  await expect(storage.getByText('Qualification history')).toBeVisible();
   await expect(storage.getByText('transiently-unavailable')).toBeVisible();
   await expect(storage.getByText(/credential-binding/iu).first()).toBeVisible();
 
@@ -148,8 +183,102 @@ test('operator can register, qualify, inspect, revise, and delete a Target Stora
   await revision
     .getByLabel('Endpoint URL')
     .fill('http://revised-storage.invalid');
+
+  await page.route(
+    `**/api/v1/target-storages/${registered.id}/revisions`,
+    async (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: 'application/problem+json',
+        json: problem('SKYWRIGHT_TARGET_STORAGE_REVISION_CONFLICT'),
+      }),
+  );
+  await revision.getByRole('button', { name: 'Stage revision' }).click();
+  await expect(
+    page.getByText('The Target Storage operation could not be completed.'),
+  ).toBeVisible();
+  await page.unroute(`**/api/v1/target-storages/${registered.id}/revisions`);
+
   await revision.getByRole('button', { name: 'Stage revision' }).click();
   await expect(storage.getByText('Revision 2')).toBeVisible();
+
+  let activation = true;
+  await page.route(
+    `**/api/v1/target-storages/${registered.id}/activation`,
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        json: {
+          ...registered,
+          activated: activation,
+          eligible: activation,
+          registrationRevision: registered.registrationRevision + 1,
+        },
+      });
+      activation = false;
+    },
+  );
+  const activationResponse = page.waitForResponse(
+    (response) =>
+      response
+        .url()
+        .endsWith(`/api/v1/target-storages/${registered.id}/activation`) &&
+      response.request().method() === 'PUT',
+  );
+  await storage.getByRole('button', { name: 'Activate' }).click();
+  const activationBody = await (await activationResponse).json();
+  expect(activationBody).toMatchObject({ activated: true, eligible: true });
+  await expect(storage.getByText('Eligible', { exact: true })).toBeVisible();
+
+  const localDefaults = page.locator('form').filter({
+    has: page.getByRole('heading', { name: 'local-single-gpu' }),
+  });
+  await localDefaults
+    .getByLabel('Execution destination')
+    .selectOption(registered.id);
+  await localDefaults.getByLabel('Enable repatriation').check();
+  await localDefaults
+    .getByLabel('Repatriation destination')
+    .selectOption(registered.id);
+  await page.route(
+    '**/api/v1/target-storage-defaults/local-single-gpu',
+    async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        json: {
+          targetClass: 'local-single-gpu',
+          executionStorageId: registered.id,
+          repatriationEnabled: true,
+          repatriationStorageId: registered.id,
+        },
+      }),
+  );
+  await localDefaults.getByRole('button', { name: 'Save defaults' }).click();
+  await expect(localDefaults.getByLabel('Enable repatriation')).toBeChecked();
+
+  await storage.getByRole('button', { name: 'Deactivate' }).click();
+  await expect(
+    storage.getByText('Not eligible', { exact: true }),
+  ).toBeVisible();
+  await page.unroute(`**/api/v1/target-storages/${registered.id}/activation`);
+
+  await page.route(
+    `**/api/v1/target-storages/${registered.id}`,
+    async (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: 'application/problem+json',
+        json: problem('SKYWRIGHT_TARGET_STORAGE_REFERENCED'),
+      }),
+  );
+  await storage.getByRole('button', { name: 'Delete' }).click();
+  await expect(
+    page.getByText('The Target Storage could not be deleted.'),
+  ).toBeVisible();
+  await expect(storage).toBeVisible();
+  await page.unroute(`**/api/v1/target-storages/${registered.id}`);
 
   await storage.getByRole('button', { name: 'Delete' }).click();
   await expect(

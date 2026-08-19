@@ -24,7 +24,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Any, BinaryIO, NoReturn, cast
+from typing import Any, BinaryIO, NoReturn, TypedDict, cast
 from urllib.parse import quote, unquote
 
 import numpy as np
@@ -610,6 +610,17 @@ def _decode_tree(
     )
 
 
+class ResolvedTargetStorageDescriptor(TypedDict):
+    """Non-secret control-plane descriptor accepted by direct execution."""
+
+    storageId: str
+    endpoint: str
+    bucket: str
+    region: str
+    pathStyleAccess: bool
+    compatibilityOptions: dict[str, str]
+
+
 @dataclass(frozen=True)
 class TargetStorage:
     """Injected resolved address and credential-provider settings for one Run Store."""
@@ -622,6 +633,29 @@ class TargetStorage:
     run_id: str
     addressing_style: str = "path"
     profile_name: str | None = None
+    compatibility_options: Mapping[str, str] | None = None
+
+    @classmethod
+    def from_resolved_descriptor(
+        cls,
+        descriptor: ResolvedTargetStorageDescriptor,
+        *,
+        training_project_id: str,
+        run_id: str,
+        profile_name: str | None = None,
+    ) -> TargetStorage:
+        """Materialize the production Run Store target from registry resolution."""
+        return cls(
+            storage_id=descriptor["storageId"],
+            endpoint_url=descriptor["endpoint"],
+            bucket=descriptor["bucket"],
+            region=descriptor["region"],
+            training_project_id=training_project_id,
+            run_id=run_id,
+            addressing_style=("path" if descriptor["pathStyleAccess"] else "virtual"),
+            profile_name=profile_name,
+            compatibility_options=dict(descriptor["compatibilityOptions"]),
+        )
 
 
 class RunStoreError(RuntimeError):

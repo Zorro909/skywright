@@ -122,14 +122,32 @@ public class TargetStorageHttpAdapter implements TargetStoragesApi, TargetStorag
 
 	private de.zorro909.skywright.backend.boundary.generated.model.TargetStorageConfiguration configuration(
 			TargetStorageConfiguration value) {
+		var options = new de.zorro909.skywright.backend.boundary.generated.model.TargetStorageConfigurationCompatibilityOptions();
+		if (value.compatibilityOptions().containsKey("chunkedEncoding")) {
+			options.setChunkedEncoding(
+					de.zorro909.skywright.backend.boundary.generated.model.TargetStorageConfigurationCompatibilityOptions.ChunkedEncodingEnum
+						.fromValue(value.compatibilityOptions().get("chunkedEncoding")));
+		}
+		if (value.compatibilityOptions().containsKey("checksumCalculation")) {
+			options.setChecksumCalculation(
+					de.zorro909.skywright.backend.boundary.generated.model.TargetStorageConfigurationCompatibilityOptions.ChecksumCalculationEnum
+						.fromValue(value.compatibilityOptions().get("checksumCalculation")));
+		}
 		return new de.zorro909.skywright.backend.boundary.generated.model.TargetStorageConfiguration(value.endpoint(),
-				value.region(), value.pathStyleAccess(), value.compatibilityOptions());
+				value.region(), value.pathStyleAccess(), options);
 	}
 
 	private TargetStorageConfiguration configuration(
 			de.zorro909.skywright.backend.boundary.generated.model.TargetStorageConfiguration value) {
+		Map<String, String> options = new java.util.LinkedHashMap<>();
+		if (value.getCompatibilityOptions().getChunkedEncoding() != null) {
+			options.put("chunkedEncoding", value.getCompatibilityOptions().getChunkedEncoding().getValue());
+		}
+		if (value.getCompatibilityOptions().getChecksumCalculation() != null) {
+			options.put("checksumCalculation", value.getCompatibilityOptions().getChecksumCalculation().getValue());
+		}
 		return new TargetStorageConfiguration(value.getEndpoint(), value.getRegion(), value.getPathStyleAccess(),
-				value.getCompatibilityOptions());
+				options);
 	}
 
 	private de.zorro909.skywright.backend.boundary.generated.model.TargetStorageBinding binding(

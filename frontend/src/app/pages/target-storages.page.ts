@@ -10,6 +10,7 @@ import {
   assignTargetStorageDefaults,
   createTargetStorage,
   deleteTargetStorage,
+  getTargetStorage,
   listTargetStorageDefaults,
   listTargetStorages,
   qualifyTargetStorage,
@@ -57,7 +58,7 @@ const BINDING_ROLES: TargetStorageBindingReference['role'][] = [
         <form (submit)="register($event)">
           <label>
             Name
-            <input name="name" required />
+            <input name="name" maxlength="255" required />
           </label>
           <label>
             Purpose
@@ -72,7 +73,7 @@ const BINDING_ROLES: TargetStorageBindingReference['role'][] = [
           </label>
           <label>
             Bucket
-            <input name="bucket" required />
+            <input name="bucket" maxlength="255" required />
           </label>
           <label>
             Region
@@ -105,11 +106,19 @@ const BINDING_ROLES: TargetStorageBindingReference['role'][] = [
           </fieldset>
           <label>
             Chunked encoding option
-            <input name="chunkedEncoding" />
+            <select name="chunkedEncoding">
+              <option value="">Provider default</option>
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </select>
           </label>
           <label>
             Checksum calculation option
-            <input name="checksumCalculation" />
+            <select name="checksumCalculation">
+              <option value="">Provider default</option>
+              <option value="when-required">When required</option>
+              <option value="when-supported">When supported</option>
+            </select>
           </label>
           <button type="submit" [disabled]="busy()">Register candidate</button>
         </form>
@@ -170,33 +179,68 @@ const BINDING_ROLES: TargetStorageBindingReference['role'][] = [
             <ol>
               @for (revision of storage.revisions; track revision.revision) {
                 <li>
-                  Revision {{ revision.revision }} — {{ revision.state }} —
-                  {{ revision.configuration.endpoint }}
+                  <strong>Revision {{ revision.revision }}</strong> —
+                  {{ revision.state }}
+                  <dl>
+                    <div>
+                      <dt>Endpoint</dt>
+                      <dd>{{ revision.configuration.endpoint }}</dd>
+                    </div>
+                    <div>
+                      <dt>Region</dt>
+                      <dd>{{ revision.configuration.region }}</dd>
+                    </div>
+                    <div>
+                      <dt>Addressing</dt>
+                      <dd>
+                        {{
+                          revision.configuration.pathStyleAccess
+                            ? 'Path style'
+                            : 'Virtual hosted style'
+                        }}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Compatibility options</dt>
+                      <dd>
+                        {{ compatibilitySummary(revision.configuration) }}
+                      </dd>
+                    </div>
+                  </dl>
                 </li>
               }
             </ol>
 
-            @if (latestAssessment(storage); as assessment) {
-              <h4>Latest qualification</h4>
-              <p>
-                Revision {{ assessment.configurationRevision }}:
-                <strong>{{ assessment.availability }}</strong>
-              </p>
-              @if (failedCapabilities(storage).length > 0) {
-                <ul>
-                  @for (
-                    capability of failedCapabilities(storage);
-                    track capability.capability
-                  ) {
-                    <li>
-                      {{ capability.capability }} —
-                      {{
-                        capability.failureCode ?? capability.summary ?? 'failed'
-                      }}
-                    </li>
-                  }
-                </ul>
-              }
+            <h4>Qualification history</h4>
+            @if (storage.assessments.length === 0) {
+              <p>No qualifications have been recorded.</p>
+            } @else {
+              <ol>
+                @for (assessment of storage.assessments; track assessment.id) {
+                  <li>
+                    Revision {{ assessment.configurationRevision }} at
+                    {{ assessment.observedUntil }}:
+                    <strong>{{ assessment.availability }}</strong>
+                    @if (failedCapabilities(assessment).length > 0) {
+                      <ul>
+                        @for (
+                          capability of failedCapabilities(assessment);
+                          track capability.capability
+                        ) {
+                          <li>
+                            {{ capability.capability }} —
+                            {{
+                              capability.failureCode ??
+                                capability.summary ??
+                                'failed'
+                            }}
+                          </li>
+                        }
+                      </ul>
+                    }
+                  </li>
+                }
+              </ol>
             }
 
             <div class="actions">
@@ -254,25 +298,33 @@ const BINDING_ROLES: TargetStorageBindingReference['role'][] = [
                 </label>
                 <label>
                   Chunked encoding option
-                  <input
+                  <select
                     name="chunkedEncoding"
                     [value]="
                       storage.configuration?.compatibilityOptions?.[
                         'chunkedEncoding'
                       ] ?? ''
                     "
-                  />
+                  >
+                    <option value="">Provider default</option>
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                  </select>
                 </label>
                 <label>
                   Checksum calculation option
-                  <input
+                  <select
                     name="checksumCalculation"
                     [value]="
                       storage.configuration?.compatibilityOptions?.[
                         'checksumCalculation'
                       ] ?? ''
                     "
-                  />
+                  >
+                    <option value="">Provider default</option>
+                    <option value="when-required">When required</option>
+                    <option value="when-supported">When supported</option>
+                  </select>
                 </label>
                 <button type="submit" [disabled]="busy()">
                   Stage revision
@@ -535,7 +587,7 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
     const data = new FormData(form);
-    await this.perform(async () =>
+    const succeeded = await this.perform(async () =>
       createTargetStorage({
         name: this.value(data, 'name'),
         purpose: this.value(data, 'purpose') as 'dataset' | 'run-output',
@@ -544,11 +596,20 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
         bindings: this.bindingReferences(data),
       }),
     );
-    form.reset();
+    if (succeeded) {
+      form.reset();
+    }
   }
 
   protected async qualify(storage: TargetStorage): Promise<void> {
-    await this.perform(() => qualifyTargetStorage(storage.id));
+    if (!(await this.perform(() => qualifyTargetStorage(storage.id)))) {
+      try {
+        const refreshed = await getTargetStorage(storage.id);
+        this.replaceStorage(refreshed);
+      } catch {
+        // Preserve the qualification failure; a later reload can recover the view.
+      }
+    }
   }
 
   protected async toggleActivation(storage: TargetStorage): Promise<void> {
@@ -632,16 +693,21 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
     }
   }
 
-  protected latestAssessment(storage: TargetStorage) {
-    return storage.assessments.at(-1);
+  protected failedCapabilities(
+    assessment: TargetStorage['assessments'][number],
+  ) {
+    return assessment.capabilities.filter(
+      (capability) => !capability.succeeded,
+    );
   }
 
-  protected failedCapabilities(storage: TargetStorage) {
-    return (
-      this.latestAssessment(storage)?.capabilities.filter(
-        (capability) => !capability.succeeded,
-      ) ?? []
-    );
+  protected compatibilitySummary(
+    configuration: TargetStorageConfiguration,
+  ): string {
+    const entries = Object.entries(configuration.compatibilityOptions);
+    return entries.length === 0
+      ? 'Provider defaults'
+      : entries.map(([name, value]) => `${name}=${value}`).join(', ');
   }
 
   protected eligibleRunOutputs(): TargetStorage[] {
@@ -682,20 +748,26 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
 
   private async perform(
     operation: () => Promise<TargetStorage>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     this.busy.set(true);
     this.failure.set(undefined);
     try {
       const updated = await operation();
-      this.storages.update((storages) => [
-        ...storages.filter((storage) => storage.id !== updated.id),
-        updated,
-      ]);
+      this.replaceStorage(updated);
+      return true;
     } catch {
       this.failure.set('The Target Storage operation could not be completed.');
+      return false;
     } finally {
       this.busy.set(false);
     }
+  }
+
+  private replaceStorage(updated: TargetStorage): void {
+    this.storages.update((storages) => [
+      ...storages.filter((storage) => storage.id !== updated.id),
+      updated,
+    ]);
   }
 
   private configuration(data: FormData): TargetStorageConfiguration {

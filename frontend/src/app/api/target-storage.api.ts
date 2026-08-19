@@ -42,6 +42,17 @@ export async function listTargetStorages(
   );
 }
 
+export async function getTargetStorage(
+  storageId: string,
+): Promise<TargetStorage> {
+  return request(
+    api.GET('/target-storages/{storageId}', {
+      params: { path: { storageId } },
+      parseAs: 'json',
+    }),
+  );
+}
+
 export async function createTargetStorage(
   body: CreateTargetStorage,
 ): Promise<TargetStorage> {

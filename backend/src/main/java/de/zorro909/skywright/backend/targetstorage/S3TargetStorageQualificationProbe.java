@@ -16,6 +16,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Primary;
@@ -24,6 +28,7 @@ import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
 import software.amazon.awssdk.regions.Region;
@@ -55,6 +60,10 @@ import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignReques
 @ConditionalOnBean(value = { TargetStorageCredentialAccess.class })
 final class S3TargetStorageQualificationProbe implements TargetStorageQualificationProbe {
 
+	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
+
+	private static final Duration QUALIFICATION_TIMEOUT = Duration.ofMinutes(2);
+
 	private final TargetStorageCredentialAccess credentials;
 
 	S3TargetStorageQualificationProbe(TargetStorageCredentialAccess credentials) {
@@ -80,7 +89,40 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 			return S3TargetStorageQualificationProbe.unavailable(request, started, "credential-projection-unavailable",
 					"The backend Credential Projection is temporarily unavailable");
 		}
-		return S3TargetStorageQualificationProbe.exercise(request, provider, started);
+		return S3TargetStorageQualificationProbe.exerciseWithinDeadline(request, provider, started);
+	}
+
+	private static TargetStorageAssessment exerciseWithinDeadline(TargetStorageQualificationRequest request,
+			AwsCredentialsProvider credentials, Instant started) {
+		CompletableFuture<TargetStorageAssessment> result = new CompletableFuture<>();
+		Thread worker = Thread.ofVirtual().name("target-storage-qualification").start(() -> {
+			try {
+				result.complete(S3TargetStorageQualificationProbe.exercise(request, credentials, started));
+			}
+			catch (Throwable failure) {
+				result.completeExceptionally(failure);
+			}
+		});
+		try {
+			return result.get(QUALIFICATION_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+		}
+		catch (TimeoutException failure) {
+			worker.interrupt();
+			return S3TargetStorageQualificationProbe.unavailable(request, started, "qualification-timeout",
+					"Qualification exceeded its bounded execution time");
+		}
+		catch (InterruptedException failure) {
+			worker.interrupt();
+			Thread.currentThread().interrupt();
+			return S3TargetStorageQualificationProbe.unavailable(request, started, "qualification-interrupted",
+					"Qualification was interrupted");
+		}
+		catch (ExecutionException failure) {
+			if (failure.getCause() instanceof RuntimeException runtimeFailure) {
+				throw runtimeFailure;
+			}
+			throw new IllegalStateException("Target Storage qualification failed", failure.getCause());
+		}
 	}
 
 	private static TargetStorageAssessment exercise(TargetStorageQualificationRequest request,
@@ -96,14 +138,22 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 		ResultCollector results = new ResultCollector();
 		S3Configuration s3Configuration = RunStoreS3Compatibility
 			.configuration(request.configuration().pathStyleAccess(), request.configuration().compatibilityOptions());
+		ClientOverrideConfiguration deadlines = ClientOverrideConfiguration.builder()
+			.apiCallTimeout(REQUEST_TIMEOUT)
+			.apiCallAttemptTimeout(REQUEST_TIMEOUT)
+			.build();
 		try (S3AsyncClient client = S3AsyncClient.builder()
 			.endpointOverride(request.configuration().endpoint())
 			.region(Region.of(request.configuration().region()))
 			.credentialsProvider(credentials)
-			.httpClientBuilder(NettyNioAsyncHttpClient.builder())
+			.httpClientBuilder(NettyNioAsyncHttpClient.builder()
+				.connectionTimeout(Duration.ofSeconds(5))
+				.readTimeout(REQUEST_TIMEOUT)
+				.writeTimeout(REQUEST_TIMEOUT))
 			.serviceConfiguration(s3Configuration)
 			.requestChecksumCalculation(
 					RunStoreS3Compatibility.checksumCalculation(request.configuration().compatibilityOptions()))
+			.overrideConfiguration(deadlines)
 			.build();
 				S3Presigner presigner = S3Presigner.builder()
 					.endpointOverride(request.configuration().endpoint())
@@ -184,19 +234,27 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 					.getObjectRequest(GetObjectRequest.builder().bucket(request.bucket()).key(objectKey).build())
 					.build());
 				try {
-					HttpResponse<byte[]> response = HttpClient.newHttpClient()
-						.send(HttpRequest.newBuilder(presigned.url().toURI()).GET().build(),
+					HttpResponse<byte[]> response = HttpClient.newBuilder()
+						.connectTimeout(Duration.ofSeconds(5))
+						.build()
+						.send(HttpRequest.newBuilder(presigned.url().toURI()).timeout(REQUEST_TIMEOUT).GET().build(),
 								HttpResponse.BodyHandlers.ofByteArray());
+					if (response.statusCode() == 429 || response.statusCode() >= 500) {
+						throw new TransientQualificationException("Presigned GET is temporarily unavailable");
+					}
 					if (response.statusCode() != 200 || !Arrays.equals(replacementContent, response.body())) {
 						throw new IllegalStateException("Presigned GET did not retrieve the expected object");
 					}
 				}
 				catch (InterruptedException failure) {
 					Thread.currentThread().interrupt();
-					throw new IllegalStateException("Presigned GET was interrupted", failure);
+					throw new TransientQualificationException("Presigned GET was interrupted", failure);
 				}
-				catch (java.io.IOException | java.net.URISyntaxException failure) {
-					throw new IllegalStateException("Presigned GET could not be executed", failure);
+				catch (java.io.IOException failure) {
+					throw new TransientQualificationException("Presigned GET could not be executed", failure);
+				}
+				catch (java.net.URISyntaxException failure) {
+					throw new IllegalStateException("Presigned GET URL was invalid", failure);
 				}
 			});
 			AtomicReference<String> upload = new AtomicReference<>();
@@ -388,6 +446,18 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 		}
 	}
 
+	private static final class TransientQualificationException extends RuntimeException {
+
+		private TransientQualificationException(String message) {
+			super(message);
+		}
+
+		private TransientQualificationException(String message, Throwable cause) {
+			super(message, cause);
+		}
+
+	}
+
 	private static final class ResultCollector {
 
 		private final Map<String, TargetStorageCapabilityResult> results = new LinkedHashMap<>();
@@ -419,7 +489,7 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 		private static boolean isTransient(Throwable failure) {
 			for (Throwable current = failure; current != null; current = current.getCause()) {
 				S3Exception serviceFailure;
-				if (current instanceof SdkClientException) {
+				if (current instanceof SdkClientException || current instanceof TransientQualificationException) {
 					return true;
 				}
 				if (!(current instanceof S3Exception) || (serviceFailure = (S3Exception) current).statusCode() != 429
