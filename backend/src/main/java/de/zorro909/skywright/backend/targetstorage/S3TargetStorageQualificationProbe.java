@@ -485,7 +485,8 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 
 		private static boolean isTransient(Throwable failure) {
 			for (Throwable current = failure; current != null; current = current.getCause()) {
-				if (current instanceof SdkClientException) {
+				if (current instanceof SdkClientException || current instanceof IOException
+						|| current instanceof InterruptedException) {
 					return true;
 				}
 				if (current instanceof S3Exception serviceFailure

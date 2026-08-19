@@ -30,7 +30,7 @@ const api = createClient<paths>({
 
 async function requireData<T>(
   response: Response,
-  data: T | undefined,
+  data: string | undefined,
   error: unknown,
 ): Promise<T> {
   if (!response.ok) {
@@ -38,33 +38,36 @@ async function requireData<T>(
       await normalizeProblemResponse(response, error),
     );
   }
-  if (data === undefined) {
+  try {
+    return JSON.parse(data ?? '') as T;
+  } catch {
     throw new ApiRequestFailure({ kind: 'malformed-response', response });
   }
-  return data;
 }
 
 export const targetStorageApi = {
   async list(signal?: AbortSignal) {
     const { data, error, response } = await api.GET('/target-storages', {
       signal: signal ?? null,
+      parseAs: 'text',
     });
-    return requireData(response, data, error);
+    return requireData<TargetStorage[]>(response, data, error);
   },
 
   async listDefaults(signal?: AbortSignal) {
     const { data, error, response } = await api.GET(
       '/target-storage-defaults',
-      { signal: signal ?? null },
+      { signal: signal ?? null, parseAs: 'text' },
     );
-    return requireData(response, data, error);
+    return requireData<TargetStorageDefaults[]>(response, data, error);
   },
 
   async create(body: CreateTargetStorage) {
     const { data, error, response } = await api.POST('/target-storages', {
       body,
+      parseAs: 'text',
     });
-    return requireData(response, data, error);
+    return requireData<TargetStorage>(response, data, error);
   },
 
   async stage(
@@ -87,17 +90,18 @@ export const targetStorageApi = {
             compatibilityOptions,
           },
         },
+        parseAs: 'text',
       },
     );
-    return requireData(response, data, error);
+    return requireData<TargetStorage>(response, data, error);
   },
 
   async qualify(storageId: string) {
     const { data, error, response } = await api.POST(
       '/target-storages/{storageId}/qualification',
-      { params: { path: { storageId } } },
+      { params: { path: { storageId } }, parseAs: 'text' },
     );
-    return requireData(response, data, error);
+    return requireData<TargetStorage>(response, data, error);
   },
 
   async activate(storage: TargetStorage, activated: boolean) {
@@ -109,9 +113,10 @@ export const targetStorageApi = {
           expectedRegistrationRevision: storage.registrationRevision,
           activated,
         },
+        parseAs: 'text',
       },
     );
-    return requireData(response, data, error);
+    return requireData<TargetStorage>(response, data, error);
   },
 
   async replaceBindings(
@@ -126,9 +131,10 @@ export const targetStorageApi = {
           expectedRegistrationRevision: storage.registrationRevision,
           bindings,
         },
+        parseAs: 'text',
       },
     );
-    return requireData(response, data, error);
+    return requireData<TargetStorage>(response, data, error);
   },
 
   async remove(storageId: string) {
@@ -158,9 +164,10 @@ export const targetStorageApi = {
           repatriationEnabled,
           repatriationStorageId,
         },
+        parseAs: 'text',
       },
     );
-    return requireData(response, data, error);
+    return requireData<TargetStorageDefaults>(response, data, error);
   },
 };
 

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CompletionException;
@@ -52,6 +53,28 @@ final class S3TargetStorageQualificationProbeTest {
 		});
 
 		assertThat(results.permanentFailure()).isTrue();
+	}
+
+	@Test
+	void presignedGetIoFailureIsTransient() {
+		var results = new S3TargetStorageQualificationProbe.ResultCollector();
+
+		results.check("presigned-get", () -> {
+			throw new IllegalStateException("Presigned GET failed", new IOException("connection reset"));
+		});
+
+		assertThat(results.permanentFailure()).isFalse();
+	}
+
+	@Test
+	void presignedGetInterruptionIsTransient() {
+		var results = new S3TargetStorageQualificationProbe.ResultCollector();
+
+		results.check("presigned-get", () -> {
+			throw new IllegalStateException("Presigned GET was interrupted", new InterruptedException("cancelled"));
+		});
+
+		assertThat(results.permanentFailure()).isFalse();
 	}
 
 }
