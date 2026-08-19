@@ -113,7 +113,7 @@ const ROLES = [
         <h3 id="registrations-heading">Registrations</h3>
         @if (loading()) {
           <p role="status">Loading Target Storages…</p>
-        } @else if (storages().length === 0) {
+        } @else if (storageListLoaded() && storages().length === 0) {
           <p>No Target Storages are registered.</p>
         }
         <div class="storage-grid">
@@ -483,6 +483,7 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
   protected readonly storages = signal<TargetStorage[]>([]);
   protected readonly defaults = signal<TargetStorageDefaults[]>([]);
   protected readonly loading = signal(true);
+  protected readonly storageListLoaded = signal(false);
   protected readonly busy = signal(false);
   protected readonly message = signal('');
 
@@ -579,6 +580,7 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
   }
 
   private async reload() {
+    this.storageListLoaded.set(false);
     try {
       const [storages, defaults] = await Promise.allSettled([
         this.api.list(this.abort.signal),
@@ -586,6 +588,7 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
       ]);
       if (storages.status === 'fulfilled') {
         this.storages.set(storages.value);
+        this.storageListLoaded.set(true);
       }
       if (defaults.status === 'fulfilled') {
         this.defaults.set(defaults.value);

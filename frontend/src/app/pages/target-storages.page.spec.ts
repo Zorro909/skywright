@@ -105,6 +105,39 @@ describe('Target Storages operator workflow', () => {
     expect(view.textContent).toContain('The Target Storage operation failed.');
   });
 
+  it('does not present a failed storage list as an empty registry', async () => {
+    const api = {
+      list: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockRejectedValueOnce({ kind: 'network' }),
+      listDefaults: vi.fn().mockResolvedValue([]),
+    };
+    await TestBed.configureTestingModule({
+      imports: [TargetStoragesPage],
+      providers: [{ provide: TARGET_STORAGE_API, useValue: api }],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(TargetStoragesPage);
+    fixture.detectChanges();
+    const view = fixture.nativeElement as HTMLElement;
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(view.textContent).toContain('No Target Storages are registered.');
+    });
+
+    const page = fixture.componentInstance as unknown as {
+      reload(): Promise<void>;
+    };
+    await page.reload();
+    fixture.detectChanges();
+
+    expect(view.textContent).not.toContain(
+      'No Target Storages are registered.',
+    );
+  });
+
   it('does not hide unexpected client defects as API failures', async () => {
     const api = {
       list: vi.fn().mockResolvedValue([]),
