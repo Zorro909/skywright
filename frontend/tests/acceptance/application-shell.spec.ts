@@ -8,7 +8,11 @@ test('user can navigate the packaged Skywright shell', async ({ page }) => {
   await expect(page.getByRole('banner')).toBeVisible();
   const navigation = page.getByRole('navigation', { name: 'Primary' });
   await expect(navigation).toBeVisible();
-  await expect(navigation.getByRole('link')).toHaveText(['Overview', 'About']);
+  await expect(navigation.getByRole('link')).toHaveText([
+    'Overview',
+    'Target Storages',
+    'About',
+  ]);
   await expect(page.getByRole('main')).toBeVisible();
   await expect(
     page.getByRole('heading', { level: 1, name: 'Skywright' }),
@@ -59,7 +63,7 @@ test('user can navigate the packaged Skywright shell', async ({ page }) => {
     ).toBeVisible();
   }
 
-  for (const path of ['/', '/about', '/missing']) {
+  for (const path of ['/', '/target-storages', '/about', '/missing']) {
     await page.goto(path);
     const accessibility = await new AxeBuilder({ page }).analyze();
     expect(accessibility.violations).toEqual([]);
@@ -78,7 +82,7 @@ test('keyboard users can bypass navigation and open a destination', async ({
   await expect(page.getByRole('main')).toBeFocused();
 
   await page.goto('/');
-  for (let tab = 0; tab < 4; tab += 1) {
+  for (let tab = 0; tab < 5; tab += 1) {
     await page.keyboard.press('Tab');
   }
   const aboutLink = page.getByRole('link', { name: 'About' });
@@ -129,6 +133,179 @@ test('backend loss degrades and recovers only System Information', async ({
   await expect(
     page.getByRole('heading', { level: 3, name: 'System Information' }),
   ).toBeFocused();
+});
+
+test('operator can register, revise, qualify, and inspect a Target Storage safely', async ({
+  page,
+}) => {
+  await page.goto('/target-storages');
+  const registration = page
+    .getByRole('region', { name: 'Register a destination' })
+    .locator('form');
+  await registration.getByLabel('Name').fill('Acceptance outputs');
+  await registration.getByLabel('Bucket').fill('acceptance-runs');
+  await registration.getByLabel('Endpoint').fill('http://storage.example');
+  await registration.getByLabel('Region').fill('us-east-1');
+  await registration.getByRole('button', { name: 'Register' }).click();
+
+  const storage = page.locator('.storage-card', {
+    has: page.getByRole('heading', { name: 'Acceptance outputs' }),
+  });
+  await expect(storage).toContainText('Candidate revision1');
+  await expect(storage).toContainText('No bindings associated.');
+  await expect(page.locator('input[name*="secret" i]')).toHaveCount(0);
+  await expect(page.locator('input[name*="password" i]')).toHaveCount(0);
+  await expect(page.locator('input[name*="token" i]')).toHaveCount(0);
+
+  await storage
+    .getByLabel('Candidate endpoint')
+    .fill('http://replacement.example');
+  await storage.getByRole('button', { name: 'Stage revision' }).click();
+  await expect(storage).toContainText('Candidate revision2');
+  await expect(storage).toContainText(
+    'Revision 2 · candidate · http://replacement.example',
+  );
+
+  await storage.getByRole('button', { name: 'Qualify' }).click();
+  await expect(storage).toContainText('transiently-unavailable');
+  await storage.getByText(/Revision 2 · transiently-unavailable/u).click();
+  await expect(storage).toContainText(
+    'A ready backend Credential Binding is required',
+  );
+
+  await storage.getByRole('button', { name: 'Activate' }).click();
+  await expect(page.getByRole('status')).toContainText(
+    'SKYWRIGHT_TARGET_STORAGE_NOT_QUALIFIED',
+  );
+
+  await registration.getByLabel('Name').fill('Conflicting dataset');
+  await registration.getByLabel('Purpose').selectOption('dataset');
+  await registration.getByLabel('Bucket').fill('acceptance-runs');
+  await registration.getByLabel('Endpoint').fill('http://replacement.example');
+  await registration.getByLabel('Region').fill('us-east-1');
+  await registration.getByRole('button', { name: 'Register' }).click();
+  await expect(page.getByRole('status')).toContainText(
+    'SKYWRIGHT_TARGET_STORAGE_PURPOSE_CONFLICT',
+  );
+
+  const storageId = await storage.getAttribute('data-storage-id');
+  expect(storageId).not.toBeNull();
+  await page.route(`**/api/v1/target-storages/${storageId}`, async (route) => {
+    if (route.request().method() !== 'DELETE') {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 409,
+      contentType: 'application/problem+json',
+      headers: { 'X-Correlation-ID': 'acceptance-delete' },
+      body: JSON.stringify({
+        type: 'about:blank',
+        title: 'Conflict',
+        status: 409,
+        detail: 'The Target Storage has durable references.',
+        instance: `/api/v1/target-storages/${storageId}`,
+        errorCode: 'SKYWRIGHT_TARGET_STORAGE_REFERENCED',
+        correlationId: 'acceptance-delete',
+        fieldViolations: [],
+        unavailableSource: null,
+        retryable: false,
+      }),
+    });
+  });
+  await storage.getByRole('button', { name: 'Delete' }).click();
+  await expect(page.getByRole('status')).toContainText(
+    'SKYWRIGHT_TARGET_STORAGE_REFERENCED',
+  );
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
+test('operator can assign class defaults and deactivate an eligible registration', async ({
+  page,
+}) => {
+  const storageId = '00000000-0000-0000-0000-000000000080';
+  const storage = {
+    id: storageId,
+    name: 'Qualified outputs',
+    purpose: 'run-output',
+    bucket: 'qualified-runs',
+    registrationRevision: 4,
+    activated: true,
+    eligible: true,
+    activeRevision: 1,
+    candidateRevision: null,
+    availability: 'available',
+    configuration: {
+      endpoint: 'http://storage.example',
+      region: 'us-east-1',
+      pathStyleAccess: true,
+      compatibilityOptions: {},
+    },
+    revisions: [],
+    bindings: [],
+    assessments: [],
+  };
+  const defaults: unknown[] = [];
+
+  await page.route('**/api/v1/target-storages', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: [storage] });
+      return;
+    }
+    await route.continue();
+  });
+  await page.route('**/api/v1/target-storage-defaults', async (route) => {
+    await route.fulfill({ json: defaults });
+  });
+  await page.route(
+    '**/api/v1/target-storage-defaults/local-single-gpu',
+    async (route) => {
+      defaults.splice(0, defaults.length, {
+        targetClass: 'local-single-gpu',
+        executionStorageId: storageId,
+        repatriationEnabled: true,
+        repatriationStorageId: storageId,
+      });
+      await route.fulfill({ json: defaults[0] });
+    },
+  );
+  await page.route(
+    `**/api/v1/target-storages/${storageId}/activation`,
+    async (route) => {
+      storage.activated = false;
+      storage.eligible = false;
+      storage.registrationRevision += 1;
+      await route.fulfill({ json: storage });
+    },
+  );
+
+  await page.goto('/target-storages');
+  const defaultsForm = page
+    .getByRole('heading', { name: 'Target Class defaults' })
+    .locator('..')
+    .locator('form');
+  await defaultsForm
+    .getByLabel('Target Class')
+    .selectOption('local-single-gpu');
+  await defaultsForm.getByLabel('Execution storage ID').fill(storageId);
+  await defaultsForm.getByLabel('Repatriation storage ID').fill(storageId);
+  await defaultsForm.getByRole('button', { name: 'Assign defaults' }).click();
+  await expect(page.getByRole('status')).toContainText(
+    'Target Class defaults assigned.',
+  );
+  await expect(page.getByText(/local-single-gpu: execution/u)).toContainText(
+    storageId,
+  );
+
+  const card = page.locator('.storage-card', {
+    has: page.getByRole('heading', { name: 'Qualified outputs' }),
+  });
+  await card.getByRole('button', { name: 'Deactivate' }).click();
+  await expect(page.getByRole('status')).toContainText(
+    'Registration deactivated.',
+  );
+  await expect(card).toContainText('Ineligible');
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
 test('direct application routes boot without rewriting reserved backend URLs', async ({

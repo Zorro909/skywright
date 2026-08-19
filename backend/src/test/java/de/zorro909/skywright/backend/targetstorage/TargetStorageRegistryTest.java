@@ -1,0 +1,257 @@
+package de.zorro909.skywright.backend.targetstorage;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import de.zorro909.skywright.backend.runstore.RunStoreS3CapabilityFloor;
+import java.net.URI;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.Test;
+
+final class TargetStorageRegistryTest {
+
+	private final InMemoryTargetStorageRepository repository = new InMemoryTargetStorageRepository();
+
+	private final TargetStorageRegistry registry = new TargetStorageRegistry(this.repository);
+
+	@Test
+	void successfulQualificationPromotesCandidateAndDerivesEligibility() {
+		List<TargetStorageBinding> bindings = readyBindings();
+		UUID id = this.registry.register("Run outputs", TargetStoragePurpose.RUN_OUTPUT, "runs",
+				configuration("http://storage.example", "eu-central-1"), bindings);
+		TargetStorageAssessment assessment = successfulAssessment(1, bindings);
+		this.registry.recordQualification(id, assessment);
+		this.registry.activate(id, this.registry.get(id).registrationRevision());
+
+		TargetStorageView storage = this.registry.get(id);
+		assertThat(storage.activeRevision()).isEqualTo(1);
+		assertThat(storage.candidateRevision()).isNull();
+		assertThat(storage.eligible()).isTrue();
+		assertThat(storage.assessments()).containsExactly(assessment);
+	}
+
+	@Test
+	void failedCandidateNeverDisplacesTheActiveRevision() {
+		UUID id = eligibleRunOutput();
+		this.registry.stageRevision(id, this.registry.get(id).registrationRevision(),
+				configuration("http://replacement.example", "us-east-1"));
+		this.registry.recordQualification(id, failedAssessment(2, "conditional-create-not-enforced"));
+
+		TargetStorageView storage = this.registry.get(id);
+		assertThat(storage.activeRevision()).isEqualTo(1);
+		assertThat(storage.candidateRevision()).isEqualTo(2);
+		assertThat(storage.configuration().endpoint()).isEqualTo(URI.create("http://storage.example"));
+		assertThat(storage.eligible()).isTrue();
+		assertThat(storage.revisions()).extracting(TargetStorageRevisionView::state)
+			.containsExactly("active", "candidate");
+	}
+
+	@Test
+	void failedInitialCandidateExposesItsCurrentCapabilityAvailability() {
+		UUID id = this.registry.register("Draft", TargetStoragePurpose.RUN_OUTPUT, "draft",
+				configuration("http://storage.example", "eu-central-1"), List.of());
+
+		this.registry.recordQualification(id, failedAssessment(1, "conditional-create-not-enforced"));
+
+		assertThat(this.registry.get(id).availability()).isEqualTo(CapabilityAvailability.INCOMPATIBLE);
+		assertThat(this.registry.get(id).candidateRevision()).isEqualTo(1);
+	}
+
+	@Test
+	void staleRevisionCannotOverwriteAConcurrentEdit() {
+		UUID id = eligibleRunOutput();
+		long staleRevision = this.registry.get(id).registrationRevision();
+		this.registry.rename(id, staleRevision, "Primary outputs");
+
+		assertThatThrownBy(() -> this.registry.stageRevision(id, staleRevision,
+				configuration("http://stale.example", "us-east-1")))
+			.isInstanceOf(TargetStorageConflictException.class)
+			.hasMessageContaining("TARGET_STORAGE_REVISION_CONFLICT");
+	}
+
+	@Test
+	void qualificationThatFinishesAfterANewerCandidateCannotPromoteTheStaleCandidate() {
+		UUID id = eligibleRunOutput();
+		this.registry.stageRevision(id, this.registry.get(id).registrationRevision(),
+				configuration("http://candidate-two.example", "us-east-1"));
+		this.registry.stageRevision(id, this.registry.get(id).registrationRevision(),
+				configuration("http://candidate-three.example", "us-east-1"));
+
+		this.registry.recordQualification(id, successfulAssessment(2));
+
+		assertThat(this.registry.get(id).activeRevision()).isEqualTo(1);
+		assertThat(this.registry.get(id).candidateRevision()).isEqualTo(3);
+	}
+
+	@Test
+	void activeRevisionCanBeRequalifiedToExposeCurrentUnavailability() {
+		UUID id = eligibleRunOutput();
+
+		assertThat(this.registry.qualificationRequest(id).configurationRevision()).isEqualTo(1);
+		this.registry.recordQualification(id, failedAssessment(1, "storage-unavailable"));
+
+		assertThat(this.registry.get(id).activeRevision()).isEqualTo(1);
+		assertThat(this.registry.get(id).eligible()).isFalse();
+	}
+
+	@Test
+	void bindingRevisionChangeRequiresFreshQualificationEvidence() {
+		UUID id = eligibleRunOutput();
+		List<TargetStorageBinding> rotated = readyBindings().stream()
+			.map(binding -> new TargetStorageBinding(binding.role(), binding.bindingId(), 2, binding.readiness()))
+			.toList();
+
+		this.registry.replaceBindings(id, this.registry.get(id).registrationRevision(), rotated);
+
+		assertThat(this.registry.get(id).eligible()).isFalse();
+		this.registry.recordQualification(id, successfulAssessment(1, rotated));
+		assertThat(this.registry.get(id).eligible()).isTrue();
+	}
+
+	@Test
+	void purposeAndBucketAreImmutableAndKnownResourceCannotCrossPurposes() {
+		this.registry.register("Datasets", TargetStoragePurpose.DATASET, "shared",
+				configuration("http://storage.example", "eu-central-1"), readyBindings());
+
+		assertThatThrownBy(() -> this.registry.register("Outputs", TargetStoragePurpose.RUN_OUTPUT, "shared",
+				configuration("http://storage.example", "eu-central-1"), readyBindings()))
+			.isInstanceOf(TargetStorageConflictException.class)
+			.hasMessageContaining("TARGET_STORAGE_PURPOSE_CONFLICT");
+	}
+
+	@Test
+	void datasetEligibilityDoesNotRequireTheRunOutputOnlyMetricViewBinding() {
+		List<TargetStorageBinding> bindings = readyBindings().stream()
+			.filter(binding -> binding.role() != TargetStorageRole.METRIC_VIEW)
+			.toList();
+		UUID id = this.registry.register("Datasets", TargetStoragePurpose.DATASET, "datasets",
+				configuration("http://storage.example", "eu-central-1"), bindings);
+		this.registry.recordQualification(id, successfulAssessment(1, bindings));
+		this.registry.activate(id, this.registry.get(id).registrationRevision());
+
+		assertThat(this.registry.get(id).eligible()).isTrue();
+	}
+
+	@Test
+	void automaticQualificationWaitsForEveryPurposeSpecificBindingRole() {
+		UUID incomplete = this.registry.register("Incomplete", TargetStoragePurpose.RUN_OUTPUT, "incomplete",
+				configuration("http://incomplete.example", "eu-central-1"), List.of());
+		AtomicInteger probes = new AtomicInteger();
+		var qualification = new TargetStorageQualification(this.registry, request -> {
+			probes.incrementAndGet();
+			return failedAssessment(request.configurationRevision(), "not-available");
+		});
+
+		qualification.qualifyWhenReady(incomplete);
+
+		assertThat(probes).hasValue(0);
+	}
+
+	@Test
+	void defaultsAreUniquePerTargetClassAndNeverFallBackAcrossClasses() {
+		UUID local = eligibleRunOutput();
+		UUID cloud = eligibleRunOutput("Cloud outputs", "cloud-runs", "http://cloud.example");
+		this.registry.assignDefaults(TargetClass.LOCAL_SINGLE_GPU, local, true, local);
+		this.registry.assignDefaults(TargetClass.CLOUD_SPOT, cloud, false, cloud);
+
+		assertThat(this.registry.resolve(TargetClass.LOCAL_SINGLE_GPU, null, null))
+			.isEqualTo(new TargetStorageSelection(local, true, local));
+		assertThat(this.registry.resolve(TargetClass.CLOUD_SPOT, null, null))
+			.isEqualTo(new TargetStorageSelection(cloud, false, cloud));
+		assertThatThrownBy(() -> this.registry.resolve(TargetClass.CLOUD_ON_DEMAND, null, null))
+			.isInstanceOf(TargetStorageIneligibleException.class)
+			.hasMessageContaining("TARGET_STORAGE_DEFAULT_MISSING");
+	}
+
+	@Test
+	void deactivationPreservesResolutionButPreventsNewSelectionAndReferencedDeletion() {
+		UUID id = eligibleRunOutput();
+		this.registry.assignDefaults(TargetClass.LOCAL_MULTI_GPU, id, true, id);
+		TargetStorageDescriptor before = this.registry.resolveDescriptor(id);
+
+		this.registry.deactivate(id, this.registry.get(id).registrationRevision());
+
+		assertThat(this.registry.resolveDescriptor(id)).isEqualTo(before);
+		assertThatThrownBy(() -> this.registry.resolve(TargetClass.LOCAL_MULTI_GPU, null, null))
+			.isInstanceOf(TargetStorageIneligibleException.class);
+		assertThatThrownBy(() -> this.registry.delete(id)).isInstanceOf(TargetStorageReferencedException.class)
+			.hasMessageContaining("TARGET_STORAGE_REFERENCED");
+	}
+
+	@Test
+	void failureConstructionCannotCarryCredentialValues() {
+		assertThatThrownBy(() -> TargetStorageCapabilityResult.failure("put-object", "access-denied",
+				"The binding cannot perform PutObject", Map.of("provider-detail", "do-not-store")))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("free-form capability observations");
+	}
+
+	@Test
+	void incompleteCapabilityEvidenceCannotBePromoted() {
+		assertThatThrownBy(
+				() -> new TargetStorageAssessment(UUID.randomUUID(), 1, Instant.parse("2026-08-19T08:00:00Z"),
+						Instant.parse("2026-08-19T08:00:02Z"), CapabilityAvailability.AVAILABLE, List.of(),
+						List.of(TargetStorageCapabilityResult.success("put-object"))))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("every required S3 capability");
+	}
+
+	private UUID eligibleRunOutput() {
+		return eligibleRunOutput("Run outputs", "runs", "http://storage.example");
+	}
+
+	private UUID eligibleRunOutput(String name, String bucket, String endpoint) {
+		List<TargetStorageBinding> bindings = readyBindings();
+		UUID id = this.registry.register(name, TargetStoragePurpose.RUN_OUTPUT, bucket,
+				configuration(endpoint, "eu-central-1"), bindings);
+		this.registry.recordQualification(id, successfulAssessment(1, bindings));
+		this.registry.activate(id, this.registry.get(id).registrationRevision());
+		return id;
+	}
+
+	private static TargetStorageConfiguration configuration(String endpoint, String region) {
+		return new TargetStorageConfiguration(URI.create(endpoint), region, true, Map.of());
+	}
+
+	private static List<TargetStorageBinding> readyBindings() {
+		return List.of(
+				new TargetStorageBinding(TargetStorageRole.TRAINING_PROCESS, UUID.randomUUID(), 1,
+						BindingReadiness.READY),
+				new TargetStorageBinding(TargetStorageRole.BACKEND, UUID.randomUUID(), 1, BindingReadiness.READY),
+				new TargetStorageBinding(TargetStorageRole.TRANSFER_WORKER, UUID.randomUUID(), 1,
+						BindingReadiness.READY),
+				new TargetStorageBinding(TargetStorageRole.METRIC_VIEW, UUID.randomUUID(), 1, BindingReadiness.READY));
+	}
+
+	private static TargetStorageAssessment successfulAssessment(long revision) {
+		return successfulAssessment(revision, readyBindings());
+	}
+
+	private static TargetStorageAssessment successfulAssessment(long revision, List<TargetStorageBinding> bindings) {
+		return new TargetStorageAssessment(UUID.randomUUID(), revision, Instant.parse("2026-08-19T08:00:00Z"),
+				Instant.parse("2026-08-19T08:00:02Z"), CapabilityAvailability.AVAILABLE,
+				bindings.stream().map(TargetStorageBindingRevision::from).toList(),
+				RunStoreS3CapabilityFloor.requiredCapabilities()
+					.stream()
+					.map(TargetStorageCapabilityResult::success)
+					.toList());
+	}
+
+	private static TargetStorageAssessment failedAssessment(long revision, String code) {
+		return new TargetStorageAssessment(UUID.randomUUID(), revision, Instant.parse("2026-08-19T08:00:00Z"),
+				Instant.parse("2026-08-19T08:00:02Z"), CapabilityAvailability.INCOMPATIBLE,
+				readyBindings().stream().map(TargetStorageBindingRevision::from).toList(),
+				RunStoreS3CapabilityFloor.requiredCapabilities()
+					.stream()
+					.map(capability -> "conditional-create".equals(capability)
+							? TargetStorageCapabilityResult.failure(capability, code,
+									"Conditional creation was not enforced", Map.of())
+							: TargetStorageCapabilityResult.success(capability))
+					.toList());
+	}
+
+}

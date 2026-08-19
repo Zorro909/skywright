@@ -8,6 +8,7 @@ import liquibase.database.jvm.JdbcConnection;
 import liquibase.integration.spring.SpringLiquibase;
 import liquibase.integration.spring.SpringResourceAccessor;
 import liquibase.ui.LoggerUIService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Component;
 
@@ -19,9 +20,13 @@ public final class LiquibaseSchemaCompatibility {
 
 	private final ResourceLoader resourceLoader;
 
-	LiquibaseSchemaCompatibility(SpringLiquibase springLiquibase, ResourceLoader resourceLoader) {
+	private final String runtimeRole;
+
+	LiquibaseSchemaCompatibility(SpringLiquibase springLiquibase, ResourceLoader resourceLoader,
+			@Value("${spring.datasource.username}") String runtimeRole) {
 		this.springLiquibase = springLiquibase;
 		this.resourceLoader = resourceLoader;
+		this.runtimeRole = runtimeRole;
 	}
 
 	public void validate() {
@@ -32,6 +37,7 @@ public final class LiquibaseSchemaCompatibility {
 			var database = liquibase.getDatabase();
 			database.setDefaultSchemaName(springLiquibase.getDefaultSchema());
 			database.setLiquibaseSchemaName(springLiquibase.getLiquibaseSchema());
+			liquibase.setChangeLogParameter("runtimeRole", this.runtimeRole);
 			Scope.child(Scope.Attr.ui, new LoggerUIService(), () -> {
 				liquibase.validate();
 				if (!liquibase.listUnrunChangeSets(contexts(), labels()).isEmpty()) {

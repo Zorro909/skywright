@@ -32,6 +32,167 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SystemInformation'
+  /target-storages:
+    get:
+      operationId: listTargetStorages
+      summary: List Target Storage registrations.
+      responses:
+        '200':
+          description: Current non-secret registrations.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TargetStorage' }
+    post:
+      operationId: createTargetStorage
+      summary: Register a Target Storage candidate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTargetStorage' }
+      responses:
+        '201':
+          description: Registration created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TargetStorage' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /target-storages/{storageId}:
+    parameters:
+      - name: storageId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    get:
+      operationId: getTargetStorage
+      summary: Inspect one Target Storage and its history.
+      responses:
+        '200':
+          description: Current registration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TargetStorage' }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: deleteTargetStorage
+      summary: Delete an unreferenced Target Storage registration.
+      responses:
+        '204': { description: Registration deleted. }
+        '409': { $ref: '#/components/responses/Problem' }
+  /target-storages/{storageId}/revisions:
+    parameters:
+      - name: storageId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    post:
+      operationId: stageTargetStorageRevision
+      summary: Stage a candidate non-secret configuration revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StageTargetStorageRevision' }
+      responses:
+        '200':
+          description: Candidate staged.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TargetStorage' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /target-storages/{storageId}/qualification:
+    parameters:
+      - name: storageId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    post:
+      operationId: qualifyTargetStorage
+      summary: Qualify the current candidate revision.
+      responses:
+        '200':
+          description: Qualification completed and recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TargetStorage' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /target-storages/{storageId}/bindings:
+    parameters:
+      - name: storageId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    put:
+      operationId: replaceTargetStorageBindings
+      summary: Replace the role-scoped Credential Binding references for a Target Storage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplaceTargetStorageBindings' }
+      responses:
+        '200':
+          description: Binding references replaced using authoritative readiness.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TargetStorage' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /target-storages/{storageId}/activation:
+    parameters:
+      - name: storageId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    put:
+      operationId: setTargetStorageActivation
+      summary: Activate or deactivate a Target Storage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetTargetStorageActivation' }
+      responses:
+        '200':
+          description: Activation updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TargetStorage' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /target-storage-defaults:
+    get:
+      operationId: listTargetStorageDefaults
+      summary: List per-Target-Class storage defaults.
+      responses:
+        '200':
+          description: Assigned defaults.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TargetStorageDefaults' }
+  /target-storage-defaults/{targetClass}:
+    parameters:
+      - name: targetClass
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/TargetClass' }
+    put:
+      operationId: assignTargetStorageDefaults
+      summary: Assign execution and Repatriation defaults for one Target Class.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignTargetStorageDefaults' }
+      responses:
+        '200':
+          description: Defaults assigned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TargetStorageDefaults' }
+        '422': { $ref: '#/components/responses/Problem' }
 components:
   schemas:
     SystemInformation:
@@ -70,6 +231,173 @@ components:
       type: string
       format: duration
       description: An ISO 8601 duration.
+    TargetStoragePurpose:
+      type: string
+      enum: [dataset, run-output]
+    TargetClass:
+      type: string
+      enum: [local-single-gpu, local-multi-gpu, cloud-on-demand, cloud-spot]
+    TargetStorageRole:
+      type: string
+      enum: [training-process, backend, transfer-worker, metric-view]
+    BindingReadiness:
+      type: string
+      enum: [ready, missing, invalid, expired]
+    CapabilityAvailability:
+      type: string
+      enum: [available, transiently-unavailable, incompatible]
+    TargetStorageRevisionState:
+      type: string
+      enum: [active, candidate, historical]
+    TargetStorageConfiguration:
+      type: object
+      additionalProperties: false
+      required: [endpoint, region, pathStyleAccess, compatibilityOptions]
+      properties:
+        endpoint:
+          type: string
+          format: uri
+          description: An HTTP or HTTPS S3-compatible service endpoint.
+        region: { type: string, minLength: 1 }
+        pathStyleAccess: { type: boolean }
+        compatibilityOptions:
+          type: object
+          additionalProperties: { type: string }
+    TargetStorageBinding:
+      type: object
+      additionalProperties: false
+      required: [role, bindingId, bindingRevision, readiness]
+      properties:
+        role: { $ref: '#/components/schemas/TargetStorageRole' }
+        bindingId: { $ref: '#/components/schemas/SkywrightId' }
+        bindingRevision: { type: integer, format: int64, minimum: 1 }
+        readiness: { $ref: '#/components/schemas/BindingReadiness' }
+    TargetStorageBindingReference:
+      type: object
+      additionalProperties: false
+      description: A non-secret reference whose readiness is resolved by the Credential Binding authority.
+      required: [role, bindingId, bindingRevision]
+      properties:
+        role: { $ref: '#/components/schemas/TargetStorageRole' }
+        bindingId: { $ref: '#/components/schemas/SkywrightId' }
+        bindingRevision: { type: integer, format: int64, minimum: 1 }
+    TargetStorageCapabilityResult:
+      type: object
+      additionalProperties: false
+      required: [capability, succeeded, failureCode, summary, observations]
+      properties:
+        capability: { type: string }
+        succeeded: { type: boolean }
+        failureCode: { type: [string, 'null'] }
+        summary: { type: [string, 'null'] }
+        observations:
+          type: object
+          additionalProperties: { type: string }
+    TargetStorageAssessment:
+      type: object
+      additionalProperties: false
+      required: [id, configurationRevision, observedFrom, observedUntil, availability, bindingRevisions, capabilities]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        configurationRevision: { type: integer, format: int64, minimum: 1 }
+        observedFrom: { $ref: '#/components/schemas/UtcInstant' }
+        observedUntil: { $ref: '#/components/schemas/UtcInstant' }
+        availability: { $ref: '#/components/schemas/CapabilityAvailability' }
+        bindingRevisions:
+          type: array
+          description: The exact non-secret Credential Binding revisions used for this assessment.
+          items: { $ref: '#/components/schemas/TargetStorageBindingReference' }
+        capabilities:
+          type: array
+          items: { $ref: '#/components/schemas/TargetStorageCapabilityResult' }
+    TargetStorageRevision:
+      type: object
+      additionalProperties: false
+      required: [revision, state, configuration]
+      properties:
+        revision: { type: integer, format: int64, minimum: 1 }
+        state: { $ref: '#/components/schemas/TargetStorageRevisionState' }
+        configuration: { $ref: '#/components/schemas/TargetStorageConfiguration' }
+    TargetStorage:
+      type: object
+      additionalProperties: false
+      required: [id, name, purpose, bucket, registrationRevision, activated, eligible, activeRevision, candidateRevision, availability, configuration, revisions, bindings, assessments]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        name: { type: string }
+        purpose: { $ref: '#/components/schemas/TargetStoragePurpose' }
+        bucket: { type: string }
+        registrationRevision: { type: integer, format: int64 }
+        activated: { type: boolean }
+        eligible: { type: boolean }
+        activeRevision: { type: [integer, 'null'], format: int64 }
+        candidateRevision: { type: [integer, 'null'], format: int64 }
+        availability: { $ref: '#/components/schemas/CapabilityAvailability' }
+        configuration:
+          oneOf:
+            - { $ref: '#/components/schemas/TargetStorageConfiguration' }
+            - { type: 'null' }
+        revisions:
+          type: array
+          items: { $ref: '#/components/schemas/TargetStorageRevision' }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/TargetStorageBinding' }
+        assessments:
+          type: array
+          items: { $ref: '#/components/schemas/TargetStorageAssessment' }
+    ReplaceTargetStorageBindings:
+      type: object
+      additionalProperties: false
+      required: [expectedRegistrationRevision, bindings]
+      properties:
+        expectedRegistrationRevision: { type: integer, format: int64, minimum: 1 }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/TargetStorageBindingReference' }
+    CreateTargetStorage:
+      type: object
+      additionalProperties: false
+      required: [name, purpose, bucket, configuration, bindings]
+      properties:
+        name: { type: string, minLength: 1 }
+        purpose: { $ref: '#/components/schemas/TargetStoragePurpose' }
+        bucket: { type: string, minLength: 1 }
+        configuration: { $ref: '#/components/schemas/TargetStorageConfiguration' }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/TargetStorageBindingReference' }
+    StageTargetStorageRevision:
+      type: object
+      additionalProperties: false
+      required: [expectedRegistrationRevision, configuration]
+      properties:
+        expectedRegistrationRevision: { type: integer, format: int64, minimum: 1 }
+        configuration: { $ref: '#/components/schemas/TargetStorageConfiguration' }
+    SetTargetStorageActivation:
+      type: object
+      additionalProperties: false
+      required: [expectedRegistrationRevision, activated]
+      properties:
+        expectedRegistrationRevision: { type: integer, format: int64, minimum: 1 }
+        activated: { type: boolean }
+    TargetStorageDefaults:
+      type: object
+      additionalProperties: false
+      required: [targetClass, executionStorageId, repatriationEnabled, repatriationStorageId]
+      properties:
+        targetClass: { $ref: '#/components/schemas/TargetClass' }
+        executionStorageId: { $ref: '#/components/schemas/SkywrightId' }
+        repatriationEnabled: { type: boolean }
+        repatriationStorageId: { $ref: '#/components/schemas/SkywrightId' }
+    AssignTargetStorageDefaults:
+      type: object
+      additionalProperties: false
+      required: [executionStorageId, repatriationEnabled, repatriationStorageId]
+      properties:
+        executionStorageId: { $ref: '#/components/schemas/SkywrightId' }
+        repatriationEnabled: { type: boolean }
+        repatriationStorageId: { $ref: '#/components/schemas/SkywrightId' }
     CorrelationId:
       type: string
       minLength: 1

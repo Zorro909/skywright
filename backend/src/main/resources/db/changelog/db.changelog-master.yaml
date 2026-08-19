@@ -1,3 +1,5 @@
 databaseChangeLog:
   - include:
       file: db/changelog/versions/0001-persistence-foundation.yaml
+  - include:
+      file: db/changelog/versions/0002-target-storage-registry.yaml

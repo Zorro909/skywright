@@ -22,7 +22,7 @@ final class DatabaseStartupIT {
 			try (var backend = BackendProcess.start(arguments(database, port))) {
 				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
 
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(2);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(7);
 				assertThat(database.countTables("public")).isZero();
 			}
 		}
@@ -38,7 +38,7 @@ final class DatabaseStartupIT {
 			try (var backend = BackendProcess.start(rollbackArguments)) {
 				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
 
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(2);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(7);
 			}
 		}
 	}
@@ -104,7 +104,8 @@ final class DatabaseStartupIT {
 			try (var backend = BackendProcess.start(arguments(database, firstPort))) {
 				BackendProcess.awaitReadiness(firstPort, Duration.ofSeconds(30));
 			}
-			database.executeAsMigrator("UPDATE skywright.databasechangelog SET md5sum = '9:invalid'");
+			database.executeAsMigrator("UPDATE skywright.databasechangelog SET md5sum = '9:invalid' "
+					+ "WHERE id = 'issue-79-persistence-foundation'");
 
 			try (var backend = BackendProcess.start(arguments(database, BackendProcess.availablePort()))) {
 				var exitCode = backend.awaitExit(Duration.ofSeconds(20));
@@ -123,13 +124,15 @@ final class DatabaseStartupIT {
 			try (var backend = BackendProcess.start(arguments(database, port))) {
 				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
 				var validChecksum = database.migrationChecksum();
-				database.executeAsMigrator("UPDATE skywright.databasechangelog SET md5sum = '9:invalid'");
+				database.executeAsMigrator("UPDATE skywright.databasechangelog SET md5sum = '9:invalid' "
+						+ "WHERE id = 'issue-79-persistence-foundation'");
 
 				assertThat(get(port, "/livez").statusCode()).isEqualTo(200);
 				assertThat(get(port, "/readyz").statusCode()).isEqualTo(503);
 				assertThat(get(port, "/actuator/health").statusCode()).isEqualTo(503);
 
-				database.executeAsMigrator("UPDATE skywright.databasechangelog SET md5sum = '" + validChecksum + "'");
+				database.executeAsMigrator("UPDATE skywright.databasechangelog SET md5sum = '" + validChecksum
+						+ "' WHERE id = 'issue-79-persistence-foundation'");
 				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
 			}
 		}

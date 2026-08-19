@@ -61,7 +61,7 @@ The success, recoverable-interruption, cancellation, or terminal-failure control
 _Avoid_: Execution Termination Cause, Run Lifecycle State, diagnostic exit code
 
 **Target Storage**:
-A pre-registered, credentialed storage destination that Skywright addresses but never creates. Many Storage Locations live within one; datasets and run outputs never share one.
+A control-plane registration with a stable identity for one storage destination that Skywright addresses but never creates. Its purpose and bucket are immutable, while qualified access configuration and role-scoped Credential Binding associations may change; datasets and run outputs never share one.
 _Avoid_: Bucket, provider, storage backend
 
 **Target Class**:

@@ -1,0 +1,80 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-80-target-storage-registry
+      author: skywright
+      logicalFilePath: db/changelog/versions/0002-target-storage-registry.yaml
+      changes:
+        - createTable:
+            tableName: target_storage
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: name, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: purpose, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: bucket, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: registration_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: activated, type: boolean, constraints: { nullable: false } }
+              - column: { name: active_revision, type: bigint }
+              - column: { name: candidate_revision, type: bigint }
+              - column: { name: availability, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+        - createTable:
+            tableName: target_storage_configuration
+            columns:
+              - column: { name: target_storage_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: configuration_position, type: integer, constraints: { nullable: false } }
+              - column: { name: configuration_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: endpoint, type: varchar(2048), constraints: { nullable: false } }
+              - column: { name: region, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: path_style_access, type: boolean, constraints: { nullable: false } }
+              - column: { name: compatibility_options, type: jsonb, constraints: { nullable: false } }
+        - addForeignKeyConstraint: { baseTableName: target_storage_configuration, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_configuration_storage, onDelete: CASCADE }
+        - addPrimaryKey: { tableName: target_storage_configuration, columnNames: "target_storage_id, configuration_position", constraintName: pk_target_storage_configuration }
+        - addUniqueConstraint: { tableName: target_storage_configuration, columnNames: "target_storage_id, configuration_revision", constraintName: uq_target_storage_configuration_revision }
+        - createTable:
+            tableName: target_storage_binding
+            columns:
+              - column: { name: target_storage_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: binding_position, type: integer, constraints: { nullable: false } }
+              - column: { name: role, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: binding_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: binding_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: readiness, type: varchar(32), constraints: { nullable: false } }
+        - addForeignKeyConstraint: { baseTableName: target_storage_binding, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_binding_storage, onDelete: CASCADE }
+        - addPrimaryKey: { tableName: target_storage_binding, columnNames: "target_storage_id, binding_position", constraintName: pk_target_storage_binding }
+        - addUniqueConstraint: { tableName: target_storage_binding, columnNames: "target_storage_id, role", constraintName: uq_target_storage_binding_role }
+        - createTable:
+            tableName: target_storage_assessment
+            columns:
+              - column: { name: target_storage_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: assessment_position, type: integer, constraints: { nullable: false } }
+              - column: { name: assessment_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: configuration_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: observed_from, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: observed_until, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: availability, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: binding_revisions, type: jsonb, constraints: { nullable: false } }
+              - column: { name: capabilities, type: jsonb, constraints: { nullable: false } }
+        - addForeignKeyConstraint: { baseTableName: target_storage_assessment, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_assessment_storage, onDelete: CASCADE }
+        - addPrimaryKey: { tableName: target_storage_assessment, columnNames: "target_storage_id, assessment_position", constraintName: pk_target_storage_assessment }
+        - addUniqueConstraint: { tableName: target_storage_assessment, columnNames: assessment_id, constraintName: uq_target_storage_assessment_id }
+        - createTable:
+            tableName: target_storage_defaults
+            columns:
+              - column: { name: target_class, type: varchar(32), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: execution_storage_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: repatriation_enabled, type: boolean, constraints: { nullable: false } }
+              - column: { name: repatriation_storage_id, type: uuid, constraints: { nullable: false } }
+        - addForeignKeyConstraint: { baseTableName: target_storage_defaults, baseColumnNames: execution_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_defaults_execution }
+        - addForeignKeyConstraint: { baseTableName: target_storage_defaults, baseColumnNames: repatriation_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_target_storage_defaults_repatriation }
+        - sql:
+            comment: Grant the configured application role only the DML privileges its JPA boundary requires.
+            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON target_storage, target_storage_configuration, target_storage_binding, target_storage_assessment, target_storage_defaults TO "${runtimeRole}"
+      rollback:
+        - sql:
+            comment: Revoke the application privileges before removing the owned tables.
+            sql: REVOKE ALL PRIVILEGES ON target_storage, target_storage_configuration, target_storage_binding, target_storage_assessment, target_storage_defaults FROM "${runtimeRole}"
+        - dropTable: { tableName: target_storage_defaults }
+        - dropTable: { tableName: target_storage_assessment }
+        - dropTable: { tableName: target_storage_binding }
+        - dropTable: { tableName: target_storage_configuration }
+        - dropTable: { tableName: target_storage }

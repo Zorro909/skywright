@@ -159,6 +159,20 @@ def recorder(memory: MemoryS3, tmp_path, progress=None, **options) -> RunStoreRe
     )
 
 
+def test_resolved_target_storage_carries_non_secret_compatibility_options() -> None:
+    target = TargetStorage(
+        storage_id="test-storage",
+        endpoint_url="http://storage.invalid",
+        bucket="runs",
+        region="us-east-1",
+        training_project_id="project",
+        run_id="run",
+        compatibility_options={"checksumCalculation": "when-required"},
+    )
+
+    assert target.compatibility_options == {"checksumCalculation": "when-required"}
+
+
 def test_protocol_builds_portable_v1_object_identities() -> None:
     protocol = RunStoreProtocol("project-\u03b1", "run-1")
 
