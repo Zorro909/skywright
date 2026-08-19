@@ -3,14 +3,12 @@ package de.zorro909.skywright.backend.runstore;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.net.ServerSocket;
+import de.zorro909.skywright.backend.acceptance.SeaweedFsFixture;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.HexFormat;
@@ -32,12 +30,9 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 @Tag("real-service")
 class RunStoreS3IT {
 
-	private static final String IMAGE = "docker.io/chrislusf/seaweedfs:4.42@sha256:"
-			+ "f7cbc8bdbbf60a1aaba7d61784a3bdff3ec1e0657f6ad0b26d5b6ab2cd9d0dc6";
-
 	@Test
 	void javaAccessUsesTheSamePinnedSeaweedFsProtocol() throws Exception {
-		try (SeaweedFs service = SeaweedFs.start()) {
+		try (SeaweedFsFixture service = SeaweedFsFixture.start()) {
 			var credentials = StaticCredentialsProvider.create(AwsBasicCredentials.create("test-key", "test-secret"));
 			String bucket = "skywright-" + UUID.randomUUID().toString();
 			try (S3AsyncClient writer = S3AsyncClient.builder()
@@ -109,57 +104,6 @@ class RunStoreS3IT {
 
 	private static String sha256(byte[] bytes) throws Exception {
 		return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-	}
-
-	private record SeaweedFs(String container, URI endpoint) implements AutoCloseable {
-
-		static SeaweedFs start() throws Exception {
-			int port;
-			try (ServerSocket socket = new ServerSocket(0)) {
-				port = socket.getLocalPort();
-			}
-			Process process = new ProcessBuilder("docker", "run", "-d", "--rm", "-p", "127.0.0.1:" + port + ":8333",
-					IMAGE, "mini", "-master.telemetry=false")
-				.redirectErrorStream(true)
-				.start();
-			String[] output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim()
-				.split("\\R");
-			if (process.waitFor() != 0) {
-				throw new IllegalStateException(String.join("\n", output));
-			}
-			return new SeaweedFs(output[output.length - 1], URI.create("http://127.0.0.1:" + port));
-		}
-
-		void awaitReady(S3AsyncClient client) throws Exception {
-			long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
-			while (true) {
-				try {
-					client.listBuckets().join();
-					return;
-				}
-				catch (RuntimeException failure) {
-					if (System.nanoTime() >= deadline) {
-						throw failure;
-					}
-					Thread.sleep(100);
-				}
-			}
-		}
-
-		@Override
-		public void close() throws Exception {
-			try {
-				Process logs = new ProcessBuilder("docker", "logs", this.container).redirectErrorStream(true).start();
-				byte[] output = logs.getInputStream().readAllBytes();
-				logs.waitFor();
-				Path directory = Path.of("target/service-logs");
-				Files.createDirectories(directory);
-				Files.write(directory.resolve("seaweedfs-" + this.container.substring(0, 12) + ".log"), output);
-			}
-			finally {
-				new ProcessBuilder("docker", "rm", "-f", this.container).start().waitFor();
-			}
-		}
 	}
 
 }

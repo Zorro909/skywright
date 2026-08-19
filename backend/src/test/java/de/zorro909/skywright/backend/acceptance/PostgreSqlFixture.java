@@ -110,12 +110,15 @@ final class PostgreSqlFixture {
 			}
 		}
 
-		String migrationChecksum() throws SQLException {
+		String migrationChecksum(String changesetId) throws SQLException {
 			try (var connection = DriverManager.getConnection(jdbcUrl, migrator, migratorPassword);
-					var statement = connection.prepareStatement("SELECT md5sum FROM skywright.databasechangelog");
-					var result = statement.executeQuery()) {
-				result.next();
-				return result.getString(1);
+					var statement = connection
+						.prepareStatement("SELECT md5sum FROM skywright.databasechangelog WHERE id = ?")) {
+				statement.setString(1, changesetId);
+				try (var result = statement.executeQuery()) {
+					result.next();
+					return result.getString(1);
+				}
 			}
 		}
 

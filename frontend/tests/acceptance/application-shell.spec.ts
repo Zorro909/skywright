@@ -8,7 +8,11 @@ test('user can navigate the packaged Skywright shell', async ({ page }) => {
   await expect(page.getByRole('banner')).toBeVisible();
   const navigation = page.getByRole('navigation', { name: 'Primary' });
   await expect(navigation).toBeVisible();
-  await expect(navigation.getByRole('link')).toHaveText(['Overview', 'About']);
+  await expect(navigation.getByRole('link')).toHaveText([
+    'Overview',
+    'Target Storages',
+    'About',
+  ]);
   await expect(page.getByRole('main')).toBeVisible();
   await expect(
     page.getByRole('heading', { level: 1, name: 'Skywright' }),
@@ -59,7 +63,7 @@ test('user can navigate the packaged Skywright shell', async ({ page }) => {
     ).toBeVisible();
   }
 
-  for (const path of ['/', '/about', '/missing']) {
+  for (const path of ['/', '/target-storages', '/about', '/missing']) {
     await page.goto(path);
     const accessibility = await new AxeBuilder({ page }).analyze();
     expect(accessibility.violations).toEqual([]);
@@ -78,13 +82,90 @@ test('keyboard users can bypass navigation and open a destination', async ({
   await expect(page.getByRole('main')).toBeFocused();
 
   await page.goto('/');
-  for (let tab = 0; tab < 4; tab += 1) {
+  for (let tab = 0; tab < 5; tab += 1) {
     await page.keyboard.press('Tab');
   }
   const aboutLink = page.getByRole('link', { name: 'About' });
   await expect(aboutLink).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/about$/u);
+});
+
+test('operator can register, qualify, inspect, revise, and delete a Target Storage', async ({
+  page,
+}) => {
+  await page.goto('/target-storages');
+  await expect(
+    page.getByRole('heading', { level: 2, name: 'Target Storages' }),
+  ).toBeVisible();
+
+  await page.getByText('Register Target Storage').click();
+  await expect(
+    page.getByText(
+      'Binding UUIDs only. Credential values are never accepted here.',
+    ),
+  ).toBeVisible();
+
+  const registration = page.locator('form').first();
+  await registration.getByLabel('Name').fill('Acceptance outputs');
+  await registration.getByLabel('Endpoint URL').fill('http://storage.invalid');
+  await registration.getByLabel('Bucket').fill('acceptance-outputs');
+  await registration
+    .getByLabel('Training Process binding UUID')
+    .fill('65d81b25-ac05-455a-85ae-de56024348e2');
+  await registration
+    .getByLabel('Backend binding UUID')
+    .fill('fd049266-8da9-44ea-9021-9556907a2a96');
+  await registration
+    .getByLabel('Transfer Worker binding UUID')
+    .fill('b99fce1b-c4c6-47d7-93f3-161f46f66c39');
+  await registration
+    .getByLabel('Metric View binding UUID')
+    .fill('2ed9cde4-4fbf-4ce9-aa86-1f7d6f9188bf');
+  await registration
+    .getByRole('button', { name: 'Register candidate' })
+    .click();
+
+  const storage = page.getByRole('article').filter({
+    has: page.getByRole('heading', { name: 'Acceptance outputs' }),
+  });
+  await expect(storage).toBeVisible();
+  await expect(storage.getByText('Candidate revision')).toBeVisible();
+  await expect(storage.getByText('missing').first()).toBeVisible();
+
+  await storage
+    .getByRole('button', { name: 'Qualify current revision' })
+    .click();
+  await expect(storage.getByText('Latest qualification')).toBeVisible();
+  await expect(storage.getByText('transiently-unavailable')).toBeVisible();
+  await expect(storage.getByText(/credential-binding/iu).first()).toBeVisible();
+
+  await storage.getByText('Stage revised configuration').click();
+  const revision = storage
+    .locator('details')
+    .filter({ hasText: 'Stage revised configuration' })
+    .locator('form');
+  await revision
+    .getByLabel('Endpoint URL')
+    .fill('http://revised-storage.invalid');
+  await revision.getByRole('button', { name: 'Stage revision' }).click();
+  await expect(storage.getByText('Revision 2')).toBeVisible();
+
+  await storage.getByRole('button', { name: 'Delete' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Acceptance outputs' }),
+  ).toHaveCount(0);
+
+  const sensitiveNames = await page
+    .locator('input')
+    .evaluateAll((inputs) =>
+      inputs
+        .map((input) => input.getAttribute('name') ?? '')
+        .filter((name) =>
+          /secret|password|accessKey|credentialValue/iu.test(name),
+        ),
+    );
+  expect(sensitiveNames).toEqual([]);
 });
 
 test('backend loss degrades and recovers only System Information', async ({
