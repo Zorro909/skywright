@@ -8,12 +8,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-@RestControllerAdvice
+@RestControllerAdvice(assignableTypes = TargetStorageHttpAdapter.class)
 @Order(Ordered.HIGHEST_PRECEDENCE)
 final class TargetStorageProblemHandler {
 
@@ -36,6 +37,16 @@ final class TargetStorageProblemHandler {
 		Problem problem = new Problem("about:blank", HttpStatus.CONFLICT.getReasonPhrase(), HttpStatus.CONFLICT.value(),
 				"The Target Storage changed concurrently; reload it and retry.", request.getRequestURI(),
 				"SKYWRIGHT_TARGET_STORAGE_REVISION_CONFLICT", RequestCorrelationFilter.correlationIdFrom(request),
+				List.of(), null, false);
+		return ResponseEntity.status(HttpStatus.CONFLICT).contentType(MediaType.APPLICATION_PROBLEM_JSON).body(problem);
+	}
+
+	@ExceptionHandler(value = { DataIntegrityViolationException.class })
+	ResponseEntity<Problem> handleResourceConflict(DataIntegrityViolationException failure,
+			HttpServletRequest request) {
+		Problem problem = new Problem("about:blank", HttpStatus.CONFLICT.getReasonPhrase(), HttpStatus.CONFLICT.value(),
+				"The endpoint and bucket are already registered.", request.getRequestURI(),
+				"SKYWRIGHT_TARGET_STORAGE_RESOURCE_CONFLICT", RequestCorrelationFilter.correlationIdFrom(request),
 				List.of(), null, false);
 		return ResponseEntity.status(HttpStatus.CONFLICT).contentType(MediaType.APPLICATION_PROBLEM_JSON).body(problem);
 	}

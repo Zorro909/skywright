@@ -39,6 +39,13 @@ final class TargetStorageApiIT {
 
 			try (var application = start(database)) {
 				int port = ((WebServerApplicationContext) application).getWebServer().getPort();
+				var secretEndpoint = request(port, "POST", "/api/v1/target-storages",
+						registration(URI.create("http://operator:do-not-return@storage.example?token=hidden"),
+								"secret-endpoint", "run-output"));
+				assertThat(secretEndpoint.statusCode()).isEqualTo(422);
+				assertThat(secretEndpoint.body()).contains("SKYWRIGHT_TARGET_STORAGE_CONFIGURATION_INVALID")
+					.doesNotContain("do-not-return", "token=hidden");
+
 				var created = request(port, "POST", "/api/v1/target-storages",
 						registration(storage.endpoint(), bucket, "run-output"));
 				assertThat(created.statusCode()).isEqualTo(201);

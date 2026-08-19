@@ -7,11 +7,45 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Comparator;
+import java.util.List;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 @Tag("real-service")
 final class TargetStoragePersistenceIT {
+
+	@Test
+	void concurrentRegistrationsCannotClaimTheSameResource() throws Exception {
+		try (var database = PostgreSqlFixture.freshDatabase()) {
+			int port = BackendProcess.availablePort();
+			try (var backend = BackendProcess.start(arguments(database, port));
+					var requests = Executors.newVirtualThreadPerTaskExecutor()) {
+				awaitReady(backend, port);
+				var barrier = new CyclicBarrier(2);
+				var first = requests.submit(() -> {
+					barrier.await();
+					return request(port, "POST", "/api/v1/target-storages",
+							registration().replace("Acceptance outputs", "Concurrent output A"));
+				});
+				var second = requests.submit(() -> {
+					barrier.await();
+					return request(port, "POST", "/api/v1/target-storages",
+							registration().replace("Acceptance outputs", "Concurrent output B"));
+				});
+
+				var responses = List.of(first.get(), second.get())
+					.stream()
+					.sorted(Comparator.comparingInt(HttpResponse::statusCode))
+					.toList();
+				assertThat(responses).extracting(HttpResponse::statusCode).containsExactly(201, 409);
+				assertThat(responses.get(1).body()).as(backend.output())
+					.contains("SKYWRIGHT_TARGET_STORAGE_RESOURCE_CONFLICT");
+			}
+		}
+	}
 
 	@Test
 	void registrationSurvivesAControlPlaneRestartWithoutPersistingCredentialValues() throws Exception {

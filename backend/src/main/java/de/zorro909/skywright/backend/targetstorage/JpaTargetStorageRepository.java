@@ -23,8 +23,23 @@ class JpaTargetStorageRepository implements TargetStorageRepository {
 	}
 
 	@Override
-	public Optional<TargetStorageAggregate> findByResource(URI endpoint, String bucket) {
-		return this.findAll().stream().filter(storage -> storage.hasResource(endpoint, bucket)).findFirst();
+	public TargetStorageResourceClaim saveNewAndClaim(TargetStorageAggregate storage, URI endpoint, String bucket) {
+		this.entityManager.persist(TargetStorageEntity.from(storage.snapshot()));
+		this.entityManager.flush();
+		return this.claimResource(storage.id(), storage.purpose(), endpoint, bucket);
+	}
+
+	@Override
+	public TargetStorageResourceClaim claimResource(UUID storageId, TargetStoragePurpose purpose, URI endpoint,
+			String bucket) {
+		String resourceKey = TargetStorageResourceClaim.resourceKey(endpoint, bucket);
+		TargetStorageResourceEntity existing = this.entityManager.find(TargetStorageResourceEntity.class, resourceKey);
+		if (existing != null) {
+			return existing.domain();
+		}
+		TargetStorageResourceEntity claim = TargetStorageResourceEntity.create(storageId, purpose, endpoint, bucket);
+		this.entityManager.persist(claim);
+		return claim.domain();
 	}
 
 	@Override

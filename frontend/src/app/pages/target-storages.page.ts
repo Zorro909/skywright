@@ -490,7 +490,7 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
     const form = event.currentTarget as HTMLFormElement;
     const data = new FormData(form);
     const bindings = this.bindings(data);
-    await this.mutate('Registration created.', () =>
+    const created = await this.mutate('Registration created.', () =>
       this.api.create({
         name: this.value(data, 'name'),
         purpose: this.value(data, 'purpose') as 'dataset' | 'run-output',
@@ -507,7 +507,7 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
         bindings,
       }),
     );
-    form.reset();
+    if (created) form.reset();
   }
 
   protected async qualify(storage: TargetStorage) {
@@ -583,15 +583,20 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
     }
   }
 
-  private async mutate(message: string, operation: () => Promise<unknown>) {
+  private async mutate(
+    message: string,
+    operation: () => Promise<unknown>,
+  ): Promise<boolean> {
     this.busy.set(true);
     this.message.set('');
     try {
       await operation();
       this.message.set(message);
       await this.reload();
+      return true;
     } catch (error) {
       this.message.set(this.safeFailure(error));
+      return false;
     } finally {
       this.busy.set(false);
     }

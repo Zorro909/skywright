@@ -18,16 +18,11 @@ public class TargetStorageRegistry {
 			TargetStorageConfiguration configuration, List<TargetStorageBinding> bindings) {
 		TargetStorageRegistry.requireText(name, "name");
 		TargetStorageRegistry.requireText(bucket, "bucket");
-		this.repository.findByResource(configuration.endpoint(), bucket).ifPresent(existing -> {
-			if (existing.purpose() != purpose) {
-				throw new TargetStorageConflictException("TARGET_STORAGE_PURPOSE_CONFLICT",
-						"The endpoint and bucket are already registered for " + existing.purpose().wireValue());
-			}
-			throw new TargetStorageConflictException("TARGET_STORAGE_RESOURCE_CONFLICT",
-					"The endpoint and bucket are already registered");
-		});
 		UUID id = UUID.randomUUID();
-		this.repository.save(TargetStorageAggregate.create(id, name, purpose, bucket, configuration, bindings));
+		TargetStorageResourceClaim claim = this.repository.saveNewAndClaim(
+				TargetStorageAggregate.create(id, name, purpose, bucket, configuration, bindings),
+				configuration.endpoint(), bucket);
+		this.requireClaim(id, purpose, claim);
 		return id;
 	}
 
@@ -52,16 +47,8 @@ public class TargetStorageRegistry {
 	public long stageRevision(UUID id, long expectedRegistrationRevision, TargetStorageConfiguration configuration) {
 		TargetStorageAggregate storage = this.storage(id);
 		storage.requireRevision(expectedRegistrationRevision);
-		this.repository.findByResource(configuration.endpoint(), storage.bucket()).ifPresent(existing -> {
-			if (!existing.id().equals(id)) {
-				if (existing.purpose() != storage.purpose()) {
-					throw new TargetStorageConflictException("TARGET_STORAGE_PURPOSE_CONFLICT",
-							"The endpoint and bucket are already registered for another purpose");
-				}
-				throw new TargetStorageConflictException("TARGET_STORAGE_RESOURCE_CONFLICT",
-						"The endpoint and bucket are already registered");
-			}
-		});
+		this.requireClaim(id, storage.purpose(),
+				this.repository.claimResource(id, storage.purpose(), configuration.endpoint(), storage.bucket()));
 		long revision = storage.stage(configuration);
 		this.repository.save(storage);
 		return revision;
@@ -144,6 +131,25 @@ public class TargetStorageRegistry {
 		return storage.descriptor();
 	}
 
+	TargetStorageDescriptor resolveEligibleRunOutputDescriptor(UUID id) {
+		TargetStorageAggregate storage = this.requireRunOutput(id);
+		if (!storage.eligible()) {
+			throw new TargetStorageIneligibleException("TARGET_STORAGE_INELIGIBLE",
+					"Target Storage is not eligible for new work");
+		}
+		return storage.descriptor();
+	}
+
+	TargetStorageBinding readyBinding(UUID id, TargetStorageRole role) {
+		return this.storage(id)
+			.bindings()
+			.stream()
+			.filter(binding -> binding.role() == role && binding.readiness() == BindingReadiness.READY)
+			.findFirst()
+			.orElseThrow(() -> new TargetStorageIneligibleException("TARGET_STORAGE_BINDING_UNAVAILABLE",
+					"The required Credential Binding is not ready"));
+	}
+
 	TargetStorageQualificationRequest qualificationRequest(UUID id) {
 		TargetStorageAggregate storage = this.storage(id);
 		return storage.qualificationRequest();
@@ -174,6 +180,22 @@ public class TargetStorageRegistry {
 			throw new TargetStorageValidationException("TARGET_STORAGE_REGISTRATION_INVALID",
 					field + " must not be blank");
 		}
+		if (value.length() > 255) {
+			throw new TargetStorageValidationException("TARGET_STORAGE_REGISTRATION_INVALID",
+					field + " must not exceed 255 characters");
+		}
+	}
+
+	private void requireClaim(UUID id, TargetStoragePurpose purpose, TargetStorageResourceClaim claim) {
+		if (claim.storageId().equals(id)) {
+			return;
+		}
+		if (claim.purpose() != purpose) {
+			throw new TargetStorageConflictException("TARGET_STORAGE_PURPOSE_CONFLICT",
+					"The endpoint and bucket are already registered for " + claim.purpose().wireValue());
+		}
+		throw new TargetStorageConflictException("TARGET_STORAGE_RESOURCE_CONFLICT",
+				"The endpoint and bucket are already registered");
 	}
 
 }

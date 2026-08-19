@@ -22,7 +22,7 @@ final class DatabaseStartupIT {
 			try (var backend = BackendProcess.start(arguments(database, port))) {
 				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
 
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(7);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(8);
 				assertThat(database.countTables("public")).isZero();
 			}
 		}
@@ -38,7 +38,7 @@ final class DatabaseStartupIT {
 			try (var backend = BackendProcess.start(rollbackArguments)) {
 				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
 
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(7);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(8);
 			}
 		}
 	}

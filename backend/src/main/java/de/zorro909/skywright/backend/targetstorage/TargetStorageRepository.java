@@ -9,7 +9,9 @@ interface TargetStorageRepository {
 
 	Optional<TargetStorageAggregate> findById(UUID id);
 
-	Optional<TargetStorageAggregate> findByResource(URI endpoint, String bucket);
+	TargetStorageResourceClaim saveNewAndClaim(TargetStorageAggregate storage, URI endpoint, String bucket);
+
+	TargetStorageResourceClaim claimResource(UUID storageId, TargetStoragePurpose purpose, URI endpoint, String bucket);
 
 	List<TargetStorageAggregate> findAll();
 

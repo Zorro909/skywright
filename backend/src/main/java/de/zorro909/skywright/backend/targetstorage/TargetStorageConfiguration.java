@@ -12,8 +12,18 @@ record TargetStorageConfiguration(URI endpoint, String region, boolean pathStyle
 		if (!List.of("http", "https").contains(endpoint.getScheme())) {
 			throw invalid("endpoint must use http or https");
 		}
+		if (endpoint.getHost() == null || endpoint.getUserInfo() != null || endpoint.getQuery() != null
+				|| endpoint.getFragment() != null) {
+			throw invalid("endpoint must name a host and must not contain user info, a query, or a fragment");
+		}
+		if (endpoint.toString().length() > 2048) {
+			throw invalid("endpoint must not exceed 2048 characters");
+		}
 		if (region == null || region.isBlank()) {
 			throw invalid("region must not be blank");
+		}
+		if (region.length() > 255) {
+			throw invalid("region must not exceed 255 characters");
 		}
 		if (!(compatibilityOptions = Map.copyOf(compatibilityOptions)).keySet()
 			.stream()

@@ -155,6 +155,8 @@ GRANT USAGE ON SCHEMA skywright TO runtime;
   const baseUrl = `jdbc:postgresql://127.0.0.1:${port}/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true`;
   const acceptanceEnvironment = {
     ...process.env,
+    SKYWRIGHT_ACCEPTANCE_DATABASE_CONTAINER: containerName,
+    SKYWRIGHT_CONTAINER_CLI: containerCli,
     SKYWRIGHT_DATABASE_RUNTIME_URL: `${baseUrl}&currentSchema=skywright`,
     SKYWRIGHT_DATABASE_RUNTIME_USERNAME: 'runtime',
     SKYWRIGHT_DATABASE_RUNTIME_PASSWORD: runtimePassword,

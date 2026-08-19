@@ -10,7 +10,8 @@ describe('Target Storages operator workflow', () => {
   it('shows non-secret registration state and creates a draft', async () => {
     const create = vi
       .fn<(request: CreateTargetStorage) => Promise<void>>()
-      .mockResolvedValue(undefined);
+      .mockRejectedValueOnce(new Error('unavailable'))
+      .mockResolvedValueOnce(undefined);
     const api = {
       list: vi.fn().mockResolvedValue([
         {
@@ -87,12 +88,21 @@ describe('Target Storages operator workflow', () => {
     setValue(form, 'endpoint', 'https://s3.example');
     form?.dispatchEvent(new SubmitEvent('submit'));
     await fixture.whenStable();
+    expect((form?.elements.namedItem('name') as HTMLInputElement).value).toBe(
+      'Dataset archive',
+    );
 
-    expect(create).toHaveBeenCalledOnce();
+    form?.dispatchEvent(new SubmitEvent('submit'));
+    await fixture.whenStable();
+
+    expect(create).toHaveBeenCalledTimes(2);
     expect(create.mock.calls[0]?.[0].name).toBe('Dataset archive');
     expect(create.mock.calls[0]?.[0].bucket).toBe('datasets');
     expect(create.mock.calls[0]?.[0].configuration.endpoint).toBe(
       'https://s3.example',
+    );
+    expect((form?.elements.namedItem('name') as HTMLInputElement).value).toBe(
+      '',
     );
   });
 });

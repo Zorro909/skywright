@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 
 test('user can navigate the packaged Skywright shell', async ({ page }) => {
@@ -188,96 +189,19 @@ test('operator can register, revise, qualify, and inspect a Target Storage safel
     'SKYWRIGHT_TARGET_STORAGE_PURPOSE_CONFLICT',
   );
 
-  const storageId = await storage.getAttribute('data-storage-id');
-  expect(storageId).not.toBeNull();
-  await page.route(`**/api/v1/target-storages/${storageId}`, async (route) => {
-    if (route.request().method() !== 'DELETE') {
-      await route.continue();
-      return;
-    }
-    await route.fulfill({
-      status: 409,
-      contentType: 'application/problem+json',
-      headers: { 'X-Correlation-ID': 'acceptance-delete' },
-      body: JSON.stringify({
-        type: 'about:blank',
-        title: 'Conflict',
-        status: 409,
-        detail: 'The Target Storage has durable references.',
-        instance: `/api/v1/target-storages/${storageId}`,
-        errorCode: 'SKYWRIGHT_TARGET_STORAGE_REFERENCED',
-        correlationId: 'acceptance-delete',
-        fieldViolations: [],
-        unavailableSource: null,
-        retryable: false,
-      }),
-    });
-  });
-  await storage.getByRole('button', { name: 'Delete' }).click();
-  await expect(page.getByRole('status')).toContainText(
-    'SKYWRIGHT_TARGET_STORAGE_REFERENCED',
-  );
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
 test('operator can assign class defaults and deactivate an eligible registration', async ({
   page,
+  request,
 }) => {
-  const storageId = '00000000-0000-0000-0000-000000000080';
-  const storage = {
-    id: storageId,
-    name: 'Qualified outputs',
-    purpose: 'run-output',
-    bucket: 'qualified-runs',
-    registrationRevision: 4,
-    activated: true,
-    eligible: true,
-    activeRevision: 1,
-    candidateRevision: null,
-    availability: 'available',
-    configuration: {
-      endpoint: 'http://storage.example',
-      region: 'us-east-1',
-      pathStyleAccess: true,
-      compatibilityOptions: {},
-    },
-    revisions: [],
-    bindings: [],
-    assessments: [],
-  };
-  const defaults: unknown[] = [];
-
-  await page.route('**/api/v1/target-storages', async (route) => {
-    if (route.request().method() === 'GET') {
-      await route.fulfill({ json: [storage] });
-      return;
-    }
-    await route.continue();
+  const created = await request.post('/api/v1/target-storages', {
+    data: qualifiedRegistration,
   });
-  await page.route('**/api/v1/target-storage-defaults', async (route) => {
-    await route.fulfill({ json: defaults });
-  });
-  await page.route(
-    '**/api/v1/target-storage-defaults/local-single-gpu',
-    async (route) => {
-      defaults.splice(0, defaults.length, {
-        targetClass: 'local-single-gpu',
-        executionStorageId: storageId,
-        repatriationEnabled: true,
-        repatriationStorageId: storageId,
-      });
-      await route.fulfill({ json: defaults[0] });
-    },
-  );
-  await page.route(
-    `**/api/v1/target-storages/${storageId}/activation`,
-    async (route) => {
-      storage.activated = false;
-      storage.eligible = false;
-      storage.registrationRevision += 1;
-      await route.fulfill({ json: storage });
-    },
-  );
+  expect(created.status()).toBe(201);
+  const storageId = (await created.json()).id as string;
+  seedEligibleRegistration(storageId);
 
   await page.goto('/target-storages');
   const defaultsForm = page
@@ -305,8 +229,99 @@ test('operator can assign class defaults and deactivate an eligible registration
     'Registration deactivated.',
   );
   await expect(card).toContainText('Ineligible');
+  await card.getByRole('button', { name: 'Delete' }).click();
+  await expect(page.getByRole('status')).toContainText(
+    'SKYWRIGHT_TARGET_STORAGE_REFERENCED',
+  );
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
+
+const qualifiedRegistration = {
+  name: 'Qualified outputs',
+  purpose: 'run-output',
+  bucket: 'qualified-runs',
+  configuration: {
+    endpoint: 'http://qualified-storage.example',
+    region: 'us-east-1',
+    pathStyleAccess: true,
+    compatibilityOptions: {},
+  },
+  bindings: [
+    ['training-process', '00000000-0000-0000-0000-000000000011'],
+    ['backend', '00000000-0000-0000-0000-000000000012'],
+    ['transfer-worker', '00000000-0000-0000-0000-000000000013'],
+    ['metric-view', '00000000-0000-0000-0000-000000000014'],
+  ].map(([role, bindingId]) => ({ role, bindingId, bindingRevision: 1 })),
+};
+
+function seedEligibleRegistration(storageId: string) {
+  const container = process.env['SKYWRIGHT_ACCEPTANCE_DATABASE_CONTAINER'];
+  if (!container)
+    throw new Error('acceptance database container is unavailable');
+  const capabilities = [
+    'put-object',
+    'conditional-create',
+    'conditional-replace',
+    'multipart-create',
+    'multipart-upload',
+    'multipart-list-parts',
+    'multipart-complete',
+    'multipart-abort',
+    'ranged-read',
+    'list-objects',
+    'delete-object',
+    'read-after-write',
+    'list-after-write',
+    'list-after-delete',
+    'get-presigning',
+    'metadata-preservation',
+    'checksum-preservation',
+    'list-multipart-uploads',
+    'cleanup',
+  ].map((capability) => ({
+    capability,
+    succeeded: true,
+    failureCode: null,
+    summary: null,
+    observations: {},
+  }));
+  const bindingRevisions = [
+    ['TRAINING_PROCESS', '00000000-0000-0000-0000-000000000011'],
+    ['BACKEND', '00000000-0000-0000-0000-000000000012'],
+    ['TRANSFER_WORKER', '00000000-0000-0000-0000-000000000013'],
+    ['METRIC_VIEW', '00000000-0000-0000-0000-000000000014'],
+  ].map(([role, bindingId]) => ({ role, bindingId, bindingRevision: 1 }));
+  const sql = `
+    UPDATE skywright.target_storage_binding SET readiness = 'READY'
+      WHERE target_storage_id = '${storageId}';
+    UPDATE skywright.target_storage SET registration_revision = 4, activated = true,
+      active_revision = 1, candidate_revision = NULL, availability = 'AVAILABLE'
+      WHERE id = '${storageId}';
+    INSERT INTO skywright.target_storage_assessment
+      (target_storage_id, assessment_position, assessment_id, configuration_revision,
+       observed_from, observed_until, availability, binding_revisions, capabilities)
+    VALUES ('${storageId}', 0, '00000000-0000-0000-0000-000000000080', 1,
+      '2026-08-19T08:00:00Z', '2026-08-19T08:00:02Z', 'AVAILABLE',
+      $json$${JSON.stringify(bindingRevisions)}$json$::jsonb,
+      $json$${JSON.stringify(capabilities)}$json$::jsonb);
+  `;
+  execFileSync(
+    process.env['SKYWRIGHT_CONTAINER_CLI'] ?? 'docker',
+    [
+      'exec',
+      '--interactive',
+      container,
+      'psql',
+      '--set',
+      'ON_ERROR_STOP=1',
+      '--username',
+      'postgres',
+      '--dbname',
+      'skywright',
+    ],
+    { input: sql },
+  );
+}
 
 test('direct application routes boot without rewriting reserved backend URLs', async ({
   page,

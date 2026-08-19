@@ -14,6 +14,8 @@ final class InMemoryTargetStorageRepository implements TargetStorageRepository {
 
 	private final Map<TargetClass, TargetStorageDefaults> defaults = new EnumMap<>(TargetClass.class);
 
+	private final Map<String, TargetStorageResourceClaim> resourceClaims = new LinkedHashMap<>();
+
 	InMemoryTargetStorageRepository() {
 	}
 
@@ -23,8 +25,18 @@ final class InMemoryTargetStorageRepository implements TargetStorageRepository {
 	}
 
 	@Override
-	public Optional<TargetStorageAggregate> findByResource(URI endpoint, String bucket) {
-		return this.storages.values().stream().filter(storage -> storage.hasResource(endpoint, bucket)).findFirst();
+	public TargetStorageResourceClaim saveNewAndClaim(TargetStorageAggregate storage, URI endpoint, String bucket) {
+		TargetStorageResourceClaim claim = this.claim(storage.id(), storage.purpose(), endpoint, bucket);
+		if (claim.storageId().equals(storage.id())) {
+			this.storages.put(storage.id(), storage);
+		}
+		return claim;
+	}
+
+	@Override
+	public TargetStorageResourceClaim claimResource(UUID storageId, TargetStoragePurpose purpose, URI endpoint,
+			String bucket) {
+		return this.claim(storageId, purpose, endpoint, bucket);
 	}
 
 	@Override
@@ -40,6 +52,7 @@ final class InMemoryTargetStorageRepository implements TargetStorageRepository {
 	@Override
 	public void delete(UUID id) {
 		this.storages.remove(id);
+		this.resourceClaims.values().removeIf(claim -> claim.storageId().equals(id));
 	}
 
 	@Override
@@ -62,6 +75,12 @@ final class InMemoryTargetStorageRepository implements TargetStorageRepository {
 	@Override
 	public List<TargetStorageDefaults> findDefaults() {
 		return List.copyOf(this.defaults.values());
+	}
+
+	private TargetStorageResourceClaim claim(UUID storageId, TargetStoragePurpose purpose, URI endpoint,
+			String bucket) {
+		String key = TargetStorageResourceClaim.resourceKey(endpoint, bucket);
+		return this.resourceClaims.computeIfAbsent(key, ignored -> new TargetStorageResourceClaim(storageId, purpose));
 	}
 
 }

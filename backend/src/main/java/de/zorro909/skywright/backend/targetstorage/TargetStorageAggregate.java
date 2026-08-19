@@ -202,6 +202,10 @@ final class TargetStorageAggregate {
 		return Map.copyOf(this.configurations);
 	}
 
+	List<TargetStorageBinding> bindings() {
+		return List.copyOf(this.bindings);
+	}
+
 	TargetStorageSnapshot snapshot() {
 		return new TargetStorageSnapshot(this.id, this.name, this.purpose, this.bucket, this.registrationRevision,
 				this.activated, this.activeRevision, this.candidateRevision, this.configurations, this.bindings,
@@ -213,12 +217,7 @@ final class TargetStorageAggregate {
 			.filter(binding -> binding.readiness() == BindingReadiness.READY)
 			.map(TargetStorageBinding::role)
 			.collect(Collectors.toSet());
-		Set<TargetStorageRole> requiredRoles = this.purpose == TargetStoragePurpose.DATASET
-				? Set.of(TargetStorageRole.TRAINING_PROCESS, TargetStorageRole.BACKEND,
-						TargetStorageRole.TRANSFER_WORKER)
-				: Set.of(TargetStorageRole.TRAINING_PROCESS, TargetStorageRole.BACKEND,
-						TargetStorageRole.TRANSFER_WORKER, TargetStorageRole.METRIC_VIEW);
-		return roles.containsAll(requiredRoles);
+		return roles.containsAll(this.purpose.requiredRoles());
 	}
 
 	private boolean activeAssessmentMatchesBindings() {

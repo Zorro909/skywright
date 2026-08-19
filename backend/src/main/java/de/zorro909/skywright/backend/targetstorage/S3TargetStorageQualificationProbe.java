@@ -2,6 +2,11 @@ package de.zorro909.skywright.backend.targetstorage;
 
 import de.zorro909.skywright.backend.runstore.RunStoreS3CapabilityFloor;
 import java.nio.charset.StandardCharsets;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -21,6 +26,7 @@ import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
@@ -89,6 +95,10 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 		byte[] content = "skywright-target-storage-qualification".getBytes(StandardCharsets.UTF_8);
 		String checksum = Base64.getEncoder().encodeToString(S3TargetStorageQualificationProbe.sha256(content));
 		ResultCollector results = new ResultCollector();
+		ClientOverrideConfiguration deadlines = ClientOverrideConfiguration.builder()
+			.apiCallTimeout(Duration.ofSeconds(30L))
+			.apiCallAttemptTimeout(Duration.ofSeconds(10L))
+			.build();
 		S3Configuration s3Configuration = S3Configuration.builder()
 			.pathStyleAccessEnabled(request.configuration().pathStyleAccess())
 			.chunkedEncodingEnabled(optionEnabled(request, "chunkedEncoding", false))
@@ -97,6 +107,7 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 			.endpointOverride(request.configuration().endpoint())
 			.region(Region.of(request.configuration().region()))
 			.credentialsProvider(credentials)
+			.overrideConfiguration(deadlines)
 			.httpClientBuilder(NettyNioAsyncHttpClient.builder())
 			.serviceConfiguration(s3Configuration)
 			.requestChecksumCalculation(checksumCalculation(request))
@@ -178,11 +189,13 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 						.build(), AsyncRequestBody.fromBytes(content))
 					.join();
 			});
-			results.check("get-presigning",
-					() -> presigner.presignGetObject(GetObjectPresignRequest.builder()
-						.signatureDuration(Duration.ofMinutes(1L))
-						.getObjectRequest(GetObjectRequest.builder().bucket(request.bucket()).key(objectKey).build())
-						.build()));
+			results.check("get-presigning", () -> {
+				var signed = presigner.presignGetObject(GetObjectPresignRequest.builder()
+					.signatureDuration(Duration.ofMinutes(1L))
+					.getObjectRequest(GetObjectRequest.builder().bucket(request.bucket()).key(objectKey).build())
+					.build());
+				S3TargetStorageQualificationProbe.requirePresignedGet(signed.url().toString(), content);
+			});
 			AtomicReference<String> upload = new AtomicReference<>();
 			AtomicReference<String> partEtag = new AtomicReference<>();
 			results.check("multipart-create",
@@ -202,32 +215,45 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 									.build(), AsyncRequestBody.fromBytes(content))
 								.join()
 								.eTag()));
-			results
-				.check("multipart-list-parts",
-						() -> client.listParts(ListPartsRequest.builder()
-							.bucket(request.bucket())
-							.key(multipartKey)
-							.uploadId(S3TargetStorageQualificationProbe.required(upload.get(), "multipart upload"))
-							.build()).join());
-			results
-				.check("list-multipart-uploads",
-						() -> client.listMultipartUploads(
-								ListMultipartUploadsRequest.builder().bucket(request.bucket()).prefix(prefix).build())
-							.join());
-			results.check("multipart-complete",
-					() -> client
-						.completeMultipartUpload(CompleteMultipartUploadRequest.builder()
-							.bucket(request.bucket())
-							.key(multipartKey)
-							.uploadId(S3TargetStorageQualificationProbe.required(upload.get(), "multipart upload"))
-							.multipartUpload(CompletedMultipartUpload.builder()
-								.parts(CompletedPart.builder()
-									.partNumber(1)
-									.eTag(S3TargetStorageQualificationProbe.required(partEtag.get(), "part ETag"))
-									.build())
+			results.check("multipart-list-parts", () -> {
+				var parts = client
+					.listParts(ListPartsRequest.builder()
+						.bucket(request.bucket())
+						.key(multipartKey)
+						.uploadId(S3TargetStorageQualificationProbe.required(upload.get(), "multipart upload"))
+						.build())
+					.join();
+				boolean uploadedPartPresent = parts.parts()
+					.stream()
+					.anyMatch(part -> part.partNumber() == 1 && part.eTag().equals(partEtag.get()));
+				if (!uploadedPartPresent) {
+					throw new IllegalStateException("Uploaded multipart part was not listed");
+				}
+			});
+			results.check("list-multipart-uploads", () -> S3TargetStorageQualificationProbe.requireUploadListed(client,
+					request.bucket(), prefix, upload.get(), true));
+			results.check("multipart-complete", () -> {
+				client
+					.completeMultipartUpload(CompleteMultipartUploadRequest.builder()
+						.bucket(request.bucket())
+						.key(multipartKey)
+						.uploadId(S3TargetStorageQualificationProbe.required(upload.get(), "multipart upload"))
+						.multipartUpload(CompletedMultipartUpload.builder()
+							.parts(CompletedPart.builder()
+								.partNumber(1)
+								.eTag(S3TargetStorageQualificationProbe.required(partEtag.get(), "part ETag"))
 								.build())
 							.build())
-						.join());
+						.build())
+					.join();
+				ResponseBytes completed = client
+					.getObject(GetObjectRequest.builder().bucket(request.bucket()).key(multipartKey).build(),
+							AsyncResponseTransformer.toBytes())
+					.join();
+				if (!Arrays.equals(content, completed.asByteArray())) {
+					throw new IllegalStateException("Completed multipart object did not preserve its content");
+				}
+			});
 			AtomicReference<String> abortUpload = new AtomicReference<>();
 			results.check("multipart-abort", () -> {
 				abortUpload.set(client
@@ -242,6 +268,8 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 						.uploadId(abortUpload.get())
 						.build())
 					.join();
+				S3TargetStorageQualificationProbe.requireUploadListed(client, request.bucket(), prefix,
+						abortUpload.get(), false);
 			});
 			results.check("delete-object",
 					() -> client
@@ -252,13 +280,14 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 			results.check("cleanup", () -> S3TargetStorageQualificationProbe.cleanup(client, request.bucket(), prefix));
 		}
 		catch (RuntimeException failure) {
+			results.noteFailure(failure);
 			results.fillMissing("qualification-initialization-failed",
 					S3TargetStorageQualificationProbe.safeSummary(failure));
 		}
 		results.fillMissing("capability-not-exercised", "A prerequisite capability failed");
 		CapabilityAvailability availability = results.succeeded() ? CapabilityAvailability.AVAILABLE
-				: (results.transientFailure() ? CapabilityAvailability.TRANSIENTLY_UNAVAILABLE
-						: CapabilityAvailability.INCOMPATIBLE);
+				: (results.permanentFailure() ? CapabilityAvailability.INCOMPATIBLE
+						: CapabilityAvailability.TRANSIENTLY_UNAVAILABLE);
 		return new TargetStorageAssessment(UUID.randomUUID(), request.configurationRevision(), started, Instant.now(),
 				availability, request.bindings().stream().map(TargetStorageBindingRevision::from).toList(),
 				results.results());
@@ -276,6 +305,12 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 					.uploadId(upload.uploadId())
 					.build())
 				.join());
+		if (!client.listMultipartUploads(ListMultipartUploadsRequest.builder().bucket(bucket).prefix(prefix).build())
+			.join()
+			.uploads()
+			.isEmpty()) {
+			throw new IllegalStateException("Qualification cleanup left multipart uploads behind");
+		}
 		ListObjectsV2Response objects = client
 			.listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).prefix(prefix).build())
 			.join();
@@ -288,6 +323,40 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 			.contents()
 			.isEmpty()) {
 			throw new IllegalStateException("Qualification cleanup left objects behind");
+		}
+	}
+
+	private static void requireUploadListed(S3AsyncClient client, String bucket, String prefix, String uploadId,
+			boolean expected) {
+		boolean listed = client
+			.listMultipartUploads(ListMultipartUploadsRequest.builder().bucket(bucket).prefix(prefix).build())
+			.join()
+			.uploads()
+			.stream()
+			.anyMatch(upload -> upload.uploadId().equals(uploadId));
+		if (listed != expected) {
+			throw new IllegalStateException(
+					expected ? "Multipart upload was not listed" : "Aborted multipart upload remained listed");
+		}
+	}
+
+	private static void requirePresignedGet(String url, byte[] expected) {
+		try (HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10L)).build()) {
+			HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+				.timeout(Duration.ofSeconds(30L))
+				.GET()
+				.build();
+			HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+			if (response.statusCode() != 200 || !Arrays.equals(expected, response.body())) {
+				throw new IllegalStateException("Presigned GET did not return the expected object");
+			}
+		}
+		catch (InterruptedException failure) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Presigned GET was interrupted", failure);
+		}
+		catch (IOException failure) {
+			throw new IllegalStateException("Presigned GET failed", failure);
 		}
 	}
 
@@ -368,6 +437,8 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 
 		private boolean transientFailure;
 
+		private boolean permanentFailure;
+
 		private ResultCollector() {
 		}
 
@@ -377,8 +448,7 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 				this.results.put(capability, TargetStorageCapabilityResult.success(capability));
 			}
 			catch (RuntimeException failure) {
-				boolean transientOutage = ResultCollector.isTransient(failure);
-				this.transientFailure |= transientOutage;
+				boolean transientOutage = this.noteFailure(failure);
 				this.results.put(capability,
 						TargetStorageCapabilityResult.failure(capability,
 								transientOutage ? "transient-storage-outage" : "capability-failed",
@@ -386,8 +456,15 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 			}
 		}
 
-		boolean transientFailure() {
-			return this.transientFailure;
+		boolean noteFailure(Throwable failure) {
+			boolean transientOutage = ResultCollector.isTransient(failure);
+			this.transientFailure |= transientOutage;
+			this.permanentFailure |= !transientOutage;
+			return transientOutage;
+		}
+
+		boolean permanentFailure() {
+			return this.permanentFailure;
 		}
 
 		private static boolean isTransient(Throwable failure) {

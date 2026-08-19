@@ -3,7 +3,6 @@ package de.zorro909.skywright.backend.targetstorage;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import de.zorro909.skywright.backend.acceptance.SeaweedFsFixture;
-import de.zorro909.skywright.backend.runstore.ResolvedTargetStorage;
 import de.zorro909.skywright.backend.runstore.S3RunStoreObjectStore;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -69,10 +68,8 @@ final class TargetStorageQualificationIT {
 				.putObject(PutObjectRequest.builder().bucket(bucket).key("direct/output.bin").build(),
 						AsyncRequestBody.fromBytes(directContent))
 				.join();
-			TargetStorageDescriptor descriptor = registry.resolveDescriptor(storageId);
-			var resolved = new ResolvedTargetStorage(descriptor.storageId().toString(), descriptor.endpoint(),
-					descriptor.bucket(), Region.of(descriptor.region()), descriptor.pathStyleAccess(),
-					descriptor.compatibilityOptions(), credentials, "project", "run");
+			var resolved = new TargetStorageResolver(registry, credentialAccess).resolveRunOutput(storageId, "backend",
+					"project", "run");
 			try (var runStore = new S3RunStoreObjectStore(resolved)) {
 				assertThat(runStore.get("direct/output.bin").bytes()).isEqualTo(directContent);
 			}
