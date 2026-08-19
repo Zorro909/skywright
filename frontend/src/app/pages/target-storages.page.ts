@@ -621,6 +621,9 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
       await this.reload();
       return true;
     } catch (error) {
+      if (!apiFailureFrom(error)) {
+        throw error;
+      }
       this.message.set(this.safeFailure(error));
       return false;
     } finally {

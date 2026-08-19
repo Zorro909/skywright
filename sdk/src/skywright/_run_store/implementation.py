@@ -23,7 +23,7 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import TracebackType
+from types import MappingProxyType, TracebackType
 from typing import Any, BinaryIO, NoReturn, cast
 from urllib.parse import quote, unquote
 
@@ -622,7 +622,14 @@ class TargetStorage:
     run_id: str
     addressing_style: str = "path"
     profile_name: str | None = None
-    compatibility_options: Mapping[str, str] = field(default_factory=dict)
+    compatibility_options: Mapping[str, str] = field(default_factory=dict, hash=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "compatibility_options",
+            MappingProxyType(dict(self.compatibility_options)),
+        )
 
 
 class RunStoreError(RuntimeError):

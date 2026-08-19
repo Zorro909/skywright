@@ -10,7 +10,7 @@ describe('Target Storages operator workflow', () => {
   it('shows non-secret registration state and creates a draft', async () => {
     const create = vi
       .fn<(request: CreateTargetStorage) => Promise<void>>()
-      .mockRejectedValueOnce(new Error('unavailable'))
+      .mockRejectedValueOnce({ kind: 'network' })
       .mockResolvedValueOnce(undefined);
     const api = {
       list: vi.fn().mockResolvedValue([storageFixture()]),
@@ -103,6 +103,29 @@ describe('Target Storages operator workflow', () => {
       expect(view.querySelector('h4')?.textContent).toContain('Run outputs');
     });
     expect(view.textContent).toContain('The Target Storage operation failed.');
+  });
+
+  it('does not hide unexpected client defects as API failures', async () => {
+    const api = {
+      list: vi.fn().mockResolvedValue([]),
+      listDefaults: vi.fn().mockResolvedValue([]),
+    };
+    await TestBed.configureTestingModule({
+      imports: [TargetStoragesPage],
+      providers: [{ provide: TARGET_STORAGE_API, useValue: api }],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TargetStoragesPage);
+    const page = fixture.componentInstance as unknown as {
+      mutate(
+        message: string,
+        operation: () => Promise<unknown>,
+      ): Promise<boolean>;
+    };
+    const defect = new Error('client defect');
+
+    await expect(
+      page.mutate('completed', () => Promise.reject(defect)),
+    ).rejects.toBe(defect);
   });
 });
 

@@ -160,6 +160,7 @@ def recorder(memory: MemoryS3, tmp_path, progress=None, **options) -> RunStoreRe
 
 
 def test_resolved_target_storage_carries_non_secret_compatibility_options() -> None:
+    options = {"checksumCalculation": "when-required"}
     target = TargetStorage(
         storage_id="test-storage",
         endpoint_url="http://storage.invalid",
@@ -167,9 +168,12 @@ def test_resolved_target_storage_carries_non_secret_compatibility_options() -> N
         region="us-east-1",
         training_project_id="project",
         run_id="run",
-        compatibility_options={"checksumCalculation": "when-required"},
+        compatibility_options=options,
     )
 
+    assert target.compatibility_options == {"checksumCalculation": "when-required"}
+    assert target in {target}
+    options["checksumCalculation"] = "when-supported"
     assert target.compatibility_options == {"checksumCalculation": "when-required"}
 
 
