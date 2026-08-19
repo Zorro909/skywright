@@ -1,10 +1,11 @@
 import { defineConfig } from '@playwright/test';
 
 const backendExecutable = process.env['SKYWRIGHT_BACKEND_EXECUTABLE'];
+const backendTestFixture = process.env['SKYWRIGHT_BACKEND_TEST_FIXTURE'];
 
-if (!backendExecutable) {
+if (!backendExecutable || !backendTestFixture) {
   throw new Error(
-    'SKYWRIGHT_BACKEND_EXECUTABLE must name the packaged Spring application',
+    'SKYWRIGHT_BACKEND_EXECUTABLE and SKYWRIGHT_BACKEND_TEST_FIXTURE must name the packaged Spring application and its test-only fixture',
   );
 }
 
@@ -23,7 +24,7 @@ export default defineConfig({
     browserName: 'chromium',
   },
   webServer: {
-    command: `java -jar ${JSON.stringify(backendExecutable)} --skywright.deployment.environment=acceptance --spring.profiles.active=target-storage-acceptance --server.port=${port}`,
+    command: `java -Dloader.path=${JSON.stringify(backendTestFixture)} -cp ${JSON.stringify(backendExecutable)} org.springframework.boot.loader.launch.PropertiesLauncher --skywright.deployment.environment=acceptance --spring.profiles.active=target-storage-acceptance --server.port=${port}`,
     url: `http://127.0.0.1:${port}/readyz`,
     reuseExistingServer: false,
     timeout: 120_000,

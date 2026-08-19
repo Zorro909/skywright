@@ -3,14 +3,12 @@ package de.zorro909.skywright.backend.targetstorage;
 import de.zorro909.skywright.backend.runstore.RunStoreS3CapabilityFloor;
 import java.time.Instant;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Profile;
-import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
 
 /** Packaged-browser fixture enabled only for the acceptance deployment. */
 @Configuration(proxyBeanMethods = false)
@@ -21,11 +19,6 @@ class TargetStorageAcceptanceConfiguration {
 		if (!"acceptance".equals(deploymentEnvironment)) {
 			throw new IllegalStateException("The Target Storage acceptance fixture requires the acceptance deployment");
 		}
-	}
-
-	@Bean
-	TargetStorageCredentialAccess acceptanceTargetStorageCredentialAccess() {
-		return (bindingId, bindingRevision, consumingRole) -> Optional.of(AnonymousCredentialsProvider.create());
 	}
 
 	@Bean

@@ -84,22 +84,12 @@ final class TargetStorageAggregate {
 		return this.activeRevision;
 	}
 
-	boolean hasResource(URI endpoint, String resourceBucket) {
-		return this.bucket.equals(resourceBucket)
-				&& this.configurations.values().stream().anyMatch(value -> value.endpoint().equals(endpoint));
-	}
-
 	void requireRevision(long expected) {
 		if (expected != this.registrationRevision) {
 			throw new TargetStorageConflictException("TARGET_STORAGE_REVISION_CONFLICT",
 					"Expected registration revision " + expected + " but current revision is "
 							+ this.registrationRevision);
 		}
-	}
-
-	void rename(String value) {
-		this.name = value;
-		++this.registrationRevision;
 	}
 
 	long stage(TargetStorageConfiguration configuration) {
@@ -198,10 +188,6 @@ final class TargetStorageAggregate {
 			return "candidate";
 		}
 		return "historical";
-	}
-
-	Map<Long, TargetStorageConfiguration> configurations() {
-		return Map.copyOf(this.configurations);
 	}
 
 	List<TargetStorageBinding> bindings() {

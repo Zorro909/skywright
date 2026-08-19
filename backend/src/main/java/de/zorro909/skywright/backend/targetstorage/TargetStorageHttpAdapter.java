@@ -135,8 +135,18 @@ public class TargetStorageHttpAdapter implements TargetStoragesApi, TargetStorag
 
 	private TargetStorageConfiguration configuration(
 			de.zorro909.skywright.backend.boundary.generated.model.TargetStorageConfiguration value) {
-		return new TargetStorageConfiguration(java.net.URI.create(value.getEndpoint()), value.getRegion(),
-				value.getPathStyleAccess(), value.getCompatibilityOptions());
+		return new TargetStorageConfiguration(TargetStorageHttpAdapter.parseEndpoint(value.getEndpoint()),
+				value.getRegion(), value.getPathStyleAccess(), value.getCompatibilityOptions());
+	}
+
+	static java.net.URI parseEndpoint(String value) {
+		try {
+			return java.net.URI.create(value);
+		}
+		catch (IllegalArgumentException invalid) {
+			throw new TargetStorageValidationException("TARGET_STORAGE_CONFIGURATION_INVALID",
+					"endpoint must be a valid URI");
+		}
 	}
 
 	private de.zorro909.skywright.backend.boundary.generated.model.TargetStorageBinding binding(

@@ -45,6 +45,12 @@ final class TargetStorageApiIT {
 				assertThat(secretEndpoint.statusCode()).isEqualTo(422);
 				assertThat(secretEndpoint.body()).contains("SKYWRIGHT_TARGET_STORAGE_CONFIGURATION_INVALID")
 					.doesNotContain("do-not-return", "token=hidden");
+				var malformedSecretEndpoint = request(port, "POST", "/api/v1/target-storages",
+						registration(storage.endpoint(), "malformed-secret", "run-output")
+							.replace(storage.endpoint().toString(), "http://operator:do-not-log@storage.example/%ZZ"));
+				assertThat(malformedSecretEndpoint.statusCode()).isEqualTo(422);
+				assertThat(malformedSecretEndpoint.body()).contains("SKYWRIGHT_TARGET_STORAGE_CONFIGURATION_INVALID")
+					.doesNotContain("do-not-log", "%ZZ");
 
 				var created = request(port, "POST", "/api/v1/target-storages",
 						registration(storage.endpoint(), bucket, "run-output"));

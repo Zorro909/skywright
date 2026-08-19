@@ -67,7 +67,7 @@ final class TargetStorageRegistryTest {
 	void staleRevisionCannotOverwriteAConcurrentEdit() {
 		UUID id = eligibleRunOutput();
 		long staleRevision = this.registry.get(id).registrationRevision();
-		this.registry.rename(id, staleRevision, "Primary outputs");
+		this.registry.replaceBindings(id, staleRevision, this.registry.get(id).bindings());
 
 		assertThatThrownBy(() -> this.registry.stageRevision(id, staleRevision,
 				configuration("http://stale.example", "us-east-1")))

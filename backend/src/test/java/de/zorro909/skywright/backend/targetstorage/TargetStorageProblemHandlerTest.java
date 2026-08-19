@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.targetstorage;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -33,6 +34,16 @@ final class TargetStorageProblemHandlerTest {
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
 		assertThat(response.getBody()).isNotNull();
 		assertThat(response.getBody().getErrorCode()).isEqualTo("SKYWRIGHT_HTTP_INTERNAL_ERROR");
+	}
+
+	@Test
+	void malformedEndpointFailureNeverCarriesTheSubmittedValueIntoLogs() {
+		assertThatThrownBy(
+				() -> TargetStorageHttpAdapter.parseEndpoint("http://operator:do-not-log@storage.example/%ZZ"))
+			.isInstanceOf(TargetStorageValidationException.class)
+			.hasMessageContaining("endpoint must be a valid URI")
+			.hasMessageNotContaining("do-not-log")
+			.hasMessageNotContaining("%ZZ");
 	}
 
 }

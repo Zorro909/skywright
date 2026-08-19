@@ -36,14 +36,6 @@ public class TargetStorageRegistry {
 		return this.storage(id).view();
 	}
 
-	public void rename(UUID id, long expectedRegistrationRevision, String name) {
-		TargetStorageRegistry.requireText(name, "name");
-		TargetStorageAggregate storage = this.storage(id);
-		storage.requireRevision(expectedRegistrationRevision);
-		storage.rename(name);
-		this.repository.save(storage);
-	}
-
 	public long stageRevision(UUID id, long expectedRegistrationRevision, TargetStorageConfiguration configuration) {
 		TargetStorageAggregate storage = this.storage(id);
 		storage.requireRevision(expectedRegistrationRevision);
