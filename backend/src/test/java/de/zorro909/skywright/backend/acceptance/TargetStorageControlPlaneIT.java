@@ -10,6 +10,10 @@ import de.zorro909.skywright.backend.targetstorage.TargetStorageRole;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -19,6 +23,7 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListMultipartUploadsRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import tools.jackson.databind.JsonNode;
@@ -87,15 +92,23 @@ final class TargetStorageControlPlaneIT {
 				assertThat(resolved.storageId()).isEqualTo(storageId);
 				assertThat(resolved.endpoint()).isEqualTo(service.endpoint());
 				assertThat(resolved.credentials()).isSameAs(credentials);
+				TargetStorageControlPlaneIT.consumeWithPythonSdk(resolved.storageId(), resolved.endpoint().toString(),
+						resolved.bucket(), resolved.region().id(), resolved.pathStyleAccess(),
+						resolved.compatibilityOptions());
 
 				var deleteResponse = backend.request("DELETE", "/api/v1/target-storages/" + storageId, null);
 				assertThat(deleteResponse.statusCode()).isEqualTo(409);
 				assertThat(deleteResponse.body()).contains("SKYWRIGHT_TARGET_STORAGE_REFERENCED");
 			}
 
-			assertThat(administrator.listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).build())
+			var directObjects = administrator.listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).build())
 				.join()
-				.contents()).isEmpty();
+				.contents();
+			assertThat(directObjects).anySatisfy(object -> assertThat(object.key()).endsWith("/direct.txt"));
+			for (var object : directObjects) {
+				administrator.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(object.key()).build())
+					.join();
+			}
 			assertThat(administrator.listMultipartUploads(ListMultipartUploadsRequest.builder().bucket(bucket).build())
 				.join()
 				.uploads()).isEmpty();
@@ -132,10 +145,44 @@ final class TargetStorageControlPlaneIT {
 				    "endpoint": "%s",
 				    "region": "us-east-1",
 				    "pathStyleAccess": true,
-				    "compatibilityOptions": {"chunkedEncoding":"false"}
+				    "compatibilityOptions": {"chunkedEncoding":"false","checksumCalculation":"when-required"}
 				  }
 				}
 				""".formatted(registrationRevision, endpoint);
+	}
+
+	private static void consumeWithPythonSdk(String storageId, String endpoint, String bucket, String region,
+			boolean pathStyleAccess, Map<String, String> compatibilityOptions) throws Exception {
+		Path repository = Path.of("").toAbsolutePath();
+		while (!Files.isDirectory(repository.resolve("sdk"))) {
+			repository = repository.getParent();
+			if (repository == null) {
+				throw new IllegalStateException("Could not locate the SDK from the integration test");
+			}
+		}
+		String payload = JSON.writeValueAsString(Map.of("descriptor",
+				Map.of("storageId", storageId, "endpoint", endpoint, "bucket", bucket, "region", region,
+						"pathStyleAccess", pathStyleAccess, "compatibilityOptions", compatibilityOptions),
+				"trainingProjectId", "project", "runId", "run", "attemptId", "123e4567-e89b-12d3-a456-426614174001"));
+		ProcessBuilder processBuilder = new ProcessBuilder("uv", "run", "--project",
+				repository.resolve("sdk").toString(), "--locked", "python",
+				repository.resolve("sdk/tests/support/consume_resolved_target_storage.py").toString())
+			.redirectErrorStream(true);
+		processBuilder.environment().put("AWS_ACCESS_KEY_ID", "test-key");
+		processBuilder.environment().put("AWS_SECRET_ACCESS_KEY", "test-secret");
+		processBuilder.environment().put("AWS_REGION", region);
+		processBuilder.environment().put("AWS_EC2_METADATA_DISABLED", "true");
+		Process process = processBuilder.start();
+		process.getOutputStream().write(payload.getBytes(StandardCharsets.UTF_8));
+		process.getOutputStream().close();
+		boolean finished = process.waitFor(Duration.ofMinutes(2).toMillis(),
+				java.util.concurrent.TimeUnit.MILLISECONDS);
+		if (!finished) {
+			process.destroyForcibly();
+			throw new IllegalStateException("Python SDK descriptor consumption timed out");
+		}
+		String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		assertThat(process.exitValue()).as(output).isZero();
 	}
 
 }

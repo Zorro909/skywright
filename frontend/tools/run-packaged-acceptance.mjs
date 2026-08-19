@@ -10,11 +10,15 @@ if (!image) {
 }
 
 const containerCli = process.env['SKYWRIGHT_CONTAINER_CLI'] ?? 'docker';
-const containerName = `skywright-acceptance-${randomUUID()}`;
+const postgresContainerName = `skywright-acceptance-postgres-${randomUUID()}`;
+const seaweedContainerName = `skywright-acceptance-seaweed-${randomUUID()}`;
+const seaweedImage =
+  'docker.io/chrislusf/seaweedfs:4.42@sha256:f7cbc8bdbbf60a1aaba7d61784a3bdff3ec1e0657f6ad0b26d5b6ab2cd9d0dc6';
 const adminPassword = randomUUID();
 const migratorPassword = randomUUID();
 const runtimePassword = randomUUID();
-let containerStarted = false;
+let postgresStarted = false;
+let seaweedStarted = false;
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -57,7 +61,7 @@ async function waitForPostgreSql() {
     try {
       await run(containerCli, [
         'exec',
-        containerName,
+        postgresContainerName,
         'pg_isready',
         '--username',
         'postgres',
@@ -81,7 +85,7 @@ async function psql(database, sql) {
     [
       'exec',
       '--interactive',
-      containerName,
+      postgresContainerName,
       'psql',
       '--set',
       'ON_ERROR_STOP=1',
@@ -95,11 +99,22 @@ async function psql(database, sql) {
 }
 
 async function cleanup() {
-  if (!containerStarted) return;
-  containerStarted = false;
-  await run(containerCli, ['rm', '--force', containerName]).catch((error) => {
-    console.error(`Could not remove ${containerName}:`, error);
-  });
+  if (seaweedStarted) {
+    seaweedStarted = false;
+    await run(containerCli, ['rm', '--force', seaweedContainerName]).catch(
+      (error) => {
+        console.error(`Could not remove ${seaweedContainerName}:`, error);
+      },
+    );
+  }
+  if (postgresStarted) {
+    postgresStarted = false;
+    await run(containerCli, ['rm', '--force', postgresContainerName]).catch(
+      (error) => {
+        console.error(`Could not remove ${postgresContainerName}:`, error);
+      },
+    );
+  }
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
@@ -114,7 +129,7 @@ try {
     'run',
     '--detach',
     '--name',
-    containerName,
+    postgresContainerName,
     '--publish',
     '127.0.0.1::5432',
     '--env',
@@ -125,7 +140,7 @@ try {
     'POSTGRES_DB=postgres',
     image,
   ]);
-  containerStarted = true;
+  postgresStarted = true;
   await waitForPostgreSql();
   await psql(
     'postgres',
@@ -143,7 +158,7 @@ GRANT USAGE ON SCHEMA skywright TO runtime;
 
   const publishedPort = await run(containerCli, [
     'port',
-    containerName,
+    postgresContainerName,
     '5432/tcp',
   ]);
   const port = /^127\.0\.0\.1:(\d+)$/u.exec(publishedPort)?.[1];
@@ -151,6 +166,51 @@ GRANT USAGE ON SCHEMA skywright TO runtime;
     throw new Error(
       `Could not determine PostgreSQL port from: ${publishedPort}`,
     );
+  }
+  await run(containerCli, [
+    'run',
+    '--detach',
+    '--name',
+    seaweedContainerName,
+    '--publish',
+    '127.0.0.1::8333',
+    seaweedImage,
+    'mini',
+    '-master.telemetry=false',
+  ]);
+  seaweedStarted = true;
+  const publishedSeaweedPort = await run(containerCli, [
+    'port',
+    seaweedContainerName,
+    '8333/tcp',
+  ]);
+  const seaweedPort = /^127\.0\.0\.1:(\d+)$/u.exec(publishedSeaweedPort)?.[1];
+  if (!seaweedPort) {
+    throw new Error(
+      `Could not determine SeaweedFS port from: ${publishedSeaweedPort}`,
+    );
+  }
+  const seaweedEndpoint = `http://127.0.0.1:${seaweedPort}`;
+  let seaweedFailure;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      const response = await fetch(`${seaweedEndpoint}/acceptance-outputs`, {
+        method: 'PUT',
+      });
+      if (response.ok) {
+        seaweedFailure = undefined;
+        break;
+      }
+      seaweedFailure = new Error(`SeaweedFS returned HTTP ${response.status}`);
+    } catch (error) {
+      seaweedFailure = error;
+    }
+    await delay(200);
+  }
+  if (seaweedFailure) {
+    throw new Error('SeaweedFS did not become ready within 20 seconds', {
+      cause: seaweedFailure,
+    });
   }
   const baseUrl = `jdbc:postgresql://127.0.0.1:${port}/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true`;
   const acceptanceEnvironment = {
@@ -161,6 +221,11 @@ GRANT USAGE ON SCHEMA skywright TO runtime;
     SKYWRIGHT_DATABASE_MIGRATION_URL: baseUrl,
     SKYWRIGHT_DATABASE_MIGRATION_USERNAME: 'migrator',
     SKYWRIGHT_DATABASE_MIGRATION_PASSWORD: migratorPassword,
+    SKYWRIGHT_ACCEPTANCE_S3_ENDPOINT: seaweedEndpoint,
+    AWS_ACCESS_KEY_ID: 'test-access-key',
+    AWS_SECRET_ACCESS_KEY: 'test-secret-key',
+    AWS_REGION: 'us-east-1',
+    AWS_EC2_METADATA_DISABLED: 'true',
   };
 
   await run('pnpm', ['exec', 'playwright', 'test'], {
@@ -168,11 +233,17 @@ GRANT USAGE ON SCHEMA skywright TO runtime;
     inherit: true,
   });
 } catch (error) {
-  if (containerStarted) {
-    const logs = await run(containerCli, ['logs', containerName], {
+  if (postgresStarted) {
+    const logs = await run(containerCli, ['logs', postgresContainerName], {
       includeStderr: true,
     }).catch((logError) => `PostgreSQL logs unavailable: ${logError}`);
     console.error('PostgreSQL acceptance logs:\n', logs);
+  }
+  if (seaweedStarted) {
+    const logs = await run(containerCli, ['logs', seaweedContainerName], {
+      includeStderr: true,
+    }).catch((logError) => `SeaweedFS logs unavailable: ${logError}`);
+    console.error('SeaweedFS acceptance logs:\n', logs);
   }
   throw error;
 } finally {

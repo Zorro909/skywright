@@ -1175,11 +1175,32 @@ def _s3_client(
         else 30.0,
         30.0,
     )
+    compatibility_options = dict(target.compatibility_options or {})
+    unsupported = compatibility_options.keys() - {
+        "chunkedEncoding",
+        "checksumCalculation",
+    }
+    if unsupported:
+        names = ", ".join(sorted(unsupported))
+        raise ValueError(f"Unsupported Target Storage compatibility options: {names}")
+    chunked_encoding = compatibility_options.get("chunkedEncoding", "false")
+    if chunked_encoding not in {"true", "false"}:
+        raise ValueError("chunkedEncoding must be true or false")
+    if chunked_encoding == "true":
+        raise ValueError(
+            "chunkedEncoding=true is not supported by the Python S3 client"
+        )
+    checksum_calculation = compatibility_options.get(
+        "checksumCalculation", "when-required"
+    ).replace("-", "_")
+    if checksum_calculation not in {"when_required", "when_supported"}:
+        raise ValueError("checksumCalculation must be when-required or when-supported")
     return session.client(
         "s3",
         endpoint_url=target.endpoint_url,
         config=Config(
             s3={"addressing_style": target.addressing_style},
+            request_checksum_calculation=checksum_calculation,
             connect_timeout=remaining,
             read_timeout=remaining,
             retries={"mode": "standard", "max_attempts": 8},

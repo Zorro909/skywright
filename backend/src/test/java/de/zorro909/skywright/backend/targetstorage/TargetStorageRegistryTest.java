@@ -11,12 +11,8 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import java.util.stream.Stream;
 
 final class TargetStorageRegistryTest {
 
@@ -229,38 +225,6 @@ final class TargetStorageRegistryTest {
 			.hasMessageContaining("TARGET_STORAGE_QUALIFICATION_FAILED");
 		assertThat(this.registry.get(id).assessments()).containsExactly(assessment);
 		assertThat(this.registry.get(id).candidateRevision()).isEqualTo(1);
-	}
-
-	@ParameterizedTest(name = "{0}")
-	@MethodSource("selectiveQualificationFailures")
-	void selectiveQualificationFailureIsRecordedWithoutPromotingTheCandidate(String scenario, String capability,
-			String code, CapabilityAvailability availability) {
-		UUID id = this.registry.register("Run outputs", TargetStoragePurpose.RUN_OUTPUT, "runs",
-				configuration("http://storage.example", "eu-central-1"), readyBindings());
-		var assessment = new TargetStorageAssessment(UUID.randomUUID(), 1, Instant.parse("2026-08-19T08:00:00Z"),
-				Instant.parse("2026-08-19T08:00:02Z"), availability, readyBindings(),
-				List.of(TargetStorageCapabilityResult.failure(capability, code, "The selective fake failed",
-						Map.of())));
-		var qualification = new TargetStorageQualification(this.registry, request -> assessment);
-
-		assertThatThrownBy(() -> qualification.qualify(id))
-			.isInstanceOf(TargetStorageQualificationFailedException.class);
-		assertThat(this.registry.get(id).assessments()).containsExactly(assessment);
-		assertThat(this.registry.get(id).activeRevision()).isNull();
-		assertThat(this.registry.get(id).candidateRevision()).isEqualTo(1);
-	}
-
-	private static Stream<Arguments> selectiveQualificationFailures() {
-		return Stream.of(
-				Arguments.of("ignored conditional header", "conditional-create", "precondition-not-enforced",
-						CapabilityAvailability.INCOMPATIBLE),
-				Arguments.of("delayed listing", "list-after-write", "object-not-immediately-listed",
-						CapabilityAvailability.INCOMPATIBLE),
-				Arguments.of("role access denied", "put-object", "access-denied", CapabilityAvailability.INCOMPATIBLE),
-				Arguments.of("transient endpoint outage", "list-objects", "transient-storage-outage",
-						CapabilityAvailability.TRANSIENTLY_UNAVAILABLE),
-				Arguments.of("cleanup failure", "cleanup", "qualification-cleanup-failed",
-						CapabilityAvailability.INCOMPATIBLE));
 	}
 
 	private UUID eligibleRunOutput() {

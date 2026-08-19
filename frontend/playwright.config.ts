@@ -23,7 +23,7 @@ export default defineConfig({
     browserName: 'chromium',
   },
   webServer: {
-    command: `java -jar ${JSON.stringify(backendExecutable)} --skywright.deployment.environment=acceptance --server.port=${port}`,
+    command: `java -jar ${JSON.stringify(backendExecutable)} --skywright.deployment.environment=acceptance --skywright.acceptance.target-storage.enabled=true --server.port=${port}`,
     url: `http://127.0.0.1:${port}/readyz`,
     reuseExistingServer: false,
     timeout: 120_000,

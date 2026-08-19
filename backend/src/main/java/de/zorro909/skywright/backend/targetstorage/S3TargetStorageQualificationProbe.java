@@ -15,14 +15,13 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.core.ResponseBytes;
@@ -56,17 +55,15 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 
 @Component
-@Primary
-@ConditionalOnBean(value = { TargetStorageCredentialAccess.class })
 final class S3TargetStorageQualificationProbe implements TargetStorageQualificationProbe {
 
 	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
 
 	private static final Duration QUALIFICATION_TIMEOUT = Duration.ofMinutes(2);
 
-	private final TargetStorageCredentialAccess credentials;
+	private final Optional<TargetStorageCredentialAccess> credentials;
 
-	S3TargetStorageQualificationProbe(TargetStorageCredentialAccess credentials) {
+	S3TargetStorageQualificationProbe(Optional<TargetStorageCredentialAccess> credentials) {
 		this.credentials = credentials;
 	}
 
@@ -83,7 +80,7 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 					"A ready backend Credential Binding is required");
 		}
 		AwsCredentialsProvider provider = this.credentials
-			.credentials(binding.bindingId(), binding.bindingRevision(), "backend")
+			.flatMap(access -> access.credentials(binding.bindingId(), binding.bindingRevision(), "backend"))
 			.orElse(null);
 		if (provider == null) {
 			return S3TargetStorageQualificationProbe.unavailable(request, started, "credential-projection-unavailable",

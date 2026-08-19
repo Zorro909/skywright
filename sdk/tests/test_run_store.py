@@ -142,6 +142,21 @@ class ProgressRecorder:
         self.steps.append(values)
 
 
+class RecordingSession:
+    latest: RecordingSession | None = None
+
+    def __init__(self, *, profile_name, region_name) -> None:
+        self.profile_name = profile_name
+        self.region_name = region_name
+        self.client_options = None
+        RecordingSession.latest = self
+
+    def client(self, service_name, **options):
+        assert service_name == "s3"
+        self.client_options = options
+        return MemoryS3()
+
+
 def recorder(memory: MemoryS3, tmp_path, progress=None, **options) -> RunStoreRecorder:
     return RunStoreRecorder(
         TargetStorage(
@@ -179,6 +194,58 @@ def test_protocol_builds_portable_v1_object_identities() -> None:
     ).endswith(
         "samples/123e4567-e89b-12d3-a456-426614174000/0000000000000000007/%C3%A9%2Fe%CC%81"
     )
+
+
+def test_resolved_descriptor_applies_supported_provider_options(tmp_path) -> None:
+    target = TargetStorage.from_resolved_descriptor(
+        {
+            "storageId": "123e4567-e89b-12d3-a456-426614174000",
+            "endpoint": "http://storage.invalid",
+            "bucket": "runs",
+            "region": "us-east-1",
+            "pathStyleAccess": True,
+            "compatibilityOptions": {
+                "chunkedEncoding": "false",
+                "checksumCalculation": "when-supported",
+            },
+        },
+        training_project_id="project",
+        run_id="run",
+    )
+
+    RunStoreRecorder(
+        target,
+        session_factory=RecordingSession,
+        checkpoint_codec=CheckpointCodec(staging_directory=tmp_path),
+    )
+
+    assert RecordingSession.latest is not None
+    assert RecordingSession.latest.client_options is not None
+    config = RecordingSession.latest.client_options["config"]
+    assert config.s3 == {"addressing_style": "path"}
+    assert config.request_checksum_calculation == "when_supported"
+
+
+def test_resolved_descriptor_rejects_unavailable_provider_option(tmp_path) -> None:
+    target = TargetStorage.from_resolved_descriptor(
+        {
+            "storageId": "123e4567-e89b-12d3-a456-426614174000",
+            "endpoint": "http://storage.invalid",
+            "bucket": "runs",
+            "region": "us-east-1",
+            "pathStyleAccess": True,
+            "compatibilityOptions": {"chunkedEncoding": "true"},
+        },
+        training_project_id="project",
+        run_id="run",
+    )
+
+    with pytest.raises(ValueError, match="chunkedEncoding=true"):
+        RunStoreRecorder(
+            target,
+            session_factory=RecordingSession,
+            checkpoint_codec=CheckpointCodec(staging_directory=tmp_path),
+        )
 
 
 def test_checkpoint_reference_round_trips_without_a_storage_location() -> None:
