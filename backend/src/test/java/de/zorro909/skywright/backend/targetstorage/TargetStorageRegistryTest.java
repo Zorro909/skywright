@@ -135,6 +135,46 @@ final class TargetStorageRegistryTest {
 	}
 
 	@Test
+	void delayedAssessmentForOldBindingsCannotHideNewerCurrentEvidence() {
+		UUID id = eligibleRunOutput();
+		List<TargetStorageBinding> oldBindings = this.registry.get(id).bindings();
+		List<TargetStorageBinding> currentBindings = oldBindings.stream()
+			.map(binding -> new TargetStorageBinding(binding.role(), binding.bindingId(), 2, binding.readiness()))
+			.toList();
+		this.registry.replaceBindings(id, this.registry.get(id).registrationRevision(), currentBindings);
+		this.registry.recordQualification(id, successfulAssessment(1, currentBindings));
+
+		this.registry.recordQualification(id, successfulAssessment(1, oldBindings));
+
+		assertThat(this.registry.get(id).eligible()).isTrue();
+	}
+
+	@Test
+	void olderObservationForCurrentBindingsCannotOverwriteNewerAvailability() {
+		UUID id = eligibleRunOutput();
+		List<TargetStorageBinding> bindings = this.registry.get(id).bindings();
+		this.registry.recordQualification(id, successfulAssessment(1, bindings, Instant.parse("2026-08-19T10:00:00Z")));
+
+		this.registry.recordQualification(id,
+				failedAssessment(1, "delayed-failure", bindings, Instant.parse("2026-08-19T09:00:00Z")));
+
+		assertThat(this.registry.get(id).availability()).isEqualTo(CapabilityAvailability.AVAILABLE);
+		assertThat(this.registry.get(id).eligible()).isTrue();
+	}
+
+	@Test
+	void laterRecordedAssessmentWinsWhenObservationTimestampsTie() {
+		UUID id = eligibleRunOutput();
+		List<TargetStorageBinding> bindings = this.registry.get(id).bindings();
+
+		this.registry.recordQualification(id,
+				failedAssessment(1, "same-time-failure", bindings, Instant.parse("2026-08-19T08:00:02Z")));
+
+		assertThat(this.registry.get(id).availability()).isEqualTo(CapabilityAvailability.INCOMPATIBLE);
+		assertThat(this.registry.get(id).eligible()).isFalse();
+	}
+
+	@Test
 	void purposeAndBucketAreImmutableAndKnownResourceCannotCrossPurposes() {
 		this.registry.register("Datasets", TargetStoragePurpose.DATASET, "shared",
 				configuration("http://storage.example", "eu-central-1"), readyBindings());
@@ -154,6 +194,25 @@ final class TargetStorageRegistryTest {
 				configuration("http://storage.example", "eu-central-1"), readyBindings()))
 			.isInstanceOf(TargetStorageConflictException.class)
 			.hasMessageContaining("TARGET_STORAGE_PURPOSE_CONFLICT");
+	}
+
+	@Test
+	void encodedSlashRemainsDistinctFromAPathSeparatorInResourceClaims() {
+		assertThat(TargetStorageResourceClaim.canonicalEndpoint(URI.create("https://storage.example/base%2Fsegment")))
+			.isEqualTo("https://storage.example/base%2Fsegment")
+			.isNotEqualTo(
+					TargetStorageResourceClaim.canonicalEndpoint(URI.create("https://storage.example/base/segment")));
+		assertThat(TargetStorageResourceClaim.canonicalEndpoint(URI.create("https://storage.example/base%2fsegment")))
+			.isEqualTo("https://storage.example/base%2Fsegment");
+		assertThat(TargetStorageResourceClaim.canonicalEndpoint(URI.create("https://storage.example/%7eowner")))
+			.isEqualTo("https://storage.example/~owner");
+		assertThat(TargetStorageResourceClaim.canonicalEndpoint(URI.create("https://storage.example//tenant")))
+			.isEqualTo("https://storage.example//tenant")
+			.isNotEqualTo(TargetStorageResourceClaim.canonicalEndpoint(URI.create("https://storage.example")));
+		assertThat(TargetStorageResourceClaim.canonicalEndpoint(URI.create("https://storage.example//tenant/..")))
+			.isEqualTo("https://storage.example//");
+		assertThat(TargetStorageResourceClaim.canonicalEndpoint(URI.create("https://storage.example//.")))
+			.isEqualTo("https://storage.example//");
 	}
 
 	@Test
@@ -289,9 +348,13 @@ final class TargetStorageRegistryTest {
 	}
 
 	private static TargetStorageAssessment successfulAssessment(long revision, List<TargetStorageBinding> bindings) {
-		return new TargetStorageAssessment(UUID.randomUUID(), revision, Instant.parse("2026-08-19T08:00:00Z"),
-				Instant.parse("2026-08-19T08:00:02Z"), CapabilityAvailability.AVAILABLE,
-				bindings.stream().map(TargetStorageBindingRevision::from).toList(),
+		return successfulAssessment(revision, bindings, Instant.parse("2026-08-19T08:00:02Z"));
+	}
+
+	private static TargetStorageAssessment successfulAssessment(long revision, List<TargetStorageBinding> bindings,
+			Instant observedUntil) {
+		return new TargetStorageAssessment(UUID.randomUUID(), revision, observedUntil.minusSeconds(2), observedUntil,
+				CapabilityAvailability.AVAILABLE, bindings.stream().map(TargetStorageBindingRevision::from).toList(),
 				RunStoreS3CapabilityFloor.requiredCapabilities()
 					.stream()
 					.map(TargetStorageCapabilityResult::success)
@@ -300,9 +363,13 @@ final class TargetStorageRegistryTest {
 
 	private static TargetStorageAssessment failedAssessment(long revision, String code,
 			List<TargetStorageBinding> bindings) {
-		return new TargetStorageAssessment(UUID.randomUUID(), revision, Instant.parse("2026-08-19T08:00:00Z"),
-				Instant.parse("2026-08-19T08:00:02Z"), CapabilityAvailability.INCOMPATIBLE,
-				bindings.stream().map(TargetStorageBindingRevision::from).toList(),
+		return failedAssessment(revision, code, bindings, Instant.parse("2026-08-19T08:00:04Z"));
+	}
+
+	private static TargetStorageAssessment failedAssessment(long revision, String code,
+			List<TargetStorageBinding> bindings, Instant observedUntil) {
+		return new TargetStorageAssessment(UUID.randomUUID(), revision, observedUntil.minusSeconds(2), observedUntil,
+				CapabilityAvailability.INCOMPATIBLE, bindings.stream().map(TargetStorageBindingRevision::from).toList(),
 				RunStoreS3CapabilityFloor.requiredCapabilities()
 					.stream()
 					.map(capability -> "conditional-create".equals(capability)

@@ -126,13 +126,13 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 							.ifNoneMatch("*")
 							.metadata(Map.of("skywright-sha256", checksum, "skywright-purpose", "qualification"))
 							.build(), AsyncRequestBody.fromBytes(content)).join());
-			results.check("conditional-create",
+			results.checkAfter("conditional-create", List.of("put-object"),
 					() -> S3TargetStorageQualificationProbe.requirePreconditionFailure(() -> client.putObject(
 							PutObjectRequest.builder().bucket(request.bucket()).key(objectKey).ifNoneMatch("*").build(),
 							AsyncRequestBody.fromBytes(content))
 						.join()));
 			AtomicReference<String> etag = new AtomicReference<>();
-			results.check("metadata-preservation", () -> {
+			results.checkAfter("metadata-preservation", List.of("put-object"), () -> {
 				HeadObjectResponse head = client
 					.headObject(HeadObjectRequest.builder().bucket(request.bucket()).key(objectKey).build())
 					.join();
@@ -141,7 +141,7 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 					throw new IllegalStateException("Skywright checksum metadata was not preserved");
 				}
 			});
-			results.check("checksum-preservation", () -> {
+			results.checkAfter("checksum-preservation", List.of("put-object"), () -> {
 				ResponseBytes body = client
 					.getObject(GetObjectRequest.builder().bucket(request.bucket()).key(objectKey).build(),
 							AsyncResponseTransformer.toBytes())
@@ -150,7 +150,7 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 					throw new IllegalStateException("Object checksum did not survive retrieval");
 				}
 			});
-			results.check("ranged-read", () -> {
+			results.checkAfter("ranged-read", List.of("put-object"), () -> {
 				ResponseBytes body = client.getObject(
 						GetObjectRequest.builder().bucket(request.bucket()).key(objectKey).range("bytes=0-8").build(),
 						AsyncResponseTransformer.toBytes())
@@ -159,16 +159,16 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 					throw new IllegalStateException("Ranged read returned the wrong byte count");
 				}
 			});
-			results.check("read-after-write",
+			results.checkAfter("read-after-write", List.of("put-object"),
 					() -> client.headObject(HeadObjectRequest.builder().bucket(request.bucket()).key(objectKey).build())
 						.join());
-			results.check("list-after-write", () -> S3TargetStorageQualificationProbe.requireListed(client,
-					request.bucket(), prefix, objectKey, true));
+			results.checkAfter("list-after-write", List.of("put-object"), () -> S3TargetStorageQualificationProbe
+				.requireListed(client, request.bucket(), prefix, objectKey, true));
 			results.check("list-objects",
 					() -> client
 						.listObjectsV2(ListObjectsV2Request.builder().bucket(request.bucket()).prefix(prefix).build())
 						.join());
-			results.check("conditional-replace", () -> {
+			results.checkAfter("conditional-replace", List.of("put-object", "metadata-preservation"), () -> {
 				if (etag.get() == null) {
 					throw new IllegalStateException("Object ETag is unavailable");
 				}
@@ -189,7 +189,7 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 						.build(), AsyncRequestBody.fromBytes(content))
 					.join();
 			});
-			results.check("get-presigning", () -> {
+			results.checkAfter("get-presigning", List.of("put-object"), () -> {
 				var signed = presigner.presignGetObject(GetObjectPresignRequest.builder()
 					.signatureDuration(Duration.ofMinutes(1L))
 					.getObjectRequest(GetObjectRequest.builder().bucket(request.bucket()).key(objectKey).build())
@@ -203,7 +203,7 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 							CreateMultipartUploadRequest.builder().bucket(request.bucket()).key(multipartKey).build())
 						.join()
 						.uploadId()));
-			results.check("multipart-upload",
+			results.checkAfter("multipart-upload", List.of("multipart-create"),
 					() -> partEtag.set(
 							client
 								.uploadPart(UploadPartRequest.builder()
@@ -215,7 +215,7 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 									.build(), AsyncRequestBody.fromBytes(content))
 								.join()
 								.eTag()));
-			results.check("multipart-list-parts", () -> {
+			results.checkAfter("multipart-list-parts", List.of("multipart-create", "multipart-upload"), () -> {
 				var parts = client
 					.listParts(ListPartsRequest.builder()
 						.bucket(request.bucket())
@@ -230,9 +230,10 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 					throw new IllegalStateException("Uploaded multipart part was not listed");
 				}
 			});
-			results.check("list-multipart-uploads", () -> S3TargetStorageQualificationProbe.requireUploadListed(client,
-					request.bucket(), prefix, upload.get(), true));
-			results.check("multipart-complete", () -> {
+			results.checkAfter("list-multipart-uploads", List.of("multipart-create"),
+					() -> S3TargetStorageQualificationProbe.requireUploadListed(client, request.bucket(), prefix,
+							upload.get(), true));
+			results.checkAfter("multipart-complete", List.of("multipart-create", "multipart-upload"), () -> {
 				client
 					.completeMultipartUpload(CompleteMultipartUploadRequest.builder()
 						.bucket(request.bucket())
@@ -271,12 +272,12 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 				S3TargetStorageQualificationProbe.requireUploadListed(client, request.bucket(), prefix,
 						abortUpload.get(), false);
 			});
-			results.check("delete-object",
+			results.checkAfter("delete-object", List.of("put-object"),
 					() -> client
 						.deleteObject(DeleteObjectRequest.builder().bucket(request.bucket()).key(objectKey).build())
 						.join());
-			results.check("list-after-delete", () -> S3TargetStorageQualificationProbe.requireListed(client,
-					request.bucket(), prefix, objectKey, false));
+			results.checkAfter("list-after-delete", List.of("delete-object"), () -> S3TargetStorageQualificationProbe
+				.requireListed(client, request.bucket(), prefix, objectKey, false));
 			results.check("cleanup", () -> S3TargetStorageQualificationProbe.cleanup(client, request.bucket(), prefix));
 		}
 		catch (RuntimeException failure) {
@@ -431,13 +432,13 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 		}
 	}
 
-	private static final class ResultCollector {
+	static final class ResultCollector {
 
 		private final Map<String, TargetStorageCapabilityResult> results = new LinkedHashMap<>();
 
 		private boolean permanentFailure;
 
-		private ResultCollector() {
+		ResultCollector() {
 		}
 
 		void check(String capability, Runnable operation) {
@@ -452,6 +453,20 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 								transientOutage ? "transient-storage-outage" : "capability-failed",
 								S3TargetStorageQualificationProbe.safeSummary(failure), Map.of()));
 			}
+		}
+
+		void checkAfter(String capability, List<String> prerequisites, Runnable operation) {
+			if (prerequisites.stream().anyMatch(prerequisite -> !this.succeeded(prerequisite))) {
+				this.results.put(capability, TargetStorageCapabilityResult.failure(capability,
+						"prerequisite-capability-failed", "A prerequisite capability failed", Map.of()));
+				return;
+			}
+			this.check(capability, operation);
+		}
+
+		private boolean succeeded(String capability) {
+			TargetStorageCapabilityResult result = this.results.get(capability);
+			return result != null && result.succeeded();
 		}
 
 		boolean noteFailure(Throwable failure) {

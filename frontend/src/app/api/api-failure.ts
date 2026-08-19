@@ -13,7 +13,7 @@ export interface SafeProblem {
   readonly errorCode: string;
   readonly correlationId: string;
   readonly fieldViolations: readonly FieldViolation[];
-  readonly unavailableSource?: string;
+  readonly unavailableSource?: string | null;
   readonly retryable?: boolean;
 }
 

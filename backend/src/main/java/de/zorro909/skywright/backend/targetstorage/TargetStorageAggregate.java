@@ -2,10 +2,12 @@ package de.zorro909.skywright.backend.targetstorage;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -111,18 +113,20 @@ final class TargetStorageAggregate {
 			throw new IllegalArgumentException("assessment names an unknown configuration revision");
 		}
 		this.assessments.add(assessment);
-		boolean currentBindings = assessment.bindingRevisions()
-			.equals(this.bindings.stream().map(TargetStorageBindingRevision::from).toList());
-		if (currentBindings && assessment.availability() == CapabilityAvailability.AVAILABLE
+		List<TargetStorageBindingRevision> currentBindings = this.currentBindingRevisions();
+		boolean latestCurrentEvidence = this.latestAssessment(assessment.configurationRevision(), currentBindings)
+			.map(assessment::equals)
+			.orElse(false);
+		if (latestCurrentEvidence && assessment.availability() == CapabilityAvailability.AVAILABLE
 				&& Objects.equals(this.candidateRevision, assessment.configurationRevision())) {
 			this.activeRevision = assessment.configurationRevision();
 			this.candidateRevision = null;
 			this.availability = CapabilityAvailability.AVAILABLE;
 		}
-		else if (currentBindings && Objects.equals(this.activeRevision, assessment.configurationRevision())) {
+		else if (latestCurrentEvidence && Objects.equals(this.activeRevision, assessment.configurationRevision())) {
 			this.availability = assessment.availability();
 		}
-		else if (currentBindings && this.activeRevision == null
+		else if (latestCurrentEvidence && this.activeRevision == null
 				&& Objects.equals(this.candidateRevision, assessment.configurationRevision())) {
 			this.availability = assessment.availability();
 		}
@@ -209,19 +213,34 @@ final class TargetStorageAggregate {
 	}
 
 	private boolean activeAssessmentMatchesBindings() {
-		List<TargetStorageBindingRevision> current = this.bindings.stream()
-			.map(TargetStorageBindingRevision::from)
-			.sorted(java.util.Comparator.comparing(value -> value.role().name()))
-			.toList();
-		return this.assessments.stream()
-			.filter(assessment -> Objects.equals(this.activeRevision, assessment.configurationRevision()))
-			.reduce((first, second) -> second)
-			.map(assessment -> assessment.bindingRevisions()
-				.stream()
-				.sorted(java.util.Comparator.comparing(value -> value.role().name()))
-				.toList()
-				.equals(current))
+		return this.latestAssessment(this.activeRevision, this.currentBindingRevisions())
+			.map(assessment -> assessment.availability() == CapabilityAvailability.AVAILABLE)
 			.orElse(false);
+	}
+
+	private Optional<TargetStorageAssessment> latestAssessment(Long configurationRevision,
+			List<TargetStorageBindingRevision> bindingRevisions) {
+		Comparator<TargetStorageAssessment> observationOrder = Comparator
+			.comparing(TargetStorageAssessment::observedUntil)
+			.thenComparing(TargetStorageAssessment::observedFrom);
+		TargetStorageAssessment latest = null;
+		for (TargetStorageAssessment assessment : this.assessments) {
+			boolean matches = Objects.equals(configurationRevision, assessment.configurationRevision())
+					&& this.sortedBindingRevisions(assessment.bindingRevisions())
+						.equals(this.sortedBindingRevisions(bindingRevisions));
+			if (matches && (latest == null || observationOrder.compare(assessment, latest) >= 0)) {
+				latest = assessment;
+			}
+		}
+		return Optional.ofNullable(latest);
+	}
+
+	private List<TargetStorageBindingRevision> currentBindingRevisions() {
+		return this.bindings.stream().map(TargetStorageBindingRevision::from).toList();
+	}
+
+	private List<TargetStorageBindingRevision> sortedBindingRevisions(List<TargetStorageBindingRevision> values) {
+		return values.stream().sorted(Comparator.comparing(value -> value.role().name())).toList();
 	}
 
 	private static List<TargetStorageBinding> validatedBindings(List<TargetStorageBinding> bindings) {

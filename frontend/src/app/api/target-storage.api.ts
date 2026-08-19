@@ -71,6 +71,7 @@ export const targetStorageApi = {
     storage: TargetStorage,
     endpoint: string,
     region: string,
+    pathStyleAccess: boolean,
     compatibilityOptions: Record<string, string>,
   ) {
     const { data, error, response } = await api.POST(
@@ -82,7 +83,7 @@ export const targetStorageApi = {
           configuration: {
             endpoint,
             region,
-            pathStyleAccess: storage.configuration?.pathStyleAccess ?? true,
+            pathStyleAccess,
             compatibilityOptions,
           },
         },

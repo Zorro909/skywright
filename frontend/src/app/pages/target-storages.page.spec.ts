@@ -13,47 +13,7 @@ describe('Target Storages operator workflow', () => {
       .mockRejectedValueOnce(new Error('unavailable'))
       .mockResolvedValueOnce(undefined);
     const api = {
-      list: vi.fn().mockResolvedValue([
-        {
-          id: '00000000-0000-0000-0000-000000000080',
-          name: 'Run outputs',
-          purpose: 'run-output',
-          bucket: 'runs',
-          registrationRevision: 2,
-          activated: false,
-          eligible: false,
-          activeRevision: null,
-          candidateRevision: 1,
-          availability: 'transiently-unavailable',
-          configuration: {
-            endpoint: 'https://storage.example',
-            region: 'eu-central-1',
-            pathStyleAccess: true,
-            compatibilityOptions: {},
-          },
-          revisions: [
-            {
-              revision: 1,
-              state: 'candidate',
-              configuration: {
-                endpoint: 'https://storage.example',
-                region: 'eu-central-1',
-                pathStyleAccess: true,
-                compatibilityOptions: {},
-              },
-            },
-          ],
-          bindings: [
-            {
-              role: 'backend',
-              bindingId: '00000000-0000-0000-0000-000000000001',
-              bindingRevision: 1,
-              readiness: 'missing',
-            },
-          ],
-          assessments: [],
-        },
-      ]),
+      list: vi.fn().mockResolvedValue([storageFixture()]),
       listDefaults: vi.fn().mockResolvedValue([]),
       create,
       stage: vi.fn(),
@@ -104,8 +64,102 @@ describe('Target Storages operator workflow', () => {
     expect((form?.elements.namedItem('name') as HTMLInputElement).value).toBe(
       '',
     );
+
+    const stageForm = view.querySelector<HTMLFormElement>('form.inline-form');
+    const pathStyleAccess = stageForm?.elements.namedItem(
+      'pathStyleAccess',
+    ) as HTMLInputElement;
+    expect(pathStyleAccess.checked).toBe(false);
+    pathStyleAccess.checked = true;
+    stageForm?.dispatchEvent(new SubmitEvent('submit'));
+    await fixture.whenStable();
+    expect(api.stage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: storageFixture().id }),
+      'https://candidate.storage.example',
+      'us-west-2',
+      true,
+      expect.any(Object),
+    );
+  });
+
+  it('retains a fulfilled storage list when loading defaults fails', async () => {
+    const api = {
+      list: vi.fn().mockResolvedValue([storageFixture()]),
+      listDefaults: vi
+        .fn()
+        .mockRejectedValue(new Error('defaults unavailable')),
+    };
+    await TestBed.configureTestingModule({
+      imports: [TargetStoragesPage],
+      providers: [{ provide: TARGET_STORAGE_API, useValue: api }],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(TargetStoragesPage);
+    fixture.detectChanges();
+    const view = fixture.nativeElement as HTMLElement;
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(view.querySelector('h4')?.textContent).toContain('Run outputs');
+    });
+    expect(view.textContent).toContain('The Target Storage operation failed.');
   });
 });
+
+function storageFixture() {
+  return {
+    id: '00000000-0000-0000-0000-000000000080',
+    name: 'Run outputs',
+    purpose: 'run-output' as const,
+    bucket: 'runs',
+    registrationRevision: 2,
+    activated: false,
+    eligible: false,
+    activeRevision: 1,
+    candidateRevision: 2,
+    availability: 'transiently-unavailable' as const,
+    configuration: {
+      endpoint: 'https://storage.example',
+      region: 'eu-central-1',
+      pathStyleAccess: true,
+      compatibilityOptions: {},
+    },
+    revisions: [
+      {
+        revision: 1,
+        state: 'active' as const,
+        configuration: {
+          endpoint: 'https://storage.example',
+          region: 'eu-central-1',
+          pathStyleAccess: true,
+          compatibilityOptions: {},
+        },
+      },
+      {
+        revision: 2,
+        state: 'candidate' as const,
+        configuration: {
+          endpoint: 'https://candidate.storage.example',
+          region: 'us-west-2',
+          pathStyleAccess: false,
+          compatibilityOptions: {
+            chunkedEncoding: 'enabled',
+            checksumCalculation: 'when-supported',
+          },
+        },
+      },
+    ],
+    bindings: [
+      {
+        role: 'backend' as const,
+        bindingId: '00000000-0000-0000-0000-000000000001',
+        bindingRevision: 1,
+        readiness: 'missing' as const,
+      },
+    ],
+    assessments: [],
+  };
+}
 
 function setValue(form: HTMLFormElement | null, name: string, value: string) {
   const input = form?.elements.namedItem(name) as HTMLInputElement | null;

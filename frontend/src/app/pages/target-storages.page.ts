@@ -118,6 +118,7 @@ const ROLES = [
         }
         <div class="storage-grid">
           @for (storage of storages(); track storage.id) {
+            @let editableConfiguration = this.editableConfiguration(storage);
             <article class="storage-card" [attr.data-storage-id]="storage.id">
               <header>
                 <div>
@@ -243,7 +244,7 @@ const ROLES = [
                     name="endpoint"
                     type="url"
                     required
-                    [value]="storage.configuration?.endpoint ?? ''"
+                    [value]="editableConfiguration?.endpoint ?? ''"
                   />
                 </label>
                 <label>
@@ -251,8 +252,16 @@ const ROLES = [
                   <input
                     name="region"
                     required
-                    [value]="storage.configuration?.region ?? 'us-east-1'"
+                    [value]="editableConfiguration?.region ?? 'us-east-1'"
                   />
+                </label>
+                <label class="check-row">
+                  <input
+                    name="pathStyleAccess"
+                    type="checkbox"
+                    [checked]="editableConfiguration?.pathStyleAccess ?? true"
+                  />
+                  Path-style access
                 </label>
                 <label>
                   Chunked encoding
@@ -260,7 +269,7 @@ const ROLES = [
                     <option
                       value="disabled"
                       [selected]="
-                        storage.configuration?.compatibilityOptions?.[
+                        editableConfiguration?.compatibilityOptions?.[
                           'chunkedEncoding'
                         ] !== 'enabled'
                       "
@@ -270,7 +279,7 @@ const ROLES = [
                     <option
                       value="enabled"
                       [selected]="
-                        storage.configuration?.compatibilityOptions?.[
+                        editableConfiguration?.compatibilityOptions?.[
                           'chunkedEncoding'
                         ] === 'enabled'
                       "
@@ -285,7 +294,7 @@ const ROLES = [
                     <option
                       value="when-required"
                       [selected]="
-                        storage.configuration?.compatibilityOptions?.[
+                        editableConfiguration?.compatibilityOptions?.[
                           'checksumCalculation'
                         ] !== 'when-supported'
                       "
@@ -295,7 +304,7 @@ const ROLES = [
                     <option
                       value="when-supported"
                       [selected]="
-                        storage.configuration?.compatibilityOptions?.[
+                        editableConfiguration?.compatibilityOptions?.[
                           'checksumCalculation'
                         ] === 'when-supported'
                       "
@@ -539,6 +548,7 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
         storage,
         this.value(data, 'endpoint'),
         this.value(data, 'region'),
+        data.has('pathStyleAccess'),
         {
           chunkedEncoding: this.value(data, 'chunkedEncoding'),
           checksumCalculation: this.value(data, 'checksumCalculation'),
@@ -570,17 +580,33 @@ export class TargetStoragesPage implements OnInit, OnDestroy {
 
   private async reload() {
     try {
-      const [storages, defaults] = await Promise.all([
+      const [storages, defaults] = await Promise.allSettled([
         this.api.list(this.abort.signal),
         this.api.listDefaults(this.abort.signal),
       ]);
-      this.storages.set(storages);
-      this.defaults.set(defaults);
-    } catch (error) {
-      this.message.set(this.safeFailure(error));
+      if (storages.status === 'fulfilled') {
+        this.storages.set(storages.value);
+      }
+      if (defaults.status === 'fulfilled') {
+        this.defaults.set(defaults.value);
+      }
+      const failure = [storages, defaults].find(
+        (result): result is PromiseRejectedResult =>
+          result.status === 'rejected',
+      );
+      if (failure) {
+        this.message.set(this.safeFailure(failure.reason));
+      }
     } finally {
       this.loading.set(false);
     }
+  }
+
+  protected editableConfiguration(storage: TargetStorage) {
+    return (
+      storage.revisions.find((revision) => revision.state === 'candidate')
+        ?.configuration ?? storage.configuration
+    );
   }
 
   private async mutate(
