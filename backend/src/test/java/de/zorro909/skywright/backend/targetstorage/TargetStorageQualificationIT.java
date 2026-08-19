@@ -142,7 +142,8 @@ final class TargetStorageQualificationIT {
 	private enum FailureMode {
 
 		IGNORED_CONDITIONAL("conditional-create"), DELAYED_LISTING("list-after-write"),
-		ROLE_ACCESS_DENIED("put-object"), CLEANUP_FAILURE("cleanup");
+		ROLE_ACCESS_DENIED("put-object"), FALSE_MULTIPART_COMPLETION("multipart-complete"),
+		IGNORED_MULTIPART_ABORT("multipart-abort"), CLEANUP_FAILURE("cleanup");
 
 		private final String capability;
 
@@ -176,6 +177,21 @@ final class TargetStorageQualificationIT {
 							Map.of("Content-Type", List.of("application/xml")));
 					return;
 				}
+				String query = exchange.getRequestURI().getRawQuery();
+				if (this.mode == FailureMode.FALSE_MULTIPART_COMPLETION && exchange.getRequestMethod().equals("POST")
+						&& query != null && query.contains("uploadId=")) {
+					respond(exchange, 200,
+							("<CompleteMultipartUploadResult><Location>ignored</Location><Bucket>ignored</Bucket>"
+									+ "<Key>ignored</Key><ETag>ignored</ETag></CompleteMultipartUploadResult>")
+								.getBytes(StandardCharsets.UTF_8),
+							Map.of("Content-Type", List.of("application/xml")));
+					return;
+				}
+				if (this.mode == FailureMode.IGNORED_MULTIPART_ABORT && exchange.getRequestMethod().equals("DELETE")
+						&& query != null && query.contains("uploadId=")) {
+					respond(exchange, 204, new byte[0], Map.of());
+					return;
+				}
 				if (this.mode == FailureMode.CLEANUP_FAILURE && exchange.getRequestMethod().equals("DELETE")
 						&& this.deleteRequests.incrementAndGet() > 1) {
 					respond(exchange, 403, "<Error><Code>AccessDenied</Code><Message>cleanup denied</Message></Error>"
@@ -196,8 +212,7 @@ final class TargetStorageQualificationIT {
 				HttpResponse<byte[]> response = HttpClient.newHttpClient()
 					.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
 				byte[] body = response.body();
-				if (this.mode == FailureMode.DELAYED_LISTING && exchange.getRequestURI().getRawQuery() != null
-						&& exchange.getRequestURI().getRawQuery().contains("list-type=2")) {
+				if (this.mode == FailureMode.DELAYED_LISTING && query != null && query.contains("list-type=2")) {
 					body = new String(body, StandardCharsets.UTF_8).replaceAll("(?s)<Contents>.*?</Contents>", "")
 						.getBytes(StandardCharsets.UTF_8);
 				}

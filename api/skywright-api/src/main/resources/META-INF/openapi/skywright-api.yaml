@@ -266,7 +266,8 @@ components:
           properties:
             chunkedEncoding:
               type: string
-              enum: ['true', 'false']
+              description: Disables SDK chunked transfer encoding for providers that require fixed-length requests.
+              enum: ['false']
             checksumCalculation:
               type: string
               enum: [when-required, when-supported]

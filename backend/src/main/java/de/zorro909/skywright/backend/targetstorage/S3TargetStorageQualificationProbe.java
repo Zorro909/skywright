@@ -297,20 +297,28 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 					throw new IllegalStateException("Multipart upload was not listed");
 				}
 			});
-			results.check("multipart-complete",
-					() -> client
-						.completeMultipartUpload(CompleteMultipartUploadRequest.builder()
-							.bucket(request.bucket())
-							.key(multipartKey)
-							.uploadId(S3TargetStorageQualificationProbe.required(upload.get(), "multipart upload"))
-							.multipartUpload(CompletedMultipartUpload.builder()
-								.parts(CompletedPart.builder()
-									.partNumber(1)
-									.eTag(S3TargetStorageQualificationProbe.required(partEtag.get(), "part ETag"))
-									.build())
+			results.check("multipart-complete", () -> {
+				client
+					.completeMultipartUpload(CompleteMultipartUploadRequest.builder()
+						.bucket(request.bucket())
+						.key(multipartKey)
+						.uploadId(S3TargetStorageQualificationProbe.required(upload.get(), "multipart upload"))
+						.multipartUpload(CompletedMultipartUpload.builder()
+							.parts(CompletedPart.builder()
+								.partNumber(1)
+								.eTag(S3TargetStorageQualificationProbe.required(partEtag.get(), "part ETag"))
 								.build())
 							.build())
-						.join());
+						.build())
+					.join();
+				ResponseBytes<?> completed = client
+					.getObject(GetObjectRequest.builder().bucket(request.bucket()).key(multipartKey).build(),
+							AsyncResponseTransformer.toBytes())
+					.join();
+				if (!Arrays.equals(content, completed.asByteArray())) {
+					throw new IllegalStateException("Completed multipart object did not contain the uploaded bytes");
+				}
+			});
 			AtomicReference<String> abortUpload = new AtomicReference<>();
 			results.check("multipart-abort", () -> {
 				abortUpload.set(client
@@ -319,12 +327,31 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 					.join()
 					.uploadId());
 				client
+					.uploadPart(UploadPartRequest.builder()
+						.bucket(request.bucket())
+						.key(abortedKey)
+						.uploadId(abortUpload.get())
+						.partNumber(1)
+						.build(), AsyncRequestBody.fromBytes(content))
+					.join();
+				client
 					.abortMultipartUpload(AbortMultipartUploadRequest.builder()
 						.bucket(request.bucket())
 						.key(abortedKey)
 						.uploadId(abortUpload.get())
 						.build())
 					.join();
+				boolean remains = client
+					.listMultipartUploads(
+							ListMultipartUploadsRequest.builder().bucket(request.bucket()).prefix(abortedKey).build())
+					.join()
+					.uploads()
+					.stream()
+					.anyMatch(candidate -> candidate.key().equals(abortedKey)
+							&& candidate.uploadId().equals(abortUpload.get()));
+				if (remains) {
+					throw new IllegalStateException("Aborted multipart upload remained listed");
+				}
 			});
 			results.check("delete-object",
 					() -> client

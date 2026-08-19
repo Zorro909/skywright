@@ -14,7 +14,7 @@ public final class RunStoreS3Compatibility {
 	public static S3Configuration configuration(boolean pathStyleAccess, Map<String, String> options) {
 		return S3Configuration.builder()
 			.pathStyleAccessEnabled(pathStyleAccess)
-			.chunkedEncodingEnabled(booleanOption(options, "chunkedEncoding", false))
+			.chunkedEncodingEnabled(chunkedEncoding(options))
 			.build();
 	}
 
@@ -30,15 +30,15 @@ public final class RunStoreS3Compatibility {
 		}
 	}
 
-	private static boolean booleanOption(Map<String, String> options, String name, boolean defaultValue) {
-		String value = options.get(name);
+	private static boolean chunkedEncoding(Map<String, String> options) {
+		String value = options.get("chunkedEncoding");
 		if (value == null) {
-			return defaultValue;
+			return false;
 		}
-		if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
-			return Boolean.parseBoolean(value);
+		if ("false".equalsIgnoreCase(value)) {
+			return false;
 		}
-		throw new IllegalArgumentException(name + " must be true or false");
+		throw new IllegalArgumentException("chunkedEncoding must be false");
 	}
 
 }

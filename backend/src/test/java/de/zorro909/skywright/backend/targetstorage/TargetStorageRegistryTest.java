@@ -169,7 +169,7 @@ final class TargetStorageRegistryTest {
 				Optional.of((bindingId, bindingRevision, consumingRole) -> Optional.of(provider)), storageId -> false);
 		UUID id = resolvingRegistry.register("Run outputs", TargetStoragePurpose.RUN_OUTPUT, "runs",
 				new TargetStorageConfiguration(URI.create("http://storage.example"), "eu-central-1", true,
-						Map.of("chunkedEncoding", "true")),
+						Map.of("chunkedEncoding", "false")),
 				readyBindings());
 		resolvingRegistry.recordQualification(id, successfulAssessment(1));
 
@@ -177,7 +177,15 @@ final class TargetStorageRegistryTest {
 
 		assertThat(resolved.storageId()).isEqualTo(id.toString());
 		assertThat(resolved.credentials()).isSameAs(provider);
-		assertThat(resolved.compatibilityOptions()).containsEntry("chunkedEncoding", "true");
+		assertThat(resolved.compatibilityOptions()).containsEntry("chunkedEncoding", "false");
+	}
+
+	@Test
+	void rejectsCompatibilityOptionsThatRequiredConsumersCannotHonor() {
+		assertThatThrownBy(() -> new TargetStorageConfiguration(URI.create("http://storage.example"), "eu-central-1",
+				true, Map.of("chunkedEncoding", "true")))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("chunkedEncoding must be false");
 	}
 
 	@Test

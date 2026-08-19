@@ -7,10 +7,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 
-/**
- * Enables the packaged browser seam without introducing a production credential
- * implementation.
- */
+/** Supplies the packaged acceptance process with its isolated fake bindings. */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnExpression("'${skywright.deployment.environment:}' == 'acceptance' && "
 		+ "'${skywright.acceptance.target-storage.enabled:false}' == 'true'")
