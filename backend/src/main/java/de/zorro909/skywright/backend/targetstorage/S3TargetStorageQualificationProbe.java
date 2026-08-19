@@ -155,9 +155,7 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 						GetObjectRequest.builder().bucket(request.bucket()).key(objectKey).range("bytes=0-8").build(),
 						AsyncResponseTransformer.toBytes())
 					.join();
-				if (body.asByteArray().length != 9) {
-					throw new IllegalStateException("Ranged read returned the wrong byte count");
-				}
+				S3TargetStorageQualificationProbe.requireExpectedRange(content, body.asByteArray());
 			});
 			results.checkAfter("read-after-write", List.of("put-object"),
 					() -> client.headObject(HeadObjectRequest.builder().bucket(request.bucket()).key(objectKey).build())
@@ -292,6 +290,12 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 		return new TargetStorageAssessment(UUID.randomUUID(), request.configurationRevision(), started, Instant.now(),
 				availability, request.bindings().stream().map(TargetStorageBindingRevision::from).toList(),
 				results.results());
+	}
+
+	static void requireExpectedRange(byte[] content, byte[] rangedContent) {
+		if (!Arrays.equals(Arrays.copyOfRange(content, 0, 9), rangedContent)) {
+			throw new IllegalStateException("Ranged read returned the wrong content");
+		}
 	}
 
 	private static void cleanup(S3AsyncClient client, String bucket, String prefix) {

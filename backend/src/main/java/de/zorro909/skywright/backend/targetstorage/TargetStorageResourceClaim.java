@@ -27,6 +27,9 @@ record TargetStorageResourceClaim(UUID storageId, TargetStoragePurpose purpose) 
 	static String canonicalEndpoint(URI endpoint) {
 		String scheme = endpoint.getScheme().toLowerCase(java.util.Locale.ROOT);
 		String host = endpoint.getHost().toLowerCase(java.util.Locale.ROOT);
+		if (host.endsWith(".")) {
+			host = host.substring(0, host.length() - 1);
+		}
 		int port = endpoint.getPort();
 		if (("http".equals(scheme) && port == 80) || ("https".equals(scheme) && port == 443)) {
 			port = -1;

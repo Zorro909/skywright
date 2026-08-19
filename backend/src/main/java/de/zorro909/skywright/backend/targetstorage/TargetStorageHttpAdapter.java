@@ -86,6 +86,7 @@ public class TargetStorageHttpAdapter implements TargetStoragesApi, TargetStorag
 			StageTargetStorageRevision request) {
 		this.registry.stageRevision(storageId, request.getExpectedRegistrationRevision(),
 				this.configuration(request.getConfiguration()));
+		this.refreshBindingReadiness(storageId);
 		this.qualification.qualifyWhenReady(storageId);
 		return ResponseEntity.ok(this.storage(this.registry.get(storageId)));
 	}

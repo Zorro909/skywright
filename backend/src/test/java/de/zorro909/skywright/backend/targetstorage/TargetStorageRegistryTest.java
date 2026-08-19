@@ -198,6 +198,8 @@ final class TargetStorageRegistryTest {
 
 	@Test
 	void encodedSlashRemainsDistinctFromAPathSeparatorInResourceClaims() {
+		assertThat(TargetStorageResourceClaim.canonicalEndpoint(URI.create("https://storage.example./")))
+			.isEqualTo("https://storage.example");
 		assertThat(TargetStorageResourceClaim.canonicalEndpoint(URI.create("https://storage.example/base%2Fsegment")))
 			.isEqualTo("https://storage.example/base%2Fsegment")
 			.isNotEqualTo(
