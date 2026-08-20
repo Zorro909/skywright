@@ -1,6 +1,6 @@
 databaseChangeLog:
   - changeSet:
-      id: issue-81-training-project-registry-schema
+      id: issue-81-training-project-registry-tables
       author: skywright
       logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
       changes:
@@ -23,33 +23,6 @@ databaseChangeLog:
               - column: { name: execution_credential_binding_id, type: uuid }
               - column: { name: readiness, type: varchar(32), constraints: { nullable: false } }
               - column: { name: state, type: varchar(16), constraints: { nullable: false } }
-        - addPrimaryKey:
-            tableName: training_project_registry_binding
-            columnNames: "training_project_id, binding_position"
-            constraintName: pk_training_project_registry_binding
-        - addForeignKeyConstraint:
-            baseTableName: training_project_registry_binding
-            baseColumnNames: training_project_id
-            referencedTableName: training_project
-            referencedColumnNames: id
-            constraintName: fk_training_project_registry_binding_project
-            onDelete: CASCADE
-        - sql:
-            sql: CREATE UNIQUE INDEX training_project_display_name_key ON training_project (lower(btrim(display_name)))
-        - sql:
-            sql: CREATE UNIQUE INDEX training_project_live_repository_key ON training_project_registry_binding (repository) WHERE state IN ('active', 'candidate')
-        - sql:
-            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON training_project, training_project_registry_binding TO "${runtimeRole}"
-      rollback:
-        - sql:
-            sql: REVOKE ALL PRIVILEGES ON training_project, training_project_registry_binding FROM "${runtimeRole}"
-        - dropTable: { tableName: training_project_registry_binding }
-        - dropTable: { tableName: training_project }
-  - changeSet:
-      id: issue-81-registry-rebinding-schema
-      author: skywright
-      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
-      changes:
         - createTable:
             tableName: registry_rebinding_operation
             columns:
@@ -73,29 +46,66 @@ databaseChangeLog:
               - column: { name: digest, type: varchar(71), constraints: { nullable: false } }
               - column: { name: verified, type: boolean, constraints: { nullable: false } }
               - column: { name: failure_code, type: varchar(128) }
-        - addPrimaryKey:
-            tableName: registry_rebinding_artifact
-            columnNames: "registry_rebinding_operation_id, artifact_position"
-            constraintName: pk_registry_rebinding_artifact
-        - addForeignKeyConstraint:
-            baseTableName: registry_rebinding_operation
-            baseColumnNames: training_project_id
-            referencedTableName: training_project
-            referencedColumnNames: id
-            constraintName: fk_registry_rebinding_operation_project
-        - addForeignKeyConstraint:
-            baseTableName: registry_rebinding_artifact
-            baseColumnNames: registry_rebinding_operation_id
-            referencedTableName: registry_rebinding_operation
-            referencedColumnNames: id
-            constraintName: fk_registry_rebinding_artifact_operation
-            onDelete: CASCADE
-        - sql:
-            sql: CREATE UNIQUE INDEX registry_rebinding_one_active_key ON registry_rebinding_operation (training_project_id) WHERE state IN ('verifying', 'failed')
-        - sql:
-            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON registry_rebinding_operation, registry_rebinding_artifact TO "${runtimeRole}"
       rollback:
-        - sql:
-            sql: REVOKE ALL PRIVILEGES ON registry_rebinding_operation, registry_rebinding_artifact FROM "${runtimeRole}"
         - dropTable: { tableName: registry_rebinding_artifact }
         - dropTable: { tableName: registry_rebinding_operation }
+        - dropTable: { tableName: training_project_registry_binding }
+        - dropTable: { tableName: training_project }
+  - changeSet:
+      id: issue-81-training-project-registry-primary-keys
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - addPrimaryKey: { tableName: training_project_registry_binding, columnNames: "training_project_id, binding_position", constraintName: pk_training_project_registry_binding }
+        - addPrimaryKey: { tableName: registry_rebinding_artifact, columnNames: "registry_rebinding_operation_id, artifact_position", constraintName: pk_registry_rebinding_artifact }
+      rollback:
+        - dropPrimaryKey: { tableName: registry_rebinding_artifact, constraintName: pk_registry_rebinding_artifact }
+        - dropPrimaryKey: { tableName: training_project_registry_binding, constraintName: pk_training_project_registry_binding }
+  - changeSet:
+      id: issue-81-training-project-registry-foreign-keys
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - addForeignKeyConstraint: { baseTableName: training_project_registry_binding, baseColumnNames: training_project_id, referencedTableName: training_project, referencedColumnNames: id, constraintName: fk_training_project_registry_binding_project, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: registry_rebinding_operation, baseColumnNames: training_project_id, referencedTableName: training_project, referencedColumnNames: id, constraintName: fk_registry_rebinding_operation_project }
+        - addForeignKeyConstraint: { baseTableName: registry_rebinding_artifact, baseColumnNames: registry_rebinding_operation_id, referencedTableName: registry_rebinding_operation, referencedColumnNames: id, constraintName: fk_registry_rebinding_artifact_operation, onDelete: CASCADE }
+      rollback:
+        - dropForeignKeyConstraint: { baseTableName: registry_rebinding_artifact, constraintName: fk_registry_rebinding_artifact_operation }
+        - dropForeignKeyConstraint: { baseTableName: registry_rebinding_operation, constraintName: fk_registry_rebinding_operation_project }
+        - dropForeignKeyConstraint: { baseTableName: training_project_registry_binding, constraintName: fk_training_project_registry_binding_project }
+  - changeSet:
+      id: issue-81-training-project-registry-unique-constraints
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - addUniqueConstraint: { tableName: training_project_registry_binding, columnNames: "training_project_id, binding_revision", constraintName: uq_training_project_binding_revision }
+      rollback:
+        - dropUniqueConstraint: { tableName: training_project_registry_binding, constraintName: uq_training_project_binding_revision }
+  - changeSet:
+      id: issue-81-training-project-registry-checks
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - sqlFile: { path: sql/0003-training-project-checks.sql, relativeToChangelogFile: true }
+      rollback:
+        - sqlFile: { path: undo/0003-training-project-checks.sql, relativeToChangelogFile: true }
+  - changeSet:
+      id: issue-81-training-project-registry-indexes
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - sqlFile: { path: sql/0003-training-project-indexes.sql, relativeToChangelogFile: true }
+      rollback:
+        - sqlFile: { path: undo/0003-training-project-indexes.sql, relativeToChangelogFile: true }
+  - changeSet:
+      id: issue-81-training-project-registry-grants
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - sql:
+            comment: Grant the configured application role only the DML privileges its JPA boundary requires.
+            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON training_project, training_project_registry_binding, registry_rebinding_operation, registry_rebinding_artifact TO "${runtimeRole}"
+      rollback:
+        - sql:
+            comment: Revoke application privileges before removing the owned tables.
+            sql: REVOKE ALL PRIVILEGES ON training_project, training_project_registry_binding, registry_rebinding_operation, registry_rebinding_artifact FROM "${runtimeRole}"

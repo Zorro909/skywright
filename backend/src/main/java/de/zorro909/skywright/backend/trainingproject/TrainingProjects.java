@@ -78,6 +78,10 @@ public class TrainingProjects {
 			UUID executionCredentialBindingId) {
 		TrainingProjectEntity project = project(id);
 		requireRevision(project, expectedRevision);
+		if (this.repository.hasActiveOperation(id)) {
+			throw new TrainingProjectException("REGISTRY_REBINDING_CONFLICT",
+					"Registry credentials cannot change while a Registry Rebinding Operation is active.");
+		}
 		RegistryBinding active = project.view().activeBinding();
 		requireBindingShape(active.accessMode(), resolverCredentialBindingId, executionCredentialBindingId);
 		project.replaceActiveBinding(new RegistryBinding(active.revision() + 1, active.repository(),

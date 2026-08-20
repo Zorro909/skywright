@@ -21,6 +21,8 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 
 	private static final Pattern VERSION_LABEL = Pattern.compile("[0-9a-f]{40}-[A-Za-z0-9][A-Za-z0-9._-]{0,86}");
 
+	private static final Pattern DIGEST = Pattern.compile("sha256:[0-9a-f]{64}");
+
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	private final HttpClient client;
@@ -49,22 +51,20 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 		List<ProjectVersionReference> versions = new ArrayList<>();
 		URI page = this.endpoint.resolve("/v2/" + name + "/tags/list?n=100");
 		while (page != null) {
-			HttpResponse<String> tags = send(repository, request(page, repository).GET().build(), 200);
+			HttpResponse<String> tags = send(request(page, repository).GET().build(), 200);
 			for (JsonNode tagNode : json(tags.body()).path("tags")) {
 				String tag = tagNode.asText();
 				if (!VERSION_LABEL.matcher(tag).matches()) {
 					continue;
 				}
-				HttpResponse<String> manifest = send(repository,
-						request("/v2/" + name + "/manifests/" + tag, repository)
-							.method("HEAD", HttpRequest.BodyPublishers.noBody())
-							.header("Accept", MANIFEST_ACCEPT)
-							.build(),
-						200);
-				String digest = manifest.headers()
+				HttpResponse<String> manifest = send(request("/v2/" + name + "/manifests/" + tag, repository)
+					.method("HEAD", HttpRequest.BodyPublishers.noBody())
+					.header("Accept", MANIFEST_ACCEPT)
+					.build(), 200);
+				String digest = requireDigest(manifest.headers()
 					.firstValue("Docker-Content-Digest")
 					.orElseThrow(() -> new ProjectVersionException(
-							new ProjectVersionFailure("PROJECT_REGISTRY_RESPONSE_INVALID", "")));
+							new ProjectVersionFailure("PROJECT_REGISTRY_RESPONSE_INVALID", ""))));
 				versions.add(new ProjectVersionReference(tag, digest));
 			}
 			page = nextPage(tags);
@@ -75,7 +75,7 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 	@Override
 	public Optional<RegistryArtifact> pullArtifact(String repository, String reference) {
 		String name = name(repository);
-		HttpResponse<String> manifest = sendAllowMissing(repository,
+		HttpResponse<String> manifest = sendAllowMissing(
 				request("/v2/" + name + "/manifests/" + reference, repository).GET()
 					.header("Accept", MANIFEST_ACCEPT)
 					.build());
@@ -83,32 +83,32 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 			return Optional.empty();
 		}
 		requireStatus(manifest, 200);
-		String digest = manifest.headers()
+		String digest = requireDigest(manifest.headers()
 			.firstValue("Docker-Content-Digest")
-			.orElseThrow(() -> new IllegalStateException("registry response omitted Docker-Content-Digest"));
+			.orElseThrow(() -> new ProjectVersionException(
+					new ProjectVersionFailure("PROJECT_REGISTRY_RESPONSE_INVALID", ""))));
 		JsonNode descriptor = contentDescriptor(json(manifest.body()));
-		String blobDigest = descriptor.path("digest").asText();
-		if (blobDigest.isEmpty()) {
-			throw new IllegalStateException("registry artifact manifest omitted its content digest");
-		}
-		HttpResponse<String> blob = send(repository,
-				request("/v2/" + name + "/blobs/" + blobDigest, repository).GET().build(), 200);
+		String blobDigest = requireDigest(descriptor.path("digest").asText());
+		HttpResponse<String> blob = send(request("/v2/" + name + "/blobs/" + blobDigest, repository).GET().build(),
+				200);
 		return Optional.of(new RegistryArtifact(digest, blob.body()));
 	}
 
 	@Override
 	public boolean imageAvailable(String repository, String digest) {
 		String name = name(repository);
-		HttpResponse<String> response = sendAllowMissing(repository,
-				request("/v2/" + name + "/manifests/" + digest, repository)
-					.method("HEAD", HttpRequest.BodyPublishers.noBody())
-					.header("Accept", MANIFEST_ACCEPT)
-					.build());
+		HttpResponse<String> response = sendAllowMissing(request("/v2/" + name + "/manifests/" + digest, repository)
+			.method("HEAD", HttpRequest.BodyPublishers.noBody())
+			.header("Accept", MANIFEST_ACCEPT)
+			.build());
 		if (response.statusCode() == 404) {
 			return false;
 		}
 		requireStatus(response, 200);
-		return digest.equals(response.headers().firstValue("Docker-Content-Digest").orElse(""));
+		return digest.equals(requireDigest(response.headers()
+			.firstValue("Docker-Content-Digest")
+			.orElseThrow(() -> new ProjectVersionException(
+					new ProjectVersionFailure("PROJECT_REGISTRY_RESPONSE_INVALID", "")))));
 	}
 
 	private HttpRequest.Builder request(String path, String repository) {
@@ -132,13 +132,13 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 		}).orElse(null);
 	}
 
-	private HttpResponse<String> send(String repository, HttpRequest request, int expected) {
-		HttpResponse<String> response = sendAllowMissing(repository, request);
+	private HttpResponse<String> send(HttpRequest request, int expected) {
+		HttpResponse<String> response = sendAllowMissing(request);
 		requireStatus(response, expected);
 		return response;
 	}
 
-	private HttpResponse<String> sendAllowMissing(String repository, HttpRequest request) {
+	private HttpResponse<String> sendAllowMissing(HttpRequest request) {
 		try {
 			return this.client.send(request, HttpResponse.BodyHandlers.ofString());
 		}
@@ -149,6 +149,13 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 			Thread.currentThread().interrupt();
 			throw new IllegalStateException("registry request interrupted", error);
 		}
+	}
+
+	private static String requireDigest(String value) {
+		if (!DIGEST.matcher(value).matches()) {
+			throw new ProjectVersionException(new ProjectVersionFailure("PROJECT_REGISTRY_RESPONSE_INVALID", ""));
+		}
+		return value;
 	}
 
 	private static void requireStatus(HttpResponse<?> response, int expected) {

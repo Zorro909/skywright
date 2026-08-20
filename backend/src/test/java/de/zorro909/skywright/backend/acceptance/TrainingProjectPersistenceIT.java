@@ -35,6 +35,25 @@ final class TrainingProjectPersistenceIT {
 				assertThat(started.statusCode()).as(started.body()).isEqualTo(201);
 				assertThat(started.body()).contains("\"state\":\"failed\"", "REGISTRY_CREDENTIALS_UNAVAILABLE");
 				operationId = jsonString(started.body(), "id");
+
+				var credentialChange = request(firstPort, "PUT",
+						"/api/v1/training-projects/" + projectId + "/registry-credentials", """
+								{
+								  "expectedRevision":2,
+								  "resolverCredentialBindingId":"00000000-0000-0000-0000-000000000001",
+								  "executionCredentialBindingId":"00000000-0000-0000-0000-000000000002"
+								}
+								""");
+				assertThat(credentialChange.statusCode()).as(credentialChange.body()).isEqualTo(409);
+				assertThat(credentialChange.body()).contains("SKYWRIGHT_REGISTRY_REBINDING_CONFLICT");
+
+				var competing = request(firstPort, "POST",
+						"/api/v1/training-projects/" + projectId + "/registry-rebindings",
+						"""
+								{"expectedRevision":2,"candidate":{"repository":"ghcr.io/example/competing","accessMode":"public"}}
+								""");
+				assertThat(competing.statusCode()).as(competing.body()).isEqualTo(409);
+				assertThat(competing.body()).contains("SKYWRIGHT_REGISTRY_REBINDING_CONFLICT");
 			}
 
 			int secondPort = BackendProcess.availablePort();

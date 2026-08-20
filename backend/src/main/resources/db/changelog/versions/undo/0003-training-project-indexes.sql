@@ -1,0 +1,7 @@
+SET search_path TO skywright;
+
+DROP INDEX skywright.registry_rebinding_one_active_key;
+DROP INDEX skywright.training_project_one_candidate_binding_key;
+DROP INDEX skywright.training_project_one_active_binding_key;
+DROP INDEX skywright.training_project_live_repository_key;
+DROP INDEX skywright.training_project_display_name_key;

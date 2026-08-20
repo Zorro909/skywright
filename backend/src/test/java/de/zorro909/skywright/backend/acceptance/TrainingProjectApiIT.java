@@ -29,6 +29,7 @@ final class TrainingProjectApiIT {
 				assertThat(created.body()).contains("\"displayName\":\"Vision Lab\"", "\"revision\":1",
 						"\"repository\":\"ghcr.io/example/vision\"", "\"readiness\":\"ready\"");
 				String projectId = jsonString(created.body(), "id");
+				assertThat(projectId.charAt(14)).isEqualTo('4');
 
 				var inspected = request(port, "GET", "/api/v1/training-projects/" + projectId, null);
 				assertThat(inspected.statusCode()).isEqualTo(200);

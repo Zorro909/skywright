@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.projectversion;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -44,6 +45,54 @@ final class GhcrProjectVersionRegistryTest {
 				"HEAD /v2/example/project/manifests/" + label + " Bearer test-token",
 				"GET /v2/example/project/manifests/" + manifestDigest + " Bearer test-token",
 				"GET /v2/example/project/blobs/" + blobDigest + " Bearer test-token");
+	}
+
+	@Test
+	void rejectsMalformedRegistryDigestsAndHttpFailures() throws Exception {
+		String label = "2".repeat(40) + "-github-81-2";
+		HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		try {
+			server.createContext("/", exchange -> {
+				if (exchange.getRequestURI().getPath().endsWith("/tags/list")) {
+					body(exchange, 200, "{\"tags\":[\"" + label + "\"]}");
+				}
+				else {
+					exchange.getResponseHeaders().add("Docker-Content-Digest", "not-a-digest");
+					exchange.sendResponseHeaders(200, -1);
+					exchange.close();
+				}
+			});
+			server.start();
+			URI endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+			var registry = new GhcrProjectVersionRegistry(HttpClient.newHttpClient(), endpoint,
+					repository -> Optional.empty());
+
+			assertThatThrownBy(() -> registry.listVersions("ghcr.io/example/project"))
+				.isInstanceOf(ProjectVersionException.class)
+				.hasMessage("PROJECT_REGISTRY_RESPONSE_INVALID");
+		}
+		finally {
+			server.stop(0);
+		}
+
+		HttpServer unavailable = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		try {
+			unavailable.createContext("/", exchange -> {
+				exchange.sendResponseHeaders(401, -1);
+				exchange.close();
+			});
+			unavailable.start();
+			URI endpoint = URI.create("http://127.0.0.1:" + unavailable.getAddress().getPort());
+			var registry = new GhcrProjectVersionRegistry(HttpClient.newHttpClient(), endpoint,
+					repository -> Optional.of("Bearer rejected"));
+
+			assertThatThrownBy(() -> registry.listVersions("ghcr.io/example/project"))
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessage("registry returned HTTP 401");
+		}
+		finally {
+			unavailable.stop(0);
+		}
 	}
 
 	private static void respond(HttpExchange exchange, List<String> requests, String label, String manifestDigest,
