@@ -21,9 +21,9 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from types import TracebackType
+from types import MappingProxyType, TracebackType
 from typing import Any, BinaryIO, NoReturn, cast
 from urllib.parse import quote, unquote
 
@@ -622,6 +622,14 @@ class TargetStorage:
     run_id: str
     addressing_style: str = "path"
     profile_name: str | None = None
+    compatibility_options: Mapping[str, str] = field(default_factory=dict, hash=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "compatibility_options",
+            MappingProxyType(dict(self.compatibility_options)),
+        )
 
 
 class RunStoreError(RuntimeError):
@@ -1141,15 +1149,21 @@ def _s3_client(
         else 30.0,
         30.0,
     )
+    checksum_calculation = target.compatibility_options.get("checksumCalculation")
+    config_options: dict[str, Any] = {
+        "s3": {"addressing_style": target.addressing_style},
+        "connect_timeout": remaining,
+        "read_timeout": remaining,
+        "retries": {"mode": "standard", "max_attempts": 8},
+    }
+    if checksum_calculation is not None:
+        config_options["request_checksum_calculation"] = checksum_calculation.replace(
+            "-", "_"
+        )
     return session.client(
         "s3",
         endpoint_url=target.endpoint_url,
-        config=Config(
-            s3={"addressing_style": target.addressing_style},
-            connect_timeout=remaining,
-            read_timeout=remaining,
-            retries={"mode": "standard", "max_attempts": 8},
-        ),
+        config=Config(**config_options),
     )
 
 

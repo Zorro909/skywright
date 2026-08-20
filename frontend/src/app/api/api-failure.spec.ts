@@ -114,5 +114,35 @@ describe('API failure normalization', () => {
         problem: { ...problem, unavailableSource: {} },
       }),
     ).toBe(false);
+    expect(
+      isApiFailure({
+        kind: 'problem',
+        response,
+        problem: { ...problem, unavailableSource: null },
+      }),
+    ).toBe(true);
+  });
+
+  it('accepts a schema-null unavailable source and omits it after normalization', async () => {
+    const response = new Response(
+      JSON.stringify({
+        errorCode: 'SKYWRIGHT_TARGET_STORAGE_NOT_QUALIFIED',
+        correlationId: 'request-null-source',
+        fieldViolations: [],
+        unavailableSource: null,
+        retryable: false,
+      }),
+      { headers: { 'Content-Type': 'application/problem+json' } },
+    );
+
+    const failure = await normalizeProblemResponse(response);
+
+    expect(failure.kind).toBe('problem');
+    if (failure.kind === 'problem') {
+      expect(failure.problem.errorCode).toBe(
+        'SKYWRIGHT_TARGET_STORAGE_NOT_QUALIFIED',
+      );
+      expect(failure.problem).not.toHaveProperty('unavailableSource');
+    }
   });
 });

@@ -45,7 +45,7 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 		this.control = control;
 		S3Configuration configuration = S3Configuration.builder()
 			.pathStyleAccessEnabled(target.pathStyleAccess())
-			.chunkedEncodingEnabled(false)
+			.chunkedEncodingEnabled(optionEnabled(target, "chunkedEncoding", false))
 			.build();
 		ClientOverrideConfiguration deadlines = ClientOverrideConfiguration.builder()
 			.apiCallTimeout(control.requestTimeout())
@@ -57,7 +57,7 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 			.region(target.region())
 			.credentialsProvider(target.credentials())
 			.serviceConfiguration(configuration)
-			.requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
+			.requestChecksumCalculation(checksumCalculation(target))
 			.overrideConfiguration(deadlines)
 			.build();
 		this.presigner = S3Presigner.builder()
@@ -95,6 +95,16 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 		}
 		while (continuation != null);
 		return List.copyOf(result);
+	}
+
+	private static boolean optionEnabled(ResolvedTargetStorage target, String name, boolean defaultValue) {
+		String value = target.compatibilityOptions().get(name);
+		return value == null ? defaultValue : "enabled".equals(value);
+	}
+
+	private static RequestChecksumCalculation checksumCalculation(ResolvedTargetStorage target) {
+		return "when-supported".equals(target.compatibilityOptions().get("checksumCalculation"))
+				? RequestChecksumCalculation.WHEN_SUPPORTED : RequestChecksumCalculation.WHEN_REQUIRED;
 	}
 
 	@Override

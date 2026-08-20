@@ -191,8 +191,29 @@ esac
 
 
 @pytest.mark.system
-def test_production_run_store_conforms_against_pinned_seaweedfs(tmp_path) -> None:
+def test_registered_descriptor_uses_standard_credentials_against_pinned_seaweedfs(
+    tmp_path, monkeypatch
+) -> None:
     with seaweedfs() as (endpoint, client):
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+        observed_checksum_modes: list[str] = []
+        standard_session = boto3.Session
+
+        def recording_session(*args, **kwargs):
+            delegate = standard_session(*args, **kwargs)
+
+            class RecordingSession:
+                def client(self, service_name, **client_kwargs):
+                    observed_checksum_modes.append(
+                        client_kwargs["config"].request_checksum_calculation
+                    )
+                    return delegate.client(service_name, **client_kwargs)
+
+            return RecordingSession()
+
+        monkeypatch.setattr(boto3, "Session", recording_session)
         bucket = f"skywright-{uuid.uuid4().hex}"
         client.create_bucket(Bucket=bucket)
         target = TargetStorage(
@@ -202,14 +223,15 @@ def test_production_run_store_conforms_against_pinned_seaweedfs(tmp_path) -> Non
             "us-east-1",
             "project",
             "run",
+            compatibility_options={"checksumCalculation": "when-supported"},
         )
         store = RunStoreRecorder(
             target,
-            client=client,
             checkpoint_codec=CheckpointCodec(staging_directory=tmp_path),
             multipart_threshold=1,
             multipart_part_size=5 * 1024 * 1024,
         )
+        assert observed_checksum_modes == ["when_supported"]
 
         def train(context):
             state = State()
@@ -238,7 +260,6 @@ def test_production_run_store_conforms_against_pinned_seaweedfs(tmp_path) -> Non
 
         reader = RunStoreReader(
             target,
-            client=client,
             checkpoint_codec=CheckpointCodec(staging_directory=tmp_path),
         )
         assert reader.read_exact(reference).state["state"] == {"value": 7}

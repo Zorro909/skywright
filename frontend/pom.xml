@@ -189,6 +189,7 @@
                   <arguments><argument>run</argument><argument>test:acceptance</argument></arguments>
                   <environmentVariables>
                     <SKYWRIGHT_BACKEND_EXECUTABLE>${maven.multiModuleProjectDirectory}/backend/target/skywright-backend-${project.version}.jar</SKYWRIGHT_BACKEND_EXECUTABLE>
+                    <SKYWRIGHT_BACKEND_TEST_FIXTURE>${maven.multiModuleProjectDirectory}/backend/target/skywright-backend-${project.version}-tests.jar</SKYWRIGHT_BACKEND_TEST_FIXTURE>
                     <SKYWRIGHT_POSTGRESQL_IMAGE>${postgresql.container.image}</SKYWRIGHT_POSTGRESQL_IMAGE>
                   </environmentVariables>
                 </configuration>

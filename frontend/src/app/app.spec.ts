@@ -22,6 +22,7 @@ describe('application shell', () => {
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('header h1')?.textContent).toContain('Skywright');
     expect(root.querySelector('nav[aria-label="Primary"]')).not.toBeNull();
+    expect(root.textContent).toContain('Target Storages');
     expect(root.querySelector('main h2')?.textContent).toContain(
       'About Skywright',
     );

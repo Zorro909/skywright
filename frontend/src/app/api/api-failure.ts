@@ -13,7 +13,7 @@ export interface SafeProblem {
   readonly errorCode: string;
   readonly correlationId: string;
   readonly fieldViolations: readonly FieldViolation[];
-  readonly unavailableSource?: string;
+  readonly unavailableSource?: string | null;
   readonly retryable?: boolean;
 }
 
@@ -151,7 +151,7 @@ function isSafeProblem(value: Record<string, unknown>): value is Record<
     isOptionalNumber(value['status']) &&
     isOptionalString(value['detail']) &&
     isOptionalString(value['instance']) &&
-    isOptionalString(value['unavailableSource']) &&
+    isOptionalNullableString(value['unavailableSource']) &&
     isOptionalBoolean(value['retryable']) &&
     typeof value['errorCode'] === 'string' &&
     SKYWRIGHT_ERROR_CODE.test(value['errorCode']) &&
@@ -177,6 +177,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === 'string';
+}
+
+function isOptionalNullableString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === 'string';
 }
 
 function isOptionalNumber(value: unknown): boolean {
