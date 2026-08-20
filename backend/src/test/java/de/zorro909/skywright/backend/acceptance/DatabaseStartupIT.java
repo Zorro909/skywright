@@ -22,7 +22,7 @@ final class DatabaseStartupIT {
 			try (var backend = BackendProcess.start(arguments(database, port))) {
 				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
 
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(8);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(12);
 				assertThat(database.countTables("public")).isZero();
 			}
 		}
@@ -36,11 +36,54 @@ final class DatabaseStartupIT {
 			var rollbackArguments = java.util.Arrays.copyOf(arguments, arguments.length + 1);
 			rollbackArguments[arguments.length] = "--spring.liquibase.test-rollback-on-update=true";
 			try (var backend = BackendProcess.start(rollbackArguments)) {
-				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
+				try {
+					BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
+				}
+				catch (AssertionError failure) {
+					throw new AssertionError(failure.getMessage() + "\n" + backend.output(), failure);
+				}
 
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(8);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(12);
 			}
 		}
+	}
+
+	@Test
+	void immediatelyPrecedingDatabaseReleaseUpgradesInPlace() throws Exception {
+		try (var database = PostgreSqlFixture.freshDatabase()) {
+			var oldPort = BackendProcess.availablePort();
+			var oldArguments = arguments(database, oldPort);
+			oldArguments = java.util.Arrays.copyOf(oldArguments, oldArguments.length + 2);
+			oldArguments[oldArguments.length
+					- 2] = "--spring.liquibase.change-log=classpath:/db/changelog/previous-database-release.yaml";
+			oldArguments[oldArguments.length - 1] = "--spring.jpa.hibernate.ddl-auto=none";
+			try (var backend = BackendProcess.start(oldArguments)) {
+				awaitLiveness(backend, oldPort, Duration.ofSeconds(30));
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(8);
+			}
+
+			var upgradedPort = BackendProcess.availablePort();
+			try (var backend = BackendProcess.start(arguments(database, upgradedPort))) {
+				BackendProcess.awaitReadiness(upgradedPort, Duration.ofSeconds(30));
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(12);
+			}
+		}
+	}
+
+	private void awaitLiveness(BackendProcess backend, int port, Duration timeout) throws Exception {
+		var deadline = java.time.Instant.now().plus(timeout);
+		while (java.time.Instant.now().isBefore(deadline)) {
+			try {
+				if (get(port, "/livez").statusCode() == 200) {
+					return;
+				}
+			}
+			catch (java.io.IOException ignored) {
+				// The old control plane has not bound its HTTP socket yet.
+			}
+			Thread.sleep(Duration.ofMillis(50));
+		}
+		throw new AssertionError("Backend did not become live within " + timeout + "\n" + backend.output());
 	}
 
 	@Test

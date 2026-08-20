@@ -1,4 +1,4 @@
-FROM ghcr.io/graalvm/jdk-community:25i2-25.0.4-ol9@sha256:be43f73571b4617dba3653c5a19dfa1ec45ac61a822db877763129ca8e7c3540
+FROM ghcr.io/graalvm/jdk-community:25i2-25.0.4-ol10@sha256:15428f0d444cb8811758c5b0dde8a2f1ab35792629cc5dd7526fc838d949f159
 
 ARG BUILD_CREATED
 

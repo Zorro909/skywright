@@ -193,6 +193,220 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/TargetStorageDefaults' }
         '422': { $ref: '#/components/responses/Problem' }
+  /training-projects:
+    get:
+      operationId: listTrainingProjects
+      summary: List Training Projects and their active registry readiness.
+      responses:
+        '200':
+          description: Current Training Projects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TrainingProject' }
+    post:
+      operationId: createTrainingProject
+      summary: Create a stable Training Project identity and its first registry binding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTrainingProject' }
+      responses:
+        '201':
+          description: Training Project created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainingProject' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /training-projects/{projectId}:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    get:
+      operationId: getTrainingProject
+      summary: Inspect one Training Project and its registry binding history.
+      responses:
+        '200':
+          description: Current Training Project.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainingProject' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /training-projects/{projectId}/display-name:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    put:
+      operationId: renameTrainingProject
+      summary: Rename a Training Project without changing its identity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenameTrainingProject' }
+      responses:
+        '200':
+          description: Training Project renamed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainingProject' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /training-projects/{projectId}/registry-credentials:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    put:
+      operationId: replaceTrainingProjectRegistryCredentials
+      summary: Replace role-scoped Credential Binding references without changing repositories.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplaceTrainingProjectRegistryCredentials' }
+      responses:
+        '200':
+          description: Registry Credential Binding references replaced.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainingProject' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /training-projects/{projectId}/versions:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    get:
+      operationId: listTrainingProjectVersions
+      summary: Enumerate live version references without pulling their artifacts.
+      responses:
+        '200':
+          description: One age-bearing live registry observation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainingProjectVersionDiscovery' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /training-projects/{projectId}/versions/{manifestDigest}:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+      - name: manifestDigest
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+    get:
+      operationId: assessTrainingProjectVersion
+      summary: Assess one exact manifest digest against live registry authority.
+      responses:
+        '200':
+          description: One age-bearing exact-version assessment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainingProjectVersionAssessment' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /training-projects/{projectId}/registry-rebindings:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    post:
+      operationId: startRegistryRebinding
+      summary: Stage and verify a candidate Training Project Registry Binding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartRegistryRebinding' }
+      responses:
+        '201':
+          description: Durable Registry Rebinding Operation created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegistryRebindingOperation' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /training-projects/{projectId}/registry-rebindings/{operationId}:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+      - name: operationId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    get:
+      operationId: getRegistryRebinding
+      summary: Inspect one durable Registry Rebinding Operation.
+      responses:
+        '200':
+          description: Current operation state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegistryRebindingOperation' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /training-projects/{projectId}/registry-rebindings/{operationId}/retry:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+      - name: operationId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    post:
+      operationId: retryRegistryRebinding
+      summary: Refresh Run references and retry candidate verification.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionCheckedOperation' }
+      responses:
+        '200':
+          description: Verification attempt completed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegistryRebindingOperation' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /training-projects/{projectId}/registry-rebindings/{operationId}/abandon:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+      - name: operationId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    post:
+      operationId: abandonRegistryRebinding
+      summary: Abandon an unpromoted candidate while retaining operation history.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionCheckedOperation' }
+      responses:
+        '200':
+          description: Operation abandoned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegistryRebindingOperation' }
+        '409': { $ref: '#/components/responses/Problem' }
 components:
   schemas:
     SystemInformation:
@@ -399,6 +613,201 @@ components:
         executionStorageId: { $ref: '#/components/schemas/SkywrightId' }
         repatriationEnabled: { type: boolean }
         repatriationStorageId: { $ref: '#/components/schemas/SkywrightId' }
+    RegistryAccessMode:
+      type: string
+      enum: [public, private]
+    RegistryReadiness:
+      type: string
+      enum: [ready, missing, invalid, expired, unavailable]
+    RegistryBindingInput:
+      type: object
+      additionalProperties: false
+      required: [repository]
+      properties:
+        repository:
+          type: string
+          pattern: '^ghcr\.io/[a-z0-9][a-z0-9._-]{0,254}/[a-z0-9][a-z0-9._-]{0,254}$'
+        accessMode:
+          allOf:
+            - { $ref: '#/components/schemas/RegistryAccessMode' }
+          default: private
+        resolverCredentialBindingId:
+          oneOf:
+            - { $ref: '#/components/schemas/SkywrightId' }
+            - { type: 'null' }
+        executionCredentialBindingId:
+          oneOf:
+            - { $ref: '#/components/schemas/SkywrightId' }
+            - { type: 'null' }
+    CreateTrainingProject:
+      type: object
+      additionalProperties: false
+      required: [displayName, registry]
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 255 }
+        registry: { $ref: '#/components/schemas/RegistryBindingInput' }
+    RenameTrainingProject:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, displayName]
+      properties:
+        expectedRevision: { type: integer, format: int64, minimum: 1 }
+        displayName: { type: string, minLength: 1, maxLength: 255 }
+    ReplaceTrainingProjectRegistryCredentials:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, resolverCredentialBindingId, executionCredentialBindingId]
+      properties:
+        expectedRevision: { type: integer, format: int64, minimum: 1 }
+        resolverCredentialBindingId:
+          oneOf:
+            - { $ref: '#/components/schemas/SkywrightId' }
+            - { type: 'null' }
+        executionCredentialBindingId:
+          oneOf:
+            - { $ref: '#/components/schemas/SkywrightId' }
+            - { type: 'null' }
+    TrainingProjectRegistryBinding:
+      type: object
+      additionalProperties: false
+      required: [revision, repository, accessMode, resolverCredentialBindingId, executionCredentialBindingId, readiness, state]
+      properties:
+        revision: { type: integer, format: int64, minimum: 1 }
+        repository: { type: string }
+        accessMode: { $ref: '#/components/schemas/RegistryAccessMode' }
+        resolverCredentialBindingId:
+          oneOf:
+            - { $ref: '#/components/schemas/SkywrightId' }
+            - { type: 'null' }
+        executionCredentialBindingId:
+          oneOf:
+            - { $ref: '#/components/schemas/SkywrightId' }
+            - { type: 'null' }
+        readiness: { $ref: '#/components/schemas/RegistryReadiness' }
+        state:
+          type: string
+          enum: [active, candidate, retired]
+    TrainingProject:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, revision, activeBinding, bindingHistory]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        displayName: { type: string }
+        revision: { type: integer, format: int64, minimum: 1 }
+        activeBinding: { $ref: '#/components/schemas/TrainingProjectRegistryBinding' }
+        bindingHistory:
+          type: array
+          items: { $ref: '#/components/schemas/TrainingProjectRegistryBinding' }
+    TrainingProjectVersionReference:
+      type: object
+      additionalProperties: false
+      required: [versionLabel, manifestDigest]
+      properties:
+        versionLabel: { type: string }
+        manifestDigest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+    TrainingProjectVersionFailure:
+      type: object
+      additionalProperties: false
+      required: [code, pointer]
+      properties:
+        code: { type: string }
+        pointer: { type: string }
+    TrainingProjectVersionDiscovery:
+      type: object
+      additionalProperties: false
+      required: [registryAvailable, observedAt, versions, failures]
+      properties:
+        registryAvailable: { type: boolean }
+        observedAt: { $ref: '#/components/schemas/UtcInstant' }
+        versions:
+          type: array
+          items: { $ref: '#/components/schemas/TrainingProjectVersionReference' }
+        failures:
+          type: array
+          items: { $ref: '#/components/schemas/TrainingProjectVersionFailure' }
+    TrainingProjectVersionAssessment:
+      type: object
+      additionalProperties: false
+      required: [runnable, assessedAt, version, failures]
+      properties:
+        runnable: { type: boolean }
+        assessedAt: { $ref: '#/components/schemas/UtcInstant' }
+        version:
+          oneOf:
+            - { $ref: '#/components/schemas/VerifiedTrainingProjectVersion' }
+            - { type: 'null' }
+        failures:
+          type: array
+          items: { $ref: '#/components/schemas/TrainingProjectVersionFailure' }
+    VerifiedTrainingProjectVersion:
+      type: object
+      additionalProperties: false
+      required: [projectIdentity, versionLabel, manifestDigest, sourceRevision, pipeline, images, environmentProfiles, configurationContractDigest, metricContractDigest]
+      properties:
+        projectIdentity: { $ref: '#/components/schemas/SkywrightId' }
+        versionLabel: { type: string }
+        manifestDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        sourceRevision: { type: string }
+        pipeline: { type: string }
+        images:
+          type: object
+          additionalProperties: { type: string }
+        environmentProfiles:
+          type: object
+          additionalProperties: { type: string }
+        configurationContractDigest: { type: string }
+        metricContractDigest: { type: string }
+    StartRegistryRebinding:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, candidate]
+      properties:
+        expectedRevision: { type: integer, format: int64, minimum: 1 }
+        candidate: { $ref: '#/components/schemas/RegistryBindingInput' }
+    RevisionCheckedOperation:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision]
+      properties:
+        expectedRevision: { type: integer, format: int64, minimum: 1 }
+    RegistryRebindingArtifact:
+      type: object
+      additionalProperties: false
+      required: [kind, repository, digest, verified, failureCode]
+      properties:
+        kind:
+          type: string
+          enum: [version-manifest, image, configuration-contract, metric-contract]
+        repository: { type: string }
+        digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        verified: { type: boolean }
+        failureCode: { type: [string, 'null'] }
+    RegistryRebindingOperation:
+      type: object
+      additionalProperties: false
+      required: [id, projectId, candidateBindingRevision, state, attempts, artifacts, failureCodes, startedAt, completedAt]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        projectId: { $ref: '#/components/schemas/SkywrightId' }
+        candidateBindingRevision: { type: integer, format: int64, minimum: 1 }
+        state:
+          type: string
+          enum: [verifying, failed, promoted, abandoned]
+        attempts: { type: integer, minimum: 0 }
+        artifacts:
+          type: array
+          items: { $ref: '#/components/schemas/RegistryRebindingArtifact' }
+        failureCodes:
+          type: array
+          items: { type: string }
+        startedAt: { $ref: '#/components/schemas/UtcInstant' }
+        completedAt:
+          oneOf:
+            - { $ref: '#/components/schemas/UtcInstant' }
+            - { type: 'null' }
     CorrelationId:
       type: string
       minLength: 1

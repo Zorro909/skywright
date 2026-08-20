@@ -1,0 +1,111 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-81-training-project-registry-tables
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - createTable:
+            tableName: training_project
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: display_name, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+        - createTable:
+            tableName: training_project_registry_binding
+            columns:
+              - column: { name: training_project_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: binding_position, type: integer, constraints: { nullable: false } }
+              - column: { name: binding_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: repository, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: access_mode, type: varchar(16), constraints: { nullable: false } }
+              - column: { name: resolver_credential_binding_id, type: uuid }
+              - column: { name: execution_credential_binding_id, type: uuid }
+              - column: { name: readiness, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: state, type: varchar(16), constraints: { nullable: false } }
+        - createTable:
+            tableName: registry_rebinding_operation
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: training_project_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: active_binding_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: candidate_binding_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: state, type: varchar(16), constraints: { nullable: false } }
+              - column: { name: attempts, type: integer, constraints: { nullable: false } }
+              - column: { name: failure_codes, type: varchar(2048), constraints: { nullable: false } }
+              - column: { name: started_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: completed_at, type: timestamp with time zone }
+              - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+        - createTable:
+            tableName: registry_rebinding_artifact
+            columns:
+              - column: { name: registry_rebinding_operation_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: artifact_position, type: integer, constraints: { nullable: false } }
+              - column: { name: kind, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: repository, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: digest, type: varchar(71), constraints: { nullable: false } }
+              - column: { name: verified, type: boolean, constraints: { nullable: false } }
+              - column: { name: failure_code, type: varchar(128) }
+      rollback:
+        - dropTable: { tableName: registry_rebinding_artifact }
+        - dropTable: { tableName: registry_rebinding_operation }
+        - dropTable: { tableName: training_project_registry_binding }
+        - dropTable: { tableName: training_project }
+  - changeSet:
+      id: issue-81-training-project-registry-primary-keys
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - addPrimaryKey: { tableName: training_project_registry_binding, columnNames: "training_project_id, binding_position", constraintName: pk_training_project_registry_binding }
+        - addPrimaryKey: { tableName: registry_rebinding_artifact, columnNames: "registry_rebinding_operation_id, artifact_position", constraintName: pk_registry_rebinding_artifact }
+      rollback:
+        - dropPrimaryKey: { tableName: registry_rebinding_artifact, constraintName: pk_registry_rebinding_artifact }
+        - dropPrimaryKey: { tableName: training_project_registry_binding, constraintName: pk_training_project_registry_binding }
+  - changeSet:
+      id: issue-81-training-project-registry-foreign-keys
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - addForeignKeyConstraint: { baseTableName: training_project_registry_binding, baseColumnNames: training_project_id, referencedTableName: training_project, referencedColumnNames: id, constraintName: fk_training_project_registry_binding_project, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: registry_rebinding_operation, baseColumnNames: training_project_id, referencedTableName: training_project, referencedColumnNames: id, constraintName: fk_registry_rebinding_operation_project }
+        - addForeignKeyConstraint: { baseTableName: registry_rebinding_artifact, baseColumnNames: registry_rebinding_operation_id, referencedTableName: registry_rebinding_operation, referencedColumnNames: id, constraintName: fk_registry_rebinding_artifact_operation, onDelete: CASCADE }
+      rollback:
+        - dropForeignKeyConstraint: { baseTableName: registry_rebinding_artifact, constraintName: fk_registry_rebinding_artifact_operation }
+        - dropForeignKeyConstraint: { baseTableName: registry_rebinding_operation, constraintName: fk_registry_rebinding_operation_project }
+        - dropForeignKeyConstraint: { baseTableName: training_project_registry_binding, constraintName: fk_training_project_registry_binding_project }
+  - changeSet:
+      id: issue-81-training-project-registry-unique-constraints
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - addUniqueConstraint: { tableName: training_project_registry_binding, columnNames: "training_project_id, binding_revision", constraintName: uq_training_project_binding_revision }
+      rollback:
+        - dropUniqueConstraint: { tableName: training_project_registry_binding, constraintName: uq_training_project_binding_revision }
+  - changeSet:
+      id: issue-81-training-project-registry-checks
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - sqlFile: { path: sql/0003-training-project-checks.sql, relativeToChangelogFile: true }
+      rollback:
+        - sqlFile: { path: undo/0003-training-project-checks.sql, relativeToChangelogFile: true }
+  - changeSet:
+      id: issue-81-training-project-registry-indexes
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - sqlFile: { path: sql/0003-training-project-indexes.sql, relativeToChangelogFile: true }
+      rollback:
+        - sqlFile: { path: undo/0003-training-project-indexes.sql, relativeToChangelogFile: true }
+  - changeSet:
+      id: issue-81-training-project-registry-grants
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - sql:
+            comment: Grant the configured application role only the DML privileges its JPA boundary requires.
+            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON training_project, training_project_registry_binding, registry_rebinding_operation, registry_rebinding_artifact TO "${runtimeRole}"
+      rollback:
+        - sql:
+            comment: Revoke application privileges before removing the owned tables.
+            sql: REVOKE ALL PRIVILEGES ON training_project, training_project_registry_binding, registry_rebinding_operation, registry_rebinding_artifact FROM "${runtimeRole}"
