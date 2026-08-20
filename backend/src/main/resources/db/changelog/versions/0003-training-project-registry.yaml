@@ -1,0 +1,101 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-81-training-project-registry-schema
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - createTable:
+            tableName: training_project
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: display_name, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+        - createTable:
+            tableName: training_project_registry_binding
+            columns:
+              - column: { name: training_project_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: binding_position, type: integer, constraints: { nullable: false } }
+              - column: { name: binding_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: repository, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: access_mode, type: varchar(16), constraints: { nullable: false } }
+              - column: { name: resolver_credential_binding_id, type: uuid }
+              - column: { name: execution_credential_binding_id, type: uuid }
+              - column: { name: readiness, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: state, type: varchar(16), constraints: { nullable: false } }
+        - addPrimaryKey:
+            tableName: training_project_registry_binding
+            columnNames: "training_project_id, binding_position"
+            constraintName: pk_training_project_registry_binding
+        - addForeignKeyConstraint:
+            baseTableName: training_project_registry_binding
+            baseColumnNames: training_project_id
+            referencedTableName: training_project
+            referencedColumnNames: id
+            constraintName: fk_training_project_registry_binding_project
+            onDelete: CASCADE
+        - sql:
+            sql: CREATE UNIQUE INDEX training_project_display_name_key ON training_project (lower(btrim(display_name)))
+        - sql:
+            sql: CREATE UNIQUE INDEX training_project_live_repository_key ON training_project_registry_binding (repository) WHERE state IN ('active', 'candidate')
+        - sql:
+            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON training_project, training_project_registry_binding TO "${runtimeRole}"
+      rollback:
+        - sql:
+            sql: REVOKE ALL PRIVILEGES ON training_project, training_project_registry_binding FROM "${runtimeRole}"
+        - dropTable: { tableName: training_project_registry_binding }
+        - dropTable: { tableName: training_project }
+  - changeSet:
+      id: issue-81-registry-rebinding-schema
+      author: skywright
+      logicalFilePath: db/changelog/versions/0003-training-project-registry.yaml
+      changes:
+        - createTable:
+            tableName: registry_rebinding_operation
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: training_project_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: active_binding_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: candidate_binding_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: state, type: varchar(16), constraints: { nullable: false } }
+              - column: { name: attempts, type: integer, constraints: { nullable: false } }
+              - column: { name: failure_codes, type: varchar(2048), constraints: { nullable: false } }
+              - column: { name: started_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: completed_at, type: timestamp with time zone }
+              - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+        - createTable:
+            tableName: registry_rebinding_artifact
+            columns:
+              - column: { name: registry_rebinding_operation_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: artifact_position, type: integer, constraints: { nullable: false } }
+              - column: { name: kind, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: repository, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: digest, type: varchar(71), constraints: { nullable: false } }
+              - column: { name: verified, type: boolean, constraints: { nullable: false } }
+              - column: { name: failure_code, type: varchar(128) }
+        - addPrimaryKey:
+            tableName: registry_rebinding_artifact
+            columnNames: "registry_rebinding_operation_id, artifact_position"
+            constraintName: pk_registry_rebinding_artifact
+        - addForeignKeyConstraint:
+            baseTableName: registry_rebinding_operation
+            baseColumnNames: training_project_id
+            referencedTableName: training_project
+            referencedColumnNames: id
+            constraintName: fk_registry_rebinding_operation_project
+        - addForeignKeyConstraint:
+            baseTableName: registry_rebinding_artifact
+            baseColumnNames: registry_rebinding_operation_id
+            referencedTableName: registry_rebinding_operation
+            referencedColumnNames: id
+            constraintName: fk_registry_rebinding_artifact_operation
+            onDelete: CASCADE
+        - sql:
+            sql: CREATE UNIQUE INDEX registry_rebinding_one_active_key ON registry_rebinding_operation (training_project_id) WHERE state IN ('verifying', 'failed')
+        - sql:
+            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON registry_rebinding_operation, registry_rebinding_artifact TO "${runtimeRole}"
+      rollback:
+        - sql:
+            sql: REVOKE ALL PRIVILEGES ON registry_rebinding_operation, registry_rebinding_artifact FROM "${runtimeRole}"
+        - dropTable: { tableName: registry_rebinding_artifact }
+        - dropTable: { tableName: registry_rebinding_operation }
