@@ -1,0 +1,66 @@
+apiVersion: skaffold/v4beta14
+kind: Config
+metadata:
+  name: skywright
+build:
+  platforms:
+    - linux/amd64
+  local:
+    push: false
+  artifacts:
+    - image: skywright-backend
+      context: .
+      custom:
+        buildCommand: deployment/scripts/build-backend-image
+        dependencies:
+          paths:
+            - pom.xml
+            - .mvn/**
+            - mvnw
+            - api/skywright-api/pom.xml
+            - api/skywright-api/src/**
+            - frontend/pom.xml
+            - frontend/*.json
+            - frontend/*.js
+            - frontend/*.ts
+            - frontend/*.yaml
+            - frontend/src/**
+            - frontend/tools/**
+            - backend/pom.xml
+            - backend/src/**
+            - backend-deployment/pom.xml
+            - backend-deployment/src/**
+            - deployment/scripts/build-backend-image
+            - skaffold.yaml
+          ignore:
+            - "**/target/**"
+            - "**/node_modules/**"
+            - "**/.angular/**"
+manifests:
+  kustomize:
+    paths:
+      - deployment/base
+deploy:
+  statusCheck: true
+  kubectl: {}
+profiles:
+  - name: local-kind
+    manifests:
+      kustomize:
+        paths:
+          - deployment/overlays/local-kind
+    portForward:
+      - resourceType: service
+        resourceName: skywright-backend
+        namespace: skywright
+        port: 80
+        localPort: 8080
+        address: 127.0.0.1
+  - name: production
+    build:
+      local:
+        push: true
+    manifests:
+      kustomize:
+        paths:
+          - deployment/overlays/production

@@ -55,6 +55,7 @@ def load_toolchain() -> dict[str, str]:
 TOOLCHAIN = load_toolchain()
 LOCAL_CHECKS = (
     "application",
+    "deployment",
     "image",
     "integration",
     "java",
@@ -68,6 +69,7 @@ BROWSER_CHECKS = frozenset(("application", "frontend"))
 CATEGORY_CHECKS = {
     "api": frozenset(("application", "image", "java", "frontend", "security")),
     "backend": frozenset(("application", "image", "java", "security")),
+    "deployment": ALL_CHECKS,
     "documentation": frozenset(),
     "fixture": frozenset(("application", "image", "java", "sdk", "security")),
     "frontend": frozenset(("application", "image", "frontend", "security")),
@@ -103,6 +105,9 @@ COMMANDS = {
             "-Ppackaged-acceptance",
             "verify",
         ),
+    ),
+    "deployment": (
+        ("deployment/scripts/run-contract-tests",),
     ),
     "image": (
         FRONTEND_INSTALL,
@@ -235,6 +240,12 @@ def category_for(path: str) -> str:
         return "documentation"
     if normalized.startswith("api/"):
         return "api"
+    if normalized.startswith(("deployment/", "tests/deployment/")) or normalized in {
+        "skaffold.yaml",
+        "scripts/deploy",
+        ".github/workflows/deployment-release.yml",
+    }:
+        return "deployment"
     if normalized.startswith(("backend/", "backend-deployment/")):
         return "backend"
     if normalized.startswith("frontend/"):

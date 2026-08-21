@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skywright-backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: SKYWRIGHT_DATABASE_MIGRATION_URL
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-production-database
+                  key: migrationUrl
+            - name: SKYWRIGHT_DATABASE_MIGRATION_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-production-database
+                  key: migrationUsername
+            - name: SKYWRIGHT_DATABASE_MIGRATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-production-database
+                  key: migrationPassword
+            - name: SKYWRIGHT_DATABASE_RUNTIME_URL
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-production-database
+                  key: runtimeUrl
+            - name: SKYWRIGHT_DATABASE_RUNTIME_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-production-database
+                  key: runtimeUsername
+            - name: SKYWRIGHT_DATABASE_RUNTIME_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-production-database
+                  key: runtimePassword

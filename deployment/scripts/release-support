@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""Build and verify immutable Skywright deployment bundle payloads."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import NoReturn
+
+
+SKAFFOLD_VERSION = "v2.24.0"
+ORAS_VERSION = "1.3.3"
+FILES = ("release.yaml", "build-artifacts.json", "release-metadata.json")
+VERSION_PATTERN = re.compile(
+    r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$"
+)
+IMAGE_PATTERN = re.compile(
+    r"^ghcr\.io/zorro909/skywright-backend@sha256:[0-9a-f]{64}$"
+)
+COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+
+
+def abort(message: str) -> NoReturn:
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def classify(version: str) -> bool:
+    match = VERSION_PATTERN.fullmatch(version)
+    if match is None:
+        abort(f"release version is not a canonical Skywright SemVer tag: {version!r}")
+    return match.group(4) is not None
+
+
+def digest(path: Path) -> str:
+    value = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            value.update(block)
+    return value.hexdigest()
+
+
+def read_json(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        abort(f"cannot read {path.name}: {error}")
+
+
+def validate_payload(directory: Path, allow_prerelease: bool) -> dict[str, object]:
+    actual = {path.name for path in directory.iterdir() if path.is_file()}
+    expected = {*FILES, "SHA256SUMS"}
+    if actual != expected:
+        abort(f"bundle layout mismatch: expected {sorted(expected)}, got {sorted(actual)}")
+    expected_checksums: dict[str, str] = {}
+    for line in (directory / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+        parts = line.split("  ", 1)
+        if len(parts) != 2 or parts[1] not in FILES:
+            abort("bundle checksum manifest has an invalid entry")
+        expected_checksums[parts[1]] = parts[0]
+    if set(expected_checksums) != set(FILES):
+        abort("bundle checksum manifest does not cover every payload file")
+    for filename, expected_digest in expected_checksums.items():
+        if digest(directory / filename) != expected_digest:
+            abort(f"checksum mismatch for {filename}")
+
+    metadata = read_json(directory / "release-metadata.json")
+    if not isinstance(metadata, dict) or metadata.get("schemaVersion") != 1:
+        abort("release metadata schema is unsupported")
+    version = metadata.get("version")
+    if not isinstance(version, str):
+        abort("release metadata has no version")
+    prerelease = classify(version)
+    if metadata.get("prerelease") is not prerelease:
+        abort("release metadata prerelease classification is inconsistent")
+    if prerelease and not allow_prerelease:
+        abort("prerelease bundles require --allow-prerelease")
+    required = {
+        "profile": "production",
+        "namespace": "skywright",
+        "hostname": "skywright.internal",
+        "skaffoldVersion": SKAFFOLD_VERSION,
+        "orasVersion": ORAS_VERSION,
+    }
+    for key, expected_value in required.items():
+        if metadata.get(key) != expected_value:
+            abort(f"release metadata {key} must be {expected_value!r}")
+    source_commit = metadata.get("sourceCommit")
+    if not isinstance(source_commit, str) or COMMIT_PATTERN.fullmatch(source_commit) is None:
+        abort("release metadata source commit is not a full lowercase Git object ID")
+    if metadata.get("workflow") != "deployment-release.yml":
+        abort("release metadata workflow is not the deployment release workflow")
+    run_id = metadata.get("runId")
+    if not isinstance(run_id, str) or not run_id.isdecimal():
+        abort("release metadata run ID is not numeric")
+    image = metadata.get("backendImage")
+    if not isinstance(image, str) or IMAGE_PATTERN.fullmatch(image) is None:
+        abort("release metadata backend image is not digest-pinned")
+    artifacts = read_json(directory / "build-artifacts.json")
+    if artifacts != {"builds": [{"imageName": "skywright-backend", "tag": image}]}:
+        abort("build artifacts do not identify the release backend image exactly")
+    manifest_images = re.findall(
+        r"^\s*(?:-\s*)?image:\s*([^\s#]+)\s*(?:#.*)?$",
+        (directory / "release.yaml").read_text(encoding="utf-8"),
+        flags=re.MULTILINE,
+    )
+    if manifest_images != [image]:
+        abort("release manifest does not identify exactly the release backend image")
+    return metadata
+
+
+def build_bundle(arguments: argparse.Namespace) -> None:
+    prerelease = classify(arguments.version)
+    if COMMIT_PATTERN.fullmatch(arguments.source_commit) is None:
+        abort("source commit must be a full lowercase Git object ID")
+    if IMAGE_PATTERN.fullmatch(arguments.backend_image) is None:
+        abort("backend image must use the production GHCR name and a sha256 digest")
+    output = arguments.output
+    if output.exists() and any(output.iterdir()):
+        abort(f"bundle output is not empty: {output}")
+    output.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(arguments.release_yaml, output / "release.yaml")
+    shutil.copyfile(arguments.build_artifacts, output / "build-artifacts.json")
+    metadata = {
+        "schemaVersion": 1,
+        "version": arguments.version,
+        "prerelease": prerelease,
+        "sourceCommit": arguments.source_commit,
+        "backendImage": arguments.backend_image,
+        "profile": "production",
+        "namespace": "skywright",
+        "hostname": "skywright.internal",
+        "skaffoldVersion": SKAFFOLD_VERSION,
+        "orasVersion": ORAS_VERSION,
+        "workflow": arguments.workflow,
+        "runId": arguments.run_id,
+    }
+    (output / "release-metadata.json").write_text(
+        json.dumps(metadata, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
+    (output / "SHA256SUMS").write_text(
+        "".join(f"{digest(output / filename)}  {filename}\n" for filename in FILES),
+        encoding="utf-8",
+    )
+    validate_payload(output, allow_prerelease=True)
+
+
+def run_oras(
+    arguments: list[str], *, directory: Path, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [os.environ.get("SKYWRIGHT_ORAS", "oras"), *arguments],
+        cwd=directory,
+        check=check,
+        capture_output=True,
+        text=True,
+    )
+
+
+def publish_bundle(arguments: argparse.Namespace) -> None:
+    metadata = validate_payload(arguments.directory, allow_prerelease=True)
+    if metadata["version"] != arguments.version:
+        abort("requested publication version does not match release metadata")
+    classification = "prerelease" if metadata["prerelease"] else "stable"
+    with tempfile.TemporaryDirectory(prefix="skywright-oci-layout-") as temporary:
+        layout = Path(temporary) / "layout"
+        run_oras(
+            [
+                "push",
+                "--oci-layout",
+                f"{layout}:{arguments.version}",
+                "--artifact-type",
+                "application/vnd.skywright.deployment.bundle.v1",
+                "--annotation",
+                f"org.opencontainers.image.version={arguments.version}",
+                "--annotation",
+                f"io.skywright.release.classification={classification}",
+                "release.yaml:application/vnd.skywright.deployment.manifest.v1+yaml",
+                "build-artifacts.json:application/vnd.skywright.skaffold.build-artifacts.v1+json",
+                "release-metadata.json:application/vnd.skywright.deployment.metadata.v1+json",
+                "SHA256SUMS:text/plain",
+            ],
+            directory=arguments.directory,
+        )
+        expected = run_oras(
+            ["resolve", "--oci-layout", f"{layout}:{arguments.version}"],
+            directory=arguments.directory,
+        ).stdout.strip()
+        remote = f"{arguments.repository}:{arguments.version}"
+        existing_result = run_oras(
+            ["resolve", remote], directory=arguments.directory, check=False
+        )
+        existing = existing_result.stdout.strip()
+        if existing_result.returncode == 0:
+            if existing != expected:
+                abort(
+                    f"conflicting content already exists for immutable {arguments.version}"
+                )
+        else:
+            run_oras(
+                ["cp", "--from-oci-layout", f"{layout}:{arguments.version}", remote],
+                directory=arguments.directory,
+            )
+        published = run_oras(
+            ["resolve", remote], directory=arguments.directory
+        ).stdout.strip()
+        if published != expected:
+            abort("published bundle digest differs from the staged OCI layout")
+    backend_digest = str(metadata["backendImage"]).split("@", 1)[1]
+    outputs = f"bundle_digest={published}\nbackend_digest={backend_digest}\n"
+    if arguments.github_output is not None:
+        with arguments.github_output.open("a", encoding="utf-8") as destination:
+            destination.write(outputs)
+    print(outputs, end="")
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser()
+    commands = result.add_subparsers(required=True)
+    version = commands.add_parser("classify-version")
+    version.add_argument("version")
+    version.set_defaults(function=lambda args: print("prerelease" if classify(args.version) else "stable"))
+    build = commands.add_parser("build-bundle")
+    build.add_argument("--release-yaml", type=Path, required=True)
+    build.add_argument("--build-artifacts", type=Path, required=True)
+    build.add_argument("--output", type=Path, required=True)
+    build.add_argument("--version", required=True)
+    build.add_argument("--source-commit", required=True)
+    build.add_argument("--backend-image", required=True)
+    build.add_argument("--workflow", required=True)
+    build.add_argument("--run-id", required=True)
+    build.set_defaults(function=build_bundle)
+    verify = commands.add_parser("verify-bundle")
+    verify.add_argument("--directory", type=Path, required=True)
+    verify.add_argument("--allow-prerelease", action="store_true")
+    verify.set_defaults(
+        function=lambda args: print(
+            json.dumps(validate_payload(args.directory, args.allow_prerelease))
+        )
+    )
+    publish = commands.add_parser("publish-bundle")
+    publish.add_argument("--directory", type=Path, required=True)
+    publish.add_argument("--repository", required=True)
+    publish.add_argument("--version", required=True)
+    publish.add_argument("--github-output", type=Path)
+    publish.set_defaults(function=publish_bundle)
+    return result
+
+
+if __name__ == "__main__":
+    parser_arguments = parser().parse_args()
+    parser_arguments.function(parser_arguments)
