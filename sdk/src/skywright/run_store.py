@@ -18,6 +18,7 @@ from skywright._run_store.implementation import (
     SerializedCheckpoint,
     TargetStorage,
 )
+from skywright._run_store.progress import ProgressRecord
 from skywright._run_store.recorder import RunStoreRecorder
 
 __all__ = (
@@ -28,6 +29,7 @@ __all__ = (
     "MultipartUpload",
     "OperationControl",
     "OperationMeasurement",
+    "ProgressRecord",
     "RunStoreCancelledError",
     "RunStoreConflictError",
     "RunStoreDeadlineError",

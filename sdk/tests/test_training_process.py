@@ -43,6 +43,10 @@ class TestDataset:
 class TestRecorder:
     def __init__(self):
         self.events = []
+        self.configuration = None
+
+    def configure_metrics(self, configuration, *, shutdown_grace_seconds):
+        self.configuration = configuration
 
     def publish_attempt(self, attempt):
         self.events.append(("attempt", attempt))
@@ -197,6 +201,7 @@ print(json.dumps({
     "checkpoint_state": result.final_checkpoint.state["counter"],
     "checkpoint_reference": result.report.latest_durable_checkpoint,
     "events": [event[0] for event in recorder.events],
+    "recorder_configuration": recorder.configuration,
     "metrics": [
         [observation.name, observation.step, observation.value]
         for observation in result.metric_observations
@@ -215,6 +220,7 @@ print(json.dumps({
         "checkpoint_state": {"value": 1},
         "checkpoint_reference": "checkpoint:1",
         "events": ["attempt", "step", "checkpoint", "confirmation", "report"],
+        "recorder_configuration": {"learning_rate": 0.01},
         "metrics": [["train/loss", 1, 1.5]],
     }
 
@@ -3553,6 +3559,172 @@ print(json.dumps({
         "cause": "training_project_failure",
         "message": "original project failure",
         "report_failure": "report store unavailable",
+    }
+
+
+def test_observability_failure_changes_nominal_cause_before_report() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import run_training_process
+
+
+class FailingObservabilityRecorder(TestRecorder):
+    def finalize_observability(self):
+        raise OSError("metric storage unavailable")
+
+
+recorder = FailingObservabilityRecorder()
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(("item",)),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=1,
+)
+published = [event[1] for event in recorder.events if event[0] == "report"]
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "published_cause": published[0].cause.value,
+    "failure": result.report.diagnostics["observability_finalization_failure"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "skywright_failure",
+        "published_cause": "skywright_failure",
+        "failure": {
+            "exception_type": "OSError",
+            "message": "metric storage unavailable",
+        },
+    }
+
+
+def test_observability_failure_does_not_replace_the_project_failure() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import run_training_process
+
+
+class FailingObservabilityRecorder(TestRecorder):
+    def finalize_observability(self):
+        raise OSError("metric storage unavailable")
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    raise LookupError("project failed")
+
+
+recorder = FailingObservabilityRecorder()
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(()),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=1,
+)
+published = [event[1] for event in recorder.events if event[0] == "report"]
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "published_cause": published[0].cause.value,
+    "project_failure": result.report.diagnostics["message"],
+    "metric_failure": result.report.diagnostics["observability_finalization_failure"]["message"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "training_project_failure",
+        "published_cause": "training_project_failure",
+        "project_failure": "project failed",
+        "metric_failure": "metric storage unavailable",
+    }
+
+
+def test_incomplete_observability_shutdown_suppresses_the_report() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import run_training_process
+from skywright._training_errors import ObservabilityShutdownIncomplete
+
+
+class StuckObservabilityRecorder(TestRecorder):
+    def finalize_observability(self):
+        raise ObservabilityShutdownIncomplete("writer still active")
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+
+
+recorder = StuckObservabilityRecorder()
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(("item",)),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=1,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "reports": len([event for event in recorder.events if event[0] == "report"]),
+    "failure": result.report.diagnostics["observability_finalization_failure"]["message"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "skywright_failure",
+        "reports": 0,
+        "failure": "writer still active",
     }
 
 

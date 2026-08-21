@@ -5,8 +5,15 @@ from dataclasses import replace
 from types import MappingProxyType
 
 from skywright._training_context import DefaultRunContext
-from skywright._training_errors import SkywrightFailure, TrainingContractViolation
-from skywright._training_protocols import TrainingProcessRecorder
+from skywright._training_errors import (
+    ObservabilityShutdownIncomplete,
+    SkywrightFailure,
+    TrainingContractViolation,
+)
+from skywright._training_protocols import (
+    TrainingProcessRecorder,
+    finalize_recorder_observability,
+)
 from skywright._training_types import (
     CheckpointSnapshot,
     ExecutionAttemptRecord,
@@ -251,6 +258,36 @@ def _result(
 def _publish_report(
     result: TrainingProcessResult, recorder: TrainingProcessRecorder
 ) -> TrainingProcessResult:
+    observability_stopped = True
+    try:
+        finalize_recorder_observability(recorder)
+    except Exception as failure:
+        observability_stopped = not isinstance(failure, ObservabilityShutdownIncomplete)
+        diagnostics = dict(result.report.diagnostics)
+        diagnostics["observability_finalization_failure"] = {
+            "exception_type": type(failure).__name__,
+            "message": str(failure),
+        }
+        preserves_cause = result.report.cause in (
+            ExecutionTerminationCause.CONTRACT_VIOLATION,
+            ExecutionTerminationCause.TRAINING_PROJECT_FAILURE,
+            ExecutionTerminationCause.SKYWRIGHT_FAILURE,
+        )
+        result = replace(
+            result,
+            outcome=TrainingProcessOutcome.FAILED,
+            report=replace(
+                result.report,
+                cause=(
+                    result.report.cause
+                    if preserves_cause
+                    else ExecutionTerminationCause.SKYWRIGHT_FAILURE
+                ),
+                diagnostics=MappingProxyType(diagnostics),
+            ),
+        )
+    if not observability_stopped:
+        return result
     try:
         recorder.publish_report(result.report)
         return result

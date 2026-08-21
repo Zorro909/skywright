@@ -7,4 +7,8 @@ public final class RunStoreIntegrityException extends RuntimeException {
 		super(message);
 	}
 
+	public RunStoreIntegrityException(String message, Throwable cause) {
+		super(message, cause);
+	}
+
 }

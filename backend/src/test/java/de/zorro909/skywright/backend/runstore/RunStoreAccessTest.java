@@ -52,6 +52,23 @@ class RunStoreAccessTest {
 	}
 
 	@Test
+	void readsAndValidatesTheCurrentProgressProjection() {
+		MemoryObjectStore objects = new MemoryObjectStore();
+		RunStoreProtocol protocol = new RunStoreProtocol("project", "run");
+		byte[] progress = """
+				{"currentStep":3,"latestDurableCheckpoint":null,"latestDurableStep":null,"runId":"run","schemaVersion":1,"writtenAt":"2026-08-22T12:34:56Z"}"""
+			.getBytes(StandardCharsets.UTF_8);
+		objects.put(protocol.progressKey(), progress, "application/json", "progress-record");
+
+		ProgressRecord record = new RunStoreAccess(protocol, objects).readProgress();
+
+		assertThat(record.runId()).isEqualTo("run");
+		assertThat(record.currentStep()).isEqualTo(3);
+		assertThat(record.latestDurableStep()).isNull();
+		assertThat(record.targetStep()).isNull();
+	}
+
+	@Test
 	void detectsDigestCorruptionBeforeServingOrPresigning() {
 		MemoryObjectStore objects = new MemoryObjectStore();
 		RunStoreProtocol protocol = new RunStoreProtocol("project", "run");

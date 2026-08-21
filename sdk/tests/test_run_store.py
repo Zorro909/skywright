@@ -7,13 +7,21 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+from tensorboard.backend.event_processing.event_file_loader import (
+    EventFileLoader,
+    RawEventFileLoader,
+)
 
 from skywright import (
     ArtifactRecord,
@@ -26,10 +34,12 @@ from skywright import (
     SampleRecord,
     TrainingContractViolation,
 )
+from skywright._training_errors import ObservabilityShutdownIncomplete
 from skywright.run_store import (
     CheckpointCodec,
     CheckpointReference,
     OperationControl,
+    ProgressRecord,
     RunStoreCancelledError,
     RunStoreProtocol,
     RunStoreReader,
@@ -43,13 +53,23 @@ class MemoryS3:
         self.objects: dict[str, tuple[bytes, dict[str, str], str]] = {}
         self.uploads: dict[str, dict] = {}
         self.fail_part: int | None = None
+        self.puts: list[str] = []
+        self.put_bodies: dict[str, list[bytes]] = {}
 
     def put_object(self, **request):
         key = request["Key"]
         body = request["Body"]
         if hasattr(body, "read"):
             body = body.read()
-        if request.get("IfNoneMatch") == "*" and key in self.objects:
+        current = self.objects.get(key)
+        current_etag = (
+            f'"{hashlib.md5(current[0], usedforsecurity=False).hexdigest()}"'
+            if current is not None
+            else None
+        )
+        if (request.get("IfNoneMatch") == "*" and current is not None) or (
+            "IfMatch" in request and request["IfMatch"] != current_etag
+        ):
             from botocore.exceptions import ClientError
 
             raise ClientError(
@@ -57,6 +77,8 @@ class MemoryS3:
                 "PutObject",
             )
         self.objects[key] = (body, request["Metadata"], request["ContentType"])
+        self.puts.append(key)
+        self.put_bodies.setdefault(key, []).append(body)
         return {}
 
     def get_object(self, **request):
@@ -68,6 +90,7 @@ class MemoryS3:
             "Metadata": metadata,
             "ContentLength": len(body),
             "ContentType": content_type,
+            "ETag": f'"{hashlib.md5(body, usedforsecurity=False).hexdigest()}"',
         }
 
     def list_objects_v2(self, **request):
@@ -204,6 +227,12 @@ def test_protocol_builds_portable_v1_object_identities() -> None:
     ).endswith(
         "samples/123e4567-e89b-12d3-a456-426614174000/0000000000000000007/%C3%A9%2Fe%CC%81"
     )
+    assert protocol.metric_segment_key("123e4567-e89b-12d3-a456-426614174000", 2) == (
+        "project-%CE%B1/run-1/v1/metrics/"
+        "123e4567-e89b-12d3-a456-426614174000/"
+        "events.out.tfevents.0000000000000000002.skywright"
+    )
+    assert protocol.progress_key() == "project-%CE%B1/run-1/v1/progress.json"
 
 
 def test_checkpoint_reference_round_trips_without_a_storage_location() -> None:
@@ -251,12 +280,57 @@ def test_python_accepts_the_shared_run_store_golden_corpus() -> None:
             == case["artifactKey"]
         )
         assert (
+            protocol.metric_segment_key(case["attempt"], case["step"])
+            == case["metricSegmentKey"]
+        )
+        assert protocol.progress_key() == case["progressKey"]
+        assert (
             str(CheckpointReference(case["step"], case["digest"]))
             == case["checkpointReference"]
         )
     for reference in corpus["invalidReferences"]:
         with pytest.raises(ValueError):
             CheckpointReference.parse(reference)
+    for case in corpus["progressRecords"]:
+        progress = ProgressRecord.decode(case["json"].encode())
+        assert progress.run_id == case["runId"]
+        assert progress.current_step == case["currentStep"]
+        assert progress.latest_durable_step == case["latestDurableStep"]
+        assert progress.latest_durable_checkpoint == case["latestDurableCheckpoint"]
+        assert progress.target_step == case["targetStep"]
+        assert progress.written_at == case["writtenAt"]
+    for invalid in corpus["invalidProgressRecords"]:
+        with pytest.raises(ValueError, match="RUN_STORE_INCOMPATIBLE_SCHEMA"):
+            ProgressRecord.decode(invalid.encode())
+    for invalid in corpus["invalidProgressStepRecords"]:
+        with pytest.raises(ValueError, match="RUN_STORE_MALFORMED_PROGRESS"):
+            ProgressRecord.decode(invalid.encode())
+
+
+def test_python_applies_shared_progress_integrity_metadata(tmp_path) -> None:
+    corpus = json.loads(
+        (Path(__file__).parents[2] / "protocol/run-store/v1/golden.json").read_text()
+    )
+    body = corpus["progressRecords"][0]["json"].encode()
+    key = RunStoreProtocol("project", "run-1").progress_key()
+    target = TargetStorage(
+        "storage", "http://storage.invalid", "runs", "us-east-1", "project", "run-1"
+    )
+    for metadata_case in corpus["progressIntegrityMetadata"]:
+        memory = MemoryS3()
+        metadata = {
+            "skywright-sha256": hashlib.sha256(body).hexdigest(),
+            "skywright-size": str(len(body)),
+            **metadata_case["metadata"],
+        }
+        memory.objects[key] = (body, metadata, "application/json")
+        if metadata_case["valid"]:
+            assert (
+                RunStoreReader(target, client=memory).read_progress().run_id == "run-1"
+            )
+        else:
+            with pytest.raises(Exception, match="RUN_STORE_METADATA_MISMATCH"):
+                RunStoreReader(target, client=memory).read_progress()
 
 
 def test_checkpoint_codec_round_trips_the_portable_value_tree(tmp_path) -> None:
@@ -382,6 +456,613 @@ def test_recorder_publishes_attempt_outputs_checkpoint_and_report(tmp_path) -> N
         value[1]["skywright-size"] == str(len(value[0]))
         for value in memory.objects.values()
     )
+
+
+def test_recorder_persists_tensorboard_metrics_then_progress_then_report(
+    tmp_path,
+) -> None:
+    memory = MemoryS3()
+    store = recorder(
+        memory,
+        tmp_path,
+        metric_staging_directory=tmp_path,
+        metric_wall_clock=lambda: 1_700_000_000.25,
+    )
+    store.configure_metrics(
+        {
+            "metrics": {"flushInterval": 10, "segmentRoll": 1000},
+            "project": {"nested": [1, None, {"rate": 0.125}]},
+        }
+    )
+    attempt = ExecutionAttemptRecord(
+        "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+    )
+    store.publish_attempt(attempt)
+    staged = list(tmp_path.glob("skywright-metrics-*"))
+    assert len(staged) == 1
+    assert staged[0].stat().st_mode & 0o777 == 0o600
+    store.publish_step(
+        3,
+        DatasetCursor(item_offset=3),
+        (
+            MetricObservation("loss", 3, 1.5),
+            MetricObservation("skywright/system/throughput", 3, 8),
+        ),
+        None,
+        None,
+    )
+    store.publish_wall_time(MetricObservation("skywright/system/memory_used", 3, 42))
+    report = ExecutionTerminationReport(
+        1,
+        attempt.attempt_id,
+        "run",
+        "project@digest",
+        ExecutionTerminationCause.COMPLETED,
+        3,
+        None,
+        None,
+        {},
+    )
+
+    store.finalize_observability()
+    store.publish_report(report)
+    assert list(tmp_path.glob("skywright-metrics-*")) == []
+
+    segment_key = store.protocol.metric_segment_key(attempt.attempt_id, 0)
+    progress_key = store.protocol.progress_key()
+    report_key = store.protocol.attempt_report_key(attempt.attempt_id)
+    assert memory.puts.index(segment_key) < memory.puts.index(progress_key)
+    assert memory.puts.index(progress_key) < memory.puts.index(report_key)
+    progress = json.loads(memory.objects[progress_key][0])
+    assert progress == {
+        "schemaVersion": 1,
+        "runId": "run",
+        "currentStep": 3,
+        "latestDurableStep": None,
+        "latestDurableCheckpoint": None,
+        "writtenAt": "2023-11-14T22:13:20.250000Z",
+    }
+    read_progress = RunStoreReader(store.target, client=memory).read_progress()
+    assert read_progress.current_step == 3
+    assert read_progress.target_step is None
+
+    event_path = tmp_path / "published.tfevents"
+    event_path.write_bytes(memory.objects[segment_key][0])
+    events = list(EventFileLoader(str(event_path)).Load())
+    assert events[0].file_version == "brain.Event:2"
+    summaries = {
+        value.tag: (event.step, event.wall_time, value)
+        for event in events
+        for value in event.summary.value
+    }
+    assert summaries["loss"][:2] == (3, 1_700_000_000.25)
+    assert summaries["loss"][2].tensor.float_val == [1.5]
+    assert summaries["skywright/system/throughput"][2].tensor.float_val == [8]
+    assert summaries["skywright/system/memory_used"][:2] == (
+        3,
+        1_700_000_000.25,
+    )
+    configuration = summaries["skywright/run_configuration"][2]
+    assert configuration.tensor.string_val == [
+        b'{"metrics":{"flushInterval":10,"segmentRoll":1000},'
+        b'"project":{"nested":[1,null,{"rate":0.125}]}}'
+    ]
+
+
+def test_progress_write_time_is_captured_after_segment_publication(tmp_path) -> None:
+    class Clock:
+        value = 100.0
+
+        def __call__(self) -> float:
+            return self.value
+
+    clock = Clock()
+
+    class AdvancingMemory(MemoryS3):
+        def put_object(self, **request):
+            result = super().put_object(**request)
+            if "/metrics/" in request["Key"]:
+                clock.value = 200.0
+            return result
+
+    memory = AdvancingMemory()
+    store = recorder(
+        memory,
+        tmp_path,
+        metric_staging_directory=tmp_path,
+        metric_wall_clock=clock,
+    )
+    store.configure_metrics({"metrics": {"flushInterval": 10, "segmentRoll": 1000}})
+    attempt = ExecutionAttemptRecord(
+        "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+    )
+    store.publish_attempt(attempt)
+    store.publish_step(
+        1,
+        DatasetCursor(item_offset=1),
+        (MetricObservation("loss", 1, 1),),
+        None,
+        None,
+    )
+
+    store.finalize_observability()
+
+    progress = json.loads(memory.objects[store.protocol.progress_key()][0])
+    assert progress["writtenAt"] == "1970-01-01T00:03:20.000000Z"
+
+
+def test_metric_segments_roll_as_prefix_extensions_and_resume_with_purge(
+    tmp_path,
+) -> None:
+    memory = MemoryS3()
+    first = recorder(
+        memory,
+        tmp_path,
+        metric_staging_directory=tmp_path,
+        metric_wall_clock=lambda: 100.0,
+    )
+    first.configure_metrics(
+        {"metrics": {"flushInterval": 10, "segmentRoll": 2}, "value": 1}
+    )
+    first_attempt = ExecutionAttemptRecord(
+        "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+    )
+    first.publish_attempt(first_attempt)
+    first.publish_step(
+        3,
+        DatasetCursor(item_offset=3),
+        tuple(MetricObservation("curve", 3, index) for index in range(3)),
+        None,
+        None,
+    )
+    checkpoint = "skywright-checkpoint:v1:2:sha256:" + "a" * 64
+    first.confirm_checkpoint(2, checkpoint)
+    first.publish_step(
+        4,
+        DatasetCursor(item_offset=4),
+        (MetricObservation("curve", 4, 3),),
+        2,
+        checkpoint,
+    )
+    first.finalize_observability()
+
+    first_key = first.protocol.metric_segment_key(first_attempt.attempt_id, 0)
+    second_key = first.protocol.metric_segment_key(first_attempt.attempt_id, 1)
+    assert len(memory.put_bodies[first_key]) == 1
+    assert len(memory.put_bodies[second_key]) == 2
+    assert memory.put_bodies[second_key][1].startswith(memory.put_bodies[second_key][0])
+    live_path = tmp_path / "live.tfevents"
+    live_path.write_bytes(memory.put_bodies[second_key][0])
+    live_reader = RawEventFileLoader(str(live_path), detect_file_replacement=True)
+    assert len(list(live_reader.Load())) == 2
+    replacement = tmp_path / "replacement.tfevents"
+    replacement.write_bytes(memory.put_bodies[second_key][1])
+    os.replace(replacement, live_path)
+    assert len(list(live_reader.Load())) == 1
+    assert first_key in memory.objects
+    assert second_key in memory.objects
+
+    resumed = recorder(
+        memory,
+        tmp_path,
+        metric_staging_directory=tmp_path,
+        metric_wall_clock=lambda: 200.0,
+    )
+    resumed.configure_metrics(
+        {"metrics": {"flushInterval": 20, "segmentRoll": 5}, "value": 2}
+    )
+    resumed_attempt = ExecutionAttemptRecord(
+        "123e4567-e89b-12d3-a456-426614174001",
+        "run",
+        "project@digest",
+        2,
+        "skywright-checkpoint:v1:2:sha256:" + "a" * 64,
+    )
+    resumed.publish_attempt(resumed_attempt)
+    resumed.publish_step(
+        3,
+        DatasetCursor(item_offset=3),
+        (MetricObservation("curve", 3, 9),),
+        2,
+        resumed_attempt.seed_checkpoint_reference,
+    )
+    resumed.finalize_observability()
+
+    resumed_key = resumed.protocol.metric_segment_key(resumed_attempt.attempt_id, 0)
+    event_path = tmp_path / "resumed.tfevents"
+    event_path.write_bytes(memory.objects[resumed_key][0])
+    events = list(EventFileLoader(str(event_path)).Load())
+    assert [
+        (event.step, event.session_log.status)
+        for event in events
+        if event.HasField("session_log")
+    ] == [(2, 1)]
+    assert all(
+        value.tag != "skywright/run_configuration"
+        for event in events
+        for value in event.summary.value
+    )
+    combined = tmp_path / "combined"
+    combined.mkdir()
+    for index, key in enumerate((first_key, second_key)):
+        combined.joinpath(f"events.out.tfevents.0000000100.first.{index}").write_bytes(
+            memory.objects[key][0]
+        )
+    combined.joinpath("events.out.tfevents.0000000200.resumed.0").write_bytes(
+        memory.objects[resumed_key][0]
+    )
+    accumulator = EventAccumulator(str(combined), purge_orphaned_data=True)
+    accumulator.Reload()
+    assert [(event.step, event.value) for event in accumulator.Scalars("curve")] == [
+        (3, 9.0)
+    ]
+
+
+def test_configured_periodic_flush_publishes_a_readable_prefix(tmp_path) -> None:
+    class ControlledWait:
+        def __init__(self) -> None:
+            self.waiting = threading.Event()
+            self.flush_now = threading.Event()
+            self.calls = 0
+
+        def __call__(self, stop: threading.Event, interval: float) -> bool:
+            assert interval == 7
+            self.calls += 1
+            if self.calls == 1:
+                self.waiting.set()
+                self.flush_now.wait(timeout=2)
+                return False
+            stop.wait(timeout=2)
+            return True
+
+    wait = ControlledWait()
+    memory = MemoryS3()
+    store = recorder(
+        memory,
+        tmp_path,
+        metric_staging_directory=tmp_path,
+        metric_periodic_wait=wait,
+    )
+    store.configure_metrics({"metrics": {"flushInterval": 7, "segmentRoll": 1000}})
+    attempt = ExecutionAttemptRecord(
+        "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+    )
+    store.publish_attempt(attempt)
+    store.publish_step(
+        1,
+        DatasetCursor(item_offset=1),
+        (MetricObservation("loss", 1, 2),),
+        None,
+        None,
+    )
+    assert wait.waiting.wait(timeout=2)
+    key = store.protocol.metric_segment_key(attempt.attempt_id, 0)
+    assert key not in memory.objects
+
+    wait.flush_now.set()
+    deadline = time.monotonic() + 2
+    while key not in memory.objects and time.monotonic() < deadline:
+        time.sleep(0.001)
+
+    assert key in memory.objects
+    store.finalize_observability()
+
+
+def test_metric_publication_reconciles_a_lost_success_response(tmp_path) -> None:
+    class LostResponseMemory(MemoryS3):
+        def __init__(self) -> None:
+            super().__init__()
+            self.lost = False
+
+        def put_object(self, **request):
+            response = super().put_object(**request)
+            if "/metrics/" in request["Key"] and not self.lost:
+                self.lost = True
+                raise OSError("response lost after storage committed the object")
+            return response
+
+    memory = LostResponseMemory()
+    store = recorder(memory, tmp_path, metric_staging_directory=tmp_path)
+    store.configure_metrics({"metrics": {"flushInterval": 10, "segmentRoll": 1000}})
+    attempt = ExecutionAttemptRecord(
+        "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+    )
+    store.publish_attempt(attempt)
+    store.publish_step(
+        1,
+        DatasetCursor(item_offset=1),
+        (MetricObservation("loss", 1, 1),),
+        None,
+        None,
+    )
+
+    store.finalize_observability()
+
+    assert memory.lost
+    assert store.protocol.metric_segment_key(attempt.attempt_id, 0) in memory.objects
+
+
+def test_first_metric_flush_accepts_the_s3_missing_object_response(tmp_path) -> None:
+    class S3MissingMemory(MemoryS3):
+        def get_object(self, **request):
+            if request["Key"] not in self.objects:
+                from botocore.exceptions import ClientError
+
+                raise ClientError(
+                    {
+                        "Error": {"Code": "NoSuchKey"},
+                        "ResponseMetadata": {"HTTPStatusCode": 404},
+                    },
+                    "GetObject",
+                )
+            return super().get_object(**request)
+
+    memory = S3MissingMemory()
+    store = recorder(memory, tmp_path, metric_staging_directory=tmp_path)
+    store.configure_metrics({"metrics": {"flushInterval": 10, "segmentRoll": 1000}})
+    attempt = ExecutionAttemptRecord(
+        "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+    )
+    store.publish_attempt(attempt)
+    store.publish_step(
+        1,
+        DatasetCursor(item_offset=1),
+        (MetricObservation("loss", 1, 1),),
+        None,
+        None,
+    )
+
+    store.finalize_observability()
+
+    assert store.protocol.metric_segment_key(attempt.attempt_id, 0) in memory.objects
+
+
+def test_metric_publication_rejects_a_non_prefix_replacement(tmp_path) -> None:
+    memory = MemoryS3()
+    store = recorder(memory, tmp_path, metric_staging_directory=tmp_path)
+    store.configure_metrics({"metrics": {"flushInterval": 10, "segmentRoll": 1000}})
+    attempt = ExecutionAttemptRecord(
+        "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+    )
+    store.publish_attempt(attempt)
+    store.publish_step(
+        1,
+        DatasetCursor(item_offset=1),
+        (MetricObservation("loss", 1, 1),),
+        None,
+        None,
+    )
+    checkpoint = "skywright-checkpoint:v1:1:sha256:" + "a" * 64
+    store.confirm_checkpoint(1, checkpoint)
+    key = store.protocol.metric_segment_key(attempt.attempt_id, 0)
+    _, metadata, content_type = memory.objects[key]
+    conflicting = b"valid metadata, conflicting bytes"
+    memory.objects[key] = (
+        conflicting,
+        {
+            **metadata,
+            "skywright-size": str(len(conflicting)),
+            "skywright-sha256": hashlib.sha256(conflicting).hexdigest(),
+        },
+        content_type,
+    )
+    store.publish_step(
+        2,
+        DatasetCursor(item_offset=2),
+        (MetricObservation("loss", 2, 0.5),),
+        1,
+        checkpoint,
+    )
+
+    with pytest.raises(RuntimeError, match="changed concurrently"):
+        store.finalize_observability()
+
+
+def test_background_metric_failure_is_latched_for_the_next_interaction(
+    tmp_path,
+) -> None:
+    failed = threading.Event()
+    flush_now = threading.Event()
+
+    class FailingMemory(MemoryS3):
+        def put_object(self, **request):
+            if "/metrics/" in request["Key"]:
+                failed.set()
+                raise RuntimeError("metric write failed")
+            return super().put_object(**request)
+
+    class ControlledWait:
+        def __init__(self) -> None:
+            self.first = True
+
+        def __call__(self, stop: threading.Event, interval: float) -> bool:
+            if self.first:
+                self.first = False
+                flush_now.wait(timeout=2)
+                return False
+            stop.wait(timeout=2)
+            return True
+
+    memory = FailingMemory()
+    store = recorder(
+        memory,
+        tmp_path,
+        metric_staging_directory=tmp_path,
+        metric_periodic_wait=ControlledWait(),
+    )
+    store.configure_metrics({"metrics": {"flushInterval": 1, "segmentRoll": 1000}})
+    store.publish_attempt(
+        ExecutionAttemptRecord(
+            "123e4567-e89b-12d3-a456-426614174000",
+            "run",
+            "project@digest",
+            None,
+        )
+    )
+    store.publish_step(
+        1,
+        DatasetCursor(item_offset=1),
+        (MetricObservation("loss", 1, 1),),
+        None,
+        None,
+    )
+    flush_now.set()
+    assert failed.wait(timeout=2)
+
+    with pytest.raises(RuntimeError, match="metric write failed"):
+        store.publish_wall_time(MetricObservation("memory", 1, 1))
+    with pytest.raises(RuntimeError, match="metric write failed"):
+        store.finalize_observability()
+    assert list(tmp_path.glob("skywright-metrics-*")) == []
+
+
+def test_periodic_upload_does_not_block_step_acceptance(tmp_path) -> None:
+    flush_now = threading.Event()
+    upload_started = threading.Event()
+    release_upload = threading.Event()
+
+    class BlockingMemory(MemoryS3):
+        def put_object(self, **request):
+            if "/metrics/" in request["Key"]:
+                upload_started.set()
+                assert release_upload.wait(timeout=2)
+            return super().put_object(**request)
+
+    class ControlledWait:
+        def __init__(self) -> None:
+            self.first = True
+
+        def __call__(self, stop: threading.Event, interval: float) -> bool:
+            if self.first:
+                self.first = False
+                flush_now.wait(timeout=2)
+                return False
+            stop.wait(timeout=2)
+            return True
+
+    memory = BlockingMemory()
+    store = recorder(
+        memory,
+        tmp_path,
+        metric_staging_directory=tmp_path,
+        metric_periodic_wait=ControlledWait(),
+    )
+    store.configure_metrics({"metrics": {"flushInterval": 1, "segmentRoll": 1000}})
+    store.publish_attempt(
+        ExecutionAttemptRecord(
+            "123e4567-e89b-12d3-a456-426614174000",
+            "run",
+            "project@digest",
+            None,
+        )
+    )
+    store.publish_step(
+        1,
+        DatasetCursor(item_offset=1),
+        (MetricObservation("loss", 1, 1),),
+        None,
+        None,
+    )
+    flush_now.set()
+    assert upload_started.wait(timeout=2)
+    accepted = threading.Event()
+
+    def accept_next_step() -> None:
+        store.publish_step(
+            2,
+            DatasetCursor(item_offset=2),
+            (MetricObservation("loss", 2, 0.5),),
+            None,
+            None,
+        )
+        accepted.set()
+
+    acceptance = threading.Thread(target=accept_next_step)
+    acceptance.start()
+    try:
+        assert accepted.wait(timeout=0.2)
+    finally:
+        release_upload.set()
+        acceptance.join(timeout=2)
+    store.finalize_observability()
+
+
+def test_observability_finalization_respects_the_shutdown_grace(tmp_path) -> None:
+    flush_now = threading.Event()
+    upload_started = threading.Event()
+    release_upload = threading.Event()
+
+    class BlockingMemory(MemoryS3):
+        def put_object(self, **request):
+            if "/metrics/" in request["Key"]:
+                upload_started.set()
+                release_upload.wait(timeout=2)
+            return super().put_object(**request)
+
+    class ControlledWait:
+        first = True
+
+        def __call__(self, stop: threading.Event, interval: float) -> bool:
+            if not self.first:
+                return stop.wait(timeout=2)
+            self.first = False
+            flush_now.wait(timeout=2)
+            return False
+
+    memory = BlockingMemory()
+    store = recorder(
+        memory,
+        tmp_path,
+        metric_staging_directory=tmp_path,
+        metric_periodic_wait=ControlledWait(),
+    )
+    store.configure_metrics(
+        {"metrics": {"flushInterval": 1, "segmentRoll": 1000}},
+        shutdown_grace_seconds=0.05,
+    )
+    store.publish_attempt(
+        ExecutionAttemptRecord(
+            "123e4567-e89b-12d3-a456-426614174000",
+            "run",
+            "project@digest",
+            None,
+        )
+    )
+    store.publish_step(
+        1,
+        DatasetCursor(item_offset=1),
+        (MetricObservation("loss", 1, 1),),
+        None,
+        None,
+    )
+    flush_now.set()
+    assert upload_started.wait(timeout=2)
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(
+            ObservabilityShutdownIncomplete, match="shutdown grace deadline"
+        ):
+            store.finalize_observability()
+        assert time.monotonic() - started < 0.5
+        report = ExecutionTerminationReport(
+            1,
+            "123e4567-e89b-12d3-a456-426614174000",
+            "run",
+            "project@digest",
+            ExecutionTerminationCause.COMPLETED,
+            1,
+            None,
+            None,
+            {},
+        )
+        with pytest.raises(ObservabilityShutdownIncomplete):
+            store.publish_report(report)
+        assert (
+            store.protocol.attempt_report_key(report.attempt_id) not in memory.objects
+        )
+    finally:
+        release_upload.set()
 
 
 def test_recorder_reconciles_identical_retries_and_rejects_conflicts(tmp_path) -> None:

@@ -12,6 +12,9 @@
 - Adds Project Configuration Contract compilation and deterministic Run Configuration resolution,
   the `skywright-config` project-CI command, and the shared Java/Python conformance corpus.
 - Adds Project Metric Contract publication through the `skywright-metrics` command.
+- Persists committed project and System Metrics as attempt-scoped TensorBoard segments in the Run
+  Store, with periodic prefix-safe publication, recovery purge markers, canonical configuration
+  export, and a validated current Progress Record.
 
 ## 0.1.0
 

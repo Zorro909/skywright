@@ -40,13 +40,17 @@ assert metadata("skywright").get_all("Requires-Dist") == [
     "boto3<2,>=1.40",
     "jsonschema[format]<5,>=4.25",
     "numpy<3,>=2.2",
+    "protobuf==7.36.0",
     "safetensors<1,>=0.6",
+    "tensorboard==2.21.0",
 ]
 assert files(skywright).joinpath("py.typed").is_file()
 assert importlib.util.find_spec("boto3") is None
 assert importlib.util.find_spec("jsonschema") is None
 assert importlib.util.find_spec("numpy") is None
+assert importlib.util.find_spec("google") is None
 assert importlib.util.find_spec("safetensors") is None
+assert importlib.util.find_spec("tensorboard") is None
 assert importlib.util.find_spec("torch") is None
 print(skywright.__version__)
 """
@@ -60,6 +64,60 @@ print(skywright.__version__)
     )
 
     assert completed.stdout == f"{version('skywright')}\n"
+
+
+def test_installed_wheel_ships_tensorboard_event_encoding(
+    direct_wheel_path: Path,
+    tmp_path: Path,
+    isolated_process_environment: dict[str, str],
+) -> None:
+    environment = tmp_path / "metric-environment"
+    subprocess.run(
+        [sys.executable, "-m", "venv", environment],
+        check=True,
+        env=isolated_process_environment,
+    )
+    subprocess.run(
+        [
+            environment / "bin" / "python",
+            "-m",
+            "pip",
+            "--disable-pip-version-check",
+            "install",
+            direct_wheel_path,
+        ],
+        check=True,
+        env=isolated_process_environment,
+    )
+    check = """
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from tensorboard.backend.event_processing.event_file_loader import EventFileLoader
+
+from skywright._run_store.metric_events import MetricSegment
+from skywright import MetricObservation
+
+with TemporaryDirectory() as directory:
+    segment = MetricSegment(
+        wall_time=1.0,
+        staging_directory=Path(directory),
+        configuration='{"nested":[1,null]}',
+    )
+    segment.append(MetricObservation("loss", 1, 0.5), 2.0)
+    published = Path(directory) / "published.tfevents"
+    published.write_bytes(segment.bytes())
+    segment.close()
+    events = list(EventFileLoader(str(published)).Load())
+    assert events[0].file_version == "brain.Event:2"
+    assert any(value.tag == "loss" for event in events for value in event.summary.value)
+"""
+    subprocess.run(
+        [environment / "bin" / "python", "-I", "-c", check],
+        check=True,
+        cwd=tmp_path,
+        env=isolated_process_environment,
+    )
 
 
 def test_installed_package_is_complete_for_a_strict_typed_consumer(

@@ -7,6 +7,10 @@ class CheckpointPublicationCancelled(Exception):
     """Expected end of an in-flight publication during non-durable shutdown."""
 
 
+class ObservabilityShutdownIncomplete(TimeoutError):
+    """Attempt-owned observability work did not stop before its deadline."""
+
+
 class CooperativeStop(BaseException):
     def __init__(
         self,
