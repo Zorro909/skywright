@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Run Skywright's versioned deployment workflows."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+
+REPOSITORY = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPOSITORY / "deployment"))
+
+from skywright_deployment.cli import main  # noqa: E402
+
+
+if __name__ == "__main__":
+    main()

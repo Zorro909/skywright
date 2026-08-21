@@ -171,6 +171,19 @@ commands.
 To build and exercise that exact Maven image through its production runtime boundary, run
 `scripts/quality run image`. CI scans the same local image but does not publish it.
 
+## Run or deploy Skywright
+
+The versioned deployment entry point uses Skaffold 2.24.0 with an existing rootless-Podman kind
+cluster for local work:
+
+```bash
+scripts/deploy local --context kind-kind-cluster
+```
+
+Local reset, branch following, production prerequisites, verified Deployment Bundle apply and
+rollback, and the real Podman-kind system check are documented in
+[`deployment/README.md`](deployment/README.md).
+
 ## Remote debugging
 
 Start the local application with JDWP listening on port 5005, then attach a Java debugger to

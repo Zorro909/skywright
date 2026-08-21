@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       application: ${{ steps.plan.outputs.application }}
+      deployment: ${{ steps.plan.outputs.deployment }}
       plan: ${{ steps.plan.outputs.plan }}
       frontend: ${{ steps.plan.outputs.frontend }}
       image: ${{ steps.plan.outputs.image }}
@@ -73,6 +74,29 @@ jobs:
           name: quality-source-identity
           path: quality-metadata.json
           if-no-files-found: error
+          retention-days: 90
+
+  deployment:
+    name: Deployment contracts
+    needs: plan
+    if: needs.plan.outputs.deployment == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Run deployment command and render tests
+        run: scripts/quality run deployment 2>&1 | tee deployment-contracts.log
+      - name: Retain deployment test diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: deployment-reports
+          path: |
+            deployment-contracts.log
+            target/test-results/deployment.xml
+          if-no-files-found: ignore
           retention-days: 90
 
   java:
@@ -469,6 +493,7 @@ jobs:
     needs:
       - plan
       - application
+      - deployment
       - java
       - frontend
       - image
@@ -491,6 +516,7 @@ jobs:
         if: needs.plan.result == 'success'
         env:
           APPLICATION_RESULT: ${{ needs.application.result }}
+          DEPLOYMENT_RESULT: ${{ needs.deployment.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           IMAGE_RESULT: ${{ needs.image.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
@@ -502,6 +528,7 @@ jobs:
         run: |
           scripts/quality aggregate \
             --result "application=$APPLICATION_RESULT" \
+            --result "deployment=$DEPLOYMENT_RESULT" \
             --plan "$PLAN" \
             --result "frontend=$FRONTEND_RESULT" \
             --result "image=$IMAGE_RESULT" \

@@ -1,0 +1,238 @@
+name: Deployment release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Canonical vMAJOR.MINOR.PATCH release tag
+        required: true
+        type: string
+      release_run_id:
+        description: Original run ID when repairing a partial publication
+        required: false
+        type: string
+
+concurrency:
+  group: deployment-release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  qualify-main:
+    name: Build main deployment image
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the tested source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Set up GraalVM Community
+        uses: ./.github/actions/setup-java
+      - name: Set up frontend prerequisites
+        uses: ./.github/actions/setup-frontend
+        with:
+          install-browser: false
+      - name: Install pinned Skaffold
+        env:
+          SKAFFOLD_SHA256: 702344081860a587c57937cd55dfa2e70f124c05d6fb845319832ee23fd144a8
+        run: |
+          install_dir="$RUNNER_TEMP/skywright-main-tools"
+          mkdir --parents "$install_dir"
+          curl --fail --location --silent --show-error \
+            --output "$install_dir/skaffold" \
+            https://storage.googleapis.com/skaffold/releases/v2.24.0/skaffold-linux-amd64
+          echo "$SKAFFOLD_SHA256  $install_dir/skaffold" | sha256sum --check
+          chmod +x "$install_dir/skaffold"
+          echo "$install_dir" >> "$GITHUB_PATH"
+      - name: Build and test through the deployment image contract
+        run: skaffold build --profile local-kind --tag "$GITHUB_SHA" 2>&1 | tee deployment-image-build.log
+      - name: Retain main deployment build diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: main-deployment-build-${{ github.sha }}
+          path: |
+            deployment-image-build.log
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+          if-no-files-found: ignore
+          retention-days: 90
+
+  publish:
+    name: Publish immutable deployment bundle
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      backend_digest: ${{ steps.publish.outputs.backend_digest }}
+      bundle_digest: ${{ steps.publish.outputs.bundle_digest }}
+    steps:
+      - name: Check out the release source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Set up GraalVM Community
+        uses: ./.github/actions/setup-java
+      - name: Set up frontend prerequisites
+        uses: ./.github/actions/setup-frontend
+        with:
+          install-browser: false
+      - name: Install pinned release tools
+        env:
+          SKAFFOLD_SHA256: 702344081860a587c57937cd55dfa2e70f124c05d6fb845319832ee23fd144a8
+          ORAS_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59
+        run: |
+          install_dir="$RUNNER_TEMP/skywright-release-tools"
+          mkdir --parents "$install_dir"
+          curl --fail --location --silent --show-error \
+            --output "$install_dir/skaffold" \
+            https://storage.googleapis.com/skaffold/releases/v2.24.0/skaffold-linux-amd64
+          echo "$SKAFFOLD_SHA256  $install_dir/skaffold" | sha256sum --check
+          chmod +x "$install_dir/skaffold"
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/oras.tar.gz" \
+            https://github.com/oras-project/oras/releases/download/v1.3.3/oras_1.3.3_linux_amd64.tar.gz
+          echo "$ORAS_SHA256  $RUNNER_TEMP/oras.tar.gz" | sha256sum --check
+          tar --extract --gzip --file "$RUNNER_TEMP/oras.tar.gz" --directory "$install_dir" oras
+          echo "$install_dir" >> "$GITHUB_PATH"
+      - name: Validate version and source ancestry
+        id: release
+        env:
+          REQUESTED_VERSION: ${{ inputs.version || github.ref_name }}
+          REQUESTED_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          classification="$(deployment/scripts/release-support classify-version "$REQUESTED_VERSION")"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          scripts/quality identity \
+            --event tag \
+            --tested-revision "$GITHUB_SHA" \
+            --tag-commit "$GITHUB_SHA" \
+            --format json \
+            --output deployment-quality-metadata.json
+          if [[ "$GITHUB_EVENT_NAME" == push && "$REQUESTED_VERSION" != "$GITHUB_REF_NAME" ]]; then
+            echo "The release version does not match the pushed tag." >&2
+            exit 1
+          fi
+          echo "version=$REQUESTED_VERSION" >> "$GITHUB_OUTPUT"
+          echo "classification=$classification" >> "$GITHUB_OUTPUT"
+          echo "release_run_id=${REQUESTED_RUN_ID:-$GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+      - name: Require the successful main quality gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          conclusion="$(gh run list \
+            --workflow quality.yml \
+            --commit "$GITHUB_SHA" \
+            --event push \
+            --status completed \
+            --limit 20 \
+            --json conclusion \
+            --jq '.[0].conclusion // ""')"
+          if [[ "$conclusion" != success ]]; then
+            echo "The release commit has no successful main Repository Quality run." >&2
+            exit 1
+          fi
+      - name: Authenticate to GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Build, test, and identify the backend image
+        env:
+          BACKEND_TAG: ghcr.io/zorro909/skywright-backend:${{ github.sha }}
+        run: |
+          if backend_digest="$(oras resolve "$BACKEND_TAG" 2>/dev/null)"; then
+            docker pull "$BACKEND_TAG"
+            existing_revision="$(docker image inspect \
+              --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+              "$BACKEND_TAG")"
+            if [[ "$existing_revision" != "$GITHUB_SHA" ]]; then
+              echo "The existing backend image tag does not identify this source commit." >&2
+              exit 1
+            fi
+            jq --null-input \
+              --arg tag "ghcr.io/zorro909/skywright-backend@$backend_digest" \
+              '{builds:[{imageName:"skywright-backend",tag:$tag}]}' \
+              > build-artifacts.json
+            scripts/quality run image --frontend-dependencies-ready
+          else
+            skaffold build \
+              --profile production \
+              --default-repo ghcr.io/zorro909 \
+              --tag "$GITHUB_SHA" \
+              --file-output build-artifacts.json
+          fi
+      - name: Render the digest-pinned production release
+        run: |
+          skaffold render \
+            --profile production \
+            --build-artifacts build-artifacts.json \
+            --output release.yaml
+          backend_image="$(jq --raw-output '.builds[0].tag' build-artifacts.json)"
+          case "$backend_image" in
+            ghcr.io/zorro909/skywright-backend@sha256:*) ;;
+            *) echo "Skaffold did not record a digest-pinned backend image." >&2; exit 1 ;;
+          esac
+      - name: Build the Deployment Bundle payload
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_RUN_ID: ${{ steps.release.outputs.release_run_id }}
+        run: |
+          deployment/scripts/release-support build-bundle \
+            --release-yaml release.yaml \
+            --build-artifacts build-artifacts.json \
+            --output deployment-bundle \
+            --version "$VERSION" \
+            --source-commit "$GITHUB_SHA" \
+            --backend-image "$(jq --raw-output '.builds[0].tag' build-artifacts.json)" \
+            --workflow deployment-release.yml \
+            --run-id "$RELEASE_RUN_ID"
+      - name: Publish or recover the immutable bundle
+        id: publish
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          deployment/scripts/release-support publish-bundle \
+            --directory deployment-bundle \
+            --repository ghcr.io/zorro909/skywright-deployment \
+            --version "$VERSION" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Attest the Deployment Bundle digest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ghcr.io/zorro909/skywright-deployment
+          subject-digest: ${{ steps.publish.outputs.bundle_digest }}
+          push-to-registry: false
+      - name: Attest the backend image digest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ghcr.io/zorro909/skywright-backend
+          subject-digest: ${{ steps.publish.outputs.backend_digest }}
+          push-to-registry: false
+      - name: Record durable release evidence
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          BUNDLE_DIGEST: ${{ steps.publish.outputs.bundle_digest }}
+          BACKEND_DIGEST: ${{ steps.publish.outputs.backend_digest }}
+        run: |
+          {
+            echo "## Deployment release $VERSION"
+            echo ""
+            echo "The immutable OCI bundle and its embedded checksummed metadata are the durable release record."
+            echo ""
+            echo "- Bundle: \`ghcr.io/zorro909/skywright-deployment@$BUNDLE_DIGEST\`"
+            echo "- Backend: \`ghcr.io/zorro909/skywright-backend@$BACKEND_DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skywright-backend
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: wait-for-postgresql
+          image: postgres:18.1-bookworm@sha256:cc9f4143a8d2fa8cf3749d0cb4d26ecf2d53a77a2ac807e9ebd67ae22426221a
+          command:
+            - sh
+            - -c
+            - until pg_isready --host skywright-postgresql --port 5432 --username postgres; do sleep 1; done
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: backend
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SKYWRIGHT_DEPLOYMENT_ENVIRONMENT
+              value: local-kind
+            - name: SPRING_PROFILES_ACTIVE
+              value: local
+            - name: SKYWRIGHT_DATABASE_MIGRATION_URL
+              value: jdbc:postgresql://skywright-postgresql:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true
+              valueFrom: null
+            - name: SKYWRIGHT_DATABASE_MIGRATION_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-local-database
+                  key: migrationUsername
+            - name: SKYWRIGHT_DATABASE_MIGRATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-local-database
+                  key: migrationPassword
+            - name: SKYWRIGHT_DATABASE_RUNTIME_URL
+              value: jdbc:postgresql://skywright-postgresql:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true
+              valueFrom: null
+            - name: SKYWRIGHT_DATABASE_RUNTIME_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-local-database
+                  key: runtimeUsername
+            - name: SKYWRIGHT_DATABASE_RUNTIME_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-local-database
+                  key: runtimePassword

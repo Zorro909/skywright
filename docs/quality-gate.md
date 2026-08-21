@@ -3,11 +3,17 @@
 `scripts/quality` is the versioned Linux definition of repository verification. `scripts/quality
 run` executes the complete current plan. `scripts/quality run application` qualifies the canonical
 API through the independently verified Angular artifact and the packaged Spring/browser boundary;
-`scripts/quality run image` builds and exercises the production backend image. The `java`,
-`frontend`, and `sdk` selectors provide focused iteration. Every check delegates to the Maven, pnpm,
+`scripts/quality run image` builds and exercises the production backend image. `scripts/quality run
+deployment` verifies the deployment commands, rendered profiles, supervisor, bundle, and release
+workflow. The `java`, `frontend`, and `sdk` selectors provide focused iteration. Every check delegates to the Maven, pnpm,
 and SDK `uv` interfaces documented by its owning project part. The command prints all active checks,
 including deliberately inapplicable work, and fails explicitly when an exact prerequisite is
 missing or has drifted.
+
+The separate `deployment/scripts/system-test --context <kind-context>` command runs the real
+rootless-Podman kind workflow. It requires and mutates an existing local development cluster, so the
+ordinary GitHub-hosted pull-request lane does not invoke it. Missing Skaffold, Podman, kind,
+kubectl, an active matching context, or the expected cluster is a failure rather than a skip.
 
 The `integration` selector runs only the real-service suites: PostgreSQL 18 behavior at the running
 backend boundary, Python Run Store recording through `run_training_process`, and Java Run Store
@@ -24,7 +30,7 @@ scripts/quality plan --format json --changed-file frontend/src/app/app.ts
 ```
 
 Root files, wrappers, GitHub automation, and unknown top-level paths fail safe by selecting every
-check. API, backend, frontend, SDK, shared-fixture (including `protocol/`), and Environment Profile
+check. API, backend, frontend, SDK, deployment, shared-fixture (including `protocol/`), and Environment Profile
 paths fan out to their affected active checks. The canonical structural-overlay corpus at
 `sdk/src/skywright/_configuration_resources/corpus.json` is classified as a shared fixture despite
 its SDK-owned location. API, backend, frontend, and shared-fixture changes
@@ -78,6 +84,7 @@ budgets change.
 | Frontend | 12 minutes | 25 minutes |
 | Complete application | 20 minutes | 35 minutes |
 | Production backend image and scan | 25 minutes | 40 minutes |
+| Deployment contracts | 5 minutes | 10 minutes |
 
 Chromium operating-system dependency setup and a cold Chromium download are separately named steps;
 each has a hard 10-minute limit and emits its phase before invoking Playwright. Exceeding either

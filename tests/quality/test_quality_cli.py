@@ -49,6 +49,7 @@ class PlanningTest(unittest.TestCase):
             {name: check["applicable"] for name, check in plan["checks"].items()},
             {
                 "application": True,
+                "deployment": True,
                 "frontend": True,
                 "image": True,
                 "integration": True,
@@ -65,6 +66,7 @@ class PlanningTest(unittest.TestCase):
                 ["api"],
                 {
                     "application": True,
+                    "deployment": False,
                     "frontend": True,
                     "image": True,
                     "integration": False,
@@ -78,6 +80,7 @@ class PlanningTest(unittest.TestCase):
                 ["backend"],
                 {
                     "application": True,
+                    "deployment": False,
                     "frontend": False,
                     "image": True,
                     "integration": False,
@@ -91,6 +94,7 @@ class PlanningTest(unittest.TestCase):
                 ["frontend"],
                 {
                     "application": True,
+                    "deployment": False,
                     "frontend": True,
                     "image": True,
                     "integration": False,
@@ -104,6 +108,7 @@ class PlanningTest(unittest.TestCase):
                 ["sdk"],
                 {
                     "application": False,
+                    "deployment": False,
                     "frontend": False,
                     "image": False,
                     "integration": False,
@@ -117,6 +122,7 @@ class PlanningTest(unittest.TestCase):
                 ["fixture"],
                 {
                     "application": True,
+                    "deployment": False,
                     "frontend": False,
                     "image": True,
                     "integration": False,
@@ -130,6 +136,7 @@ class PlanningTest(unittest.TestCase):
                 ["fixture"],
                 {
                     "application": True,
+                    "deployment": False,
                     "frontend": False,
                     "image": True,
                     "integration": True,
@@ -143,6 +150,7 @@ class PlanningTest(unittest.TestCase):
                 ["profile"],
                 {
                     "application": False,
+                    "deployment": False,
                     "frontend": False,
                     "image": False,
                     "integration": False,
@@ -156,6 +164,7 @@ class PlanningTest(unittest.TestCase):
                 ["project-action"],
                 {
                     "application": False,
+                    "deployment": False,
                     "frontend": False,
                     "image": False,
                     "integration": False,
@@ -169,6 +178,7 @@ class PlanningTest(unittest.TestCase):
                 ["documentation"],
                 {
                     "application": False,
+                    "deployment": False,
                     "frontend": False,
                     "image": False,
                     "integration": False,
@@ -176,6 +186,20 @@ class PlanningTest(unittest.TestCase):
                     "profile": False,
                     "sdk": False,
                     "security": False,
+                },
+            ),
+            "deployment/overlays/production/kustomization.yaml": (
+                ["deployment"],
+                {
+                    "application": True,
+                    "deployment": True,
+                    "frontend": True,
+                    "image": True,
+                    "integration": True,
+                    "java": True,
+                    "profile": True,
+                    "sdk": True,
+                    "security": True,
                 },
             ),
         }
@@ -200,6 +224,7 @@ class PlanningTest(unittest.TestCase):
             {name: check["applicable"] for name, check in plan["checks"].items()},
             {
                 "application": True,
+                "deployment": False,
                 "frontend": False,
                 "image": True,
                 "integration": False,
@@ -235,6 +260,7 @@ class PlanningTest(unittest.TestCase):
             {name: check["applicable"] for name, check in plan["checks"].items()},
             {
                 "application": True,
+                "deployment": False,
                 "frontend": False,
                 "image": True,
                 "integration": True,

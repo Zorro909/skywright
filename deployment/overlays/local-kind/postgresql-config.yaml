@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skywright-postgresql-init
+  labels:
+    app.kubernetes.io/part-of: skywright
+    skywright.io/local-retained-data: "true"
+data:
+  10-skywright-roles.sh: |
+    #!/bin/sh
+    set -eu
+    psql --set=ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+      --set=migration_password="$SKYWRIGHT_MIGRATION_PASSWORD" \
+      --set=runtime_password="$SKYWRIGHT_RUNTIME_PASSWORD" <<'SQL'
+    CREATE ROLE skywright_migration LOGIN PASSWORD :'migration_password';
+    CREATE ROLE skywright_runtime LOGIN PASSWORD :'runtime_password';
+    CREATE SCHEMA skywright AUTHORIZATION skywright_migration;
+    GRANT CONNECT ON DATABASE skywright TO skywright_migration, skywright_runtime;
+    GRANT USAGE ON SCHEMA skywright TO skywright_runtime;
+    ALTER DEFAULT PRIVILEGES FOR ROLE skywright_migration IN SCHEMA skywright
+      GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO skywright_runtime;
+    ALTER DEFAULT PRIVILEGES FOR ROLE skywright_migration IN SCHEMA skywright
+      GRANT USAGE, SELECT ON SEQUENCES TO skywright_runtime;
+    SQL
