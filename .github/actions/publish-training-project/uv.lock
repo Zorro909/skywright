@@ -858,14 +858,14 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "griffe", specifier = ">=1.9,<2" },
-    { name = "hatchling", specifier = "==1.27.0" },
+    { name = "griffe", specifier = ">=1.9,<3" },
+    { name = "hatchling", specifier = "==1.32.0" },
     { name = "pyright", specifier = ">=1.1.403,<2" },
     { name = "pytest", specifier = ">=8.4,<10" },
     { name = "pytest-cov", specifier = ">=6.2,<8" },
     { name = "ruff", specifier = ">=0.12,<1" },
     { name = "tomli", specifier = ">=2,<3" },
-    { name = "twine", specifier = ">=6.1,<7" },
+    { name = "twine", specifier = ">=6.1,<8" },
 ]
 ml-test = [
     { name = "numpy", marker = "python_full_version >= '3.10' and python_full_version < '3.15'", specifier = ">=2.2,<3" },
