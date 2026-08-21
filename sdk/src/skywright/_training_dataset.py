@@ -1,5 +1,6 @@
 """Dataset cursor enforcement for one Training Process."""
 
+import math
 from collections.abc import Callable, Iterable
 from typing import NoReturn
 
@@ -14,11 +15,13 @@ class TrackedDatasetAccess:
         dataset: DatasetAccess,
         cursor: DatasetCursor,
         violate: Callable[[str, str, str], NoReturn],
+        monotonic_clock: Callable[[], float] | None,
     ) -> None:
         self._dataset = dataset
         self._cursor = cursor
         self._violate = violate
-        self._issued: dict[int, DatasetBatch] = {}
+        self._clock = monotonic_clock
+        self._issued: dict[int, tuple[DatasetBatch, float]] = {}
         self._latest_issued: DatasetBatch | None = None
         self._commit_count = 0
         self._active_iterator: object | None = None
@@ -46,7 +49,25 @@ class TrackedDatasetAccess:
         step_epoch: int | None = None
         observed_commit_count = self._commit_count
         try:
-            for batch in self._dataset.batches(cursor):
+            iterator = iter(self._dataset.batches(cursor))
+            while True:
+                wait_started = self._read_clock() if self._clock is not None else None
+                try:
+                    batch = next(iterator)
+                except StopIteration:
+                    break
+                wait_elapsed = (
+                    self._read_clock() - wait_started
+                    if wait_started is not None
+                    else 0.0
+                )
+                if not math.isfinite(wait_elapsed) or wait_elapsed < 0:
+                    raise SkywrightFailure(
+                        ValueError(
+                            "the monotonic clock produced an invalid Dataset wait"
+                        ),
+                        "project",
+                    )
                 if self._commit_count != observed_commit_count:
                     step_epoch = None
                     observed_commit_count = self._commit_count
@@ -83,7 +104,7 @@ class TrackedDatasetAccess:
                         "the pending Step spans a Dataset epoch boundary",
                         "commit the final batch from one epoch before requesting the next epoch",
                     )
-                self._issued[id(batch)] = batch
+                self._issued[id(batch)] = (batch, wait_elapsed)
                 self._latest_issued = batch
                 previous = batch.next_cursor
                 yield batch
@@ -95,19 +116,32 @@ class TrackedDatasetAccess:
             if self._active_iterator is iterator_token:
                 self._active_iterator = None
 
-    def consume(self, batch: DatasetBatch) -> DatasetCursor:
+    def consume(self, batch: DatasetBatch) -> tuple[DatasetCursor, int, float]:
         issued = self._issued.get(id(batch))
-        if issued is not batch or self._latest_issued is not batch:
+        if issued is None or issued[0] is not batch or self._latest_issued is not batch:
             self._violate(
                 "dataset-cursor/not-issued",
                 "commit_step() received a batch that was not the latest issued by this Run Context",
                 "commit the final Dataset batch whose work completed in this Step",
             )
+        item_count = sum(len(candidate.items) for candidate, _ in self._issued.values())
+        data_loading_wait = sum(wait for _, wait in self._issued.values())
         self._issued.clear()
         self._latest_issued = None
         self._commit_count += 1
         self._cursor = batch.next_cursor
-        return self._cursor
+        return self._cursor, item_count, data_loading_wait
+
+    def _read_clock(self) -> float:
+        if self._clock is None:
+            raise RuntimeError("Dataset wait timing is disabled")
+        try:
+            moment = self._clock()
+            if isinstance(moment, bool) or not math.isfinite(moment):
+                raise ValueError("the monotonic clock produced a non-finite value")
+        except Exception as failure:
+            raise SkywrightFailure(failure, "project") from failure
+        return float(moment)
 
 
 def validate_cursor_shape(

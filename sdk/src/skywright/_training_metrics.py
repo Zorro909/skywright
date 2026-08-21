@@ -120,6 +120,21 @@ def validate_metric_catalog(
     project_version: str,
     skywright_schema_identity: str,
 ) -> dict[str, MetricDefinition]:
+    try:
+        return _validate_metric_catalog(
+            catalog, project_version, skywright_schema_identity
+        )
+    except SkywrightFailure:
+        raise
+    except TrainingContractViolation as failure:
+        raise SkywrightFailure(failure, "construction") from failure
+
+
+def _validate_metric_catalog(
+    catalog: MetricCatalog,
+    project_version: str,
+    skywright_schema_identity: str,
+) -> dict[str, MetricDefinition]:
     if not (catalog.project_identity and catalog.project_contract_digest):
         raise TrainingContractViolation(
             "metric-catalog/project-identity",

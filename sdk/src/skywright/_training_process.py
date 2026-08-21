@@ -1,11 +1,13 @@
 """Orchestration for one Training Process Boundary invocation."""
 
 import math
+import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import cast
 
+from skywright._cgroup_memory import read_cgroup_memory_usage
 from skywright._training_context import DefaultRunContext
 from skywright._training_environment import (
     claim_process,
@@ -31,6 +33,7 @@ from skywright._training_results import (
     unpublished_failure,
 )
 from skywright._training_signals import SignalRequests
+from skywright._training_system_metrics import SamplerWait, wait_for_sampling
 from skywright._training_types import (
     CPU_ACCELERATOR,
     Accelerator,
@@ -69,6 +72,9 @@ def run_training_process(
     policy_stop_requested: Callable[[], str | None] = _no_policy_stop,
     shutdown_grace_seconds: float = 30.0,
     rejected_corrupt_checkpoints: tuple[CheckpointRejectionEvidence, ...] = (),
+    monotonic_clock: Callable[[], float] = time.monotonic,
+    cgroup_memory_reader: Callable[[], int | None] = read_cgroup_memory_usage,
+    system_sampler_wait: SamplerWait = wait_for_sampling,
 ) -> TrainingProcessResult:
     """Execute one Training Project through the process's sole Run Context."""
 
@@ -174,6 +180,9 @@ def run_training_process(
             run_id=run_id,
             project_version=project_version,
             shutdown_grace_seconds=shutdown_grace_seconds,
+            monotonic_clock=monotonic_clock,
+            cgroup_memory_reader=cgroup_memory_reader,
+            system_sampler_wait=system_sampler_wait,
         )
     except TrainingContractViolation as violation:
         return finish(

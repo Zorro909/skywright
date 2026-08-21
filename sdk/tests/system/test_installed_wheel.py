@@ -173,7 +173,10 @@ def train(context):
     )
     (tmp_path / "installed_runtime_support.py").write_text(
         """
-from skywright import DatasetBatch, DatasetCursor, MetricCatalog
+import json
+import os
+
+from skywright import DatasetBatch, DatasetCursor, MetricCatalog, MetricDefinition
 
 
 class Dataset:
@@ -192,7 +195,13 @@ class Recorder:
     def publish_attempt(self, attempt): pass
     def publish_checkpoint(self, checkpoint): return "checkpoint:installed"
     def confirm_checkpoint(self, step, reference): pass
-    def publish_step(self, step, dataset_cursor, observations, durable_step, durable_ref): pass
+    def publish_step(self, step, dataset_cursor, observations, durable_step, durable_ref):
+        with open(os.environ["SKYWRIGHT_SYSTEM_METRICS_OUTPUT"], "w") as output:
+            json.dump([
+                [observation.name, observation.step, observation.value]
+                for observation in observations
+            ], output)
+    def publish_wall_time(self, observation): pass
     def publish_artifact(self, artifact): pass
     def publish_sample(self, sample): pass
     def publish_report(self, report): pass
@@ -209,8 +218,35 @@ class MetricContracts:
             project_contract_digest="sha256:project",
             skywright_schema_identity=schema_identity,
             skywright_schema_digest="sha256:skywright",
-            units=frozenset(("dimensionless",)),
+            units=frozenset(("bytes", "items_per_second", "seconds")),
             project_definitions=(),
+            system_definitions=(
+                MetricDefinition(
+                    "skywright/system/throughput",
+                    "real",
+                    "items_per_second",
+                    "maximize",
+                    step_reduction="mean",
+                    minimum=0,
+                ),
+                MetricDefinition(
+                    "skywright/system/data_loading_wait",
+                    "real",
+                    "seconds",
+                    "minimize",
+                    step_reduction="sum",
+                    minimum=0,
+                ),
+                MetricDefinition(
+                    "skywright/system/memory_used",
+                    "integer",
+                    "bytes",
+                    "none",
+                    recording_basis="wall_time",
+                    step_reduction=None,
+                    minimum=0,
+                ),
+            ),
         )
 
 
@@ -237,6 +273,8 @@ def metric_contracts(): return MetricContracts()
     )
     environment = isolated_process_environment.copy()
     environment["PYTHONPATH"] = str(tmp_path)
+    metrics_output = tmp_path / "system-metrics.json"
+    environment["SKYWRIGHT_SYSTEM_METRICS_OUTPUT"] = str(metrics_output)
     completed = subprocess.run(
         [
             installed_sdk / "bin" / "skywright-runtime",
@@ -251,9 +289,16 @@ def metric_contracts(): return MetricContracts()
         capture_output=True,
     )
 
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == 0, completed.stdout + completed.stderr
     report = json.loads(completed.stdout)
     assert report["outcome"] == "completed"
     assert report["cause"] == "completed"
     assert report["last_committed_step"] == 1
     assert report["latest_durable_step"] == 1
+    observations = json.loads(metrics_output.read_text(encoding="utf-8"))
+    assert [observation[:2] for observation in observations] == [
+        ["skywright/system/throughput", 1],
+        ["skywright/system/data_loading_wait", 1],
+    ]
+    assert observations[0][2] > 0
+    assert observations[1][2] >= 0

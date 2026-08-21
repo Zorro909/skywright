@@ -136,6 +136,9 @@ class LocalRecorder:
     ):
         pass
 
+    def publish_wall_time(self, observation):
+        pass
+
     def publish_artifact(self, artifact):
         pass
 
@@ -194,11 +197,12 @@ requests are present.
 This milestone keeps checkpoint, metric-event, Sample, Artifact, and Dataset transport behind
 explicit protocols. A `DatasetAccess` implementation supplies batches and their next cursor; the
 Run Context accepts only a context-issued batch. `commit_step()` advances its cursor while
-atomically publishing the Step's metrics and progress. A `TrainingProcessRecorder` synchronously
-confirms attempt, checkpoint, metric/progress, output, and
-termination-report publication. Completion and recoverable interruption are returned only after a
-checkpoint reference and the final report are durable. The SDK does not implement a concrete Run
-Store, TensorBoard writer, or MosaicML Streaming transport.
+atomically publishing the Step's project metrics, throughput, data-loading wait, and progress.
+The Run Context also sends cgroup memory observations through the recorder at
+`metrics.systemSamplingInterval`. A `TrainingProcessRecorder` synchronously confirms attempt,
+checkpoint, metric/progress, output, and termination-report publication. Completion and
+recoverable interruption are returned only after a checkpoint reference and the final report are
+durable. The SDK does not implement a TensorBoard writer or MosaicML Streaming transport.
 
 ## Operational runtime command
 

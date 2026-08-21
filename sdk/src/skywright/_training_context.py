@@ -1,6 +1,7 @@
 """Default Run Context implementation and Training Contract lifecycle."""
 
 import copy
+import threading
 from collections.abc import Callable, Mapping
 from typing import NoReturn, cast
 
@@ -27,6 +28,13 @@ from skywright._training_protocols import (
     TrainingProcessRecorder,
 )
 from skywright._training_state import freeze, validate_output
+from skywright._training_system_metrics import (
+    MemorySystemMetrics,
+    SamplerWait,
+    StepSystemMetrics,
+    system_sampling_interval,
+    validate_system_metric_definitions,
+)
 from skywright._training_types import (
     Accelerator,
     ArtifactRecord,
@@ -58,6 +66,9 @@ class DefaultRunContext:
         project_version: str,
         shutdown_grace_seconds: float,
         policy_stop_requested: Callable[[], str | None],
+        monotonic_clock: Callable[[], float],
+        cgroup_memory_reader: Callable[[], int | None],
+        system_sampler_wait: SamplerWait,
     ) -> None:
         self._started = False
         self._violated: TrainingContractViolation | None = None
@@ -80,6 +91,7 @@ class DefaultRunContext:
         self._definitions = validate_metric_catalog(
             metric_catalog, project_version, skywright_metric_schema
         )
+        validate_system_metric_definitions(metric_catalog.system_definitions)
         self._resume_state = ResumeState(resume_from)
         if resume_from is not None and (
             type(resume_from.step) is not int or resume_from.step < 0
@@ -121,9 +133,26 @@ class DefaultRunContext:
                 "the checkpoint and configured Dataset ordering fingerprints differ",
                 "resume with identical ordering inputs or an explicit Ordering Reset",
             )
-        self._dataset = TrackedDatasetAccess(
-            dataset, self._dataset_cursor, self._violate
+        self._step_system_metrics = StepSystemMetrics(
+            metric_catalog.system_definitions, monotonic_clock
         )
+        self._dataset = TrackedDatasetAccess(
+            dataset,
+            self._dataset_cursor,
+            self._violate,
+            monotonic_clock if self._step_system_metrics.enabled else None,
+        )
+        self._metric_publication_lock = threading.Lock()
+        self._memory_system_metrics = MemorySystemMetrics(
+            metric_catalog.system_definitions,
+            system_sampling_interval(self._configuration),
+            cgroup_memory_reader,
+            system_sampler_wait,
+            lambda: self._step,
+            self._recorder.publish_wall_time,
+            self._metric_publication_lock,
+        )
+        self._shutdown_grace_seconds = shutdown_grace_seconds
         self._checkpoints = CheckpointCoordinator(
             recorder, resume_from, shutdown_grace_seconds
         )
@@ -191,7 +220,7 @@ class DefaultRunContext:
 
     @property
     def observations(self) -> tuple[MetricObservation, ...]:
-        return tuple(self._observations)
+        return tuple(self._observations) + self._memory_system_metrics.observations
 
     @property
     def artifacts(self) -> tuple[ArtifactRecord, ...]:
@@ -241,6 +270,8 @@ class DefaultRunContext:
             self._violate,
         )
         self._started = True
+        self._step_system_metrics.start()
+        self._memory_system_metrics.start()
         return self._resume_state
 
     def observe(self, name: str, value: object) -> None:
@@ -253,23 +284,31 @@ class DefaultRunContext:
     def commit_step(self, final_batch: DatasetBatch) -> None:
         self._require_running("commit a Step")
         self._raise_checkpoint_failure()
-        next_dataset_cursor = self._dataset.consume(final_batch)
+        next_dataset_cursor, item_count, data_loading_wait = self._dataset.consume(
+            final_batch
+        )
         next_step = self._step + 1
-        committed = reduce_observations(
+        project_observations = reduce_observations(
             self._pending, self._definitions, next_step, self._violate
         )
+        system_observations, interval_end = self._step_system_metrics.prepare(
+            next_step, item_count, data_loading_wait
+        )
+        committed = project_observations + system_observations
         durable_step, durable_checkpoint = self._checkpoints.durable_state()
         try:
-            self._recorder.publish_step(
-                next_step,
-                next_dataset_cursor,
-                committed,
-                durable_step,
-                durable_checkpoint,
-            )
+            with self._metric_publication_lock:
+                self._recorder.publish_step(
+                    next_step,
+                    next_dataset_cursor,
+                    committed,
+                    durable_step,
+                    durable_checkpoint,
+                )
         except Exception as failure:
             raise SkywrightFailure(failure, "project") from failure
         self._observations.extend(committed)
+        self._step_system_metrics.committed(interval_end)
         self._pending.clear()
         self._step = next_step
         self._dataset_cursor = next_dataset_cursor
@@ -333,6 +372,11 @@ class DefaultRunContext:
     def publish_terminal_checkpoint(
         self, *, cancellation_can_preempt: bool = False
     ) -> CheckpointSnapshot | None:
+        sampler_shutdown = self._memory_system_metrics.stop(
+            self._shutdown_grace_seconds
+        )
+        if sampler_shutdown.failure is not None:
+            raise SkywrightFailure(sampler_shutdown.failure, "finalization")
         try:
             return self._checkpoints.publish_terminal(
                 self.snapshot,
@@ -342,7 +386,14 @@ class DefaultRunContext:
             raise SkywrightFailure(failure, "finalization") from failure
 
     def stop_checkpoint_work(self) -> CheckpointShutdown:
-        return self._checkpoints.stop()
+        sampler_shutdown = self._memory_system_metrics.stop(
+            self._shutdown_grace_seconds
+        )
+        checkpoint_shutdown = self._checkpoints.stop()
+        return CheckpointShutdown(
+            sampler_shutdown.failure or checkpoint_shutdown.failure,
+            sampler_shutdown.stopped and checkpoint_shutdown.stopped,
+        )
 
     def validate_completion(self) -> None:
         self._raise_checkpoint_failure()
@@ -414,6 +465,10 @@ class DefaultRunContext:
             raise CooperativeStop(ExecutionTerminationCause.CANCELLED)
 
     def _raise_checkpoint_failure(self) -> None:
+        try:
+            self._memory_system_metrics.raise_if_failed()
+        except Exception as failure:
+            raise SkywrightFailure(failure, "project") from failure
         try:
             self._checkpoints.raise_if_failed()
         except Exception as failure:
