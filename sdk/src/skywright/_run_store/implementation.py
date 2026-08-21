@@ -914,6 +914,18 @@ class RunStoreRecorder:
                 latest_durable_checkpoint,
             )
 
+    def confirm_checkpoint(self, step: int, reference: str) -> None:
+        self._require_open()
+        parsed = CheckpointReference.parse(reference)
+        if parsed.step != step:
+            raise TrainingContractViolation(
+                "checkpoint/confirmation-step",
+                "Checkpoint confirmation Step does not match its reference",
+                "confirm the exact reference returned by checkpoint publication",
+            )
+        if self._progress is not None:
+            self._progress.confirm_checkpoint(step, reference)
+
     def publish_artifact(self, artifact: ArtifactRecord) -> None:
         attempt = self._require_open()
         self._put_immutable(

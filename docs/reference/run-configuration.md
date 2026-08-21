@@ -6,7 +6,7 @@ Generated from the content-addressed Skywright Configuration Schema. Do not edit
 | --- | --- | --- | --- | --- | --- |
 | `reproducibility.seed` | `"integer"` | default `0`; minimum `0`; maximum `9223372036854775807` | integer seed | must-match | Seeds library-managed deterministic random number generators before project code runs. |
 | `dataset.ordering.policy` | `"string"` | default `"deterministic-shuffle"`; enum `["deterministic-shuffle"]` | policy name | must-match | Selects the library-owned Dataset Item Sequence ordering policy. |
-| `checkpoint.cadence` | `"integer"` | default `100`; minimum `1` | Steps | may-change | Maximum completed Steps between periodic durable checkpoints. |
+| `checkpoint.cadence` | `"integer"` | default `100`; minimum `1` | Steps | may-change | Absolute-Step cadence for scheduling immutable checkpoint snapshots; asynchronous publication may make Durable Safe Points lag behind it. |
 | `checkpoint.retention` | `"integer"` | default `3`; minimum `1` | checkpoints | may-change | Minimum number of newest periodic checkpoints retained by the library. |
 | `checkpoint.keepEveryNth` | `["integer","null"]` | default `null`; minimum `1` | Steps | may-change | Optional Step divisor whose Checkpoints remain protected in addition to newest retention. |
 | `metrics.flushInterval` | `"number"` | default `10`; exclusiveMinimum `0` | seconds | may-change | Maximum wall-clock interval between flushing pending metric events. |

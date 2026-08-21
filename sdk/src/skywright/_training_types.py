@@ -31,6 +31,7 @@ class ExecutionTerminationCause(Enum):
     COMPLETED = "completed"
     CANCELLED = "cancelled"
     INTERRUPTED = "interrupted"
+    POLICY_STOPPED = "policy_stopped"
     CONTRACT_VIOLATION = "contract_violation"
     TRAINING_PROJECT_FAILURE = "training_project_failure"
     SKYWRIGHT_FAILURE = "skywright_failure"

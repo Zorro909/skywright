@@ -79,6 +79,17 @@ class State:
         self.value = state["value"]
 
 
+class RecordingProgress:
+    def __init__(self):
+        self.events = []
+
+    def publish_step(self, *values):
+        self.events.append(("step", *values))
+
+    def confirm_checkpoint(self, step, reference):
+        self.events.append(("confirmation", step, reference))
+
+
 @contextmanager
 def seaweedfs():
     with socket.socket() as reservation:
@@ -225,8 +236,10 @@ def test_registered_descriptor_uses_standard_credentials_against_pinned_seaweedf
             "run",
             compatibility_options={"checksumCalculation": "when-supported"},
         )
+        progress = RecordingProgress()
         store = RunStoreRecorder(
             target,
+            progress_recorder=progress,
             checkpoint_codec=CheckpointCodec(staging_directory=tmp_path),
             multipart_threshold=1,
             multipart_part_size=5 * 1024 * 1024,
@@ -247,7 +260,7 @@ def test_registered_descriptor_uses_standard_credentials_against_pinned_seaweedf
             train,
             run_id="run",
             project_version="project@digest",
-            configuration={},
+            configuration={"checkpoint": {"cadence": 1}},
             dataset=OneItemDataset(),
             metric_contracts=EmptyMetricContracts(),
             skywright_metric_schema="metrics@1",
@@ -257,6 +270,9 @@ def test_registered_descriptor_uses_standard_credentials_against_pinned_seaweedf
         reference = result.report.latest_durable_checkpoint
         assert reference is not None, result.report
         assert result.outcome.value == "completed"
+        assert [event[0] for event in progress.events] == ["step", "confirmation"]
+        assert progress.events[0][4:] == (None, None)
+        assert progress.events[1] == ("confirmation", 1, reference)
 
         reader = RunStoreReader(
             target,

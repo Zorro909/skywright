@@ -4,9 +4,14 @@ from skywright._training_types import ExecutionTerminationCause, FailureStage
 
 
 class CooperativeStop(BaseException):
-    def __init__(self, cause: ExecutionTerminationCause) -> None:
+    def __init__(
+        self,
+        cause: ExecutionTerminationCause,
+        diagnostics: dict[str, object] | None = None,
+    ) -> None:
         super().__init__(cause.value)
         self.cause = cause
+        self.diagnostics = diagnostics or {}
 
 
 class SkywrightFailure(BaseException):

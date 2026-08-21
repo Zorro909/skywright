@@ -4,6 +4,7 @@ import copy
 from collections.abc import Callable, Mapping
 from typing import NoReturn, cast
 
+from skywright._training_checkpoint_coordinator import CheckpointCoordinator
 from skywright._training_checkpoints import capture_checkpoint, restore_checkpoint
 from skywright._training_dataset import TrackedDatasetAccess, validate_cursor_shape
 from skywright._training_errors import (
@@ -52,6 +53,8 @@ class DefaultRunContext:
         interruption_requested: Callable[[], bool],
         run_id: str,
         project_version: str,
+        shutdown_grace_seconds: float,
+        policy_stop_requested: Callable[[], str | None],
     ) -> None:
         self._started = False
         self._violated: TrainingContractViolation | None = None
@@ -61,6 +64,7 @@ class DefaultRunContext:
         self._accelerator = accelerator
         self._cancellation_requested = cancellation_requested
         self._interruption_requested = interruption_requested
+        self._policy_stop_requested = policy_stop_requested
         self._run_id = run_id
         self._project_version = project_version
         try:
@@ -117,43 +121,53 @@ class DefaultRunContext:
         self._dataset = TrackedDatasetAccess(
             dataset, self._dataset_cursor, self._violate
         )
-        self._latest_durable_step = (
-            resume_from.step if resume_from is not None else None
-        )
-        self._latest_durable_checkpoint = (
-            resume_from.reference if resume_from is not None else None
+        self._checkpoints = CheckpointCoordinator(
+            recorder, resume_from, shutdown_grace_seconds
         )
 
     @property
     def configuration(self) -> Mapping[str, object]:
+        self._raise_checkpoint_failure()
         return self._configuration
 
     @property
     def dataset(self) -> DatasetAccess:
+        self._raise_checkpoint_failure()
         return self._dataset
 
     @property
     def dataset_cursor(self) -> DatasetCursor:
+        self._raise_checkpoint_failure()
         return self._dataset_cursor
 
     @property
     def accelerator(self) -> Accelerator:
+        self._raise_checkpoint_failure()
         return self._accelerator
 
     @property
     def metric_catalog(self) -> MetricCatalog:
+        self._raise_checkpoint_failure()
         return self._metric_catalog
 
     @property
     def step(self) -> int:
+        self._raise_checkpoint_failure()
+        return self._step
+
+    @property
+    def committed_step(self) -> int:
+        """Return committed progress for process-boundary finalization."""
         return self._step
 
     @property
     def resume_state(self) -> ResumeState:
+        self._raise_checkpoint_failure()
         return self._resume_state
 
     @property
     def cancellation_requested(self) -> bool:
+        self._raise_checkpoint_failure()
         try:
             return self._cancellation_requested()
         except Exception as failure:
@@ -161,6 +175,7 @@ class DefaultRunContext:
 
     @property
     def interruption_requested(self) -> bool:
+        self._raise_checkpoint_failure()
         if self.cancellation_requested:
             return False
         return self._read_interruption_requested()
@@ -234,18 +249,20 @@ class DefaultRunContext:
 
     def commit_step(self, final_batch: DatasetBatch) -> None:
         self._require_running("commit a Step")
+        self._raise_checkpoint_failure()
         next_dataset_cursor = self._dataset.consume(final_batch)
         next_step = self._step + 1
         committed = reduce_observations(
             self._pending, self._definitions, next_step, self._violate
         )
+        durable_step, durable_checkpoint = self._checkpoints.durable_state()
         try:
             self._recorder.publish_step(
                 next_step,
                 next_dataset_cursor,
                 committed,
-                self._latest_durable_step,
-                self._latest_durable_checkpoint,
+                durable_step,
+                durable_checkpoint,
             )
         except Exception as failure:
             raise SkywrightFailure(failure, "project") from failure
@@ -253,13 +270,27 @@ class DefaultRunContext:
         self._pending.clear()
         self._step = next_step
         self._dataset_cursor = next_dataset_cursor
+        self._raise_checkpoint_failure()
         if self.cancellation_requested:
             raise CooperativeStop(ExecutionTerminationCause.CANCELLED)
+        policy_stop_decision = self._read_policy_stop_requested()
+        if self.cancellation_requested:
+            raise CooperativeStop(ExecutionTerminationCause.CANCELLED)
+        if policy_stop_decision is not None:
+            raise CooperativeStop(
+                ExecutionTerminationCause.POLICY_STOPPED,
+                {"ceiling_stop_decision": policy_stop_decision},
+            )
         interrupted = self._read_interruption_requested()
         if self.cancellation_requested:
             raise CooperativeStop(ExecutionTerminationCause.CANCELLED)
         if interrupted:
             raise CooperativeStop(ExecutionTerminationCause.INTERRUPTED)
+        if next_step % self._checkpoint_cadence() == 0:
+            try:
+                self._checkpoints.schedule(self.snapshot())
+            except Exception as failure:
+                raise SkywrightFailure(failure, "finalization") from failure
 
     def persist_artifact(self, name: str, data: object) -> None:
         self._require_running(f"persist Artifact {name!r}")
@@ -296,7 +327,20 @@ class DefaultRunContext:
             self._project_version,
         )
 
+    def durable_state(self) -> tuple[int | None, str | None]:
+        return self._checkpoints.durable_state()
+
+    def publish_terminal_checkpoint(self) -> CheckpointSnapshot:
+        try:
+            return self._checkpoints.publish_terminal(self.snapshot)
+        except Exception as failure:
+            raise SkywrightFailure(failure, "finalization") from failure
+
+    def stop_checkpoint_work(self) -> Exception | None:
+        return self._checkpoints.stop()
+
     def validate_completion(self) -> None:
+        self._raise_checkpoint_failure()
         if self._violated is not None:
             raise self._violated
         if not self._started:
@@ -333,6 +377,38 @@ class DefaultRunContext:
                 f"cannot {operation} before start()",
                 "register Checkpoint State and call start() first",
             )
+        self._raise_checkpoint_failure()
+
+    def _checkpoint_cadence(self) -> int:
+        checkpoint = self._configuration.get("checkpoint", {})
+        if not isinstance(checkpoint, Mapping):
+            return 100
+        cadence = cast(Mapping[str, object], checkpoint).get("cadence", 100)
+        if isinstance(cadence, bool) or not isinstance(cadence, int) or cadence <= 0:
+            self._violate(
+                "checkpoint/cadence",
+                f"checkpoint cadence {cadence!r} is not a positive integer",
+                "configure checkpoint.cadence as a positive Step count",
+            )
+        return cadence
+
+    def _read_policy_stop_requested(self) -> str | None:
+        try:
+            decision = self._policy_stop_requested()
+        except Exception as failure:
+            raise SkywrightFailure(failure, "project") from failure
+        if decision == "":
+            raise SkywrightFailure(
+                ValueError("Policy Stop Request returned an empty decision identity"),
+                "project",
+            )
+        return decision
+
+    def _raise_checkpoint_failure(self) -> None:
+        try:
+            self._checkpoints.raise_if_failed()
+        except Exception as failure:
+            raise SkywrightFailure(failure, "finalization") from failure
 
     def _violate(self, rule: str, problem: str, guidance: str) -> NoReturn:
         violation = TrainingContractViolation(rule, problem, guidance)

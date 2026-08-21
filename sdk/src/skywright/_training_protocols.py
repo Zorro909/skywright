@@ -48,6 +48,8 @@ class TrainingProcessRecorder(Protocol):
 
     def publish_checkpoint(self, checkpoint: CheckpointSnapshot) -> str: ...
 
+    def confirm_checkpoint(self, step: int, reference: str) -> None: ...
+
     def publish_step(
         self,
         step: int,

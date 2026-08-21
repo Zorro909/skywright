@@ -10,6 +10,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "sdk/src/skywright/_configuration_resources/schema.json"
 OUTPUT = ROOT / "docs/reference/run-configuration.md"
+REFERENCE_DESCRIPTIONS = {
+    "checkpoint.cadence": (
+        "Absolute-Step cadence for scheduling immutable checkpoint snapshots; "
+        "asynchronous publication may make Durable Safe Points lag behind it."
+    )
+}
 
 
 def properties(node: dict[str, object], prefix: tuple[str, ...] = ()):
@@ -41,7 +47,7 @@ def render() -> str:
                 "; ".join(constraints),
                 definition["x-unit"],
                 definition["x-resume-compatibility"],
-                definition["description"],
+                REFERENCE_DESCRIPTIONS.get(path, definition["description"]),
             )
         )
     return "\n".join(lines) + "\n"
