@@ -421,12 +421,11 @@ print(json.dumps({
     }
 
 
-def test_step_publication_waits_for_a_visible_checkpoint_confirmation() -> None:
+def test_step_publication_continues_while_checkpoint_confirmation_is_blocked() -> None:
     completed = run_project(
         """
 import json
 import threading
-import time
 
 from skywright import run_training_process
 
@@ -452,21 +451,13 @@ class ConfirmingRecorder(TestRecorder):
 recorder = ConfirmingRecorder()
 
 
-def release_confirmation():
-    assert recorder.confirming.wait(2)
-    time.sleep(0.05)
-    recorder.release.set()
-
-
-threading.Thread(target=release_confirmation, daemon=True).start()
-
-
 def train(context):
     context.register_checkpoint_state("state", State())
     context.start()
     context.commit_step(next_batch(context))
     assert recorder.confirming.wait(2)
     context.commit_step(next_batch(context))
+    recorder.release.set()
 
 
 result = run_training_process(
@@ -491,7 +482,7 @@ print(json.dumps({
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout) == {
         "outcome": "completed",
-        "second_step_durable": [1, "checkpoint:1"],
+        "second_step_durable": [None, None],
     }
 
 
@@ -946,11 +937,11 @@ class IgnoringRecorder(TestRecorder):
         self.finished = threading.Event()
 
     def publish_checkpoint(self, checkpoint):
-        self.started.set()
-        self.release.wait(2)
         return super().publish_checkpoint(checkpoint)
 
     def confirm_checkpoint(self, step, reference):
+        self.started.set()
+        self.release.wait(2)
         super().confirm_checkpoint(step, reference)
         self.finished.set()
 
@@ -996,7 +987,7 @@ print(json.dumps({
         "cause": "training_project_failure",
         "message": "project failed",
         "cleanup": "TimeoutError",
-        "events_at_return": ["attempt", "step"],
+        "events_at_return": ["attempt", "step", "checkpoint"],
         "events_after_release": ["attempt", "step", "checkpoint", "confirmation"],
     }
 
