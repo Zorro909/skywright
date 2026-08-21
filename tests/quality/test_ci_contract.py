@@ -12,6 +12,12 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 ACTION = (REPOSITORY / ".github/actions/setup-frontend/action.yml").read_text(
     encoding="utf-8"
 )
+JAVA_ACTION = (REPOSITORY / ".github/actions/setup-java/action.yml").read_text(
+    encoding="utf-8"
+)
+PYTHON_ACTION = (
+    REPOSITORY / ".github/actions/setup-python-toolchain/action.yml"
+).read_text(encoding="utf-8")
 WORKFLOW = (REPOSITORY / ".github/workflows/quality.yml").read_text(encoding="utf-8")
 sys.path.insert(0, str(REPOSITORY / "scripts"))
 try:
@@ -50,18 +56,18 @@ class FrontendSetupContractTest(unittest.TestCase):
         for cache in (pnpm_cache, browser_cache):
             self.assertRegex(cache, r"uses: actions/cache@[0-9a-f]{40}")
             self.assertIn("${{ runner.os }}", cache)
-            self.assertIn("${{ inputs.node-version }}", cache)
-            self.assertIn("${{ inputs.pnpm-version }}", cache)
+            self.assertIn("${{ steps.toolchain.outputs.node_version }}", cache)
+            self.assertIn("${{ steps.toolchain.outputs.pnpm_version }}", cache)
             self.assertIn("${{ hashFiles('frontend/pnpm-lock.yaml') }}", cache)
 
         self.assertIn("path: ${{ steps.pnpm-store.outputs.path }}", pnpm_cache)
-        self.assertIn("${{ inputs.playwright-version }}", browser_cache)
+        self.assertIn("${{ steps.toolchain.outputs.playwright_version }}", browser_cache)
         self.assertIn("path: ~/.cache/ms-playwright", browser_cache)
 
     def test_browser_install_is_opt_in_bounded_and_phase_visible(self) -> None:
         self.assertRegex(
             ACTION,
-            r"install-browser:\n(?:    .*\n)*?    default: 'false'",
+            r'install-browser:\n(?:    .*\n)*?    default: "false"',
         )
         dependency_step = named_step(
             ACTION, "Install Chromium operating-system dependencies"
@@ -81,6 +87,29 @@ class FrontendSetupContractTest(unittest.TestCase):
 
 
 class QualityWorkflowContractTest(unittest.TestCase):
+    def test_setup_actions_own_repository_toolchain_versions(self) -> None:
+        self.assertIn("quality/toolchain.json", JAVA_ACTION)
+        self.assertNotIn("archive-url:", JAVA_ACTION.split("runs:", 1)[0])
+
+        self.assertIn("frontend/package.json", ACTION)
+        for input_name in ("node-version:", "pnpm-version:", "playwright-version:"):
+            self.assertNotIn(input_name, ACTION.split("runs:", 1)[0])
+
+        self.assertIn("sdk/pyproject.toml", PYTHON_ACTION)
+        self.assertIn("${{ steps.toolchain.outputs.uv_version }}", PYTHON_ACTION)
+
+    def test_quality_plan_only_exports_applicability(self) -> None:
+        plan_job = job(WORKFLOW, "plan")
+        for version_output in (
+            "java_archive_url",
+            "java_version",
+            "node_version",
+            "pnpm_version",
+            "playwright_version",
+            "uv_version",
+        ):
+            self.assertNotIn(version_output, plan_job)
+
     def test_maven_frontend_install_can_be_skipped_after_ci_setup(self) -> None:
         pom = ET.parse(REPOSITORY / "frontend/pom.xml")
         namespace = {"m": "http://maven.apache.org/POM/4.0.0"}

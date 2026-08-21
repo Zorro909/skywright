@@ -135,7 +135,7 @@
               <goal>select-jdk-toolchain</goal>
             </goals>
             <configuration>
-              <version>[25,26)</version>
+              <version>[25.0.4]</version>
               <vendor>GraalVM Community</vendor>
               <useJdk>Never</useJdk>
             </configuration>
@@ -156,18 +156,28 @@
               <rules>
                 <requireMavenVersion>
                   <version>[3.9.16]</version>
-                  <message>Build Skywright with the checked-in Maven Wrapper (Maven 3.9.16).</message>
+                  <message>Build Skywright with Maven 3.9.16; scripts/setup-worktree installs it and the checked-in wrapper remains available.</message>
                 </requireMavenVersion>
                 <requireJavaVersion>
-                  <version>[25,26)</version>
-                  <message>Build Skywright with Java 25 from GraalVM Community.</message>
+                  <version>[25.0.4]</version>
+                  <message>Build Skywright with Java 25.0.4 from GraalVM Community 25.2.4.</message>
                 </requireJavaVersion>
                 <requireJavaVendor>
                   <includes>
                     <include>GraalVM Community</include>
                   </includes>
-                  <message>Build Skywright with Java 25 from GraalVM Community.</message>
+                  <message>Build Skywright with Java 25.0.4 from GraalVM Community 25.2.4.</message>
                 </requireJavaVendor>
+                <requireProperty>
+                  <property>java.runtime.version</property>
+                  <regex>25\.0\.4\+7-jvmci-25\.2-b20</regex>
+                  <message>Build Skywright with the OpenJDK 25.0.4+7 runtime from GraalVM Community 25.2.4.</message>
+                </requireProperty>
+                <requireProperty>
+                  <property>java.vendor.version</property>
+                  <regex>GraalVM CE 25\.2\.4\+7\.1</regex>
+                  <message>Build Skywright with GraalVM Community 25.2.4+7.1.</message>
+                </requireProperty>
               </rules>
             </configuration>
           </execution>

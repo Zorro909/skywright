@@ -1,23 +1,25 @@
 name: Set up Java toolchain
 description: Download and install the repository's exact verified GraalVM Community toolchain.
-inputs:
-  archive-sha256:
-    description: SHA-256 of the supported GraalVM archive
-    required: true
-  archive-url:
-    description: URL of the supported GraalVM archive
-    required: true
-  java-version:
-    description: Exact supported Java version
-    required: true
 runs:
   using: composite
   steps:
+    - name: Read the repository Java toolchain
+      id: toolchain
+      shell: bash
+      run: |
+        python3 - <<'PY' >> "$GITHUB_OUTPUT"
+        import json
+        from pathlib import Path
+
+        toolchain = json.loads(Path("quality/toolchain.json").read_text())
+        for name in ("java_archive_sha256", "java_archive_url", "java_version"):
+            print(f"{name}={toolchain[name]}")
+        PY
     - name: Download exact GraalVM Community archive
       shell: bash
       env:
-        JAVA_ARCHIVE_SHA256: ${{ inputs.archive-sha256 }}
-        JAVA_ARCHIVE_URL: ${{ inputs.archive-url }}
+        JAVA_ARCHIVE_SHA256: ${{ steps.toolchain.outputs.java_archive_sha256 }}
+        JAVA_ARCHIVE_URL: ${{ steps.toolchain.outputs.java_archive_url }}
       run: |
         curl --fail --location --silent --show-error \
           --output "${RUNNER_TEMP}/graalvm-community.tar.gz" \
@@ -29,5 +31,5 @@ runs:
       with:
         distribution: jdkfile
         jdk-file: ${{ runner.temp }}/graalvm-community.tar.gz
-        java-version: ${{ inputs.java-version }}
+        java-version: ${{ steps.toolchain.outputs.java_version }}
         cache: maven

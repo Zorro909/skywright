@@ -9,32 +9,50 @@ buildable pure-Python runtime SDK for Training Projects.
 
 ## Required toolchain
 
-Builds require all of the following exact versions:
+The repository pins every build tool in a file consumed by its native version manager:
 
-- GraalVM Community 25.2.4 (`GraalVM CE 25.2.4+7.1`), based on OpenJDK `25.0.4+7`
-- Maven Wrapper 3.3.4, which downloads Maven 3.9.16
-- uv 0.8.8 for the Python SDK project-part
-- Node 26.7.0 and pnpm 11.21.0 for the web project-part
+| Tool | Version | Source of truth |
+| --- | --- | --- |
+| GraalVM Community | SDKMAN `25.2.4-graalce` (`GraalVM CE 25.2.4+7.1`, OpenJDK `25.0.4+7`) | `.sdkmanrc`, with the verified CI archive in `quality/toolchain.json` |
+| Maven | 3.9.16 | `.sdkmanrc` and `.mvn/wrapper/maven-wrapper.properties` |
+| Node | 26.7.0 | `.nvmrc` and `frontend/package.json` |
+| pnpm | 11.21.0 | `frontend/package.json` |
+| Playwright | 1.62.1 | `frontend/package.json` |
+| uv | 0.8.8 | `sdk/pyproject.toml` |
+| Contributor Python | 3.14 | `scripts/setup-worktree` and the primary CI lanes |
 
-Download the matching GraalVM Community archive from the
-[GraalVM 25.2.4 release](https://github.com/graalvm/graalvm-ce-builds/releases/tag/graal-25.2.4),
-verify its published SHA-256 checksum, extract it, and make it the JDK used to launch the wrapper:
+Install [SDKMAN](https://sdkman.io/install) and [NVM](https://github.com/nvm-sh/nvm), then have
+the worktree creator run the repository setup command after checkout:
 
 ```bash
-export JAVA_HOME=/absolute/path/to/graalvm-community-25.2.4+7.1
-export PATH="$JAVA_HOME/bin:$PATH"
-java -version
-./mvnw --version
+scripts/setup-worktree
 ```
 
-`java -version` must identify GraalVM Community 25.2.4 and Java 25.0.4. `./mvnw --version`
-must identify Maven 3.9.16 and the same JDK. The build validates the Maven version, Java feature
-and patch level, GraalVM release, vendor, and OpenJDK build before creating module artifacts.
-Maven Toolchains then selects that JDK for compilation and tests. JDK discovery recognizes the
-active `JAVA_HOME`; an explicit `~/.m2/toolchains.xml` is not required.
+SDKMAN and NVM installations, the pnpm content-addressed store, uv-managed Python, and the
+Playwright browser cache are user-level and shared by all worktrees. Only checked-out dependencies
+such as `frontend/node_modules` remain worktree-local. Re-running setup is safe and reuses installed
+versions. It does not install Playwright's operating-system packages; install those once when your
+host lacks them.
 
-On Windows, set `JAVA_HOME`, add `%JAVA_HOME%\bin` to `PATH`, and use `mvnw.cmd` in place of
-`./mvnw` in the commands below.
+Open a new shell in the repository root after initial setup, or activate the versions immediately:
+
+```bash
+sdk env
+nvm use
+java -version
+mvn --version
+node --version
+pnpm --version
+uv --version
+```
+
+`java -version` must identify GraalVM Community 25.2.4 and Java 25.0.4. `mvn --version` must
+identify Maven 3.9.16 and the same JDK. The build validates the exact Maven, Java, GraalVM, vendor,
+and OpenJDK runtime versions before creating module artifacts. Maven Toolchains selects that active
+JDK for compilation and tests; an explicit `~/.m2/toolchains.xml` is not required.
+
+The checked-in Maven Wrapper remains available for CI and environments where SDKMAN is unavailable.
+On Windows, use `mvnw.cmd` in place of `mvn` when Maven 3.9.16 is not installed directly.
 
 ## Build and test
 
@@ -50,38 +68,38 @@ scripts/quality run java
 scripts/quality run frontend sdk
 
 # Compile, run unit tests with Surefire, run *IT acceptance tests with Failsafe, and package all modules
-./mvnw verify
+mvn verify
 
 # Verify only the backend and the parent projects it needs
-./mvnw -pl backend -am verify
+mvn -pl backend -am verify
 
 # Run the backend's fast unit-test convention (*Test)
-./mvnw -pl backend -am test
+mvn -pl backend -am test
 
 # Run one backend integration test through Failsafe
-./mvnw -pl backend -am -Dit.test=LivenessIT verify
+mvn -pl backend -am -Dit.test=LivenessIT verify
 
 # Build the executable backend JAR without running tests
-./mvnw -pl backend -am -DskipTests package
+mvn -pl backend -am -DskipTests package
 
 # Verify the frontend and the packaged Spring/Chromium acceptance seam
-./mvnw -pl backend -am package
-./mvnw -pl frontend -am -Ppackaged-acceptance verify
+mvn -pl backend -am package
+mvn -pl frontend -am -Ppackaged-acceptance verify
 
 # Build the executable JAR and production OCI image
-./mvnw -pl backend-deployment -am package
+mvn -pl backend-deployment -am package
 
 # Build the executable JAR and production OCI image through verification
-./mvnw -pl backend-deployment -am verify
+mvn -pl backend-deployment -am verify
 
 # Test the Python SDK through its delegated native uv workflow
-./mvnw -pl sdk -am test
+mvn -pl sdk -am test
 
 # Build the SDK wheel and source distribution through the reactor
-./mvnw -pl sdk -am package
+mvn -pl sdk -am package
 
 # Run the complete SDK verification, including both installed distribution paths
-./mvnw -pl sdk -am verify
+mvn -pl sdk -am verify
 ```
 
 The quality command prints every check as applicable or inapplicable and validates exact local
@@ -112,7 +130,7 @@ with readable local logs using:
 ```bash
 export SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=local
 export SPRING_PROFILES_ACTIVE=local
-./mvnw -pl backend spring-boot:run
+mvn -pl backend spring-boot:run
 ```
 
 See the [backend deployment configuration and logging guide](backend/README.md) for configuration
@@ -142,7 +160,7 @@ based on the immutable GraalVM Community 25.2.4 runtime manifest. Its normal Mav
 builds the image:
 
 ```bash
-./mvnw -pl backend-deployment -am package
+mvn -pl backend-deployment -am package
 ```
 
 See the [backend deployment guide](backend-deployment/README.md)
@@ -159,7 +177,7 @@ Start the local application with JDWP listening on port 5005, then attach a Java
 `localhost:5005`:
 
 ```bash
-./mvnw -pl backend spring-boot:run \
+mvn -pl backend spring-boot:run \
   -Dspring-boot.run.jvmArguments='-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005' \
   -Dspring-boot.run.arguments='--skywright.deployment.environment=local'
 ```

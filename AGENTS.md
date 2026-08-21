@@ -20,6 +20,13 @@ Single-context — `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agen
 
 Test actual application code with unit tests and system tests.
 
+## Development toolchain
+
+Work from the repository root so SDKMAN can activate `.sdkmanrc`. Worktree creation should run
+`scripts/setup-worktree`; it installs or reuses the pinned shared SDKs and prepares local
+dependencies. Use `java`, `mvn`, `node`, `pnpm`, and `uv` directly. If a prerequisite check fails,
+rerun the setup script instead of embedding SDK installation paths in commands.
+
 ## Specification authority
 
 Treat issue acceptance criteria and accepted ADRs as canonical for implementation.

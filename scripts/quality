@@ -326,7 +326,6 @@ def plan_command(arguments: argparse.Namespace) -> int:
                 f"{name}={str(check.applicable).lower()}\n"
                 for name, check in plan.checks.items()
             )
-            output.writelines(f"{name}={value}\n" for name, value in TOOLCHAIN.items())
     if arguments.format == "json":
         print(serialized)
     else:
@@ -382,6 +381,7 @@ def require_java() -> None:
     required = {
         "java.version": TOOLCHAIN["java_version"],
         "java.vendor": TOOLCHAIN["java_vendor"],
+        "java.vendor.version": TOOLCHAIN["java_vendor_version"],
     }
     for property_name, expected in required.items():
         match = re.search(
@@ -396,10 +396,10 @@ def require_java() -> None:
         r"^\s*java.runtime.version = (.+)$", details, re.MULTILINE
     )
     runtime = runtime_match.group(1).strip() if runtime_match else "unknown"
-    if not runtime.startswith(TOOLCHAIN["java_runtime_prefix"]):
+    if runtime != TOOLCHAIN["java_runtime_version"]:
         raise PrerequisiteError(
             "requires GraalVM Community runtime "
-            f"{TOOLCHAIN['java_runtime_prefix']}; received {runtime}"
+            f"{TOOLCHAIN['java_runtime_version']}; received {runtime}"
         )
 
     maven = output_of(str(REPOSITORY / "mvnw"), "--version")
