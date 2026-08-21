@@ -17,6 +17,7 @@ import random
 import re
 import struct
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
@@ -29,7 +30,10 @@ from urllib.parse import quote, unquote
 
 import numpy as np
 
-from skywright._training_errors import TrainingContractViolation
+from skywright._training_errors import (
+    CheckpointPublicationCancelled,
+    TrainingContractViolation,
+)
 from skywright._training_types import (
     ArtifactRecord,
     CheckpointRejectionEvidence,
@@ -648,7 +652,7 @@ class RunStoreDeadlineError(RunStoreError):
     """The caller-owned operation deadline expired."""
 
 
-class RunStoreCancelledError(RunStoreError):
+class RunStoreCancelledError(RunStoreError, CheckpointPublicationCancelled):
     """The caller cancelled an in-flight Run Store operation."""
 
 
@@ -808,12 +812,25 @@ class RunStoreRecorder:
         self._progress = progress_recorder
         self._codec = checkpoint_codec or CheckpointCodec()
         control = operation_control or OperationControl()
+        self._checkpoint_cancellation = threading.Event()
+
+        def cancellation_requested() -> bool:
+            return (
+                control.cancellation_requested()
+                or self._checkpoint_cancellation.is_set()
+            )
+
+        controlled_publication = OperationControl(
+            control.deadline, cancellation_requested
+        )
         self._client = _S3Gateway(
-            client or _s3_client(target, session_factory, control),
+            client or _s3_client(target, session_factory, controlled_publication),
             target,
-            control,
+            controlled_publication,
         )
         self._attempt: ExecutionAttemptRecord | None = None
+        self._confirmation_lock = threading.Lock()
+        self._latest_confirmation: tuple[int, str] | None = None
         self._closed = False
         self._multipart_threshold = multipart_threshold
         self._multipart_part_size = multipart_part_size
@@ -855,6 +872,15 @@ class RunStoreRecorder:
             content_type="application/json",
         )
         self._attempt = attempt
+        if (
+            attempt.seed_checkpoint_step is not None
+            and attempt.seed_checkpoint_reference is not None
+        ):
+            with self._confirmation_lock:
+                self._latest_confirmation = (
+                    attempt.seed_checkpoint_step,
+                    attempt.seed_checkpoint_reference,
+                )
 
     def publish_checkpoint(self, checkpoint: CheckpointSnapshot) -> str:
         self._require_open()
@@ -913,6 +939,45 @@ class RunStoreRecorder:
                 latest_durable_step,
                 latest_durable_checkpoint,
             )
+
+    def confirm_checkpoint(self, step: int, reference: str) -> None:
+        self._require_open()
+        if self._checkpoint_cancellation.is_set():
+            raise RunStoreCancelledError(
+                "Checkpoint confirmation was cancelled by its coordinator"
+            )
+        parsed = CheckpointReference.parse(reference)
+        if parsed.step != step:
+            raise TrainingContractViolation(
+                "checkpoint/confirmation-step",
+                "Checkpoint confirmation Step does not match its reference",
+                "confirm the exact reference returned by checkpoint publication",
+            )
+        with self._confirmation_lock:
+            current = self._latest_confirmation
+            if current is not None:
+                current_step, current_reference = current
+                if step < current_step:
+                    return
+                if step == current_step:
+                    if reference != current_reference:
+                        raise TrainingContractViolation(
+                            "checkpoint/confirmation-conflict",
+                            f"Step {step} already has a different confirmed Checkpoint",
+                            "confirm only the immutable Checkpoint already recorded for this Step",
+                        )
+                    return
+            if self._progress is not None:
+                self._progress.confirm_checkpoint(step, reference)
+            self._latest_confirmation = (step, reference)
+
+    def cancel_checkpoint_publication(self) -> None:
+        """Request cancellation of the current attempt-owned checkpoint operation."""
+        self._checkpoint_cancellation.set()
+
+    def resume_after_checkpoint_cancellation(self) -> None:
+        """Allow report publication after cancelled checkpoint work has stopped."""
+        self._checkpoint_cancellation.clear()
 
     def publish_artifact(self, artifact: ArtifactRecord) -> None:
         attempt = self._require_open()

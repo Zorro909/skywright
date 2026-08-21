@@ -6,6 +6,15 @@ guidance. Published schema bytes are immutable; a change always creates a new sc
 digest. The backend retains an explicit trusted copy of every supported historical identity and
 reports an unlisted identity as not runnable.
 
+## 0.3.0
+
+- Corrected `checkpoint.cadence` to describe absolute-Step snapshot scheduling and
+  asynchronous durability lag. Its type, default, constraints, and resume compatibility are
+  unchanged.
+
+Migration: no Run Configuration value changes. Training Project contracts must pin the new schema
+identity when built against this SDK version.
+
 ## 0.2.0
 
 - Added nullable `checkpoint.keepEveryNth`, defaulting to `null`, so retention can protect

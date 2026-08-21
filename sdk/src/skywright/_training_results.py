@@ -5,7 +5,7 @@ from dataclasses import replace
 from types import MappingProxyType
 
 from skywright._training_context import DefaultRunContext
-from skywright._training_errors import TrainingContractViolation
+from skywright._training_errors import SkywrightFailure, TrainingContractViolation
 from skywright._training_protocols import TrainingProcessRecorder
 from skywright._training_types import (
     CheckpointSnapshot,
@@ -24,30 +24,52 @@ def stopped_result(
     context: DefaultRunContext,
     resume_from: CheckpointSnapshot | None,
     recorder: TrainingProcessRecorder,
+    diagnostics: Mapping[str, object],
 ) -> TrainingProcessResult:
-    if cause is ExecutionTerminationCause.INTERRUPTED:
+    if cause in (
+        ExecutionTerminationCause.INTERRUPTED,
+        ExecutionTerminationCause.POLICY_STOPPED,
+    ):
         return durable_result(
             attempt,
-            TrainingProcessOutcome.INTERRUPTED,
+            (
+                TrainingProcessOutcome.INTERRUPTED
+                if cause is ExecutionTerminationCause.INTERRUPTED
+                else TrainingProcessOutcome.CANCELLED
+            ),
             cause,
             context,
             resume_from,
             recorder,
+            diagnostics,
+            cancellation_can_preempt=True,
         )
+    shutdown = context.stop_checkpoint_work()
+    cleanup_failure = shutdown.failure
+    if cleanup_failure is not None:
+        return failure_result(
+            attempt,
+            cleanup_failure,
+            context,
+            resume_from,
+            "finalization",
+            recorder,
+            True,
+            skywright_failure=True,
+        )
+    durable_step, durable_checkpoint = context.durable_state()
     result = _result(
         attempt=attempt,
         outcome=TrainingProcessOutcome.CANCELLED,
         cause=cause,
-        last_committed_step=context.step,
-        latest_durable_step=resume_from.step if resume_from is not None else None,
-        latest_durable_checkpoint=(
-            resume_from.reference if resume_from is not None else None
-        ),
+        last_committed_step=context.committed_step,
+        latest_durable_step=durable_step,
+        latest_durable_checkpoint=durable_checkpoint,
         final_checkpoint=None,
         context=context,
-        diagnostics={},
+        diagnostics=diagnostics,
     )
-    return _publish_report(result, recorder)
+    return _publish_report(result, recorder) if shutdown.stopped else result
 
 
 def durable_result(
@@ -57,27 +79,44 @@ def durable_result(
     context: DefaultRunContext,
     resume_from: CheckpointSnapshot | None,
     recorder: TrainingProcessRecorder,
+    diagnostics: Mapping[str, object] | None = None,
+    *,
+    cancellation_can_preempt: bool = False,
 ) -> TrainingProcessResult:
     try:
-        checkpoint = context.snapshot()
-        reference = recorder.publish_checkpoint(checkpoint)
-        if not reference:
-            raise ValueError("checkpoint publisher returned an empty reference")
-        checkpoint = checkpoint.with_reference(reference)
-    except Exception as failure:
+        checkpoint = context.publish_terminal_checkpoint(
+            cancellation_can_preempt=cancellation_can_preempt
+        )
+    except SkywrightFailure as failure:
         return failure_result(
-            attempt, failure, context, resume_from, "finalization", recorder, True
+            attempt,
+            failure.failure,
+            context,
+            resume_from,
+            "finalization",
+            recorder,
+            True,
+            skywright_failure=True,
+        )
+    if checkpoint is None:
+        return stopped_result(
+            attempt,
+            ExecutionTerminationCause.CANCELLED,
+            context,
+            resume_from,
+            recorder,
+            {},
         )
     result = _result(
         attempt=attempt,
         outcome=outcome,
         cause=cause,
-        last_committed_step=context.step,
+        last_committed_step=context.committed_step,
         latest_durable_step=checkpoint.step,
-        latest_durable_checkpoint=reference,
+        latest_durable_checkpoint=checkpoint.reference,
         final_checkpoint=checkpoint,
         context=context,
-        diagnostics={},
+        diagnostics=diagnostics or {},
     )
     return _publish_report(result, recorder)
 
@@ -93,6 +132,10 @@ def failure_result(
     *,
     skywright_failure: bool = False,
 ) -> TrainingProcessResult:
+    shutdown = context.stop_checkpoint_work() if context is not None else None
+    cleanup_failure = shutdown.failure if shutdown is not None else None
+    if cleanup_failure is failure:
+        cleanup_failure = None
     if isinstance(failure, TrainingContractViolation) and not skywright_failure:
         cause = ExecutionTerminationCause.CONTRACT_VIOLATION
         diagnostics: dict[str, object] = {
@@ -115,22 +158,29 @@ def failure_result(
             "message": str(failure),
             "stage": stage,
         }
-    last_step = context.step if context is not None else 0
-    durable_step = resume_from.step if resume_from is not None else None
+    last_step = context.committed_step if context is not None else 0
+    if context is not None:
+        durable_step, durable_checkpoint = context.durable_state()
+    else:
+        durable_step = resume_from.step if resume_from is not None else None
+        durable_checkpoint = resume_from.reference if resume_from is not None else None
     result = _result(
         attempt=attempt,
         outcome=TrainingProcessOutcome.FAILED,
         cause=cause,
         last_committed_step=last_step,
         latest_durable_step=durable_step,
-        latest_durable_checkpoint=(
-            resume_from.reference if resume_from is not None else None
-        ),
+        latest_durable_checkpoint=durable_checkpoint,
         final_checkpoint=None,
         context=context,
-        diagnostics=diagnostics,
+        diagnostics=_with_cleanup_failure(diagnostics, cleanup_failure),
     )
-    return _publish_report(result, recorder) if attempt_published else result
+    checkpoint_work_stopped = shutdown is None or shutdown.stopped
+    return (
+        _publish_report(result, recorder)
+        if attempt_published and checkpoint_work_stopped
+        else result
+    )
 
 
 def unpublished_failure(
@@ -228,3 +278,16 @@ def _publish_report(
                 diagnostics=MappingProxyType(diagnostics),
             ),
         )
+
+
+def _with_cleanup_failure(
+    diagnostics: Mapping[str, object], failure: Exception | None
+) -> Mapping[str, object]:
+    if failure is None:
+        return diagnostics
+    combined = dict(diagnostics)
+    combined["checkpoint_cleanup_failure"] = {
+        "exception_type": type(failure).__name__,
+        "message": str(failure),
+    }
+    return combined

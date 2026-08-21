@@ -47,6 +47,10 @@ def _never_requested() -> bool:
     return False
 
 
+def _no_policy_stop() -> str | None:
+    return None
+
+
 def run_training_process(
     entry_point: TrainingProject | str,
     *,
@@ -62,6 +66,7 @@ def run_training_process(
     accelerator: Accelerator = CPU_ACCELERATOR,
     cancellation_requested: Callable[[], bool] = _never_requested,
     interruption_requested: Callable[[], bool] = _never_requested,
+    policy_stop_requested: Callable[[], str | None] = _no_policy_stop,
     shutdown_grace_seconds: float = 30.0,
     rejected_corrupt_checkpoints: tuple[CheckpointRejectionEvidence, ...] = (),
 ) -> TrainingProcessResult:
@@ -165,8 +170,10 @@ def run_training_process(
             accelerator=accelerator,
             cancellation_requested=cancellation_requested,
             interruption_requested=any_interruption_requested,
+            policy_stop_requested=policy_stop_requested,
             run_id=run_id,
             project_version=project_version,
+            shutdown_grace_seconds=shutdown_grace_seconds,
         )
     except TrainingContractViolation as violation:
         return finish(
@@ -216,7 +223,12 @@ def run_training_process(
     except CooperativeStop as stop:
         return finish(
             stopped_result(
-                attempt, stop.cause, context, resolved_resume, resolved_recorder
+                attempt,
+                stop.cause,
+                context,
+                resolved_resume,
+                resolved_recorder,
+                stop.diagnostics,
             )
         )
     except SkywrightFailure as failure:

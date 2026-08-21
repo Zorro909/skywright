@@ -141,6 +141,9 @@ class ProgressRecorder:
     def publish_step(self, *values) -> None:
         self.steps.append(values)
 
+    def confirm_checkpoint(self, step, reference) -> None:
+        self.steps.append(("confirmation", step, reference))
+
 
 def recorder(memory: MemoryS3, tmp_path, progress=None, **options) -> RunStoreRecorder:
     return RunStoreRecorder(
@@ -342,6 +345,7 @@ def test_recorder_publishes_attempt_outputs_checkpoint_and_report(tmp_path) -> N
             project_version="project@digest",
         )
     )
+    store.confirm_checkpoint(3, reference)
     store.publish_step(3, DatasetCursor(item_offset=3), (), 3, reference)
     store.publish_artifact(ArtifactRecord("weights/raw", b"artifact", 3))
     store.publish_sample(SampleRecord("preview.png", b"png", "image/png", 3))
@@ -359,7 +363,9 @@ def test_recorder_publishes_attempt_outputs_checkpoint_and_report(tmp_path) -> N
     store.publish_report(report)
 
     assert CheckpointReference.parse(reference).step == 3
-    assert progress.steps[0][0] == 3
+    assert len(progress.steps) == 2
+    assert progress.steps[0] == ("confirmation", 3, reference)
+    assert progress.steps[1][0] == 3
     artifacts = [value for key, value in memory.objects.items() if "/artifacts/" in key]
     samples = [value for key, value in memory.objects.items() if "/samples/" in key]
     assert artifacts == [(b"artifact", artifacts[0][1], "application/octet-stream")]
@@ -386,6 +392,43 @@ def test_recorder_reconciles_identical_retries_and_rejects_conflicts(tmp_path) -
         TrainingContractViolation, match="run-output/immutable-identity"
     ):
         store.publish_artifact(ArtifactRecord("result", b"different", 1))
+
+
+def test_checkpoint_confirmation_is_monotonic_idempotent_and_immutable(
+    tmp_path,
+) -> None:
+    memory = MemoryS3()
+    progress = ProgressRecorder()
+    store = recorder(memory, tmp_path, progress)
+    store.publish_attempt(
+        ExecutionAttemptRecord(
+            "123e4567-e89b-12d3-a456-426614174000",
+            "run",
+            "project@digest",
+            None,
+        )
+    )
+    older = store.publish_checkpoint(
+        CheckpointSnapshot(3, {"state": {"value": 3}}, run_id="run")
+    )
+    newer = store.publish_checkpoint(
+        CheckpointSnapshot(4, {"state": {"value": 4}}, run_id="run")
+    )
+
+    store.confirm_checkpoint(3, older)
+    store.confirm_checkpoint(3, older)
+    store.confirm_checkpoint(4, newer)
+    store.confirm_checkpoint(3, older)
+
+    assert progress.steps == [
+        ("confirmation", 3, older),
+        ("confirmation", 4, newer),
+    ]
+    conflicting = str(CheckpointReference(4, "0" * 64))
+    with pytest.raises(
+        TrainingContractViolation, match="checkpoint/confirmation-conflict"
+    ):
+        store.confirm_checkpoint(4, conflicting)
 
 
 def test_report_closes_only_the_process_writer_partition(tmp_path) -> None:
@@ -588,6 +631,19 @@ def test_operations_honor_cancellation_and_retain_non_secret_measurements(
     assert store.measurements[-1].operation == "put_object"
     assert store.measurements[-1].run_id == "run"
     assert store.measurements[-1].provenance == "test-storage"
+    checkpoint = CheckpointSnapshot(
+        1,
+        {"state": {}},
+        dataset_cursor=DatasetCursor(ordering_fingerprint="ordering"),
+        run_id="run",
+        project_version="project@digest",
+    )
+    store.cancel_checkpoint_publication()
+    with pytest.raises(RunStoreCancelledError):
+        store.publish_checkpoint(checkpoint)
+    store.resume_after_checkpoint_cancellation()
+    assert CheckpointReference.parse(store.publish_checkpoint(checkpoint)).step == 1
+
     cancelled = recorder(
         MemoryS3(),
         tmp_path,

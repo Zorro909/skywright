@@ -191,6 +191,7 @@ class Dataset:
 class Recorder:
     def publish_attempt(self, attempt): pass
     def publish_checkpoint(self, checkpoint): return "checkpoint:installed"
+    def confirm_checkpoint(self, step, reference): pass
     def publish_step(self, step, dataset_cursor, observations, durable_step, durable_ref): pass
     def publish_artifact(self, artifact): pass
     def publish_sample(self, sample): pass
