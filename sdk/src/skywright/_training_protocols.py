@@ -50,6 +50,10 @@ class TrainingProcessRecorder(Protocol):
 
     def confirm_checkpoint(self, step: int, reference: str) -> None: ...
 
+    def cancel_checkpoint_publication(self) -> None: ...
+
+    def resume_after_checkpoint_cancellation(self) -> None: ...
+
     def publish_step(
         self,
         step: int,

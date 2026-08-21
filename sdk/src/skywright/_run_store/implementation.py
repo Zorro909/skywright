@@ -17,6 +17,7 @@ import random
 import re
 import struct
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
@@ -29,7 +30,10 @@ from urllib.parse import quote, unquote
 
 import numpy as np
 
-from skywright._training_errors import TrainingContractViolation
+from skywright._training_errors import (
+    CheckpointPublicationCancelled,
+    TrainingContractViolation,
+)
 from skywright._training_types import (
     ArtifactRecord,
     CheckpointRejectionEvidence,
@@ -648,7 +652,7 @@ class RunStoreDeadlineError(RunStoreError):
     """The caller-owned operation deadline expired."""
 
 
-class RunStoreCancelledError(RunStoreError):
+class RunStoreCancelledError(RunStoreError, CheckpointPublicationCancelled):
     """The caller cancelled an in-flight Run Store operation."""
 
 
@@ -808,10 +812,21 @@ class RunStoreRecorder:
         self._progress = progress_recorder
         self._codec = checkpoint_codec or CheckpointCodec()
         control = operation_control or OperationControl()
+        self._checkpoint_cancellation = threading.Event()
+
+        def cancellation_requested() -> bool:
+            return (
+                control.cancellation_requested()
+                or self._checkpoint_cancellation.is_set()
+            )
+
+        controlled_publication = OperationControl(
+            control.deadline, cancellation_requested
+        )
         self._client = _S3Gateway(
-            client or _s3_client(target, session_factory, control),
+            client or _s3_client(target, session_factory, controlled_publication),
             target,
-            control,
+            controlled_publication,
         )
         self._attempt: ExecutionAttemptRecord | None = None
         self._closed = False
@@ -925,6 +940,14 @@ class RunStoreRecorder:
             )
         if self._progress is not None:
             self._progress.confirm_checkpoint(step, reference)
+
+    def cancel_checkpoint_publication(self) -> None:
+        """Request cancellation of the current attempt-owned checkpoint operation."""
+        self._checkpoint_cancellation.set()
+
+    def resume_after_checkpoint_cancellation(self) -> None:
+        """Allow report publication after cancelled checkpoint work has stopped."""
+        self._checkpoint_cancellation.clear()
 
     def publish_artifact(self, artifact: ArtifactRecord) -> None:
         attempt = self._require_open()

@@ -594,6 +594,19 @@ def test_operations_honor_cancellation_and_retain_non_secret_measurements(
     assert store.measurements[-1].operation == "put_object"
     assert store.measurements[-1].run_id == "run"
     assert store.measurements[-1].provenance == "test-storage"
+    checkpoint = CheckpointSnapshot(
+        1,
+        {"state": {}},
+        dataset_cursor=DatasetCursor(ordering_fingerprint="ordering"),
+        run_id="run",
+        project_version="project@digest",
+    )
+    store.cancel_checkpoint_publication()
+    with pytest.raises(RunStoreCancelledError):
+        store.publish_checkpoint(checkpoint)
+    store.resume_after_checkpoint_cancellation()
+    assert CheckpointReference.parse(store.publish_checkpoint(checkpoint)).step == 1
+
     cancelled = recorder(
         MemoryS3(),
         tmp_path,

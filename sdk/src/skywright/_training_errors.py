@@ -3,6 +3,10 @@
 from skywright._training_types import ExecutionTerminationCause, FailureStage
 
 
+class CheckpointPublicationCancelled(Exception):
+    """Expected end of an in-flight publication during non-durable shutdown."""
+
+
 class CooperativeStop(BaseException):
     def __init__(
         self,

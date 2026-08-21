@@ -421,6 +421,80 @@ print(json.dumps({
     }
 
 
+def test_step_publication_waits_for_a_visible_checkpoint_confirmation() -> None:
+    completed = run_project(
+        """
+import json
+import threading
+import time
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+class ConfirmingRecorder(TestRecorder):
+    def __init__(self):
+        super().__init__()
+        self.confirming = threading.Event()
+        self.release = threading.Event()
+
+    def confirm_checkpoint(self, step, reference):
+        if step == 1:
+            self.confirming.set()
+            assert self.release.wait(2)
+        super().confirm_checkpoint(step, reference)
+
+
+recorder = ConfirmingRecorder()
+
+
+def release_confirmation():
+    assert recorder.confirming.wait(2)
+    time.sleep(0.05)
+    recorder.release.set()
+
+
+threading.Thread(target=release_confirmation, daemon=True).start()
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+    assert recorder.confirming.wait(2)
+    context.commit_step(next_batch(context))
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={"checkpoint": {"cadence": 1}},
+    dataset=TestDataset(("one", "two")),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=1,
+)
+step_events = [event for event in recorder.events if event[0] == "step"]
+print(json.dumps({
+    "outcome": result.outcome.value,
+    "second_step_durable": list(step_events[1][4:]),
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "outcome": "completed",
+        "second_step_durable": [1, "checkpoint:1"],
+    }
+
+
 def test_policy_stop_is_terminal_and_makes_the_committed_step_durable() -> None:
     completed = run_project(
         """
@@ -682,6 +756,245 @@ print(json.dumps({
         "durable_step": 1,
         "checkpoints": [1],
         "events": ["attempt", "step", "step", "checkpoint", "confirmation", "report"],
+    }
+
+
+def test_expected_active_publication_cancellation_preserves_cancelled_cause() -> None:
+    completed = run_project(
+        """
+import json
+import threading
+
+from skywright import run_training_process
+from skywright.run_store import RunStoreCancelledError
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+class CancellingRecorder(TestRecorder):
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.cancelled = threading.Event()
+
+    def publish_checkpoint(self, checkpoint):
+        self.started.set()
+        assert self.cancelled.wait(2)
+        raise RunStoreCancelledError("publication cancelled")
+
+    def cancel_checkpoint_publication(self):
+        self.cancelled.set()
+
+    def resume_after_checkpoint_cancellation(self):
+        pass
+
+
+recorder = CancellingRecorder()
+cancel = False
+
+
+def train(context):
+    global cancel
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+    assert recorder.started.wait(2)
+    cancel = True
+    context.commit_step(next_batch(context))
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={"checkpoint": {"cadence": 1}},
+    dataset=TestDataset(("one", "two")),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=1,
+    cancellation_requested=lambda: cancel,
+)
+print(json.dumps({
+    "outcome": result.outcome.value,
+    "cause": result.report.cause.value,
+    "durable_step": result.report.latest_durable_step,
+    "events": [event[0] for event in recorder.events],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "outcome": "cancelled",
+        "cause": "cancelled",
+        "durable_step": None,
+        "events": ["attempt", "step", "step", "report"],
+    }
+
+
+def test_late_cancellation_preempts_policy_stop_terminal_publication() -> None:
+    completed = run_project(
+        """
+import json
+import threading
+
+from skywright import run_training_process
+from skywright.run_store import RunStoreCancelledError
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+class BlockingTerminalRecorder(TestRecorder):
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.cancelled = threading.Event()
+
+    def publish_checkpoint(self, checkpoint):
+        self.started.set()
+        assert self.cancelled.wait(2)
+        raise RunStoreCancelledError("terminal publication cancelled")
+
+    def cancel_checkpoint_publication(self):
+        self.cancelled.set()
+
+    def resume_after_checkpoint_cancellation(self):
+        pass
+
+
+recorder = BlockingTerminalRecorder()
+cancel = False
+
+
+def cancel_during_terminal_barrier():
+    global cancel
+    assert recorder.started.wait(2)
+    cancel = True
+
+
+threading.Thread(target=cancel_during_terminal_barrier, daemon=True).start()
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(("one",)),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=1,
+    cancellation_requested=lambda: cancel,
+    policy_stop_requested=lambda: "decision-1",
+)
+print(json.dumps({
+    "outcome": result.outcome.value,
+    "cause": result.report.cause.value,
+    "durable_step": result.report.latest_durable_step,
+    "events": [event[0] for event in recorder.events],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "outcome": "cancelled",
+        "cause": "cancelled",
+        "durable_step": None,
+        "events": ["attempt", "step", "report"],
+    }
+
+
+def test_shutdown_deadline_does_not_publish_report_before_checkpoint_work_stops() -> (
+    None
+):
+    completed = run_project(
+        """
+import json
+import threading
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+class IgnoringRecorder(TestRecorder):
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.finished = threading.Event()
+
+    def publish_checkpoint(self, checkpoint):
+        self.started.set()
+        self.release.wait(2)
+        return super().publish_checkpoint(checkpoint)
+
+    def confirm_checkpoint(self, step, reference):
+        super().confirm_checkpoint(step, reference)
+        self.finished.set()
+
+
+recorder = IgnoringRecorder()
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+    assert recorder.started.wait(2)
+    raise ValueError("project failed")
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={"checkpoint": {"cadence": 1}},
+    dataset=TestDataset(("one",)),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=1,
+    shutdown_grace_seconds=0.05,
+)
+events_at_return = [event[0] for event in recorder.events]
+recorder.release.set()
+assert recorder.finished.wait(2)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "message": result.report.diagnostics["message"],
+    "cleanup": result.report.diagnostics["checkpoint_cleanup_failure"]["exception_type"],
+    "events_at_return": events_at_return,
+    "events_after_release": [event[0] for event in recorder.events],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "training_project_failure",
+        "message": "project failed",
+        "cleanup": "TimeoutError",
+        "events_at_return": ["attempt", "step"],
+        "events_after_release": ["attempt", "step", "checkpoint", "confirmation"],
     }
 
 

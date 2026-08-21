@@ -42,8 +42,10 @@ def stopped_result(
             resume_from,
             recorder,
             diagnostics,
+            cancellation_can_preempt=True,
         )
-    cleanup_failure = context.stop_checkpoint_work()
+    shutdown = context.stop_checkpoint_work()
+    cleanup_failure = shutdown.failure
     if cleanup_failure is not None:
         return failure_result(
             attempt,
@@ -67,7 +69,7 @@ def stopped_result(
         context=context,
         diagnostics=diagnostics,
     )
-    return _publish_report(result, recorder)
+    return _publish_report(result, recorder) if shutdown.stopped else result
 
 
 def durable_result(
@@ -78,9 +80,13 @@ def durable_result(
     resume_from: CheckpointSnapshot | None,
     recorder: TrainingProcessRecorder,
     diagnostics: Mapping[str, object] | None = None,
+    *,
+    cancellation_can_preempt: bool = False,
 ) -> TrainingProcessResult:
     try:
-        checkpoint = context.publish_terminal_checkpoint()
+        checkpoint = context.publish_terminal_checkpoint(
+            cancellation_can_preempt=cancellation_can_preempt
+        )
     except SkywrightFailure as failure:
         return failure_result(
             attempt,
@@ -91,6 +97,15 @@ def durable_result(
             recorder,
             True,
             skywright_failure=True,
+        )
+    if checkpoint is None:
+        return stopped_result(
+            attempt,
+            ExecutionTerminationCause.CANCELLED,
+            context,
+            resume_from,
+            recorder,
+            {},
         )
     result = _result(
         attempt=attempt,
@@ -117,7 +132,8 @@ def failure_result(
     *,
     skywright_failure: bool = False,
 ) -> TrainingProcessResult:
-    cleanup_failure = context.stop_checkpoint_work() if context is not None else None
+    shutdown = context.stop_checkpoint_work() if context is not None else None
+    cleanup_failure = shutdown.failure if shutdown is not None else None
     if cleanup_failure is failure:
         cleanup_failure = None
     if isinstance(failure, TrainingContractViolation) and not skywright_failure:
@@ -159,7 +175,12 @@ def failure_result(
         context=context,
         diagnostics=_with_cleanup_failure(diagnostics, cleanup_failure),
     )
-    return _publish_report(result, recorder) if attempt_published else result
+    checkpoint_work_stopped = shutdown is None or shutdown.stopped
+    return (
+        _publish_report(result, recorder)
+        if attempt_published and checkpoint_work_stopped
+        else result
+    )
 
 
 def unpublished_failure(

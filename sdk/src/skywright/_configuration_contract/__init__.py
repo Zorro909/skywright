@@ -22,7 +22,7 @@ JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 JsonDocument: TypeAlias = str | bytes | Mapping[str, object]
 
-_SCHEMA_VERSION = "0.2.0"
+_SCHEMA_VERSION = "0.3.0"
 _DIALECT = "https://json-schema.org/draft/2020-12/schema"
 _VOCABULARIES = frozenset(
     {

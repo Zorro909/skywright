@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:skywright:configuration-schema:0.2.0",
+  "$id": "urn:skywright:configuration-schema:0.3.0",
   "title": "Skywright Configuration Schema",
   "description": "The library-owned part of a Skywright Run Configuration.",
   "type": "object",
@@ -47,7 +47,7 @@
       "type": "object",
       "properties": {
         "cadence": {
-          "description": "Maximum completed Steps between periodic durable checkpoints.",
+          "description": "Absolute-Step cadence for scheduling immutable checkpoint snapshots; asynchronous publication may make Durable Safe Points lag behind it.",
           "type": "integer",
           "minimum": 1,
           "default": 100,

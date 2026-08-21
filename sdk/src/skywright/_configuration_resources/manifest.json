@@ -1,6 +1,6 @@
 {
-  "schemaVersion": "0.2.0",
-  "schemaDigest": "sha256:363db9f4596b92a9e01b609b1497b73d589d06d5fbaf7fbc306f4844afdd2c53",
+  "schemaVersion": "0.3.0",
+  "schemaDigest": "sha256:cd59cc7b421bcaed5743a2575f5ebc59a0828a7b13b82c35f1180bb74d5c67cf",
   "dialect": "https://json-schema.org/draft/2020-12/schema",
   "requiredVocabularies": [
     "https://json-schema.org/draft/2020-12/vocab/core",

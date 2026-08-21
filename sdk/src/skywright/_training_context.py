@@ -4,7 +4,10 @@ import copy
 from collections.abc import Callable, Mapping
 from typing import NoReturn, cast
 
-from skywright._training_checkpoint_coordinator import CheckpointCoordinator
+from skywright._training_checkpoint_coordinator import (
+    CheckpointCoordinator,
+    CheckpointShutdown,
+)
 from skywright._training_checkpoints import capture_checkpoint, restore_checkpoint
 from skywright._training_dataset import TrackedDatasetAccess, validate_cursor_shape
 from skywright._training_errors import (
@@ -271,19 +274,16 @@ class DefaultRunContext:
         self._step = next_step
         self._dataset_cursor = next_dataset_cursor
         self._raise_checkpoint_failure()
-        if self.cancellation_requested:
-            raise CooperativeStop(ExecutionTerminationCause.CANCELLED)
+        self._stop_if_cancellation_requested()
         policy_stop_decision = self._read_policy_stop_requested()
-        if self.cancellation_requested:
-            raise CooperativeStop(ExecutionTerminationCause.CANCELLED)
+        self._stop_if_cancellation_requested()
         if policy_stop_decision is not None:
             raise CooperativeStop(
                 ExecutionTerminationCause.POLICY_STOPPED,
                 {"ceiling_stop_decision": policy_stop_decision},
             )
         interrupted = self._read_interruption_requested()
-        if self.cancellation_requested:
-            raise CooperativeStop(ExecutionTerminationCause.CANCELLED)
+        self._stop_if_cancellation_requested()
         if interrupted:
             raise CooperativeStop(ExecutionTerminationCause.INTERRUPTED)
         if next_step % self._checkpoint_cadence() == 0:
@@ -330,13 +330,18 @@ class DefaultRunContext:
     def durable_state(self) -> tuple[int | None, str | None]:
         return self._checkpoints.durable_state()
 
-    def publish_terminal_checkpoint(self) -> CheckpointSnapshot:
+    def publish_terminal_checkpoint(
+        self, *, cancellation_can_preempt: bool = False
+    ) -> CheckpointSnapshot | None:
         try:
-            return self._checkpoints.publish_terminal(self.snapshot)
+            return self._checkpoints.publish_terminal(
+                self.snapshot,
+                self._cancellation_requested if cancellation_can_preempt else None,
+            )
         except Exception as failure:
             raise SkywrightFailure(failure, "finalization") from failure
 
-    def stop_checkpoint_work(self) -> Exception | None:
+    def stop_checkpoint_work(self) -> CheckpointShutdown:
         return self._checkpoints.stop()
 
     def validate_completion(self) -> None:
@@ -403,6 +408,10 @@ class DefaultRunContext:
                 "project",
             )
         return decision
+
+    def _stop_if_cancellation_requested(self) -> None:
+        if self.cancellation_requested:
+            raise CooperativeStop(ExecutionTerminationCause.CANCELLED)
 
     def _raise_checkpoint_failure(self) -> None:
         try:
