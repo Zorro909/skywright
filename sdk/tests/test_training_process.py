@@ -97,15 +97,11 @@ def test_catalog(*definitions):
     )
 
 
-def system_metric_definitions():
-    return MetricSchema.definitions()
-
-
 class TestMetricContracts:
     def __init__(self, *definitions, system_definitions=None):
         self.definitions = definitions
         self.system_definitions = (
-            system_metric_definitions()
+            MetricSchema.definitions()
             if system_definitions is None
             else system_definitions
         )
@@ -262,7 +258,7 @@ result = run_training_process(
             comparison="minimize",
             step_reduction="mean",
         ),
-        system_definitions=system_metric_definitions(),
+        system_definitions=MetricSchema.definitions(),
     ),
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
@@ -326,7 +322,7 @@ result = run_training_process(
     configuration={},
     dataset=TestDataset(("one", "two", "three")),
     metric_contracts=TestMetricContracts(
-        system_definitions=system_metric_definitions()
+        system_definitions=MetricSchema.definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
@@ -405,7 +401,7 @@ result = run_training_process(
     configuration={"metrics": {"systemSamplingInterval": 2.5}},
     dataset=TestDataset(("item",)),
     metric_contracts=TestMetricContracts(
-        system_definitions=system_metric_definitions()
+        system_definitions=MetricSchema.definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
@@ -462,7 +458,7 @@ result = run_training_process(
     configuration={},
     dataset=TestDataset(("zero", "one", "two", "three", "four", "five")),
     metric_contracts=TestMetricContracts(
-        system_definitions=system_metric_definitions()
+        system_definitions=MetricSchema.definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=TestRecorder(),
@@ -522,7 +518,7 @@ result = run_training_process(
     configuration={},
     dataset=TestDataset(),
     metric_contracts=TestMetricContracts(
-        system_definitions=system_metric_definitions()
+        system_definitions=MetricSchema.definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=TestRecorder(),
@@ -608,7 +604,7 @@ result = run_training_process(
     configuration={{"metrics": {{"systemSamplingInterval": 3}}}},
     dataset=TestDataset(("item",)),
     metric_contracts=TestMetricContracts(
-        system_definitions=system_metric_definitions()
+        system_definitions=MetricSchema.definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
@@ -696,7 +692,7 @@ result = run_training_process(
     configuration={{"metrics": {{"systemSamplingInterval": 1}}}},
     dataset=TestDataset(),
     metric_contracts=TestMetricContracts(
-        system_definitions=system_metric_definitions()
+        system_definitions=MetricSchema.definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=FailingRecorder(),
@@ -747,7 +743,7 @@ result = run_training_process(
     configuration={},
     dataset=TestDataset(),
     metric_contracts=TestMetricContracts(
-        system_definitions=system_metric_definitions()
+        system_definitions=MetricSchema.definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=TestRecorder(),
@@ -3201,7 +3197,7 @@ result = run_training_process(
         numeric_kind="real",
         unit="dimensionless",
         comparison="minimize",
-    ), system_definitions=system_metric_definitions()),
+    ), system_definitions=MetricSchema.definitions()),
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
     seed=3,
