@@ -665,7 +665,103 @@ print(json.dumps({
     }
 
 
-def test_cancellation_drains_active_cadence_work_without_a_terminal_checkpoint() -> (
+def test_default_cadence_applies_to_large_absolute_steps() -> None:
+    completed = run_project(
+        """
+import json
+import threading
+
+from skywright import (
+    CheckpointSnapshot,
+    DatasetBatch,
+    DatasetCursor,
+    run_training_process,
+)
+
+
+class State:
+    def __init__(self): self.value = 0
+    def state_dict(self): return {"value": self.value}
+    def load_state_dict(self, state): self.value = state["value"]
+
+
+class LargeStepDataset:
+    ordering_fingerprint = "sha256:large-step-ordering"
+
+    def batches(self, cursor):
+        yield DatasetBatch(
+            items=("item",),
+            next_cursor=DatasetCursor(
+                epoch=cursor.epoch,
+                item_offset=cursor.item_offset + 1,
+                epoch_step=cursor.epoch_step + 1,
+                ordering_fingerprint=self.ordering_fingerprint,
+            ),
+            epoch=cursor.epoch,
+        )
+
+
+class CadenceRecorder(TestRecorder):
+    def __init__(self):
+        super().__init__()
+        self.scheduled = threading.Event()
+
+    def publish_checkpoint(self, checkpoint):
+        self.scheduled.set()
+        return super().publish_checkpoint(checkpoint)
+
+
+recorder = CadenceRecorder()
+
+
+def train(context):
+    state = State()
+    context.register_checkpoint_state("state", state)
+    context.start()
+    context.commit_step(next_batch(context))
+    assert recorder.scheduled.wait(2)
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=LargeStepDataset(),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=1,
+    resume_from=CheckpointSnapshot(
+        step=9_999_999_999,
+        state={"state": {"value": 9_999_999_999}},
+        dataset_cursor=DatasetCursor(
+            item_offset=9_999_999_999,
+            epoch_step=9_999_999_999,
+            ordering_fingerprint="sha256:large-step-ordering",
+        ),
+        reference="checkpoint:seed",
+    ),
+)
+print(json.dumps({
+    "outcome": result.outcome.value,
+    "checkpoint_steps": [
+        event[1].step for event in recorder.events if event[0] == "checkpoint"
+    ],
+    "durable_step": result.report.latest_durable_step,
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "outcome": "completed",
+        "checkpoint_steps": [10_000_000_000],
+        "durable_step": 10_000_000_000,
+    }
+
+
+def test_cancellation_drains_active_and_pending_cadence_work_without_a_terminal_checkpoint() -> (
     None
 ):
     completed = run_project(
@@ -709,8 +805,10 @@ def train(context):
     state.value = 1
     context.commit_step(next_batch(context))
     assert recorder.started.wait(2)
-    cancel = True
     state.value = 2
+    context.commit_step(next_batch(context))
+    cancel = True
+    state.value = 3
     context.commit_step(next_batch(context))
 
 
@@ -719,7 +817,7 @@ result = run_training_process(
     run_id="test-run",
     project_version="test-project@abc123",
     configuration={"checkpoint": {"cadence": 1}},
-    dataset=TestDataset(("one", "two")),
+    dataset=TestDataset(("one", "two", "three")),
     metric_contracts=TestMetricContracts(),
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
@@ -743,10 +841,18 @@ print(json.dumps({
     assert json.loads(completed.stdout) == {
         "outcome": "cancelled",
         "cause": "cancelled",
-        "last_step": 2,
+        "last_step": 3,
         "durable_step": 1,
         "checkpoints": [1],
-        "events": ["attempt", "step", "step", "checkpoint", "confirmation", "report"],
+        "events": [
+            "attempt",
+            "step",
+            "step",
+            "step",
+            "checkpoint",
+            "confirmation",
+            "report",
+        ],
     }
 
 
