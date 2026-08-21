@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repository"
+
+for command in curl flock; do
+  if ! command -v "$command" >/dev/null 2>&1; then
+    echo "Required command is unavailable: $command" >&2
+    exit 1
+  fi
+done
+
+sdkman_directory="${SDKMAN_DIR:-${HOME}/.sdkman}"
+nvm_directory="${NVM_DIR:-${HOME}/.nvm}"
+if [[ ! -s "$sdkman_directory/bin/sdkman-init.sh" ]]; then
+  echo "Install SDKMAN before running scripts/setup-worktree: https://sdkman.io/install" >&2
+  exit 1
+fi
+if [[ ! -s "$nvm_directory/nvm.sh" ]]; then
+  echo "Install NVM before running scripts/setup-worktree: https://github.com/nvm-sh/nvm" >&2
+  exit 1
+fi
+
+lock_directory="${XDG_RUNTIME_DIR:-/tmp}"
+exec 9>"${lock_directory}/skywright-toolchain-${UID}.lock"
+flock 9
+
+sdkman_config="$sdkman_directory/etc/config"
+if grep -q '^sdkman_auto_env=' "$sdkman_config"; then
+  sed -i 's/^sdkman_auto_env=.*/sdkman_auto_env=true/' "$sdkman_config"
+else
+  printf '\nsdkman_auto_env=true\n' >> "$sdkman_config"
+fi
+
+# SDKMAN and NVM intentionally share candidates across every worktree.
+# shellcheck disable=SC1090
+set +u
+cd "$lock_directory"
+source "$sdkman_directory/bin/sdkman-init.sh"
+cd "$repository"
+sdk env install
+sdk env
+while IFS='=' read -r candidate version; do
+  [[ -n "$candidate" && -n "$version" ]] && sdk default "$candidate" "$version"
+done < .sdkmanrc
+set -u
+
+# shellcheck disable=SC1090
+set +u
+source "$nvm_directory/nvm.sh"
+nvm install
+nvm use
+nvm alias default "$(<.nvmrc)"
+set -u
+
+pnpm_version="$(node -p "require('./frontend/package.json').packageManager.replace('pnpm@', '')")"
+if [[ "$(command -v pnpm >/dev/null 2>&1 && pnpm --version || true)" != "$pnpm_version" ]]; then
+  npm install --global "pnpm@${pnpm_version}"
+fi
+
+uv_version="$(sed -n 's/^required-version = "==\([^"]*\)"/\1/p' sdk/pyproject.toml)"
+if [[ -z "$uv_version" ]]; then
+  echo "Could not read the required uv version from sdk/pyproject.toml" >&2
+  exit 1
+fi
+if [[ "$(command -v uv >/dev/null 2>&1 && uv --version | awk '{print $2}' || true)" != "$uv_version" ]]; then
+  curl -LsSf "https://astral.sh/uv/${uv_version}/install.sh" | sh
+  export PATH="${HOME}/.local/bin:${PATH}"
+fi
+
+if ! uv python find 3.14 >/dev/null 2>&1; then
+  uv python install 3.14
+fi
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend exec playwright install chromium
+
+echo
+echo "Skywright worktree is ready:"
+java -version
+mvn --version
+printf 'Node %s\npnpm %s\n' "$(node --version)" "$(pnpm --version)"
+uv --version

@@ -55,7 +55,7 @@ List the automated and manual checks performed, with enough detail to reproduce 
 Explain any important scenario that was not tested and why.
 
 For example:
-- [ ] `./mvnw verify`
+- [ ] `mvn verify`
 - [ ] Manually verified ...
 - Not verified: ...
 -->

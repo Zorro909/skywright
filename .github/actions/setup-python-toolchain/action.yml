@@ -1,0 +1,37 @@
+name: Set up Python toolchain
+description: Install Python and the repository's exact uv version.
+inputs:
+  python-version:
+    description: Python interpreter version for this compatibility lane
+    required: true
+  enable-cache:
+    description: Enable the uv package cache
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Read the repository uv version
+      id: toolchain
+      shell: bash
+      run: |
+        python3 - <<'PY' >> "$GITHUB_OUTPUT"
+        import tomllib
+        from pathlib import Path
+
+        with Path("sdk/pyproject.toml").open("rb") as source:
+            project = tomllib.load(source)
+        print(f"uv_version={project['tool']['uv']['required-version'].removeprefix('==')}")
+        PY
+    - name: Set up Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Set up uv
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+      with:
+        version: ${{ steps.toolchain.outputs.uv_version }}
+        enable-cache: ${{ inputs.enable-cache }}
+        cache-dependency-glob: |
+          sdk/uv.lock
+          .github/actions/publish-training-project/uv.lock
