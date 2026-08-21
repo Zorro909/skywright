@@ -951,35 +951,26 @@ class State:
 class BlockingTerminalRecorder(TestRecorder):
     def __init__(self):
         super().__init__()
-        self.started = threading.Event()
-        self.cancelled = threading.Event()
+        self.confirmation_started = threading.Event()
+        self.cancellation_reached_recorder = threading.Event()
 
     def publish_checkpoint(self, checkpoint):
         return super().publish_checkpoint(checkpoint)
 
     def confirm_checkpoint(self, step, reference):
-        self.started.set()
-        assert self.cancelled.wait(2)
+        self.confirmation_started.set()
+        self.cancellation_reached_recorder.wait()
         raise RunStoreCancelledError("terminal confirmation cancelled")
 
     def cancel_checkpoint_publication(self):
-        self.cancelled.set()
+        assert self.confirmation_started.is_set()
+        self.cancellation_reached_recorder.set()
 
     def resume_after_checkpoint_cancellation(self):
         pass
 
 
 recorder = BlockingTerminalRecorder()
-cancel = False
-
-
-def cancel_during_terminal_barrier():
-    global cancel
-    assert recorder.started.wait(2)
-    cancel = True
-
-
-threading.Thread(target=cancel_during_terminal_barrier, daemon=True).start()
 
 
 def train(context):
@@ -998,7 +989,7 @@ result = run_training_process(
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
     seed=1,
-    cancellation_requested=lambda: cancel,
+    cancellation_requested=recorder.confirmation_started.is_set,
     policy_stop_requested=lambda: "decision-1",
 )
 print(json.dumps({
