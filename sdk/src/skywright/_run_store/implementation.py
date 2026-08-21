@@ -940,13 +940,6 @@ class RunStoreRecorder:
                 latest_durable_checkpoint,
             )
 
-    def publish_wall_time(self, observation: MetricObservation) -> None:
-        self._require_open()
-        if self._progress is not None:
-            publish = getattr(self._progress, "publish_wall_time", None)
-            if callable(publish):
-                publish(observation)
-
     def confirm_checkpoint(self, step: int, reference: str) -> None:
         self._require_open()
         if self._checkpoint_cancellation.is_set():

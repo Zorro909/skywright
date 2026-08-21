@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
+from skywright._training_clock import read_monotonic
 from skywright._training_errors import SkywrightFailure
 from skywright._training_types import MetricDefinition, MetricObservation
 
@@ -76,6 +77,15 @@ def validate_system_metric_definitions(
             None,
         ),
     }
+    names = {definition.name for definition in definitions}
+    if names != set(expected):
+        raise SkywrightFailure(
+            ValueError(
+                "System Metric definitions do not match the runtime collector: "
+                f"expected {sorted(expected)!r}, received {sorted(names)!r}"
+            ),
+            "construction",
+        )
     for definition in definitions:
         semantics = (
             definition.numeric_kind,
@@ -118,7 +128,7 @@ class StepSystemMetrics:
 
     def start(self) -> None:
         if self._definitions:
-            self._interval_start = self._read_clock()
+            self._interval_start = read_monotonic(self._clock)
 
     def prepare(
         self,
@@ -136,7 +146,7 @@ class StepSystemMetrics:
                 ),
                 "project",
             )
-        interval_end = self._read_clock()
+        interval_end = read_monotonic(self._clock)
         elapsed = interval_end - interval_start
         if not math.isfinite(elapsed) or elapsed <= 0:
             raise SkywrightFailure(
@@ -177,15 +187,6 @@ class StepSystemMetrics:
                 "project",
             )
         return MetricObservation(definition.name, step, value)
-
-    def _read_clock(self) -> float:
-        try:
-            moment = self._clock()
-            if isinstance(moment, bool) or not math.isfinite(moment):
-                raise ValueError("the monotonic clock produced a non-finite value")
-        except Exception as failure:
-            raise SkywrightFailure(failure, "project") from failure
-        return float(moment)
 
 
 class MemorySystemMetrics:

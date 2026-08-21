@@ -12,6 +12,7 @@ SDK_ROOT = Path(__file__).parents[1]
 
 PROCESS_SUPPORT = """
 from skywright import DatasetBatch, DatasetCursor, MetricCatalog, MetricDefinition
+from skywright.metrics import MetricSchema
 
 
 class TestDataset:
@@ -96,43 +97,18 @@ def test_catalog(*definitions):
     )
 
 
-def step_system_definitions():
-    return (
-        MetricDefinition(
-            name="skywright/system/throughput",
-            numeric_kind="real",
-            unit="items_per_second",
-            comparison="maximize",
-            step_reduction="mean",
-            minimum=0,
-        ),
-        MetricDefinition(
-            name="skywright/system/data_loading_wait",
-            numeric_kind="real",
-            unit="seconds",
-            comparison="minimize",
-            step_reduction="sum",
-            minimum=0,
-        ),
-    )
-
-
-def memory_system_definition():
-    return MetricDefinition(
-        name="skywright/system/memory_used",
-        numeric_kind="integer",
-        unit="bytes",
-        recording_basis="wall_time",
-        comparison="none",
-        step_reduction=None,
-        minimum=0,
-    )
+def system_metric_definitions():
+    return MetricSchema.definitions()
 
 
 class TestMetricContracts:
-    def __init__(self, *definitions, system_definitions=()):
+    def __init__(self, *definitions, system_definitions=None):
         self.definitions = definitions
-        self.system_definitions = system_definitions
+        self.system_definitions = (
+            system_metric_definitions()
+            if system_definitions is None
+            else system_definitions
+        )
 
     def compose(self, project_version, skywright_schema_identity):
         catalog = test_catalog(*self.definitions)
@@ -228,6 +204,7 @@ print(json.dumps({
     "metrics": [
         [observation.name, observation.step, observation.value]
         for observation in result.metric_observations
+        if not observation.name.startswith("skywright/")
     ],
 }))
 """
@@ -285,7 +262,7 @@ result = run_training_process(
             comparison="minimize",
             step_reduction="mean",
         ),
-        system_definitions=step_system_definitions(),
+        system_definitions=system_metric_definitions(),
     ),
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
@@ -349,7 +326,7 @@ result = run_training_process(
     configuration={},
     dataset=TestDataset(("one", "two", "three")),
     metric_contracts=TestMetricContracts(
-        system_definitions=step_system_definitions()
+        system_definitions=system_metric_definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
@@ -428,7 +405,7 @@ result = run_training_process(
     configuration={"metrics": {"systemSamplingInterval": 2.5}},
     dataset=TestDataset(("item",)),
     metric_contracts=TestMetricContracts(
-        system_definitions=(memory_system_definition(),)
+        system_definitions=system_metric_definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
@@ -485,7 +462,7 @@ result = run_training_process(
     configuration={},
     dataset=TestDataset(("zero", "one", "two", "three", "four", "five")),
     metric_contracts=TestMetricContracts(
-        system_definitions=step_system_definitions()
+        system_definitions=system_metric_definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=TestRecorder(),
@@ -545,7 +522,7 @@ result = run_training_process(
     configuration={},
     dataset=TestDataset(),
     metric_contracts=TestMetricContracts(
-        system_definitions=step_system_definitions()
+        system_definitions=system_metric_definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=TestRecorder(),
@@ -631,7 +608,7 @@ result = run_training_process(
     configuration={{"metrics": {{"systemSamplingInterval": 3}}}},
     dataset=TestDataset(("item",)),
     metric_contracts=TestMetricContracts(
-        system_definitions=(memory_system_definition(),)
+        system_definitions=system_metric_definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
@@ -719,7 +696,7 @@ result = run_training_process(
     configuration={{"metrics": {{"systemSamplingInterval": 1}}}},
     dataset=TestDataset(),
     metric_contracts=TestMetricContracts(
-        system_definitions=(memory_system_definition(),)
+        system_definitions=system_metric_definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=FailingRecorder(),
@@ -770,7 +747,7 @@ result = run_training_process(
     configuration={},
     dataset=TestDataset(),
     metric_contracts=TestMetricContracts(
-        system_definitions=step_system_definitions()
+        system_definitions=system_metric_definitions()
     ),
     skywright_metric_schema="test-schema@1",
     recorder=TestRecorder(),
@@ -2434,7 +2411,7 @@ class InvalidSystemContracts:
             project_contract_digest="sha256:project",
             skywright_schema_identity=schema_identity,
             skywright_schema_digest="sha256:skywright",
-            units=frozenset(("dimensionless",)),
+            units=frozenset(MetricSchema.units()),
             project_definitions=(),
             system_definitions=(MetricDefinition(
                 name="skywright/system/throughput",
@@ -2454,6 +2431,52 @@ result = run_training_process(
     configuration={},
     dataset=TestDataset(),
     metric_contracts=InvalidSystemContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=1,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "stage": result.report.diagnostics["stage"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "skywright_failure",
+        "stage": "construction",
+    }
+
+
+def test_incomplete_system_metric_catalog_is_a_skywright_failure() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import MetricCatalog, run_training_process
+
+
+class IncompleteSystemContracts:
+    def compose(self, project_version, schema_identity):
+        return MetricCatalog(
+            project_identity=project_version,
+            project_contract_digest="sha256:project",
+            skywright_schema_identity=schema_identity,
+            skywright_schema_digest="sha256:skywright",
+            units=frozenset(MetricSchema.units()),
+            project_definitions=(),
+            system_definitions=MetricSchema.definitions()[:-1],
+        )
+
+
+result = run_training_process(
+    lambda context: None,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=IncompleteSystemContracts(),
     skywright_metric_schema="test-schema@1",
     recorder=TestRecorder(),
     seed=1,
@@ -2591,6 +2614,7 @@ def train(context):
     (tmp_path / "runtime_support.py").write_text(
         """
 from skywright import DatasetBatch, DatasetCursor, MetricCatalog, MetricDefinition
+from skywright.metrics import MetricSchema
 
 
 class Dataset:
@@ -2627,7 +2651,7 @@ class MetricContracts:
             project_contract_digest="sha256:project",
             skywright_schema_identity=schema_identity,
             skywright_schema_digest="sha256:skywright",
-            units=frozenset(("dimensionless",)),
+            units=frozenset(MetricSchema.units()),
             project_definitions=(MetricDefinition(
                 name="train/loss",
                 numeric_kind="real",
@@ -2635,6 +2659,7 @@ class MetricContracts:
                 comparison="minimize",
                 step_reduction="mean",
             ),),
+            system_definitions=MetricSchema.definitions(),
         )
 
 
@@ -2739,6 +2764,7 @@ result = run_training_process(
 print(json.dumps([
     [observation.name, observation.step, observation.value]
     for observation in result.metric_observations
+    if not observation.name.startswith("skywright/")
 ]))
 """
     )
@@ -3175,7 +3201,7 @@ result = run_training_process(
         numeric_kind="real",
         unit="dimensionless",
         comparison="minimize",
-    ), system_definitions=step_system_definitions()),
+    ), system_definitions=system_metric_definitions()),
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
     seed=3,

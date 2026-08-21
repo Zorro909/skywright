@@ -89,6 +89,7 @@ from skywright import (
     RunContext,
     run_training_process,
 )
+from skywright.metrics import MetricSchema
 
 
 class Counter:
@@ -159,7 +160,7 @@ class LocalMetricContracts:
             project_contract_digest="sha256:project-contract",
             skywright_schema_identity=schema_identity,
             skywright_schema_digest="sha256:skywright-schema",
-            units=frozenset(("count",)),
+            units=frozenset((*MetricSchema.units(), "count")),
             project_definitions=(
                 MetricDefinition(
                     name="train/items",
@@ -169,6 +170,7 @@ class LocalMetricContracts:
                     step_reduction="sum",
                 ),
             ),
+            system_definitions=MetricSchema.definitions(),
         )
 
 

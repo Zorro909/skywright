@@ -22,6 +22,7 @@ from skywright import (
     TrainingContractViolation,
     run_training_process,
 )
+from skywright.metrics import MetricSchema
 from skywright.run_store import (
     CheckpointCodec,
     RunStoreReader,
@@ -53,8 +54,9 @@ class EmptyMetricContracts:
             "sha256:project",
             skywright_schema_identity,
             "sha256:skywright",
-            frozenset({"dimensionless"}),
+            frozenset(MetricSchema.units()),
             (),
+            MetricSchema.definitions(),
         )
 
 
