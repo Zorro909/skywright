@@ -337,7 +337,7 @@ A library-owned Metric Definition under `skywright/system/` that a Training Proj
 _Avoid_: Project metric, separate monitoring channel
 
 **Metric Segment**:
-An immutable TensorBoard event file holding part of one run's metric history. The open segment is replaced whole on each flush and sealed once it crosses a size or age threshold; every replacement extends its predecessor byte-for-byte, so a reader tracking an offset continues across it.
+A TensorBoard event file holding part of one run's metric history. While open, it is replaced whole on each flush with a byte-for-byte prefix extension; after the configured event count it is sealed and becomes immutable, so a reader tracking an offset can continue across replacements.
 _Avoid_: Metric row, appendable log, tracker run
 
 **Metric View**:
@@ -357,7 +357,7 @@ The role that copies content between two Storage Locations, verifies it, publish
 _Avoid_: Backend job, sync service, upload script
 
 **Progress Record**:
-A small Skywright-originated object in the Run Store carrying a run's current step, latest Durable Safe Point, target step, and the time it was written, overwritten on each flush. It is an aged intermediate result serving run-list progress and exposing checkpoint durability lag — not a metric series, and not an index over one.
+A small Skywright-originated object in the Run Store carrying a run's current Step, latest Durable Safe Point, optional target Step, and write time, overwritten on each flush. The target is absent unless a project contract supplies one; readers never infer a percentage without it. The record is an aged intermediate result for run-list progress and checkpoint durability lag, not a metric series or an index over one.
 _Avoid_: Metric index, run status, stored progress
 
 **Checkpoint State**:
