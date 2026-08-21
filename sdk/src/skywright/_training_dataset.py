@@ -1,11 +1,19 @@
 """Dataset cursor enforcement for one Training Process."""
 
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import NoReturn
 
+from skywright._training_clock import read_monotonic
 from skywright._training_errors import SkywrightFailure, TrainingContractViolation
 from skywright._training_protocols import DatasetAccess
 from skywright._training_types import DatasetBatch, DatasetCursor
+
+
+@dataclass(frozen=True)
+class _IssuedDatasetBatch:
+    batch: DatasetBatch
+    retrieval_wait: float
 
 
 class TrackedDatasetAccess:
@@ -14,11 +22,13 @@ class TrackedDatasetAccess:
         dataset: DatasetAccess,
         cursor: DatasetCursor,
         violate: Callable[[str, str, str], NoReturn],
+        monotonic_clock: Callable[[], float] | None,
     ) -> None:
         self._dataset = dataset
         self._cursor = cursor
         self._violate = violate
-        self._issued: dict[int, DatasetBatch] = {}
+        self._clock = monotonic_clock
+        self._issued_batches: dict[int, _IssuedDatasetBatch] = {}
         self._latest_issued: DatasetBatch | None = None
         self._commit_count = 0
         self._active_iterator: object | None = None
@@ -29,7 +39,7 @@ class TrackedDatasetAccess:
 
     def batches(self, cursor: DatasetCursor) -> Iterable[DatasetBatch]:
         iterator_token = object()
-        if self._active_iterator is not None or self._issued:
+        if self._active_iterator is not None or self._issued_batches:
             self._violate(
                 "dataset-cursor/overlapping-iteration",
                 "Dataset batches were requested before the prior iterator committed or closed",
@@ -46,7 +56,27 @@ class TrackedDatasetAccess:
         step_epoch: int | None = None
         observed_commit_count = self._commit_count
         try:
-            for batch in self._dataset.batches(cursor):
+            iterator = iter(self._dataset.batches(cursor))
+            while True:
+                clock = self._clock
+                wait_started = read_monotonic(clock) if clock is not None else None
+                try:
+                    batch = next(iterator)
+                except StopIteration:
+                    break
+                if wait_started is None:
+                    wait_elapsed = 0.0
+                else:
+                    if clock is None:
+                        raise RuntimeError("Dataset wait timing lost its clock")
+                    wait_elapsed = read_monotonic(clock) - wait_started
+                if wait_elapsed < 0:
+                    raise SkywrightFailure(
+                        ValueError(
+                            "the monotonic clock produced an invalid Dataset wait"
+                        ),
+                        "project",
+                    )
                 if self._commit_count != observed_commit_count:
                     step_epoch = None
                     observed_commit_count = self._commit_count
@@ -83,7 +113,9 @@ class TrackedDatasetAccess:
                         "the pending Step spans a Dataset epoch boundary",
                         "commit the final batch from one epoch before requesting the next epoch",
                     )
-                self._issued[id(batch)] = batch
+                self._issued_batches[id(batch)] = _IssuedDatasetBatch(
+                    batch, wait_elapsed
+                )
                 self._latest_issued = batch
                 previous = batch.next_cursor
                 yield batch
@@ -95,19 +127,29 @@ class TrackedDatasetAccess:
             if self._active_iterator is iterator_token:
                 self._active_iterator = None
 
-    def consume(self, batch: DatasetBatch) -> DatasetCursor:
-        issued = self._issued.get(id(batch))
-        if issued is not batch or self._latest_issued is not batch:
+    def consume(self, batch: DatasetBatch) -> tuple[DatasetCursor, int, float]:
+        issued = self._issued_batches.get(id(batch))
+        if (
+            issued is None
+            or issued.batch is not batch
+            or self._latest_issued is not batch
+        ):
             self._violate(
                 "dataset-cursor/not-issued",
                 "commit_step() received a batch that was not the latest issued by this Run Context",
                 "commit the final Dataset batch whose work completed in this Step",
             )
-        self._issued.clear()
+        item_count = sum(
+            len(candidate.batch.items) for candidate in self._issued_batches.values()
+        )
+        data_loading_wait = sum(
+            candidate.retrieval_wait for candidate in self._issued_batches.values()
+        )
+        self._issued_batches.clear()
         self._latest_issued = None
         self._commit_count += 1
         self._cursor = batch.next_cursor
-        return self._cursor
+        return self._cursor, item_count, data_loading_wait
 
 
 def validate_cursor_shape(

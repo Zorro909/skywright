@@ -15,10 +15,10 @@ from skywright._run_store.implementation import (
     RunStoreIntegrityError,
     RunStoreProtocol,
     RunStoreReader,
-    RunStoreRecorder,
     SerializedCheckpoint,
     TargetStorage,
 )
+from skywright._run_store.recorder import RunStoreRecorder
 
 __all__ = (
     "CheckpointCodec",

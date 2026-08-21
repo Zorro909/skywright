@@ -32,6 +32,7 @@ from skywright import (
     TrainingContractViolation,
     run_training_process,
 )
+from skywright.metrics import MetricSchema
 from skywright.run_store import (
     CheckpointCodec,
     CheckpointReference,
@@ -63,8 +64,9 @@ class EmptyMetricContracts:
             "sha256:project",
             skywright_schema_identity,
             "sha256:skywright",
-            frozenset({"dimensionless"}),
+            frozenset(MetricSchema.units()),
             (),
+            MetricSchema.definitions(),
         )
 
 
@@ -85,6 +87,9 @@ class RecordingProgress:
 
     def publish_step(self, *values):
         self.events.append(("step", *values))
+
+    def publish_wall_time(self, observation):
+        self.events.append(("wall_time", observation))
 
     def confirm_checkpoint(self, step, reference):
         self.events.append(("confirmation", step, reference))

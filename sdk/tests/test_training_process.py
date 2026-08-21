@@ -6,10 +6,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SDK_ROOT = Path(__file__).parents[1]
 
 PROCESS_SUPPORT = """
-from skywright import DatasetBatch, DatasetCursor, MetricCatalog
+from skywright import DatasetBatch, DatasetCursor, MetricCatalog, MetricDefinition
+from skywright.metrics import MetricSchema
 
 
 class TestDataset:
@@ -65,6 +68,9 @@ class TestRecorder:
             latest_durable_checkpoint,
         ))
 
+    def publish_wall_time(self, observation):
+        self.events.append(("wall_time", observation))
+
     def confirm_checkpoint(self, step, reference):
         self.events.append(("confirmation", step, reference))
 
@@ -84,14 +90,21 @@ def test_catalog(*definitions):
         project_contract_digest="sha256:project-contract",
         skywright_schema_identity="test-schema@1",
         skywright_schema_digest="sha256:skywright-schema",
-        units=frozenset(("count", "dimensionless")),
+        units=frozenset((
+            "bytes", "count", "dimensionless", "items_per_second", "seconds",
+        )),
         project_definitions=tuple(definitions),
     )
 
 
 class TestMetricContracts:
-    def __init__(self, *definitions):
+    def __init__(self, *definitions, system_definitions=None):
         self.definitions = definitions
+        self.system_definitions = (
+            MetricSchema.definitions()
+            if system_definitions is None
+            else system_definitions
+        )
 
     def compose(self, project_version, skywright_schema_identity):
         catalog = test_catalog(*self.definitions)
@@ -102,7 +115,7 @@ class TestMetricContracts:
             skywright_schema_digest=catalog.skywright_schema_digest,
             units=catalog.units,
             project_definitions=catalog.project_definitions,
-            system_definitions=catalog.system_definitions,
+            system_definitions=tuple(self.system_definitions),
         )
 
 
@@ -187,12 +200,13 @@ print(json.dumps({
     "metrics": [
         [observation.name, observation.step, observation.value]
         for observation in result.metric_observations
+        if not observation.name.startswith("skywright/")
     ],
 }))
 """
     )
 
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == 0, completed.stdout + completed.stderr
     assert json.loads(completed.stdout) == {
         "outcome": "completed",
         "cause": "completed",
@@ -202,6 +216,551 @@ print(json.dumps({
         "checkpoint_reference": "checkpoint:1",
         "events": ["attempt", "step", "checkpoint", "confirmation", "report"],
         "metrics": [["train/loss", 1, 1.5]],
+    }
+
+
+def test_committed_step_publishes_throughput_and_data_loading_wait_atomically() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import MetricDefinition, run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+moments = iter((10.0, 11.0, 11.5, 12.5))
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    batch = next(iter(context.dataset.batches(context.dataset_cursor)))
+    context.observe("train/loss", 2.5)
+    context.commit_step(batch)
+
+
+recorder = TestRecorder()
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(("item-0", "item-1")),
+    metric_contracts=TestMetricContracts(
+        MetricDefinition(
+            name="train/loss",
+            numeric_kind="real",
+            unit="dimensionless",
+            comparison="minimize",
+            step_reduction="mean",
+        ),
+        system_definitions=MetricSchema.definitions(),
+    ),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=17,
+    monotonic_clock=lambda: next(moments),
+)
+step_event = next(event for event in recorder.events if event[0] == "step")
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "observations": [
+        [observation.name, observation.step, observation.value]
+        for observation in step_event[3]
+    ],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "completed",
+        "observations": [
+            ["train/loss", 1, 2.5],
+            ["skywright/system/throughput", 1, 0.4],
+            ["skywright/system/data_loading_wait", 1, 0.5],
+        ],
+    }
+
+
+def test_later_step_uses_its_own_interval_and_all_consumed_batches() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+moments = iter((0.0, 1.0, 2.0, 3.0, 5.0, 10.0, 11.0, 12.0, 14.0))
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    batches = iter(context.dataset.batches(context.dataset_cursor))
+    next(batches)
+    final_batch = next(batches)
+    batches.close()
+    context.commit_step(final_batch)
+    context.commit_step(next_batch(context))
+
+
+recorder = TestRecorder()
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(("one", "two", "three")),
+    metric_contracts=TestMetricContracts(
+        system_definitions=MetricSchema.definitions()
+    ),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=4,
+    monotonic_clock=lambda: next(moments),
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "metrics": [
+        [observation.name, observation.step, observation.value]
+        for observation in result.metric_observations
+    ],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "completed",
+        "metrics": [
+            ["skywright/system/throughput", 1, 0.2],
+            ["skywright/system/data_loading_wait", 1, 3.0],
+            ["skywright/system/throughput", 2, 0.25],
+            ["skywright/system/data_loading_wait", 2, 1.0],
+        ],
+    }
+
+
+def test_memory_sampling_omits_unavailable_values_and_recovers_at_the_cadence() -> None:
+    completed = run_project(
+        """
+import json
+import threading
+import time
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+samples_finished = threading.Event()
+waited_intervals = []
+memory_values = iter((None, 123456789))
+
+
+def wait_for_sample(stop, interval):
+    waited_intervals.append(interval)
+    if len(waited_intervals) <= 2:
+        return False
+    return stop.wait(1.0)
+
+
+def read_memory():
+    value = next(memory_values)
+    if value is not None:
+        samples_finished.set()
+    return value
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    if not samples_finished.wait(1.0):
+        raise RuntimeError("sampler did not run")
+    context.commit_step(next_batch(context))
+
+
+recorder = TestRecorder()
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={"metrics": {"systemSamplingInterval": 2.5}},
+    dataset=TestDataset(("item",)),
+    metric_contracts=TestMetricContracts(
+        system_definitions=MetricSchema.definitions()
+    ),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=9,
+    cgroup_memory_reader=read_memory,
+    system_sampler_wait=wait_for_sample,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "intervals": waited_intervals,
+    "wall_time": [
+        [event[1].name, event[1].step, event[1].value]
+        for event in recorder.events if event[0] == "wall_time"
+    ],
+    "events": [event[0] for event in recorder.events],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["cause"] == "completed"
+    assert payload["intervals"] == [2.5, 2.5, 2.5]
+    assert payload["wall_time"] == [["skywright/system/memory_used", 0, 123456789]]
+    assert payload["events"][-1] == "report"
+
+
+def test_resumed_attempt_starts_a_fresh_throughput_interval() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import CheckpointSnapshot, DatasetCursor, run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+moments = iter((100.0, 101.0, 102.0, 105.0))
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(("zero", "one", "two", "three", "four", "five")),
+    metric_contracts=TestMetricContracts(
+        system_definitions=MetricSchema.definitions()
+    ),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=5,
+    resume_from=CheckpointSnapshot(
+        step=4,
+        state={"state": {}},
+        dataset_cursor=DatasetCursor(
+            item_offset=4,
+            epoch_step=4,
+            ordering_fingerprint="sha256:test-ordering",
+        ),
+        reference="checkpoint:4",
+    ),
+    monotonic_clock=lambda: next(moments),
+)
+print(json.dumps([
+    [observation.name, observation.step, observation.value]
+    for observation in result.metric_observations
+]))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == [
+        ["skywright/system/throughput", 5, 0.2],
+        ["skywright/system/data_loading_wait", 5, 1.0],
+    ]
+
+
+def test_project_cannot_write_a_declared_system_metric() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import TrainingContractViolation, run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    try:
+        context.observe("skywright/system/throughput", 10.0)
+    except TrainingContractViolation:
+        pass
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(
+        system_definitions=MetricSchema.definitions()
+    ),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=6,
+    monotonic_clock=lambda: 1.0,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "rule": result.report.diagnostics["rule"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "contract_violation",
+        "rule": "metric/undeclared",
+    }
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_outcome", "expected_cause"),
+    (
+        ("completed", "completed", "completed"),
+        ("interrupted", "interrupted", "interrupted"),
+        ("cancelled", "cancelled", "cancelled"),
+        ("failed", "failed", "training_project_failure"),
+    ),
+)
+def test_memory_sampler_stops_before_the_report_on_every_process_outcome(
+    mode: str, expected_outcome: str, expected_cause: str
+) -> None:
+    completed = run_project(
+        f"""
+import json
+import threading
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {{}}
+    def load_state_dict(self, state): pass
+
+
+sampler_waiting = threading.Event()
+sampler_stopped = threading.Event()
+wait_calls = 0
+
+
+def wait_for_sample(stop, interval):
+    global wait_calls
+    wait_calls += 1
+    if wait_calls == 1:
+        return False
+    sampler_waiting.set()
+    stopped = stop.wait(1.0)
+    if stopped:
+        sampler_stopped.set()
+    return stopped
+
+
+class ClosingRecorder(TestRecorder):
+    def publish_report(self, report):
+        self.events.append(("report", sampler_stopped.is_set()))
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    if not sampler_waiting.wait(1.0):
+        raise RuntimeError("sampler did not reach its wait")
+    if {mode!r} == "failed":
+        raise ValueError("project failure")
+    context.commit_step(next_batch(context))
+
+
+recorder = ClosingRecorder()
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={{"metrics": {{"systemSamplingInterval": 3}}}},
+    dataset=TestDataset(("item",)),
+    metric_contracts=TestMetricContracts(
+        system_definitions=MetricSchema.definitions()
+    ),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=7,
+    cancellation_requested=lambda: {mode!r} == "cancelled",
+    interruption_requested=lambda: {mode!r} == "interrupted",
+    cgroup_memory_reader=lambda: None,
+    system_sampler_wait=wait_for_sample,
+)
+print(json.dumps({{
+    "outcome": result.outcome.value,
+    "cause": result.report.cause.value,
+    "sampler_stopped_at_report": recorder.events[-1][1],
+}}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "outcome": expected_outcome,
+        "cause": expected_cause,
+        "sampler_stopped_at_report": True,
+    }
+
+
+@pytest.mark.parametrize("failure_kind", ("invalid_value", "recorder"))
+def test_memory_collection_defects_are_skywright_failures(
+    failure_kind: str,
+) -> None:
+    completed = run_project(
+        f"""
+import json
+import threading
+import time
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {{}}
+    def load_state_dict(self, state): pass
+
+
+failure_attempted = threading.Event()
+
+
+def wait_for_sample(stop, interval):
+    if failure_attempted.is_set():
+        return stop.wait(1.0)
+    return False
+
+
+def read_memory():
+    if {failure_kind!r} == "invalid_value":
+        failure_attempted.set()
+        return -1
+    return 100
+
+
+class FailingRecorder(TestRecorder):
+    def publish_wall_time(self, observation):
+        failure_attempted.set()
+        raise OSError("metric recorder unavailable")
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    if not failure_attempted.wait(1.0):
+        raise RuntimeError("sampler did not attempt publication")
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        try:
+            context.step
+        except BaseException:
+            raise
+        time.sleep(0.001)
+    raise RuntimeError("sampler failure was not surfaced")
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={{"metrics": {{"systemSamplingInterval": 1}}}},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(
+        system_definitions=MetricSchema.definitions()
+    ),
+    skywright_metric_schema="test-schema@1",
+    recorder=FailingRecorder(),
+    seed=8,
+    cgroup_memory_reader=read_memory,
+    system_sampler_wait=wait_for_sample,
+)
+print(json.dumps({{
+    "outcome": result.outcome.value,
+    "cause": result.report.cause.value,
+}}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "outcome": "failed",
+        "cause": "skywright_failure",
+    }
+
+
+def test_required_monotonic_clock_failure_is_a_skywright_failure() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+def broken_clock():
+    raise OSError("monotonic clock unavailable")
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=TestMetricContracts(
+        system_definitions=MetricSchema.definitions()
+    ),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=9,
+    monotonic_clock=broken_clock,
+)
+print(json.dumps({
+    "outcome": result.outcome.value,
+    "cause": result.report.cause.value,
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "outcome": "failed",
+        "cause": "skywright_failure",
     }
 
 
@@ -1816,7 +2375,7 @@ second = run_training_process(
 print(json.dumps({
     "called": called,
     "first_cause": first.report.cause.value,
-    "first_rule": first.report.diagnostics["rule"],
+    "first_stage": first.report.diagnostics["stage"],
     "second_rule": second.report.diagnostics["rule"],
     "first_events": [event[0] for event in first_recorder.events],
 }))
@@ -1826,8 +2385,8 @@ print(json.dumps({
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout) == {
         "called": False,
-        "first_cause": "contract_violation",
-        "first_rule": "metric-definition/reserved-name",
+        "first_cause": "skywright_failure",
+        "first_stage": "construction",
         "second_rule": "run-context/one-per-process",
         "first_events": ["attempt", "report"],
     }
@@ -1848,13 +2407,15 @@ class InvalidSystemContracts:
             project_contract_digest="sha256:project",
             skywright_schema_identity=schema_identity,
             skywright_schema_digest="sha256:skywright",
-            units=frozenset(("dimensionless",)),
+            units=frozenset(MetricSchema.units()),
             project_definitions=(),
             system_definitions=(MetricDefinition(
-                name="system/broken",
+                name="skywright/system/throughput",
                 numeric_kind="real",
                 unit="dimensionless",
-                comparison="none",
+                comparison="maximize",
+                step_reduction="mean",
+                minimum=0,
             ),),
         )
 
@@ -1884,7 +2445,53 @@ print(json.dumps({
     }
 
 
-def test_non_numeric_metric_bound_is_a_contract_violation() -> None:
+def test_incomplete_system_metric_catalog_is_a_skywright_failure() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import MetricCatalog, run_training_process
+
+
+class IncompleteSystemContracts:
+    def compose(self, project_version, schema_identity):
+        return MetricCatalog(
+            project_identity=project_version,
+            project_contract_digest="sha256:project",
+            skywright_schema_identity=schema_identity,
+            skywright_schema_digest="sha256:skywright",
+            units=frozenset(MetricSchema.units()),
+            project_definitions=(),
+            system_definitions=MetricSchema.definitions()[:-1],
+        )
+
+
+result = run_training_process(
+    lambda context: None,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=IncompleteSystemContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=1,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "stage": result.report.diagnostics["stage"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "skywright_failure",
+        "stage": "construction",
+    }
+
+
+def test_malformed_project_metric_catalog_is_a_skywright_failure() -> None:
     completed = run_project(
         """
 import json
@@ -1912,15 +2519,60 @@ result = run_training_process(
 )
 print(json.dumps({
     "cause": result.report.cause.value,
-    "rule": result.report.diagnostics["rule"],
+    "stage": result.report.diagnostics["stage"],
 }))
 """
     )
 
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout) == {
-        "cause": "contract_violation",
-        "rule": "metric-definition/bounds",
+        "cause": "skywright_failure",
+        "stage": "construction",
+    }
+
+
+def test_identity_mismatched_metric_catalog_is_a_skywright_failure() -> None:
+    completed = run_project(
+        """
+import json
+
+from skywright import MetricCatalog, run_training_process
+
+
+class WrongIdentityContracts:
+    def compose(self, project_version, schema_identity):
+        return MetricCatalog(
+            project_identity="different-project@revision",
+            project_contract_digest="sha256:project",
+            skywright_schema_identity=schema_identity,
+            skywright_schema_digest="sha256:skywright",
+            units=frozenset(("dimensionless",)),
+            project_definitions=(),
+        )
+
+
+result = run_training_process(
+    lambda context: None,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={},
+    dataset=TestDataset(),
+    metric_contracts=WrongIdentityContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=TestRecorder(),
+    seed=1,
+)
+print(json.dumps({
+    "cause": result.report.cause.value,
+    "stage": result.report.diagnostics["stage"],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "skywright_failure",
+        "stage": "construction",
     }
 
 
@@ -1958,6 +2610,7 @@ def train(context):
     (tmp_path / "runtime_support.py").write_text(
         """
 from skywright import DatasetBatch, DatasetCursor, MetricCatalog, MetricDefinition
+from skywright.metrics import MetricSchema
 
 
 class Dataset:
@@ -1977,6 +2630,7 @@ class Recorder:
     def publish_checkpoint(self, checkpoint): return "checkpoint:runtime"
     def confirm_checkpoint(self, step, reference): pass
     def publish_step(self, step, dataset_cursor, observations, durable_step, durable_ref): pass
+    def publish_wall_time(self, observation): pass
     def publish_artifact(self, artifact): pass
     def publish_sample(self, sample): pass
     def publish_report(self, report): pass
@@ -1993,7 +2647,7 @@ class MetricContracts:
             project_contract_digest="sha256:project",
             skywright_schema_identity=schema_identity,
             skywright_schema_digest="sha256:skywright",
-            units=frozenset(("dimensionless",)),
+            units=frozenset(MetricSchema.units()),
             project_definitions=(MetricDefinition(
                 name="train/loss",
                 numeric_kind="real",
@@ -2001,6 +2655,7 @@ class MetricContracts:
                 comparison="minimize",
                 step_reduction="mean",
             ),),
+            system_definitions=MetricSchema.definitions(),
         )
 
 
@@ -2044,7 +2699,7 @@ def metric_contracts(): return MetricContracts()
         capture_output=True,
     )
 
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == 0, completed.stdout + completed.stderr
     assert json.loads(completed.stdout) == {
         "attempt_id": json.loads(completed.stdout)["attempt_id"],
         "cause": "completed",
@@ -2105,6 +2760,7 @@ result = run_training_process(
 print(json.dumps([
     [observation.name, observation.step, observation.value]
     for observation in result.metric_observations
+    if not observation.name.startswith("skywright/")
 ]))
 """
     )
@@ -2519,6 +3175,9 @@ class FailingStepRecorder(TestRecorder):
         raise OSError("metric writer unavailable")
 
 
+moments = iter((0.0, 1.0, 2.0, 3.0))
+
+
 def train(context):
     context.register_checkpoint_state("state", State())
     context.start()
@@ -2538,10 +3197,11 @@ result = run_training_process(
         numeric_kind="real",
         unit="dimensionless",
         comparison="minimize",
-    )),
+    ), system_definitions=MetricSchema.definitions()),
     skywright_metric_schema="test-schema@1",
     recorder=recorder,
     seed=3,
+    monotonic_clock=lambda: next(moments),
 )
 print(json.dumps({
     "cause": result.report.cause.value,
