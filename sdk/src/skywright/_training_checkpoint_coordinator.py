@@ -32,16 +32,20 @@ class CheckpointCoordinator:
         self._recorder = recorder
         self._shutdown_grace_seconds = shutdown_grace_seconds
         self._condition = threading.Condition()
+        self._confirmation_condition = threading.Condition()
         self._active: CheckpointSnapshot | None = None
         self._pending: CheckpointSnapshot | None = None
         self._failure: Exception | None = None
         self._confirmed = resume_from
+        self._confirmation_in_progress = False
         self._cancelling_active = False
         self._shutdown_deadline: float | None = None
 
     def durable_state(self) -> tuple[int | None, str | None]:
         """Read the confirmed Step and reference under one synchronization boundary."""
-        with self._condition:
+        with self._confirmation_condition:
+            while self._confirmation_in_progress:
+                self._confirmation_condition.wait()
             if self._confirmed is None:
                 return None, None
             return self._confirmed.step, self._confirmed.reference
@@ -78,7 +82,7 @@ class CheckpointCoordinator:
             self._resume_after_cancellation()
             return None
         self.raise_if_failed()
-        with self._condition:
+        with self._confirmation_condition:
             confirmed = self._confirmed
         snapshot = capture()
         if confirmed is not None and confirmed.step == snapshot.step:
@@ -88,7 +92,7 @@ class CheckpointCoordinator:
             self._resume_after_cancellation()
             return None
         self.raise_if_failed()
-        with self._condition:
+        with self._confirmation_condition:
             confirmed = self._confirmed
         if confirmed is None or confirmed.step != snapshot.step:
             raise RuntimeError("terminal checkpoint publication was not confirmed")
@@ -168,7 +172,7 @@ class CheckpointCoordinator:
         if not reference:
             raise ValueError("checkpoint publisher returned an empty reference")
         published = snapshot.with_reference(reference)
-        with self._condition:
+        with self._confirmation_condition:
             current = self._confirmed
             if current is not None:
                 if published.step < current.step:
@@ -179,18 +183,29 @@ class CheckpointCoordinator:
                             "the same Durable Safe Point has conflicting references"
                         )
                     return current
-        with self._condition:
+            self._confirmation_in_progress = True
+        try:
             self._recorder.confirm_checkpoint(published.step, reference)
+        except Exception:
+            with self._confirmation_condition:
+                self._confirmation_in_progress = False
+                self._confirmation_condition.notify_all()
+            raise
+        with self._confirmation_condition:
             current = self._confirmed
             if current is None or published.step > current.step:
                 self._confirmed = published
-                return published
-            if (
+                result = published
+            elif (
                 published.step == current.step
                 and published.reference == current.reference
             ):
-                return current
-            return current
+                result = current
+            else:
+                result = current
+            self._confirmation_in_progress = False
+            self._confirmation_condition.notify_all()
+            return result
 
     def _begin_shutdown(self) -> None:
         with self._condition:

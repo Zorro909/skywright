@@ -394,6 +394,43 @@ def test_recorder_reconciles_identical_retries_and_rejects_conflicts(tmp_path) -
         store.publish_artifact(ArtifactRecord("result", b"different", 1))
 
 
+def test_checkpoint_confirmation_is_monotonic_idempotent_and_immutable(
+    tmp_path,
+) -> None:
+    memory = MemoryS3()
+    progress = ProgressRecorder()
+    store = recorder(memory, tmp_path, progress)
+    store.publish_attempt(
+        ExecutionAttemptRecord(
+            "123e4567-e89b-12d3-a456-426614174000",
+            "run",
+            "project@digest",
+            None,
+        )
+    )
+    older = store.publish_checkpoint(
+        CheckpointSnapshot(3, {"state": {"value": 3}}, run_id="run")
+    )
+    newer = store.publish_checkpoint(
+        CheckpointSnapshot(4, {"state": {"value": 4}}, run_id="run")
+    )
+
+    store.confirm_checkpoint(3, older)
+    store.confirm_checkpoint(3, older)
+    store.confirm_checkpoint(4, newer)
+    store.confirm_checkpoint(3, older)
+
+    assert progress.steps == [
+        ("confirmation", 3, older),
+        ("confirmation", 4, newer),
+    ]
+    conflicting = str(CheckpointReference(4, "0" * 64))
+    with pytest.raises(
+        TrainingContractViolation, match="checkpoint/confirmation-conflict"
+    ):
+        store.confirm_checkpoint(4, conflicting)
+
+
 def test_report_closes_only_the_process_writer_partition(tmp_path) -> None:
     memory = MemoryS3()
     store = recorder(memory, tmp_path)

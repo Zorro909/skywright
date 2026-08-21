@@ -858,9 +858,12 @@ class BlockingTerminalRecorder(TestRecorder):
         self.cancelled = threading.Event()
 
     def publish_checkpoint(self, checkpoint):
+        return super().publish_checkpoint(checkpoint)
+
+    def confirm_checkpoint(self, step, reference):
         self.started.set()
         assert self.cancelled.wait(2)
-        raise RunStoreCancelledError("terminal publication cancelled")
+        raise RunStoreCancelledError("terminal confirmation cancelled")
 
     def cancel_checkpoint_publication(self):
         self.cancelled.set()
@@ -915,7 +918,7 @@ print(json.dumps({
         "outcome": "cancelled",
         "cause": "cancelled",
         "durable_step": None,
-        "events": ["attempt", "step", "report"],
+        "events": ["attempt", "step", "checkpoint", "report"],
     }
 
 
@@ -995,6 +998,94 @@ print(json.dumps({
         "cleanup": "TimeoutError",
         "events_at_return": ["attempt", "step"],
         "events_after_release": ["attempt", "step", "checkpoint", "confirmation"],
+    }
+
+
+def test_report_closes_the_recorder_after_all_checkpoint_writes() -> None:
+    completed = run_project(
+        """
+import json
+import threading
+import time
+
+from skywright import run_training_process
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+class ClosingRecorder(TestRecorder):
+    def __init__(self):
+        super().__init__()
+        self.closed = False
+        self.release = threading.Event()
+        self.late_writes = []
+
+    def publish_checkpoint(self, checkpoint):
+        if self.closed:
+            self.late_writes.append("checkpoint")
+            raise RuntimeError("checkpoint after report")
+        if checkpoint.step == 1:
+            assert self.release.wait(2)
+        return super().publish_checkpoint(checkpoint)
+
+    def confirm_checkpoint(self, step, reference):
+        if self.closed:
+            self.late_writes.append("confirmation")
+            raise RuntimeError("confirmation after report")
+        super().confirm_checkpoint(step, reference)
+
+    def publish_step(self, *values):
+        super().publish_step(*values)
+        if values[0] == 2:
+            self.release.set()
+
+    def publish_report(self, report):
+        super().publish_report(report)
+        self.closed = True
+
+
+recorder = ClosingRecorder()
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+    context.commit_step(next_batch(context))
+
+
+result = run_training_process(
+    train,
+    run_id="test-run",
+    project_version="test-project@abc123",
+    configuration={"checkpoint": {"cadence": 1}},
+    dataset=TestDataset(("one", "two")),
+    metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1",
+    recorder=recorder,
+    seed=1,
+)
+time.sleep(0.05)
+print(json.dumps({
+    "outcome": result.outcome.value,
+    "late_writes": recorder.late_writes,
+    "last_event": recorder.events[-1][0],
+    "checkpoint_steps": [
+        event[1].step for event in recorder.events if event[0] == "checkpoint"
+    ],
+}))
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "outcome": "completed",
+        "late_writes": [],
+        "last_event": "report",
+        "checkpoint_steps": [1, 2],
     }
 
 

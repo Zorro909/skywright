@@ -829,6 +829,8 @@ class RunStoreRecorder:
             controlled_publication,
         )
         self._attempt: ExecutionAttemptRecord | None = None
+        self._confirmation_lock = threading.Lock()
+        self._latest_confirmation: tuple[int, str] | None = None
         self._closed = False
         self._multipart_threshold = multipart_threshold
         self._multipart_part_size = multipart_part_size
@@ -870,6 +872,15 @@ class RunStoreRecorder:
             content_type="application/json",
         )
         self._attempt = attempt
+        if (
+            attempt.seed_checkpoint_step is not None
+            and attempt.seed_checkpoint_reference is not None
+        ):
+            with self._confirmation_lock:
+                self._latest_confirmation = (
+                    attempt.seed_checkpoint_step,
+                    attempt.seed_checkpoint_reference,
+                )
 
     def publish_checkpoint(self, checkpoint: CheckpointSnapshot) -> str:
         self._require_open()
@@ -931,6 +942,10 @@ class RunStoreRecorder:
 
     def confirm_checkpoint(self, step: int, reference: str) -> None:
         self._require_open()
+        if self._checkpoint_cancellation.is_set():
+            raise RunStoreCancelledError(
+                "Checkpoint confirmation was cancelled by its coordinator"
+            )
         parsed = CheckpointReference.parse(reference)
         if parsed.step != step:
             raise TrainingContractViolation(
@@ -938,8 +953,23 @@ class RunStoreRecorder:
                 "Checkpoint confirmation Step does not match its reference",
                 "confirm the exact reference returned by checkpoint publication",
             )
-        if self._progress is not None:
-            self._progress.confirm_checkpoint(step, reference)
+        with self._confirmation_lock:
+            current = self._latest_confirmation
+            if current is not None:
+                current_step, current_reference = current
+                if step < current_step:
+                    return
+                if step == current_step:
+                    if reference != current_reference:
+                        raise TrainingContractViolation(
+                            "checkpoint/confirmation-conflict",
+                            f"Step {step} already has a different confirmed Checkpoint",
+                            "confirm only the immutable Checkpoint already recorded for this Step",
+                        )
+                    return
+            if self._progress is not None:
+                self._progress.confirm_checkpoint(step, reference)
+            self._latest_confirmation = (step, reference)
 
     def cancel_checkpoint_publication(self) -> None:
         """Request cancellation of the current attempt-owned checkpoint operation."""
