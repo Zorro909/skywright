@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out the tested source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Set up GraalVM Community
@@ -56,7 +56,7 @@ jobs:
         run: skaffold build --profile local-kind --tag "$GITHUB_SHA" 2>&1 | tee deployment-image-build.log
       - name: Retain main deployment build diagnostics
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: main-deployment-build-${{ github.sha }}
           path: |
@@ -81,7 +81,7 @@ jobs:
       bundle_digest: ${{ steps.publish.outputs.bundle_digest }}
     steps:
       - name: Check out the release source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Set up GraalVM Community
