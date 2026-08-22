@@ -16,6 +16,25 @@ databaseChangeLog:
               - column: { name: revision, type: bigint, constraints: { nullable: false } }
               - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
         - createTable:
+            tableName: dataset_manifest_entry
+            columns:
+              - column: { name: definition_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: manifest_position, type: integer, constraints: { nullable: false } }
+              - column: { name: object_key, type: varchar(2048), constraints: { nullable: false } }
+              - column: { name: byte_count, type: bigint, constraints: { nullable: false } }
+              - column: { name: checksum_sha256, type: varchar(255), constraints: { nullable: false } }
+        - createTable:
+            tableName: dataset_copy_identity
+            columns:
+              - column: { name: definition_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: copy_id, type: uuid, constraints: { nullable: false } }
+        - createTable:
+            tableName: dataset_generation_identity
+            columns:
+              - column: { name: definition_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: copy_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: generation_number, type: bigint, constraints: { nullable: false } }
+        - createTable:
             tableName: dataset_copy
             columns:
               - column: { name: definition_id, type: uuid, constraints: { nullable: false } }
@@ -86,6 +105,9 @@ databaseChangeLog:
       author: skywright
       logicalFilePath: db/changelog/versions/0004-dataset-catalog.yaml
       changes:
+        - addPrimaryKey: { tableName: dataset_manifest_entry, columnNames: "definition_id, manifest_position", constraintName: pk_dataset_manifest_entry }
+        - addPrimaryKey: { tableName: dataset_copy_identity, columnNames: "definition_id, copy_id", constraintName: pk_dataset_copy_identity }
+        - addPrimaryKey: { tableName: dataset_generation_identity, columnNames: "definition_id, copy_id, generation_number", constraintName: pk_dataset_generation_identity }
         - addPrimaryKey: { tableName: dataset_copy, columnNames: "definition_id, copy_position", constraintName: pk_dataset_copy }
         - addPrimaryKey: { tableName: dataset_copy_generation, columnNames: "definition_id, generation_position", constraintName: pk_dataset_copy_generation }
         - addPrimaryKey: { tableName: dataset_lease, columnNames: "definition_id, lease_position", constraintName: pk_dataset_lease }
@@ -97,6 +119,44 @@ databaseChangeLog:
         - dropPrimaryKey: { tableName: dataset_lease, constraintName: pk_dataset_lease }
         - dropPrimaryKey: { tableName: dataset_copy_generation, constraintName: pk_dataset_copy_generation }
         - dropPrimaryKey: { tableName: dataset_copy, constraintName: pk_dataset_copy }
+        - dropPrimaryKey: { tableName: dataset_generation_identity, constraintName: pk_dataset_generation_identity }
+        - dropPrimaryKey: { tableName: dataset_copy_identity, constraintName: pk_dataset_copy_identity }
+        - dropPrimaryKey: { tableName: dataset_manifest_entry, constraintName: pk_dataset_manifest_entry }
+  - changeSet:
+      id: issue-43-dataset-catalog-identity-triggers
+      author: skywright
+      logicalFilePath: db/changelog/versions/0004-dataset-catalog.yaml
+      changes:
+        - addUniqueConstraint: { tableName: dataset_manifest_entry, columnNames: "definition_id, object_key", constraintName: uq_dataset_manifest_entry_key }
+        - sql:
+            splitStatements: false
+            sql: |
+              CREATE FUNCTION retain_dataset_copy_identity() RETURNS trigger LANGUAGE plpgsql AS $$
+              BEGIN
+                INSERT INTO dataset_copy_identity(definition_id, copy_id)
+                VALUES (NEW.definition_id, NEW.copy_id) ON CONFLICT DO NOTHING;
+                RETURN NEW;
+              END $$;
+              CREATE TRIGGER retain_dataset_copy_identity_before_insert
+              BEFORE INSERT ON dataset_copy FOR EACH ROW EXECUTE FUNCTION retain_dataset_copy_identity();
+              CREATE FUNCTION retain_dataset_generation_identity() RETURNS trigger LANGUAGE plpgsql AS $$
+              BEGIN
+                INSERT INTO dataset_copy_identity(definition_id, copy_id)
+                VALUES (NEW.definition_id, NEW.copy_id) ON CONFLICT DO NOTHING;
+                INSERT INTO dataset_generation_identity(definition_id, copy_id, generation_number)
+                VALUES (NEW.definition_id, NEW.copy_id, NEW.generation_number) ON CONFLICT DO NOTHING;
+                RETURN NEW;
+              END $$;
+              CREATE TRIGGER retain_dataset_generation_identity_before_insert
+              BEFORE INSERT ON dataset_copy_generation FOR EACH ROW EXECUTE FUNCTION retain_dataset_generation_identity();
+      rollback:
+        - sql:
+            splitStatements: false
+            sql: |
+              DROP TRIGGER retain_dataset_generation_identity_before_insert ON dataset_copy_generation;
+              DROP FUNCTION retain_dataset_generation_identity();
+              DROP TRIGGER retain_dataset_copy_identity_before_insert ON dataset_copy;
+              DROP FUNCTION retain_dataset_copy_identity();
   - changeSet:
       id: issue-43-dataset-catalog-unique-constraints
       author: skywright
@@ -117,24 +177,39 @@ databaseChangeLog:
         - dropUniqueConstraint: { tableName: dataset_lease, constraintName: uq_dataset_lease_id }
         - dropUniqueConstraint: { tableName: dataset_catalog, constraintName: uq_dataset_catalog_version_label }
         - dropUniqueConstraint: { tableName: dataset_copy, constraintName: uq_dataset_copy_id }
+        - dropUniqueConstraint: { tableName: dataset_manifest_entry, constraintName: uq_dataset_manifest_entry_key }
   - changeSet:
       id: issue-43-dataset-catalog-foreign-keys
       author: skywright
       logicalFilePath: db/changelog/versions/0004-dataset-catalog.yaml
       changes:
+        - addForeignKeyConstraint: { baseTableName: dataset_manifest_entry, baseColumnNames: definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_manifest_catalog, onDelete: CASCADE }
         - addForeignKeyConstraint: { baseTableName: dataset_copy, baseColumnNames: definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_copy_catalog, onDelete: CASCADE }
         - addForeignKeyConstraint: { baseTableName: dataset_copy, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_dataset_copy_target_storage }
+        - addForeignKeyConstraint: { baseTableName: dataset_copy_identity, baseColumnNames: definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_copy_identity_catalog, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: dataset_generation_identity, baseColumnNames: "definition_id, copy_id", referencedTableName: dataset_copy_identity, referencedColumnNames: "definition_id, copy_id", constraintName: fk_dataset_generation_identity_copy, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: dataset_copy, baseColumnNames: "definition_id, copy_id", referencedTableName: dataset_copy_identity, referencedColumnNames: "definition_id, copy_id", constraintName: fk_dataset_copy_identity, deferrable: true, initiallyDeferred: true }
         - addForeignKeyConstraint: { baseTableName: dataset_copy_generation, baseColumnNames: definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_generation_catalog, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: dataset_copy_generation, baseColumnNames: "definition_id, copy_id, generation_number", referencedTableName: dataset_generation_identity, referencedColumnNames: "definition_id, copy_id, generation_number", constraintName: fk_dataset_generation_identity, deferrable: true, initiallyDeferred: true }
         - addForeignKeyConstraint: { baseTableName: dataset_lease, baseColumnNames: definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_lease_catalog, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: dataset_lease, baseColumnNames: "definition_id, copy_id, generation_number", referencedTableName: dataset_generation_identity, referencedColumnNames: "definition_id, copy_id, generation_number", constraintName: fk_dataset_lease_generation }
         - addForeignKeyConstraint: { baseTableName: dataset_copy_operation, baseColumnNames: definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_operation_catalog, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: dataset_copy_operation, baseColumnNames: "definition_id, copy_id, generation_number", referencedTableName: dataset_generation_identity, referencedColumnNames: "definition_id, copy_id, generation_number", constraintName: fk_dataset_operation_generation }
         - addForeignKeyConstraint: { baseTableName: dataset_cache, baseColumnNames: definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_cache_catalog, onDelete: CASCADE }
       rollback:
         - dropForeignKeyConstraint: { baseTableName: dataset_cache, constraintName: fk_dataset_cache_catalog }
         - dropForeignKeyConstraint: { baseTableName: dataset_copy_operation, constraintName: fk_dataset_operation_catalog }
+        - dropForeignKeyConstraint: { baseTableName: dataset_copy_operation, constraintName: fk_dataset_operation_generation }
         - dropForeignKeyConstraint: { baseTableName: dataset_lease, constraintName: fk_dataset_lease_catalog }
+        - dropForeignKeyConstraint: { baseTableName: dataset_lease, constraintName: fk_dataset_lease_generation }
         - dropForeignKeyConstraint: { baseTableName: dataset_copy_generation, constraintName: fk_dataset_generation_catalog }
+        - dropForeignKeyConstraint: { baseTableName: dataset_copy_generation, constraintName: fk_dataset_generation_identity }
+        - dropForeignKeyConstraint: { baseTableName: dataset_copy, constraintName: fk_dataset_copy_identity }
+        - dropForeignKeyConstraint: { baseTableName: dataset_generation_identity, constraintName: fk_dataset_generation_identity_copy }
+        - dropForeignKeyConstraint: { baseTableName: dataset_copy_identity, constraintName: fk_dataset_copy_identity_catalog }
         - dropForeignKeyConstraint: { baseTableName: dataset_copy, constraintName: fk_dataset_copy_target_storage }
         - dropForeignKeyConstraint: { baseTableName: dataset_copy, constraintName: fk_dataset_copy_catalog }
+        - dropForeignKeyConstraint: { baseTableName: dataset_manifest_entry, constraintName: fk_dataset_manifest_catalog }
   - changeSet:
       id: issue-43-dataset-catalog-indexes
       author: skywright
@@ -154,6 +229,6 @@ databaseChangeLog:
       changes:
         - sql:
             comment: Grant the runtime role the JPA access required by the Dataset Catalog.
-            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON dataset_catalog, dataset_copy, dataset_copy_generation, dataset_lease, dataset_copy_operation, dataset_cache TO "${runtimeRole}"
+            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON dataset_catalog, dataset_manifest_entry, dataset_copy_identity, dataset_generation_identity, dataset_copy, dataset_copy_generation, dataset_lease, dataset_copy_operation, dataset_cache TO "${runtimeRole}"
       rollback:
-        - sql: { sql: 'REVOKE ALL PRIVILEGES ON dataset_catalog, dataset_copy, dataset_copy_generation, dataset_lease, dataset_copy_operation, dataset_cache FROM "${runtimeRole}"' }
+        - sql: { sql: 'REVOKE ALL PRIVILEGES ON dataset_catalog, dataset_manifest_entry, dataset_copy_identity, dataset_generation_identity, dataset_copy, dataset_copy_generation, dataset_lease, dataset_copy_operation, dataset_cache FROM "${runtimeRole}"' }

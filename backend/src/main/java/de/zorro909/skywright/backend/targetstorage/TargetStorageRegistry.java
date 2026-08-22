@@ -138,6 +138,29 @@ public class TargetStorageRegistry {
 		return new TargetStorageResolution(storage.descriptor(), selectedBinding);
 	}
 
+	TargetStorageResolution resolveDatasetMaintenance(UUID id, TargetStorageRole role) {
+		TargetStorageAggregate storage = this.storage(Objects.requireNonNull(id, "storageId"));
+		if (storage.purpose() != TargetStoragePurpose.DATASET || storage.activeRevision() == null) {
+			throw new TargetStorageIneligibleException("TARGET_STORAGE_WRONG_PURPOSE",
+					"Dataset maintenance requires a qualified dataset Target Storage");
+		}
+		TargetStorageBinding selectedBinding = storage.bindings()
+			.stream()
+			.filter(binding -> binding.role() == role && binding.readiness() == BindingReadiness.READY)
+			.findFirst()
+			.orElseThrow(() -> new TargetStorageIneligibleException("TARGET_STORAGE_BINDING_UNAVAILABLE",
+					"The required Credential Binding is not ready"));
+		return new TargetStorageResolution(storage.descriptor(), selectedBinding);
+	}
+
+	/** Reports whether a Dataset Catalog admission may use the registered storage. */
+	public boolean eligibleDataset(UUID id) {
+		return this.repository.findById(Objects.requireNonNull(id, "storageId"))
+			.filter(storage -> storage.purpose() == TargetStoragePurpose.DATASET)
+			.filter(TargetStorageAggregate::eligible)
+			.isPresent();
+	}
+
 	TargetStorageQualificationRequest qualificationRequest(UUID id) {
 		TargetStorageAggregate storage = this.storage(id);
 		return storage.qualificationRequest();

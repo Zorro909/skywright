@@ -7,6 +7,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 final class DatasetCatalogTest {
@@ -74,6 +75,7 @@ final class DatasetCatalogTest {
 		assertThat(lease.runRecordId()).isEqualTo(runId);
 		assertThat(lease.generation()).isEqualTo(1);
 		assertThat(deprecated.copies().getFirst().activeLeaseCount()).isEqualTo(1);
+		assertThat(this.catalog.eligibleCopies(published.definition().definitionId())).isEmpty();
 		assertThatThrownBy(() -> this.catalog.acquireLease(published.definition().definitionId(), authority.id(), 1,
 				deprecated.revision(), UUID.randomUUID()))
 			.isInstanceOf(DatasetCatalogConflictException.class)
@@ -141,6 +143,33 @@ final class DatasetCatalogTest {
 	}
 
 	@Test
+	void cancellingBeforePublicationRestoresTheOriginalLeaseAdmissionState() {
+		DatasetCatalogView published = this.catalog.publish(publication());
+		DatasetCopyView authority = published.copies().getFirst();
+		DatasetCopyOperationView started = this.catalog.startRefresh(published.definition().definitionId(),
+				authority.id(), 1, published.revision());
+
+		this.catalog.cancelOperation(published.definition().definitionId(), started.id(), 2);
+
+		assertThat(this.catalog.get(published.definition().definitionId())
+			.copies()
+			.getFirst()
+			.currentGeneration()
+			.acceptingLeases()).isTrue();
+	}
+
+	@Test
+	void publicationAndLeaseAdmissionRequireAnEligibleDatasetTargetStorage() {
+		DatasetTargetStorageEligibility eligibility = storageId -> false;
+		DatasetCatalog guarded = new DatasetCatalog(this.repository, Clock.fixed(NOW, ZoneOffset.UTC),
+				(definition, manifest, copy) -> {
+				}, eligibility);
+
+		assertThatThrownBy(() -> guarded.publish(publication())).isInstanceOf(DatasetCatalogConflictException.class)
+			.hasMessageContaining("DATASET_TARGET_STORAGE_INELIGIBLE");
+	}
+
+	@Test
 	void cacheReportsKeepImmutableOwnershipAndCannotChangeCopyRoles() {
 		DatasetCatalogView published = this.catalog.publish(publication());
 		UUID cacheId = UUID.randomUUID();
@@ -184,6 +213,54 @@ final class DatasetCatalogTest {
 		assertThat(duringCleanup.copies().getFirst().currentGeneration().number()).isEqualTo(2);
 		assertThat(duringCleanup.copies().getFirst().generationHistory()).extracting(DatasetCopyGenerationView::number)
 			.containsExactly(1L, 2L);
+	}
+
+	@Test
+	void maintenanceWorkerResumesEveryDurableRefreshStage() {
+		DatasetPublication publication = new DatasetPublication(UUID.randomUUID(), UUID.randomUUID(), "v1",
+				"sha256:content", "sha256:manifest", UUID.randomUUID(), UUID.randomUUID(), "datasets/project/v1", 42,
+				NOW, List.of(new DatasetManifestEntry("shard.bin", 42, "checksum")));
+		DatasetCatalogView published = this.catalog.publish(publication);
+		DatasetCopyOperationView operation = this.catalog.startRefresh(publication.definitionId(), publication.copyId(),
+				1, published.revision());
+		DatasetCopyStorage storage = new DatasetCopyStorage() {
+			@Override
+			public void verify(DatasetDefinitionView definition, List<DatasetManifestEntry> manifest,
+					DatasetCopyView copy) {
+			}
+
+			@Override
+			public VerifiedDatasetReplacement stageReplacement(DatasetDefinitionView definition,
+					List<DatasetManifestEntry> manifest, DatasetCopyView copy, UUID operationId) {
+				return replacement(definition, copy, operationId);
+			}
+
+			@Override
+			public VerifiedDatasetReplacement verifyReplacement(DatasetDefinitionView definition,
+					List<DatasetManifestEntry> manifest, DatasetCopyView copy, UUID operationId) {
+				return replacement(definition, copy, operationId);
+			}
+
+			@Override
+			public void deleteAndVerify(List<DatasetManifestEntry> manifest, DatasetCopyView copy, long generation) {
+			}
+
+			private VerifiedDatasetReplacement replacement(DatasetDefinitionView definition, DatasetCopyView copy,
+					UUID operationId) {
+				return new VerifiedDatasetReplacement(copy.currentGeneration().location() + ".refresh-" + operationId,
+						42, definition.manifestIdentity(), definition.contentFingerprint(), NOW);
+			}
+		};
+		DatasetCopyMaintenanceWorker worker = new DatasetCopyMaintenanceWorker(this.catalog, storage);
+
+		worker.resumeDurableOperations();
+		worker.resumeDurableOperations();
+		worker.resumeDurableOperations();
+
+		DatasetCopyOperationView completed = this.catalog.getOperation(publication.definitionId(), operation.id());
+		assertThat(completed.progress()).isEqualTo(DatasetCopyOperationProgress.COMPLETED);
+		assertThat(this.catalog.get(publication.definitionId()).copies().getFirst().currentGeneration().number())
+			.isEqualTo(2);
 	}
 
 	@Test

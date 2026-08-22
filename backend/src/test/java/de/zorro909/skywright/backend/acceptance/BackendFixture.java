@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.acceptance;
 
 import de.zorro909.skywright.backend.SkywrightBackendApplication;
+import de.zorro909.skywright.backend.targetstorage.TargetStorageIntegrationTestConfiguration;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -31,6 +32,12 @@ final class BackendFixture implements AutoCloseable {
 
 	static BackendFixture start() {
 		return start(new SpringApplicationBuilder(SkywrightBackendApplication.class));
+	}
+
+	static BackendFixture startWithTargetStorageIntegration() {
+		return start(new SpringApplicationBuilder(SkywrightBackendApplication.class,
+				TargetStorageIntegrationTestConfiguration.class)
+			.profiles("target-storage-integration"));
 	}
 
 	static BackendFixture start(BuildProperties buildProperties) {
@@ -69,6 +76,14 @@ final class BackendFixture implements AutoCloseable {
 		var request = HttpRequest.newBuilder(baseUri.resolve(path))
 			.header("Content-Type", "application/json")
 			.POST(HttpRequest.BodyPublishers.ofString(body))
+			.build();
+		return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+	}
+
+	HttpResponse<String> put(String path, String body) throws IOException, InterruptedException {
+		var request = HttpRequest.newBuilder(baseUri.resolve(path))
+			.header("Content-Type", "application/json")
+			.PUT(HttpRequest.BodyPublishers.ofString(body))
 			.build();
 		return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 	}

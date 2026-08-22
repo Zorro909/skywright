@@ -14,6 +14,8 @@ final class DatasetCatalogAggregate {
 
 	private final List<DatasetCopyView> copies;
 
+	private final List<DatasetManifestEntry> manifest;
+
 	private final List<DatasetLeaseView> leases;
 
 	private final List<DatasetCopyOperationView> operations;
@@ -21,10 +23,12 @@ final class DatasetCatalogAggregate {
 	private final List<DatasetCacheView> caches;
 
 	private DatasetCatalogAggregate(long revision, DatasetDefinitionView definition, List<DatasetCopyView> copies,
-			List<DatasetLeaseView> leases, List<DatasetCacheView> caches, List<DatasetCopyOperationView> operations) {
+			List<DatasetManifestEntry> manifest, List<DatasetLeaseView> leases, List<DatasetCacheView> caches,
+			List<DatasetCopyOperationView> operations) {
 		this.revision = revision;
 		this.definition = definition;
 		this.copies = new ArrayList<>(copies);
+		this.manifest = List.copyOf(manifest);
 		this.leases = new ArrayList<>(leases);
 		this.operations = new ArrayList<>(operations);
 		this.caches = new ArrayList<>(caches);
@@ -39,6 +43,7 @@ final class DatasetCatalogAggregate {
 		if (request.verifiedBytes() < 0) {
 			throw new IllegalArgumentException("verifiedBytes must not be negative");
 		}
+		validateManifest(request.manifestEntries(), request.verifiedBytes());
 		DatasetDefinitionView definition = new DatasetDefinitionView(request.datasetId(), request.definitionId(),
 				request.versionLabel(), request.contentFingerprint(), request.manifestIdentity(), createdAt);
 		DatasetCopyGenerationView generation = new DatasetCopyGenerationView(1, request.location(),
@@ -46,13 +51,14 @@ final class DatasetCatalogAggregate {
 				request.verifiedAt(), true, DatasetCopyAvailability.AVAILABLE);
 		DatasetCopyView copy = new DatasetCopyView(request.copyId(), request.targetStorageId(),
 				DatasetCopyRole.AUTHORITY, 1, generation, List.of(generation), 0);
-		return new DatasetCatalogAggregate(1, definition, List.of(copy), List.of(), List.of(), List.of());
+		return new DatasetCatalogAggregate(1, definition, List.of(copy), request.manifestEntries(), List.of(),
+				List.of(), List.of());
 	}
 
 	static DatasetCatalogAggregate restore(long revision, DatasetDefinitionView definition,
-			List<DatasetCopyView> copies, List<DatasetLeaseView> leases, List<DatasetCacheView> caches,
-			List<DatasetCopyOperationView> operations) {
-		return new DatasetCatalogAggregate(revision, definition, copies, leases, caches, operations);
+			List<DatasetCopyView> copies, List<DatasetManifestEntry> manifest, List<DatasetLeaseView> leases,
+			List<DatasetCacheView> caches, List<DatasetCopyOperationView> operations) {
+		return new DatasetCatalogAggregate(revision, definition, copies, manifest, leases, caches, operations);
 	}
 
 	boolean isSamePublication(DatasetPublication request) {
@@ -65,7 +71,8 @@ final class DatasetCatalogAggregate {
 				&& authority.id().equals(request.copyId())
 				&& authority.targetStorageId().equals(request.targetStorageId())
 				&& authority.currentGeneration().location().equals(request.location())
-				&& authority.currentGeneration().verifiedBytes() == request.verifiedBytes();
+				&& authority.currentGeneration().verifiedBytes() == request.verifiedBytes()
+				&& this.manifest.equals(request.manifestEntries());
 	}
 
 	DatasetCatalogView view() {
@@ -74,7 +81,7 @@ final class DatasetCatalogAggregate {
 	}
 
 	DatasetCatalogSnapshot snapshot() {
-		return new DatasetCatalogSnapshot(this.revision, this.definition, List.copyOf(this.copies),
+		return new DatasetCatalogSnapshot(this.revision, this.definition, List.copyOf(this.copies), this.manifest,
 				List.copyOf(this.leases), List.copyOf(this.caches), List.copyOf(this.operations));
 	}
 
@@ -161,7 +168,7 @@ final class DatasetCatalogAggregate {
 			throw new DatasetCatalogConflictException("DATASET_COPY_INELIGIBLE",
 					"Only an eligible verified replica can be promoted");
 		}
-		verifier.verify(this.definition, candidate);
+		verifier.verify(this.definition, this.manifest, candidate);
 		for (int index = 0; index < this.copies.size(); index++) {
 			DatasetCopyView copy = this.copies.get(index);
 			DatasetCopyRole role = copy.id().equals(copyId) ? DatasetCopyRole.AUTHORITY : DatasetCopyRole.REPLICA;
@@ -173,6 +180,7 @@ final class DatasetCatalogAggregate {
 
 	DatasetCopyOperationView startRefresh(UUID copyId, long generation, long expectedRevision, Instant now) {
 		this.requireNoActiveOperation(copyId);
+		this.requireAcceptingGeneration(copyId, generation);
 		this.deprecate(copyId, generation, expectedRevision);
 		DatasetCopyView copy = this.copy(copyId);
 		DatasetCopyOperationProgress progress = copy.activeLeaseCount() == 0 ? DatasetCopyOperationProgress.TRANSFERRING
@@ -231,6 +239,7 @@ final class DatasetCatalogAggregate {
 			throw new DatasetCatalogConflictException("DATASET_AUTHORITY_DELETE_FORBIDDEN",
 					"The authoritative Dataset Copy cannot be deleted");
 		}
+		this.requireAcceptingGeneration(copyId, generation);
 		this.deprecate(copyId, generation, expectedRevision);
 		DatasetCopyOperationProgress progress = selected.activeLeaseCount() == 0
 				? DatasetCopyOperationProgress.DELETING_OLD_BYTES : DatasetCopyOperationProgress.WAITING_FOR_LEASES;
@@ -288,6 +297,7 @@ final class DatasetCatalogAggregate {
 				operation.copyId(), operation.generation(), DatasetCopyOperationProgress.CANCELLED,
 				operation.attempts(), null, null, false, operation.startedAt(), now);
 		this.replaceOperation(operation, cancelled);
+		this.restoreLeaseAdmission(operation.copyId(), operation.generation());
 		this.revision++;
 		return cancelled;
 	}
@@ -300,6 +310,14 @@ final class DatasetCatalogAggregate {
 		this.requireRevision(expectedRevision);
 		if (report.measuredBytes() < 0 || report.ownerId() == null || report.ownerId().isBlank()) {
 			throw new IllegalArgumentException("Dataset Cache report is invalid");
+		}
+		if (report.ownerType() == DatasetCacheOwnerType.RUN) {
+			try {
+				UUID.fromString(report.ownerId());
+			}
+			catch (IllegalArgumentException invalidRunIdentity) {
+				throw new IllegalArgumentException("Run-owned Dataset Caches require a Run Record UUID");
+			}
 		}
 		DatasetCacheView sameOwner = this.caches.stream()
 			.filter(value -> value.ownerType() == report.ownerType() && value.ownerId().equals(report.ownerId()))
@@ -428,6 +446,64 @@ final class DatasetCatalogAggregate {
 		if (this.operations.stream().anyMatch(value -> value.copyId().equals(copyId) && value.active())) {
 			throw new DatasetCatalogConflictException("DATASET_COPY_OPERATION_CONFLICT",
 					"Dataset Copy already has an active maintenance operation");
+		}
+	}
+
+	private void requireAcceptingGeneration(UUID copyId, long generation) {
+		DatasetCopyGenerationView selected = this.copy(copyId)
+			.generationHistory()
+			.stream()
+			.filter(value -> value.number() == generation)
+			.findFirst()
+			.orElseThrow(() -> new DatasetCatalogConflictException("DATASET_COPY_GENERATION_NOT_FOUND",
+					"Dataset Copy generation does not exist"));
+		if (!selected.acceptingLeases()) {
+			throw new DatasetCatalogConflictException("DATASET_COPY_INELIGIBLE",
+					"Deprecated Dataset Copy generations cannot start maintenance");
+		}
+	}
+
+	private void restoreLeaseAdmission(UUID copyId, long generation) {
+		DatasetCopyView copy = this.copy(copyId);
+		List<DatasetCopyGenerationView> history = copy.generationHistory()
+			.stream()
+			.map(value -> value.number() == generation ? new DatasetCopyGenerationView(value.number(), value.location(),
+					value.manifestIdentity(), value.contentFingerprint(), value.verifiedBytes(), value.createdAt(),
+					value.verifiedAt(), true, value.availability()) : value)
+			.toList();
+		DatasetCopyGenerationView current = history.stream()
+			.filter(value -> value.number() == copy.currentGeneration().number())
+			.findFirst()
+			.orElseThrow();
+		this.replaceCopy(copy, new DatasetCopyView(copy.id(), copy.targetStorageId(), copy.role(), copy.revision() + 1,
+				current, history, copy.activeLeaseCount()));
+	}
+
+	UUID targetStorageId(UUID copyId) {
+		return this.copy(copyId).targetStorageId();
+	}
+
+	List<DatasetManifestEntry> manifest() {
+		return this.manifest;
+	}
+
+	private static void validateManifest(List<DatasetManifestEntry> manifest, long verifiedBytes) {
+		if (manifest.isEmpty()) {
+			return;
+		}
+		long bytes = 0;
+		java.util.HashSet<String> keys = new java.util.HashSet<>();
+		for (DatasetManifestEntry entry : manifest) {
+			requireText(entry.objectKey(), "manifest.objectKey");
+			requireText(entry.checksumSha256(), "manifest.checksumSha256");
+			if (entry.objectKey().startsWith("/") || entry.objectKey().contains("..") || entry.byteCount() < 0
+					|| !keys.add(entry.objectKey())) {
+				throw new IllegalArgumentException("Dataset integrity manifest is invalid");
+			}
+			bytes = Math.addExact(bytes, entry.byteCount());
+		}
+		if (bytes != verifiedBytes) {
+			throw new IllegalArgumentException("verifiedBytes must equal the Dataset integrity manifest size");
 		}
 	}
 

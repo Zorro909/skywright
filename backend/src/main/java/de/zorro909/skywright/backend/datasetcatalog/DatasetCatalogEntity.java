@@ -56,6 +56,11 @@ class DatasetCatalogEntity {
 	List<DatasetGenerationEmbeddable> generations = new ArrayList<>();
 
 	@ElementCollection(fetch = FetchType.EAGER)
+	@CollectionTable(name = "dataset_manifest_entry", joinColumns = @JoinColumn(name = "definition_id"))
+	@OrderColumn(name = "manifest_position")
+	List<DatasetManifestEntryEmbeddable> manifest = new ArrayList<>();
+
+	@ElementCollection(fetch = FetchType.EAGER)
 	@CollectionTable(name = "dataset_lease", joinColumns = @JoinColumn(name = "definition_id"))
 	@OrderColumn(name = "lease_position")
 	List<DatasetLeaseEmbeddable> leases = new ArrayList<>();
@@ -94,6 +99,7 @@ class DatasetCatalogEntity {
 				.stream()
 				.map(generation -> DatasetGenerationEmbeddable.from(copy.id(), generation)))
 			.toList();
+		this.manifest = value.manifest().stream().map(DatasetManifestEntryEmbeddable::from).toList();
 		this.leases = value.leases().stream().map(DatasetLeaseEmbeddable::from).toList();
 		this.operations = value.operations().stream().map(DatasetCopyOperationEmbeddable::from).toList();
 		this.caches = value.caches().stream().map(DatasetCacheEmbeddable::from).toList();
@@ -115,6 +121,7 @@ class DatasetCatalogEntity {
 					copy.activeLeaseCount);
 		}).toList();
 		return DatasetCatalogAggregate.restore(this.revision, definition, decodedCopies,
+				this.manifest.stream().map(DatasetManifestEntryEmbeddable::domain).toList(),
 				this.leases.stream().map(lease -> lease.domain(this.definitionId)).toList(),
 				this.caches.stream().map(DatasetCacheEmbeddable::domain).toList(),
 				this.operations.stream().map(DatasetCopyOperationEmbeddable::domain).toList());

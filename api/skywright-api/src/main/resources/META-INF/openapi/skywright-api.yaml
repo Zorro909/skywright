@@ -413,9 +413,14 @@ paths:
       summary: List Dataset Definitions and their catalog facts in stable order.
       parameters:
         - { name: datasetId, in: query, schema: { $ref: '#/components/schemas/SkywrightId' } }
+        - { name: definitionId, in: query, schema: { $ref: '#/components/schemas/SkywrightId' } }
         - { name: targetStorageId, in: query, schema: { $ref: '#/components/schemas/SkywrightId' } }
         - { name: role, in: query, schema: { $ref: '#/components/schemas/DatasetCopyRole' } }
-        - { name: acceptingLeases, in: query, schema: { type: boolean } }
+        - { name: eligible, in: query, schema: { type: boolean } }
+        - { name: operationState, in: query, schema: { $ref: '#/components/schemas/DatasetCopyOperationProgress' } }
+        - { name: cacheOwnerType, in: query, schema: { $ref: '#/components/schemas/DatasetCacheOwnerType' } }
+        - { name: cacheOwnerId, in: query, schema: { type: string, minLength: 1, maxLength: 255 } }
+        - { name: runRecordId, in: query, schema: { $ref: '#/components/schemas/SkywrightId' } }
         - { name: cursor, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:

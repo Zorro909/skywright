@@ -12,6 +12,12 @@ class DatasetCatalogWebConfiguration implements WebMvcConfigurer {
 		registry.addConverter(String.class,
 				de.zorro909.skywright.backend.boundary.generated.model.DatasetCopyRole.class,
 				de.zorro909.skywright.backend.boundary.generated.model.DatasetCopyRole::fromValue);
+		registry.addConverter(String.class,
+				de.zorro909.skywright.backend.boundary.generated.model.DatasetCopyOperationProgress.class,
+				de.zorro909.skywright.backend.boundary.generated.model.DatasetCopyOperationProgress::fromValue);
+		registry.addConverter(String.class,
+				de.zorro909.skywright.backend.boundary.generated.model.DatasetCacheOwnerType.class,
+				de.zorro909.skywright.backend.boundary.generated.model.DatasetCacheOwnerType::fromValue);
 	}
 
 }

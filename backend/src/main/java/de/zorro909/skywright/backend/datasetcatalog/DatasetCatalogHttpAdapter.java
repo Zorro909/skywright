@@ -4,7 +4,9 @@ import de.zorro909.skywright.backend.boundary.generated.api.DatasetCatalogApi;
 import de.zorro909.skywright.backend.boundary.generated.model.DatasetCatalogPage;
 import de.zorro909.skywright.backend.boundary.generated.model.DatasetCatalogRecord;
 import de.zorro909.skywright.backend.boundary.generated.model.DatasetCatalogRevisionCommand;
+import de.zorro909.skywright.backend.boundary.generated.model.DatasetCacheOwnerType;
 import de.zorro909.skywright.backend.boundary.generated.model.DatasetCopyOperation;
+import de.zorro909.skywright.backend.boundary.generated.model.DatasetCopyOperationProgress;
 import de.zorro909.skywright.backend.boundary.generated.model.DatasetCopyRole;
 import de.zorro909.skywright.backend.boundary.generated.model.StartDatasetCopyOperation;
 import java.time.ZoneOffset;
@@ -50,20 +52,31 @@ public class DatasetCatalogHttpAdapter implements DatasetCatalogApi {
 	}
 
 	@Override
-	public ResponseEntity<DatasetCatalogPage> listDatasetCatalog(UUID datasetId, UUID targetStorageId,
-			DatasetCopyRole role, Boolean acceptingLeases, String cursor, Integer limit) {
+	public ResponseEntity<DatasetCatalogPage> listDatasetCatalog(UUID datasetId, UUID definitionId,
+			UUID targetStorageId, DatasetCopyRole role, Boolean eligible, DatasetCopyOperationProgress operationState,
+			DatasetCacheOwnerType cacheOwnerType, String cacheOwnerId, UUID runRecordId, String cursor, Integer limit) {
 		UUID after = cursor == null ? null : cursor(cursor);
 		List<DatasetCatalogView> matching = this.catalog.list()
 			.stream()
 			.filter(value -> datasetId == null || value.definition().datasetId().equals(datasetId))
+			.filter(value -> definitionId == null || value.definition().definitionId().equals(definitionId))
 			.filter(value -> after == null || value.definition().definitionId().compareTo(after) > 0)
 			.filter(value -> targetStorageId == null
 					|| value.copies().stream().anyMatch(copy -> copy.targetStorageId().equals(targetStorageId)))
 			.filter(value -> role == null
 					|| value.copies().stream().anyMatch(copy -> copy.role().name().equalsIgnoreCase(role.getValue())))
-			.filter(value -> acceptingLeases == null || value.copies()
+			.filter(value -> eligible == null
+					|| value.copies().stream().anyMatch(copy -> this.catalog.eligible(copy) == eligible.booleanValue()))
+			.filter(value -> operationState == null || value.operations()
 				.stream()
-				.anyMatch(copy -> copy.currentGeneration().acceptingLeases() == acceptingLeases.booleanValue()))
+				.anyMatch(operation -> wireValue(operation.progress()).equals(operationState.getValue())))
+			.filter(value -> cacheOwnerType == null || value.caches()
+				.stream()
+				.anyMatch(cache -> wireValue(cache.ownerType()).equals(cacheOwnerType.getValue())))
+			.filter(value -> cacheOwnerId == null
+					|| value.caches().stream().anyMatch(cache -> cache.ownerId().equals(cacheOwnerId)))
+			.filter(value -> runRecordId == null
+					|| value.leases().stream().anyMatch(lease -> lease.runRecordId().equals(runRecordId)))
 			.sorted(Comparator.comparing(value -> value.definition().definitionId()))
 			.limit((long) limit + 1)
 			.toList();

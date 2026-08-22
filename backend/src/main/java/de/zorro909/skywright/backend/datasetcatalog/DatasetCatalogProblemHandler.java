@@ -24,7 +24,7 @@ final class DatasetCatalogProblemHandler {
 						: failure instanceof DatasetCatalogConflictException ? HttpStatus.CONFLICT
 								: HttpStatus.UNPROCESSABLE_ENTITY;
 		String source = failure instanceof DatasetStorageUnavailableException unavailable ? unavailable.source() : null;
-		return problem(status, safeDetail(failure), failure.errorCode(), source,
+		return problem(status, publicDetail(failure), failure.errorCode(), source,
 				failure instanceof DatasetStorageUnavailableException, request);
 	}
 
@@ -43,10 +43,17 @@ final class DatasetCatalogProblemHandler {
 		return ResponseEntity.status(status).contentType(MediaType.APPLICATION_PROBLEM_JSON).body(body);
 	}
 
-	private static String safeDetail(DatasetCatalogException failure) {
-		int separator = failure.getMessage().indexOf(": ");
-		return separator < 0 ? "The Dataset Catalog request could not be completed."
-				: failure.getMessage().substring(separator + 2);
+	private static String publicDetail(DatasetCatalogException failure) {
+		if (failure instanceof DatasetStorageUnavailableException) {
+			return "Dataset storage is temporarily unavailable; retry the request.";
+		}
+		if (failure instanceof DatasetCatalogNotFoundException) {
+			return "The requested Dataset Catalog resource does not exist.";
+		}
+		if (failure instanceof DatasetCatalogConflictException) {
+			return "The Dataset Catalog request conflicts with its current state.";
+		}
+		return "The Dataset Catalog request could not be completed.";
 	}
 
 }

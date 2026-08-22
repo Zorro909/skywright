@@ -14,23 +14,32 @@ public class DatasetCatalog {
 
 	private final DatasetCopyVerifier verifier;
 
+	private final DatasetTargetStorageEligibility storageEligibility;
+
 	DatasetCatalog(DatasetCatalogRepository repository, Clock clock) {
-		this(repository, clock, (definition, copy) -> {
+		this(repository, clock, (definition, manifest, copy) -> {
 			if (!definition.manifestIdentity().equals(copy.currentGeneration().manifestIdentity())
 					|| !definition.contentFingerprint().equals(copy.currentGeneration().contentFingerprint())) {
 				throw new DatasetCatalogConflictException("DATASET_COPY_MANIFEST_MISMATCH",
 						"Dataset Copy does not match the Dataset Definition manifest");
 			}
-		});
+		}, storageId -> true);
 	}
 
 	public DatasetCatalog(DatasetCatalogRepository repository, Clock clock, DatasetCopyVerifier verifier) {
+		this(repository, clock, verifier, storageId -> true);
+	}
+
+	public DatasetCatalog(DatasetCatalogRepository repository, Clock clock, DatasetCopyVerifier verifier,
+			DatasetTargetStorageEligibility storageEligibility) {
 		this.repository = repository;
 		this.clock = clock;
 		this.verifier = verifier;
+		this.storageEligibility = storageEligibility;
 	}
 
 	public DatasetCatalogView publish(DatasetPublication request) {
+		this.requireEligibleStorage(request.targetStorageId());
 		DatasetCatalogAggregate byDefinition = this.repository.findByDefinitionId(request.definitionId()).orElse(null);
 		if (byDefinition != null) {
 			if (!byDefinition.isSamePublication(request)) {
@@ -56,6 +65,7 @@ public class DatasetCatalog {
 	public DatasetLeaseView acquireLease(UUID definitionId, UUID copyId, long generation, long expectedRevision,
 			UUID runRecordId) {
 		DatasetCatalogAggregate catalog = this.catalog(definitionId);
+		this.requireEligibleStorage(catalog.targetStorageId(copyId));
 		DatasetLeaseView lease = catalog.acquireLease(copyId, generation, expectedRevision, runRecordId,
 				this.clock.instant());
 		this.repository.save(catalog);
@@ -71,6 +81,7 @@ public class DatasetCatalog {
 	}
 
 	public DatasetCatalogView addReplica(UUID definitionId, DatasetReplicaPublication request, long expectedRevision) {
+		this.requireEligibleStorage(request.targetStorageId());
 		DatasetCatalogAggregate catalog = this.catalog(definitionId);
 		catalog.addReplica(request, expectedRevision, this.clock.instant());
 		this.repository.save(catalog);
@@ -79,6 +90,7 @@ public class DatasetCatalog {
 
 	public DatasetCatalogView promote(UUID definitionId, UUID copyId, long expectedRevision) {
 		DatasetCatalogAggregate catalog = this.catalog(definitionId);
+		this.requireEligibleStorage(catalog.targetStorageId(copyId));
 		catalog.promote(copyId, expectedRevision, this.verifier);
 		this.repository.save(catalog);
 		return catalog.view();
@@ -194,8 +206,47 @@ public class DatasetCatalog {
 	}
 
 	@Transactional(readOnly = true)
+	public List<DatasetCopyView> eligibleCopies(UUID definitionId) {
+		return this.catalog(definitionId).view().copies().stream().filter(this::eligible).toList();
+	}
+
+	@Transactional(readOnly = true)
 	public List<DatasetCatalogView> list() {
 		return this.repository.findAll().stream().map(DatasetCatalogAggregate::view).toList();
+	}
+
+	@Transactional(readOnly = true)
+	List<DatasetCopyWorkItem> maintenanceWork() {
+		return this.repository.findAll()
+			.stream()
+			.flatMap(aggregate -> aggregate.view()
+				.operations()
+				.stream()
+				.filter(DatasetCopyOperationView::active)
+				.filter(operation -> operation.progress() != DatasetCopyOperationProgress.WAITING_FOR_LEASES)
+				.map(operation -> new DatasetCopyWorkItem(aggregate.view().revision(), aggregate.view().definition(),
+						aggregate.manifest(),
+						aggregate.view()
+							.copies()
+							.stream()
+							.filter(copy -> copy.id().equals(operation.copyId()))
+							.findFirst()
+							.orElseThrow(),
+						operation)))
+			.toList();
+	}
+
+	boolean eligible(DatasetCopyView copy) {
+		return copy.currentGeneration().acceptingLeases()
+				&& copy.currentGeneration().availability() == DatasetCopyAvailability.AVAILABLE
+				&& this.storageEligibility.eligible(copy.targetStorageId());
+	}
+
+	private void requireEligibleStorage(UUID storageId) {
+		if (!this.storageEligibility.eligible(storageId)) {
+			throw new DatasetCatalogConflictException("DATASET_TARGET_STORAGE_INELIGIBLE",
+					"Dataset Target Storage is not eligible for new work");
+		}
 	}
 
 	private DatasetCatalogAggregate catalog(UUID definitionId) {
