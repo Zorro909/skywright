@@ -5,6 +5,7 @@ from copy import deepcopy
 from decimal import Decimal
 from importlib.resources import files
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator, FormatChecker
 
@@ -66,6 +67,7 @@ def decode(document: str) -> dict[str, Any]:
         errors
         or not _has_portable_decimals(value)
         or not _has_valid_target_relationships(value)
+        or not _has_valid_storage_endpoints(value)
     ):
         raise RunDefinitionValidationError("RUN_DEFINITION_SCHEMA_VALIDATION")
     return deepcopy(cast(dict[str, Any], value))
@@ -110,6 +112,48 @@ def _has_valid_target_relationships(value: Any) -> bool:
         target.get("purchaseMode") == required_modes.get(target_class)
         and target.get("acceleratorBackend") in images
     )
+
+
+def _has_valid_storage_endpoints(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return True
+    definition = cast(dict[str, Any], value)
+    storage_value = definition.get("storage")
+    if not isinstance(storage_value, dict):
+        return True
+    storage = cast(dict[str, Any], storage_value)
+    execution_value = storage.get("execution")
+    repatriation_value = storage.get("repatriation")
+    if not isinstance(execution_value, dict) or not isinstance(
+        repatriation_value, dict
+    ):
+        return True
+    execution = cast(dict[str, Any], execution_value)
+    repatriation = cast(dict[str, Any], repatriation_value)
+    destination_value = repatriation.get("destination")
+    if not isinstance(destination_value, dict):
+        return True
+    destination = cast(dict[str, Any], destination_value)
+    return _is_valid_storage_endpoint(
+        execution.get("endpoint")
+    ) and _is_valid_storage_endpoint(destination.get("endpoint"))
+
+
+def _is_valid_storage_endpoint(value: Any) -> bool:
+    if not isinstance(value, str) or len(value) > 2048:
+        return False
+    try:
+        endpoint = urlsplit(value)
+        return (
+            endpoint.scheme.lower() in {"http", "https"}
+            and endpoint.hostname is not None
+            and endpoint.username is None
+            and endpoint.password is None
+            and "?" not in value
+            and "#" not in value
+        )
+    except ValueError:
+        return False
 
 
 def encode(value: dict[str, Any]) -> str:

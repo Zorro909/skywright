@@ -3,6 +3,7 @@ package de.zorro909.skywright.backend.rundefinition;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigInteger;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -65,6 +66,7 @@ final class RunDefinitionCodec {
 			.toList());
 		validatePortableDecimals(parsed, "", failures);
 		validateTargetRelationships(parsed, failures);
+		validateStorageEndpoints(parsed, failures);
 		if (!failures.isEmpty()) {
 			throw new RunDefinitionValidationException(failures);
 		}
@@ -120,6 +122,32 @@ final class RunDefinitionCodec {
 
 	private static String escape(String token) {
 		return token.replace("~", "~0").replace("/", "~1");
+	}
+
+	private static void validateStorageEndpoints(JsonNode definition, List<RunDefinitionFailure> failures) {
+		validateStorageEndpoint(definition.at("/storage/execution/endpoint"), "/storage/execution/endpoint", failures);
+		validateStorageEndpoint(definition.at("/storage/repatriation/destination/endpoint"),
+				"/storage/repatriation/destination/endpoint", failures);
+	}
+
+	private static void validateStorageEndpoint(JsonNode value, String pointer, List<RunDefinitionFailure> failures) {
+		if (!value.isTextual()) {
+			return;
+		}
+		boolean valid;
+		try {
+			URI endpoint = URI.create(value.asText());
+			valid = ("http".equalsIgnoreCase(endpoint.getScheme()) || "https".equalsIgnoreCase(endpoint.getScheme()))
+					&& endpoint.getHost() != null && endpoint.getUserInfo() == null && endpoint.getQuery() == null
+					&& endpoint.getFragment() == null && value.asText().length() <= 2048;
+		}
+		catch (IllegalArgumentException error) {
+			valid = false;
+		}
+		if (!valid) {
+			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition", pointer,
+					"storageEndpoint"));
+		}
 	}
 
 	private static RunDefinitionValidationException failure(String code, String pointer, String keyword) {

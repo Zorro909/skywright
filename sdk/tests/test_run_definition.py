@@ -38,8 +38,17 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
             document = document.replace(
                 '"acceleratorBackend": "cuda"', f'"acceleratorBackend": {replacement}'
             )
-        else:
+        elif invalid["pointer"] == "/configuration/nested/array/2":
             document = document.replace("0.1", replacement)
+        elif invalid["pointer"] == "/storage/execution/endpoint":
+            document = document.replace(
+                '"endpoint": "https://objects.example"',
+                f'"endpoint": {replacement}',
+            )
+        else:
+            document = document.replace(
+                '"endpoint": "https://home.example"', f'"endpoint": {replacement}'
+            )
         with pytest.raises(RunDefinitionValidationError) as failure:
             RunDefinition.decode(document)
         assert failure.value.code == invalid["code"]
