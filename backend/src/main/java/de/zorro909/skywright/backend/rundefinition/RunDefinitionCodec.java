@@ -16,7 +16,9 @@ import com.networknt.schema.SchemaRegistry;
 import com.networknt.schema.SchemaRegistryConfig;
 import com.networknt.schema.SpecificationVersion;
 import tools.jackson.core.JacksonException;
+import tools.jackson.core.StreamReadConstraints;
 import tools.jackson.core.StreamReadFeature;
+import tools.jackson.core.json.JsonFactory;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -27,7 +29,13 @@ final class RunDefinitionCodec {
 
 	private static final int MAXIMUM_PORTABLE_DECIMAL_SCALE = 1_000_000_000;
 
-	private static final JsonMapper JSON = JsonMapper.builder()
+	private static final int MAXIMUM_PORTABLE_NUMBER_LENGTH = 4_000;
+
+	private static final JsonMapper JSON = JsonMapper
+		.builder(JsonFactory.builder()
+			.streamReadConstraints(
+					StreamReadConstraints.builder().maxNumberLength(MAXIMUM_PORTABLE_NUMBER_LENGTH).build())
+			.build())
 		.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
 		.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
 		.enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
@@ -115,6 +123,11 @@ final class RunDefinitionCodec {
 		if (requiredPurchaseMode != null && !requiredPurchaseMode.equals(target.path("purchaseMode").asText())) {
 			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
 					"/targetRequest/purchaseMode", "targetRelationship"));
+		}
+		if ("local-single-gpu".equals(targetClass) && target.path("gpuCount").canConvertToInt()
+				&& target.path("gpuCount").intValue() != 1) {
+			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
+					"/targetRequest/gpuCount", "targetRelationship"));
 		}
 	}
 

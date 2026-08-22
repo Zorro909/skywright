@@ -41,6 +41,22 @@ class RunDefinitionCorpusTest {
 				.satisfies(error -> assertThat(((RunDefinitionValidationException) error).failures().getFirst().code())
 					.isEqualTo(invalid.path("code").asText()));
 		}
+		String template = corpus.path("valid").get(0).toString();
+		for (JsonNode numberCase : corpus.path("numberLengthCases")) {
+			String document = template.replace("9007199254740993", "1".repeat(numberCase.path("digits").asInt()));
+			if (numberCase.path("code").isNull()) {
+				assertThat(
+						RunDefinition.decode(document).value().at("/configuration/nested/array/1").isIntegralNumber())
+					.isTrue();
+			}
+			else {
+				assertThatThrownBy(() -> RunDefinition.decode(document))
+					.isInstanceOf(RunDefinitionValidationException.class)
+					.satisfies(
+							error -> assertThat(((RunDefinitionValidationException) error).failures().getFirst().code())
+								.isEqualTo(numberCase.path("code").asText()));
+			}
+		}
 	}
 
 	private static void set(JsonNode root, String pointer, JsonNode replacement) {

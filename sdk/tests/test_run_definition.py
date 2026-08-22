@@ -34,6 +34,10 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
             document = document.replace(
                 '"purchaseMode": "spot"', f'"purchaseMode": {replacement}'
             )
+        elif invalid["pointer"] == "/targetRequest/targetClass":
+            document = document.replace(
+                '"targetClass": "cloud-spot"', f'"targetClass": {replacement}'
+            )
         elif invalid["pointer"] == "/configuration/nested/array/2":
             document = document.replace("0.1", replacement)
         elif invalid["pointer"] == "/storage/execution/endpoint":
@@ -48,6 +52,17 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
         with pytest.raises(RunDefinitionValidationError) as failure:
             RunDefinition.decode(document)
         assert failure.value.code == invalid["code"]
+    template = json.dumps(corpus["valid"][0])
+    for number_case in corpus["numberLengthCases"]:
+        document = template.replace("9007199254740993", "1" * number_case["digits"])
+        if number_case["code"] is None:
+            assert RunDefinition.decode(document).value()["configuration"]["nested"][
+                "array"
+            ][1] == int("1" * number_case["digits"])
+        else:
+            with pytest.raises(RunDefinitionValidationError) as failure:
+                RunDefinition.decode(document)
+            assert failure.value.code == number_case["code"]
 
 
 def test_python_preserves_large_decimal_exponents_compactly() -> None:

@@ -78,6 +78,10 @@ class RunDefinitionResolverIT {
 			assertThat(resolution.definition().value().at("/targetRequest/targetClass").asText())
 				.isEqualTo(targetClass.wireValue());
 		}
+		RunDefinitionResolution invalidSingleGpu = resolver.resolve(withTarget(submission(TargetClass.LOCAL_SINGLE_GPU),
+				new TargetRequest(TargetClass.LOCAL_SINGLE_GPU, 2, null, null, null, null)), null);
+		assertThat(invalidSingleGpu.failures()).extracting(RunDefinitionFailure::code)
+			.containsExactly("GPU_COUNT_INVALID");
 	}
 
 	@Test
@@ -319,7 +323,8 @@ class RunDefinitionResolverIT {
 	private RunSubmission submission(TargetClass targetClass) {
 		return new RunSubmission(new TrainingProjectBinding("stable-project", "registry"), VERSION_DIGEST,
 				"{\"reproducibility\":{\"seed\":9}}", dataset(),
-				new TargetRequest(targetClass, 2, 80L * 1024 * 1024 * 1024, null, "H100", null),
+				new TargetRequest(targetClass, targetClass == TargetClass.LOCAL_SINGLE_GPU ? 1 : 2,
+						80L * 1024 * 1024 * 1024, null, "H100", null),
 				RunDefinitionStorageOverrides.none(), null, Duration.ofHours(1), new BigDecimal("12.3400"), false);
 	}
 

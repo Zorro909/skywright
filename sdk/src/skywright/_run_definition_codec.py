@@ -29,6 +29,21 @@ def _reject_non_json_number(value: str) -> None:
     raise RunDefinitionValidationError("RUN_DEFINITION_INVALID_JSON")
 
 
+_MAXIMUM_PORTABLE_NUMBER_LENGTH = 4_000
+
+
+def _parse_integer(value: str) -> int:
+    if len(value) > _MAXIMUM_PORTABLE_NUMBER_LENGTH:
+        raise RunDefinitionValidationError("RUN_DEFINITION_INVALID_JSON")
+    return int(value)
+
+
+def _parse_decimal(value: str) -> Decimal:
+    if len(value) > _MAXIMUM_PORTABLE_NUMBER_LENGTH:
+        raise RunDefinitionValidationError("RUN_DEFINITION_INVALID_JSON")
+    return Decimal(value)
+
+
 _SCHEMA = json.loads(
     files("skywright._run_definition_resources").joinpath("schema.json").read_text()
 )
@@ -41,8 +56,8 @@ def decode(document: str) -> dict[str, Any]:
         value: Any = json.loads(
             document,
             object_pairs_hook=_reject_duplicate,
-            parse_float=Decimal,
-            parse_int=int,
+            parse_float=_parse_decimal,
+            parse_int=_parse_integer,
             parse_constant=_reject_non_json_number,
         )
     except RunDefinitionValidationError:
@@ -104,7 +119,10 @@ def _has_valid_target_relationships(value: Any) -> bool:
     target_class = target.get("targetClass")
     if not isinstance(target_class, str):
         return False
-    return target.get("purchaseMode") == required_modes.get(target_class)
+    gpu_count = target.get("gpuCount")
+    return target.get("purchaseMode") == required_modes.get(target_class) and not (
+        target_class == "local-single-gpu" and gpu_count != 1
+    )
 
 
 def _has_valid_storage_endpoints(value: Any) -> bool:

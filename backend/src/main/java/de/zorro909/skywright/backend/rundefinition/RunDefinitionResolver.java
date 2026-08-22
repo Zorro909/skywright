@@ -83,7 +83,7 @@ public final class RunDefinitionResolver {
 		if (target == null || target.targetClass() == null) {
 			failures.add(failure("TARGET_CLASS_INVALID", "submission", "/targetRequest/targetClass", "enum"));
 		}
-		if (target == null || target.gpuCount() <= 0) {
+		if (target == null || !validGpuCount(target)) {
 			failures.add(failure("GPU_COUNT_INVALID", "submission", "/targetRequest/gpuCount", "minimum"));
 		}
 		if (target != null && target.minimumGpuMemoryBytes() != null && target.minimumGpuMemoryBytes() <= 0) {
@@ -166,7 +166,7 @@ public final class RunDefinitionResolver {
 
 	private ResolvedTarget resolveTarget(TargetRequest request, TrainingProjectVersion version,
 			List<RunDefinitionFailure> failures) {
-		if (request == null || request.targetClass() == null || request.gpuCount() <= 0) {
+		if (request == null || request.targetClass() == null || !validGpuCount(request)) {
 			return null;
 		}
 		TargetEligibilityAssessment assessment;
@@ -404,6 +404,11 @@ public final class RunDefinitionResolver {
 			case CLOUD_ON_DEMAND -> "on-demand";
 			case CLOUD_SPOT -> "spot";
 		};
+	}
+
+	private static boolean validGpuCount(TargetRequest request) {
+		return request.gpuCount() > 0
+				&& (request.targetClass() != TargetClass.LOCAL_SINGLE_GPU || request.gpuCount() == 1);
 	}
 
 	private record ResolvedTarget(TargetRequest request, String purchaseMode, String gpuModel) {
