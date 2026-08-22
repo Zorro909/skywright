@@ -22,6 +22,7 @@ final class RunDefinitionCodec {
 	private static final JsonMapper JSON = JsonMapper.builder()
 		.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
 		.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+		.enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
 		.build();
 
 	private static final Schema SCHEMA = SchemaRegistry

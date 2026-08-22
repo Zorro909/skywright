@@ -37,6 +37,7 @@
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "json": "{\"schemaVersion\":1.0}"},
     {"code": "RUN_DEFINITION_INVALID_JSON", "json": "{\"schemaVersion\":1,\"configuration\":{\"value\":NaN}}"},
     {"code": "RUN_DEFINITION_INVALID_JSON", "json": "{\"schemaVersion\":1,\"schemaVersion\":1}"},
+    {"code": "RUN_DEFINITION_INVALID_JSON", "json": "{\"schemaVersion\":1} {\"schemaVersion\":1}"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "json": "[]"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "json": "{\"schemaVersion\":1,\"unknown\":true}"}
   ]

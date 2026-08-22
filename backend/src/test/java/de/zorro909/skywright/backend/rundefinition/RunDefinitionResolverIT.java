@@ -123,6 +123,21 @@ class RunDefinitionResolverIT {
 	}
 
 	@Test
+	void unchangedCheckpointDatasetsRejectOrderingReset() {
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				targets(), storage(), "EUR");
+		RunSubmission base = submission(TargetClass.CLOUD_SPOT);
+		RunDefinition source = resolver.resolve(base, null).definition();
+		RunSubmission reset = new RunSubmission(base.trainingProject(), base.manifestArtifactDigest(),
+				base.configurationJson(), base.datasetDefinition(), base.targetRequest(), base.storageOverrides(),
+				base.maximumRecoveryDebt(), base.runtimeCeiling(), base.costCeiling(), true);
+
+		assertThat(resolver.resolve(reset, new CheckpointSeedFacts(source, true)).failures())
+			.extracting(RunDefinitionFailure::code)
+			.containsExactly("ORDERING_RESET_UNNECESSARY");
+	}
+
+	@Test
 	void exactTargetPinsNeverFallBackAndImageMapsMustCoverEligibleBackends() {
 		RunDefinitionResolver pinnedResolver = resolver(eligibleVersionRegistry(),
 				DatasetDefinitionAssessment.accepted(),

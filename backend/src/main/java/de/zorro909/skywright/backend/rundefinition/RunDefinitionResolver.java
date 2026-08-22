@@ -278,6 +278,9 @@ public final class RunDefinitionResolver {
 		if (datasetChanged && !submission.orderingReset()) {
 			failures.add(failure("ORDERING_RESET_REQUIRED", "checkpoint-seed", "/orderingReset", "required"));
 		}
+		else if (!datasetChanged && submission.orderingReset()) {
+			failures.add(failure("ORDERING_RESET_UNNECESSARY", "checkpoint-seed", "/orderingReset", "const"));
+		}
 	}
 
 	private static RunDefinition build(RunSubmission submission, TrainingProjectVersion version, JsonNode configuration,
