@@ -30,6 +30,7 @@ def _reject_non_json_number(value: str) -> None:
 
 
 _MAXIMUM_PORTABLE_NUMBER_LENGTH = 4_000
+_MAXIMUM_PORTABLE_NESTING_DEPTH = 256
 
 
 def _parse_integer(value: str) -> int:
@@ -62,8 +63,10 @@ def decode(document: str) -> dict[str, Any]:
         )
     except RunDefinitionValidationError:
         raise
-    except (json.JSONDecodeError, ValueError) as error:
+    except (json.JSONDecodeError, RecursionError, ValueError) as error:
         raise RunDefinitionValidationError("RUN_DEFINITION_INVALID_JSON") from error
+    if not _has_portable_nesting(value):
+        raise RunDefinitionValidationError("RUN_DEFINITION_INVALID_JSON")
     schema_version = (
         cast(dict[str, Any], value).get("schemaVersion")
         if isinstance(value, dict)
@@ -86,6 +89,18 @@ def decode(document: str) -> dict[str, Any]:
     ):
         raise RunDefinitionValidationError("RUN_DEFINITION_SCHEMA_VALIDATION")
     return deepcopy(cast(dict[str, Any], value))
+
+
+def _has_portable_nesting(value: Any) -> bool:
+    pending = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        if isinstance(current, (list, dict)):
+            if depth > _MAXIMUM_PORTABLE_NESTING_DEPTH:
+                return False
+            children = current if isinstance(current, list) else current.values()
+            pending.extend((child, depth + 1) for child in children)
+    return True
 
 
 def _has_portable_decimals(value: Any) -> bool:

@@ -70,8 +70,8 @@
         "registrationRevision": {"type": "integer", "minimum": 1},
         "configurationRevision": {"type": "integer", "minimum": 1},
         "endpoint": {"type": "string", "format": "uri"},
-        "bucket": {"type": "string", "minLength": 1},
-        "region": {"type": "string", "minLength": 1},
+        "bucket": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "\\S"},
+        "region": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "\\S"},
         "addressingMode": {"enum": ["path", "virtual-hosted"]},
         "compatibilityOptions": {"type": "object", "additionalProperties": {"type": "string"}}
       }

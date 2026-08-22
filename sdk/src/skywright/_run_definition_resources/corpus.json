@@ -49,10 +49,16 @@
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/targetClass", "replacementJson": "\"local-single-gpu\""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/configuration/nested/array/2", "replacementJson": "1e-1000000001"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/endpoint", "replacementJson": "\"https://access-key:secret@objects.example\""},
-    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/repatriation/destination/endpoint", "replacementJson": "\"https://home.example?credential=secret#fragment\""}
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/repatriation/destination/endpoint", "replacementJson": "\"https://home.example?credential=secret#fragment\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/bucket", "replacementJson": "\"   \""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/repatriation/destination/region", "replacementJson": "\"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\""}
   ],
   "numberLengthCases": [
     {"digits": 1001, "code": null},
     {"digits": 4001, "code": "RUN_DEFINITION_INVALID_JSON"}
+  ],
+  "nestingCases": [
+    {"depth": 100, "code": null},
+    {"depth": 300, "code": "RUN_DEFINITION_INVALID_JSON"}
   ]
 }

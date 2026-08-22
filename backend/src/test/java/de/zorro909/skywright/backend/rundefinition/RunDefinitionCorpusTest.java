@@ -57,6 +57,25 @@ class RunDefinitionCorpusTest {
 								.isEqualTo(numberCase.path("code").asText()));
 			}
 		}
+		for (JsonNode nestingCase : corpus.path("nestingCases")) {
+			String nested = "[".repeat(nestingCase.path("depth").asInt()) + "null"
+					+ "]".repeat(nestingCase.path("depth").asInt());
+			int configurationStart = template.indexOf("\"configuration\":");
+			int configurationEnd = template.indexOf(",\"datasetDefinition\"", configurationStart);
+			String document = template.substring(0, configurationStart) + "\"configuration\":{\"nested\":" + nested
+					+ "}" + template.substring(configurationEnd);
+			if (nestingCase.path("code").isNull()) {
+				assertThat(RunDefinition.decode(document).value().path("configuration").path("nested").isArray())
+					.isTrue();
+			}
+			else {
+				assertThatThrownBy(() -> RunDefinition.decode(document))
+					.isInstanceOf(RunDefinitionValidationException.class)
+					.satisfies(
+							error -> assertThat(((RunDefinitionValidationException) error).failures().getFirst().code())
+								.isEqualTo(nestingCase.path("code").asText()));
+			}
+		}
 	}
 
 	private static void set(JsonNode root, String pointer, JsonNode replacement) {

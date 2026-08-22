@@ -45,10 +45,14 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
                 '"endpoint": "https://objects.example"',
                 f'"endpoint": {replacement}',
             )
-        else:
+        elif invalid["pointer"] == "/storage/repatriation/destination/endpoint":
             document = document.replace(
                 '"endpoint": "https://home.example"', f'"endpoint": {replacement}'
             )
+        elif invalid["pointer"] == "/storage/execution/bucket":
+            document = document.replace('"bucket": "runs"', f'"bucket": {replacement}')
+        else:
+            document = document.replace('"region": "local"', f'"region": {replacement}')
         with pytest.raises(RunDefinitionValidationError) as failure:
             RunDefinition.decode(document)
         assert failure.value.code == invalid["code"]
@@ -63,6 +67,21 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
             with pytest.raises(RunDefinitionValidationError) as failure:
                 RunDefinition.decode(document)
             assert failure.value.code == number_case["code"]
+    for nesting_case in corpus["nestingCases"]:
+        nesting_value = json.loads(template)
+        nested = None
+        for _ in range(nesting_case["depth"]):
+            nested = [nested]
+        nesting_value["configuration"]["nested"] = nested
+        document = json.dumps(nesting_value)
+        if nesting_case["code"] is None:
+            assert isinstance(
+                RunDefinition.decode(document).value()["configuration"]["nested"], list
+            )
+        else:
+            with pytest.raises(RunDefinitionValidationError) as failure:
+                RunDefinition.decode(document)
+            assert failure.value.code == nesting_case["code"]
 
 
 def test_python_preserves_large_decimal_exponents_compactly() -> None:

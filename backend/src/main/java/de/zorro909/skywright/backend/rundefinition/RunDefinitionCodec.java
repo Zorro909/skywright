@@ -31,10 +31,14 @@ final class RunDefinitionCodec {
 
 	private static final int MAXIMUM_PORTABLE_NUMBER_LENGTH = 4_000;
 
+	private static final int MAXIMUM_PORTABLE_NESTING_DEPTH = 256;
+
 	private static final JsonMapper JSON = JsonMapper
 		.builder(JsonFactory.builder()
-			.streamReadConstraints(
-					StreamReadConstraints.builder().maxNumberLength(MAXIMUM_PORTABLE_NUMBER_LENGTH).build())
+			.streamReadConstraints(StreamReadConstraints.builder()
+				.maxNestingDepth(MAXIMUM_PORTABLE_NESTING_DEPTH)
+				.maxNumberLength(MAXIMUM_PORTABLE_NUMBER_LENGTH)
+				.build())
 			.build())
 		.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
 		.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
