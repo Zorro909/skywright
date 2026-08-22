@@ -43,6 +43,9 @@ final class RunDefinitionCodec {
 		catch (JacksonException error) {
 			throw failure("RUN_DEFINITION_INVALID_JSON", "", "parse");
 		}
+		if (parsed == null || parsed.isMissingNode()) {
+			throw failure("RUN_DEFINITION_INVALID_JSON", "", "parse");
+		}
 		if (parsed.isObject() && parsed.path("schemaVersion").isIntegralNumber()
 				&& !parsed.path("schemaVersion").bigIntegerValue().equals(BigInteger.ONE)) {
 			throw failure("RUN_DEFINITION_SCHEMA_VERSION_UNSUPPORTED", "/schemaVersion", "const");

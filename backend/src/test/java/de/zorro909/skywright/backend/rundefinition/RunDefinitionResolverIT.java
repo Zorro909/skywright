@@ -155,6 +155,22 @@ class RunDefinitionResolverIT {
 	}
 
 	@Test
+	void checkpointIndependentFailuresSurviveConfigurationErrors() {
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				targets(), storage(), "EUR");
+		RunSubmission base = submission(TargetClass.CLOUD_SPOT);
+		RunDefinition source = resolver.resolve(base, null).definition();
+		RunSubmission invalid = new RunSubmission(base.trainingProject(), base.manifestArtifactDigest(),
+				"{\"reproducibility\":{\"seed\":\"invalid\"}}",
+				new DatasetDefinitionReference("dataset-1", "v2", "sha256:" + "4".repeat(64)), base.targetRequest(),
+				base.storageOverrides(), base.maximumRecoveryDebt(), base.runtimeCeiling(), base.costCeiling(), false);
+
+		assertThat(resolver.resolve(invalid, new CheckpointSeedFacts(source, false)).failures())
+			.extracting(RunDefinitionFailure::code)
+			.contains("CHECKPOINT_CONFIGURATION_INCOMPATIBLE", "ORDERING_RESET_REQUIRED");
+	}
+
+	@Test
 	void exactTargetPinsNeverFallBackAndImageMapsMustCoverEligibleBackends() {
 		RunDefinitionResolver pinnedResolver = resolver(eligibleVersionRegistry(),
 				DatasetDefinitionAssessment.accepted(),

@@ -33,6 +33,8 @@
     }
   ],
   "invalid": [
+    {"code": "RUN_DEFINITION_INVALID_JSON", "json": ""},
+    {"code": "RUN_DEFINITION_INVALID_JSON", "json": "  \n\t"},
     {"code": "RUN_DEFINITION_SCHEMA_VERSION_UNSUPPORTED", "json": "{\"schemaVersion\":2}"},
     {"code": "RUN_DEFINITION_SCHEMA_VERSION_UNSUPPORTED", "json": "{\"schemaVersion\":4294967297}"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "json": "{\"schemaVersion\":1.0}"},

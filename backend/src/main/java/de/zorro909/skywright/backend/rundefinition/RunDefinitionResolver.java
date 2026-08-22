@@ -253,22 +253,25 @@ public final class RunDefinitionResolver {
 
 	private static void assessCheckpoint(RunSubmission submission, CheckpointSeedFacts seed,
 			TrainingProjectVersion version, JsonNode configuration, List<RunDefinitionFailure> failures) {
-		if (seed == null || version == null || configuration == null || submission.datasetDefinition() == null) {
+		if (seed == null || submission.datasetDefinition() == null) {
 			return;
 		}
 		RunDefinition source = seed.sourceDefinition();
-		if (!source.manifestArtifactDigest().equals(version.manifestArtifactDigest())) {
+		if (version != null && !source.manifestArtifactDigest().equals(version.manifestArtifactDigest())) {
 			failures.add(failure("CHECKPOINT_PROJECT_VERSION_CHANGED", "checkpoint-seed", "/trainingProjectVersion",
 					"const"));
 		}
-		JsonNode sourceConfiguration = source.configuration();
-		if (!sourceConfiguration.at("/reproducibility/seed").equals(configuration.at("/reproducibility/seed"))) {
-			failures.add(failure("CHECKPOINT_ORDERING_SEED_CHANGED", "checkpoint-seed",
-					"/configuration/reproducibility/seed", "const"));
-		}
-		if (!sourceConfiguration.at("/dataset/ordering/policy").equals(configuration.at("/dataset/ordering/policy"))) {
-			failures.add(failure("CHECKPOINT_ORDERING_POLICY_CHANGED", "checkpoint-seed",
-					"/configuration/dataset/ordering/policy", "const"));
+		if (configuration != null) {
+			JsonNode sourceConfiguration = source.configuration();
+			if (!sourceConfiguration.at("/reproducibility/seed").equals(configuration.at("/reproducibility/seed"))) {
+				failures.add(failure("CHECKPOINT_ORDERING_SEED_CHANGED", "checkpoint-seed",
+						"/configuration/reproducibility/seed", "const"));
+			}
+			if (!sourceConfiguration.at("/dataset/ordering/policy")
+				.equals(configuration.at("/dataset/ordering/policy"))) {
+				failures.add(failure("CHECKPOINT_ORDERING_POLICY_CHANGED", "checkpoint-seed",
+						"/configuration/dataset/ordering/policy", "const"));
+			}
 		}
 		if (!seed.libraryConfigurationCompatible()) {
 			failures.add(failure("CHECKPOINT_CONFIGURATION_INCOMPATIBLE", "checkpoint-seed", "/configuration",
