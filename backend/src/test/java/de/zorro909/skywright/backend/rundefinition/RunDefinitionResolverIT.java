@@ -172,6 +172,19 @@ class RunDefinitionResolverIT {
 	}
 
 	@Test
+	void emptyConfigurationDocumentsReturnStableFailures() {
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				targets(), storage(), "EUR");
+		RunSubmission base = submission(TargetClass.CLOUD_SPOT);
+		RunSubmission empty = new RunSubmission(base.trainingProject(), base.manifestArtifactDigest(), "  \n\t",
+				base.datasetDefinition(), base.targetRequest(), base.storageOverrides(), base.maximumRecoveryDebt(),
+				base.runtimeCeiling(), base.costCeiling(), false);
+
+		assertThat(resolver.resolve(empty, null).failures()).extracting(RunDefinitionFailure::code)
+			.containsExactly("CONFIG_INVALID_JSON");
+	}
+
+	@Test
 	void missingDatasetsDoNotSuppressOtherCheckpointFailures() {
 		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
 				targets(), storage(), "EUR");
