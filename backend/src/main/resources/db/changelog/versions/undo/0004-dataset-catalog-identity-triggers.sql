@@ -1,0 +1,4 @@
+DROP TRIGGER retain_dataset_generation_identity_before_insert ON dataset_copy_generation;
+DROP FUNCTION retain_dataset_generation_identity();
+DROP TRIGGER retain_dataset_copy_identity_before_insert ON dataset_copy;
+DROP FUNCTION retain_dataset_copy_identity();

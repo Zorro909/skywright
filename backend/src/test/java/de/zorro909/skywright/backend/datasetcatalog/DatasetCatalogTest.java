@@ -38,13 +38,26 @@ final class DatasetCatalogTest {
 	}
 
 	@Test
+	void publicationRequiresACompleteIntegrityManifest() {
+		DatasetPublication publication = publication();
+
+		assertThatThrownBy(() -> this.catalog.publish(new DatasetPublication(publication.datasetId(),
+				publication.definitionId(), publication.versionLabel(), publication.contentFingerprint(),
+				publication.manifestIdentity(), publication.copyId(), publication.targetStorageId(),
+				publication.location(), publication.verifiedBytes(), publication.verifiedAt(), List.of())))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("manifest must not be empty");
+	}
+
+	@Test
 	void publicationRejectsAReusedDefinitionIdentityWithDifferentContent() {
 		DatasetPublication publication = publication();
 		this.catalog.publish(publication);
 
-		assertThatThrownBy(() -> this.catalog.publish(new DatasetPublication(publication.datasetId(),
-				publication.definitionId(), "v1", "different-fingerprint", publication.manifestIdentity(),
-				publication.copyId(), publication.targetStorageId(), publication.location(), 42, NOW)))
+		assertThatThrownBy(
+				() -> this.catalog.publish(new DatasetPublication(publication.datasetId(), publication.definitionId(),
+						"v1", "different-fingerprint", publication.manifestIdentity(), publication.copyId(),
+						publication.targetStorageId(), publication.location(), 42, NOW, publication.manifestEntries())))
 			.isInstanceOf(DatasetCatalogConflictException.class)
 			.hasMessageContaining("DATASET_DEFINITION_CONFLICT");
 	}
@@ -54,9 +67,10 @@ final class DatasetCatalogTest {
 		DatasetPublication publication = publication();
 		this.catalog.publish(publication);
 
-		assertThatThrownBy(() -> this.catalog.publish(new DatasetPublication(publication.datasetId(), UUID.randomUUID(),
-				publication.versionLabel(), "different-fingerprint", "different-manifest", UUID.randomUUID(),
-				publication.targetStorageId(), "datasets/project/other", 7, NOW)))
+		assertThatThrownBy(() -> this.catalog
+			.publish(new DatasetPublication(publication.datasetId(), UUID.randomUUID(), publication.versionLabel(),
+					"different-fingerprint", "different-manifest", UUID.randomUUID(), publication.targetStorageId(),
+					"datasets/project/other", 7, NOW, List.of(new DatasetManifestEntry("other.bin", 7, "checksum")))))
 			.isInstanceOf(DatasetCatalogConflictException.class)
 			.hasMessageContaining("DATASET_VERSION_LABEL_CONFLICT");
 	}
@@ -140,6 +154,52 @@ final class DatasetCatalogTest {
 		assertThat(retried.attempts()).isEqualTo(2);
 		assertThat(retried.progress()).isEqualTo(DatasetCopyOperationProgress.TRANSFERRING);
 		assertThat(retried.failureSummary()).isNull();
+	}
+
+	@Test
+	void failedCleanupRetriesCleanupWithoutPublishingAnotherGeneration() {
+		DatasetPublication publication = publication();
+		DatasetCatalogView published = this.catalog.publish(publication);
+		DatasetCopyOperationView started = this.catalog.startRefresh(publication.definitionId(), publication.copyId(),
+				1, published.revision());
+		this.catalog.recordTransferComplete(publication.definitionId(), started.id(), 2);
+		DatasetCopyOperationView cleanup = this.catalog.publishReplacement(publication.definitionId(), started.id(),
+				new VerifiedDatasetReplacement("datasets/project/v1.refresh", 42, publication.manifestIdentity(),
+						publication.contentFingerprint(), NOW),
+				3);
+		DatasetCopyOperationView failed = this.catalog.failOperation(publication.definitionId(), started.id(),
+				"STORAGE_UNAVAILABLE", "Deletion failed.", true, 4);
+
+		DatasetCopyOperationView retried = this.catalog.retryOperation(publication.definitionId(), failed.id(), 5);
+
+		assertThat(cleanup.progress()).isEqualTo(DatasetCopyOperationProgress.DELETING_OLD_BYTES);
+		assertThat(failed.failedProgress()).isEqualTo(DatasetCopyOperationProgress.DELETING_OLD_BYTES);
+		assertThat(retried.progress()).isEqualTo(DatasetCopyOperationProgress.DELETING_OLD_BYTES);
+		assertThat(this.catalog.get(publication.definitionId()).copies().getFirst().currentGeneration().number())
+			.isEqualTo(2);
+	}
+
+	@Test
+	void generationFactsDeriveLeaseCountAndLastRunUseFromExactGeneration() {
+		DatasetPublication publication = publication();
+		DatasetCatalogView published = this.catalog.publish(publication);
+		DatasetLeaseView lease = this.catalog.acquireLease(publication.definitionId(), publication.copyId(), 1,
+				published.revision(), UUID.randomUUID());
+
+		DatasetCopyGenerationView leased = this.catalog.get(publication.definitionId())
+			.copies()
+			.getFirst()
+			.currentGeneration();
+		this.catalog.endLease(publication.definitionId(), lease.id(), RunTerminalEvidence.FINISHED, 2);
+		DatasetCopyGenerationView ended = this.catalog.get(publication.definitionId())
+			.copies()
+			.getFirst()
+			.currentGeneration();
+
+		assertThat(leased.activeLeaseCount()).isEqualTo(1);
+		assertThat(leased.lastRunUsedAt()).isEqualTo(NOW);
+		assertThat(ended.activeLeaseCount()).isZero();
+		assertThat(ended.lastRunUsedAt()).isEqualTo(NOW);
 	}
 
 	@Test
@@ -282,7 +342,8 @@ final class DatasetCatalogTest {
 		return new DatasetPublication(UUID.fromString("00000000-0000-0000-0000-000000000001"),
 				UUID.fromString("00000000-0000-0000-0000-000000000002"), "v1", "sha256:content", "sha256:manifest",
 				UUID.fromString("00000000-0000-0000-0000-000000000003"),
-				UUID.fromString("00000000-0000-0000-0000-000000000004"), "datasets/project/v1", 42, NOW);
+				UUID.fromString("00000000-0000-0000-0000-000000000004"), "datasets/project/v1", 42, NOW,
+				List.of(new DatasetManifestEntry("shard.bin", 42, "checksum")));
 	}
 
 }

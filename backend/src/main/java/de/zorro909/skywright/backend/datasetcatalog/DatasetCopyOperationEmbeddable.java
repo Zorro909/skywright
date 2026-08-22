@@ -30,6 +30,10 @@ class DatasetCopyOperationEmbeddable {
 	@Column(nullable = false)
 	int attempts;
 
+	@Enumerated(EnumType.STRING)
+	@Column(name = "failed_progress")
+	DatasetCopyOperationProgress failedProgress;
+
 	@Column(name = "failure_code")
 	String failureCode;
 
@@ -55,6 +59,7 @@ class DatasetCopyOperationEmbeddable {
 		result.copyId = value.copyId();
 		result.generation = value.generation();
 		result.progress = value.progress();
+		result.failedProgress = value.failedProgress();
 		result.attempts = value.attempts();
 		result.failureCode = value.failureCode();
 		result.failureSummary = value.failureSummary();
@@ -66,7 +71,8 @@ class DatasetCopyOperationEmbeddable {
 
 	DatasetCopyOperationView domain() {
 		return new DatasetCopyOperationView(this.id, this.kind, this.copyId, this.generation, this.progress,
-				this.attempts, this.failureCode, this.failureSummary, this.retryable, this.startedAt, this.updatedAt);
+				this.failedProgress, this.attempts, this.failureCode, this.failureSummary, this.retryable,
+				this.startedAt, this.updatedAt);
 	}
 
 }

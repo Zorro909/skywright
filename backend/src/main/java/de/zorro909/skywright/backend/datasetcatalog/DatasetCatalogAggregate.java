@@ -76,8 +76,9 @@ final class DatasetCatalogAggregate {
 	}
 
 	DatasetCatalogView view() {
-		return new DatasetCatalogView(this.revision, this.definition, List.copyOf(this.copies),
-				List.copyOf(this.leases), List.copyOf(this.caches), List.copyOf(this.operations));
+		return new DatasetCatalogView(this.revision, this.definition,
+				this.copies.stream().map(this::withLeaseFacts).toList(), List.copyOf(this.leases),
+				List.copyOf(this.caches), List.copyOf(this.operations));
 	}
 
 	DatasetCatalogSnapshot snapshot() {
@@ -258,8 +259,8 @@ final class DatasetCatalogAggregate {
 					"Only an active Dataset Copy Operation can fail");
 		}
 		DatasetCopyOperationView failed = new DatasetCopyOperationView(operation.id(), operation.kind(),
-				operation.copyId(), operation.generation(), DatasetCopyOperationProgress.FAILED, operation.attempts(),
-				failureCode, safeSummary(failureSummary), retryable, operation.startedAt(), now);
+				operation.copyId(), operation.generation(), DatasetCopyOperationProgress.FAILED, operation.progress(),
+				operation.attempts(), failureCode, safeSummary(failureSummary), retryable, operation.startedAt(), now);
 		this.replaceOperation(operation, failed);
 		this.revision++;
 		return failed;
@@ -273,9 +274,15 @@ final class DatasetCatalogAggregate {
 					"Dataset Copy Operation is not retryable");
 		}
 		DatasetCopyView copy = this.copy(operation.copyId());
-		DatasetCopyOperationProgress progress = copy.activeLeaseCount() > 0
-				? DatasetCopyOperationProgress.WAITING_FOR_LEASES : operation.kind() == DatasetCopyOperationKind.REFRESH
-						? DatasetCopyOperationProgress.TRANSFERRING : DatasetCopyOperationProgress.DELETING_OLD_BYTES;
+		DatasetCopyOperationProgress progress = operation.failedProgress();
+		if (progress == null) {
+			progress = operation.kind() == DatasetCopyOperationKind.REFRESH ? DatasetCopyOperationProgress.TRANSFERRING
+					: DatasetCopyOperationProgress.DELETING_OLD_BYTES;
+		}
+		if (progress == DatasetCopyOperationProgress.WAITING_FOR_LEASES && copy.activeLeaseCount() == 0) {
+			progress = operation.kind() == DatasetCopyOperationKind.REFRESH ? DatasetCopyOperationProgress.TRANSFERRING
+					: DatasetCopyOperationProgress.DELETING_OLD_BYTES;
+		}
 		DatasetCopyOperationView retried = new DatasetCopyOperationView(operation.id(), operation.kind(),
 				operation.copyId(), operation.generation(), progress, operation.attempts() + 1, null, null, false,
 				operation.startedAt(), now);
@@ -489,7 +496,7 @@ final class DatasetCatalogAggregate {
 
 	private static void validateManifest(List<DatasetManifestEntry> manifest, long verifiedBytes) {
 		if (manifest.isEmpty()) {
-			return;
+			throw new IllegalArgumentException("Dataset integrity manifest must not be empty");
 		}
 		long bytes = 0;
 		java.util.HashSet<String> keys = new java.util.HashSet<>();
@@ -538,6 +545,26 @@ final class DatasetCatalogAggregate {
 			.findFirst()
 			.orElseThrow(
 					() -> new DatasetCatalogConflictException("DATASET_COPY_NOT_FOUND", "Dataset Copy does not exist"));
+	}
+
+	private DatasetCopyView withLeaseFacts(DatasetCopyView copy) {
+		List<DatasetCopyGenerationView> history = copy.generationHistory().stream().map(generation -> {
+			List<DatasetLeaseView> generationLeases = this.leases.stream()
+				.filter(lease -> lease.copyId().equals(copy.id()) && lease.generation() == generation.number())
+				.toList();
+			long activeCount = generationLeases.stream().filter(DatasetLeaseView::active).count();
+			Instant lastRunUsedAt = generationLeases.stream()
+				.map(DatasetLeaseView::acquiredAt)
+				.max(Instant::compareTo)
+				.orElse(null);
+			return generation.withLeaseFacts(activeCount, lastRunUsedAt);
+		}).toList();
+		DatasetCopyGenerationView current = history.stream()
+			.filter(generation -> generation.number() == copy.currentGeneration().number())
+			.findFirst()
+			.orElseThrow();
+		return new DatasetCopyView(copy.id(), copy.targetStorageId(), copy.role(), copy.revision(), current, history,
+				copy.activeLeaseCount());
 	}
 
 	private void replaceCopy(DatasetCopyView oldValue, DatasetCopyView newValue) {

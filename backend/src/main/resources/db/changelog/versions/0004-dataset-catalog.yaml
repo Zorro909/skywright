@@ -82,6 +82,7 @@ databaseChangeLog:
               - column: { name: copy_id, type: uuid, constraints: { nullable: false } }
               - column: { name: generation_number, type: bigint, constraints: { nullable: false } }
               - column: { name: progress, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: failed_progress, type: varchar(32) }
               - column: { name: attempts, type: integer, constraints: { nullable: false } }
               - column: { name: failure_code, type: varchar(255) }
               - column: { name: failure_summary, type: varchar(1024) }
@@ -127,41 +128,15 @@ databaseChangeLog:
       author: skywright
       logicalFilePath: db/changelog/versions/0004-dataset-catalog.yaml
       changes:
-        - addUniqueConstraint: { tableName: dataset_manifest_entry, columnNames: "definition_id, object_key", constraintName: uq_dataset_manifest_entry_key }
-        - sql:
-            splitStatements: false
-            sql: |
-              CREATE FUNCTION retain_dataset_copy_identity() RETURNS trigger LANGUAGE plpgsql AS $$
-              BEGIN
-                INSERT INTO dataset_copy_identity(definition_id, copy_id)
-                VALUES (NEW.definition_id, NEW.copy_id) ON CONFLICT DO NOTHING;
-                RETURN NEW;
-              END $$;
-              CREATE TRIGGER retain_dataset_copy_identity_before_insert
-              BEFORE INSERT ON dataset_copy FOR EACH ROW EXECUTE FUNCTION retain_dataset_copy_identity();
-              CREATE FUNCTION retain_dataset_generation_identity() RETURNS trigger LANGUAGE plpgsql AS $$
-              BEGIN
-                INSERT INTO dataset_copy_identity(definition_id, copy_id)
-                VALUES (NEW.definition_id, NEW.copy_id) ON CONFLICT DO NOTHING;
-                INSERT INTO dataset_generation_identity(definition_id, copy_id, generation_number)
-                VALUES (NEW.definition_id, NEW.copy_id, NEW.generation_number) ON CONFLICT DO NOTHING;
-                RETURN NEW;
-              END $$;
-              CREATE TRIGGER retain_dataset_generation_identity_before_insert
-              BEFORE INSERT ON dataset_copy_generation FOR EACH ROW EXECUTE FUNCTION retain_dataset_generation_identity();
+        - sqlFile: { path: sql/0004-dataset-catalog-identity-triggers.sql, relativeToChangelogFile: true, splitStatements: false }
       rollback:
-        - sql:
-            splitStatements: false
-            sql: |
-              DROP TRIGGER retain_dataset_generation_identity_before_insert ON dataset_copy_generation;
-              DROP FUNCTION retain_dataset_generation_identity();
-              DROP TRIGGER retain_dataset_copy_identity_before_insert ON dataset_copy;
-              DROP FUNCTION retain_dataset_copy_identity();
+        - sqlFile: { path: undo/0004-dataset-catalog-identity-triggers.sql, relativeToChangelogFile: true, splitStatements: false }
   - changeSet:
       id: issue-43-dataset-catalog-unique-constraints
       author: skywright
       logicalFilePath: db/changelog/versions/0004-dataset-catalog.yaml
       changes:
+        - addUniqueConstraint: { tableName: dataset_manifest_entry, columnNames: "definition_id, object_key", constraintName: uq_dataset_manifest_entry_key }
         - addUniqueConstraint: { tableName: dataset_copy, columnNames: copy_id, constraintName: uq_dataset_copy_id }
         - addUniqueConstraint: { tableName: dataset_catalog, columnNames: "dataset_id, version_label", constraintName: uq_dataset_catalog_version_label }
         - addUniqueConstraint: { tableName: dataset_lease, columnNames: lease_id, constraintName: uq_dataset_lease_id }
@@ -222,6 +197,14 @@ databaseChangeLog:
         - dropIndex: { tableName: dataset_lease, indexName: ix_dataset_lease_copy_generation }
         - dropIndex: { tableName: dataset_copy, indexName: ix_dataset_copy_storage }
         - dropIndex: { tableName: dataset_catalog, indexName: ix_dataset_catalog_dataset }
+  - changeSet:
+      id: issue-43-dataset-catalog-authority-invariant
+      author: skywright
+      logicalFilePath: db/changelog/versions/0004-dataset-catalog.yaml
+      changes:
+        - sqlFile: { path: sql/0004-dataset-catalog-authority-invariant.sql, relativeToChangelogFile: true, splitStatements: false }
+      rollback:
+        - sqlFile: { path: undo/0004-dataset-catalog-authority-invariant.sql, relativeToChangelogFile: true, splitStatements: false }
   - changeSet:
       id: issue-43-dataset-catalog-grants
       author: skywright

@@ -132,8 +132,11 @@ public class DatasetCatalogHttpAdapter implements DatasetCatalogApi {
 		return new de.zorro909.skywright.backend.boundary.generated.model.DatasetCopyGeneration(value.number(),
 				value.location(), value.manifestIdentity(), value.contentFingerprint(), value.verifiedBytes(),
 				value.createdAt().atOffset(ZoneOffset.UTC), value.verifiedAt().atOffset(ZoneOffset.UTC),
-				value.acceptingLeases(), de.zorro909.skywright.backend.boundary.generated.model.DatasetCopyAvailability
-					.fromValue(wireValue(value.availability())));
+				value.acceptingLeases(),
+				de.zorro909.skywright.backend.boundary.generated.model.DatasetCopyAvailability
+					.fromValue(wireValue(value.availability())),
+				value.activeLeaseCount(),
+				value.lastRunUsedAt() == null ? null : value.lastRunUsedAt().atOffset(ZoneOffset.UTC));
 	}
 
 	private de.zorro909.skywright.backend.boundary.generated.model.DatasetLease lease(DatasetLeaseView value) {

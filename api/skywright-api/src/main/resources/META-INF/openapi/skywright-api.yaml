@@ -583,7 +583,7 @@ components:
     DatasetCopyGeneration:
       type: object
       additionalProperties: false
-      required: [number, location, manifestIdentity, contentFingerprint, verifiedBytes, createdAt, verifiedAt, acceptingLeases, availability]
+      required: [number, location, manifestIdentity, contentFingerprint, verifiedBytes, createdAt, verifiedAt, acceptingLeases, availability, activeLeaseCount, lastRunUsedAt]
       properties:
         number: { type: integer, format: int64, minimum: 1 }
         location: { type: string }
@@ -594,6 +594,8 @@ components:
         verifiedAt: { $ref: '#/components/schemas/UtcInstant' }
         acceptingLeases: { type: boolean }
         availability: { $ref: '#/components/schemas/DatasetCopyAvailability' }
+        activeLeaseCount: { type: integer, format: int64, minimum: 0 }
+        lastRunUsedAt: { type: [string, 'null'], format: date-time }
     DatasetCopy:
       type: object
       additionalProperties: false

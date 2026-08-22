@@ -1,0 +1,4 @@
+DROP TRIGGER require_one_dataset_authority_for_catalog ON dataset_catalog;
+DROP TRIGGER require_one_dataset_authority_after_change ON dataset_copy;
+DROP FUNCTION require_one_dataset_authority();
+ALTER TABLE dataset_copy DROP CONSTRAINT ck_dataset_copy_role;
