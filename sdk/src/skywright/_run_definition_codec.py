@@ -32,6 +32,7 @@ _SCHEMA = json.loads(
     files("skywright._run_definition_resources").joinpath("schema.json").read_text()
 )
 _VALIDATOR: Any = Draft202012Validator(_SCHEMA, format_checker=FormatChecker())
+_MAXIMUM_PORTABLE_DECIMAL_EXPONENT = 1_000_000_000
 
 
 def decode(document: str) -> dict[str, Any]:
@@ -61,9 +62,54 @@ def decode(document: str) -> dict[str, Any]:
     if isinstance(schema_version, Decimal):
         raise RunDefinitionValidationError("RUN_DEFINITION_SCHEMA_VALIDATION")
     errors = sorted(_VALIDATOR.iter_errors(value), key=lambda error: list(error.path))
-    if errors:
+    if (
+        errors
+        or not _has_portable_decimals(value)
+        or not _has_valid_target_relationships(value)
+    ):
         raise RunDefinitionValidationError("RUN_DEFINITION_SCHEMA_VALIDATION")
     return deepcopy(cast(dict[str, Any], value))
+
+
+def _has_portable_decimals(value: Any) -> bool:
+    if isinstance(value, Decimal):
+        exponent = value.as_tuple().exponent
+        return isinstance(exponent, int) and (
+            abs(exponent) <= _MAXIMUM_PORTABLE_DECIMAL_EXPONENT
+        )
+    if isinstance(value, list):
+        return all(_has_portable_decimals(item) for item in cast(list[Any], value))
+    if isinstance(value, dict):
+        mapping = cast(dict[str, Any], value)
+        return all(_has_portable_decimals(item) for item in mapping.values())
+    return True
+
+
+def _has_valid_target_relationships(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return True
+    definition = cast(dict[str, Any], value)
+    target_value = definition.get("targetRequest")
+    version_value = definition.get("trainingProjectVersion")
+    if not isinstance(target_value, dict) or not isinstance(version_value, dict):
+        return True
+    target = cast(dict[str, Any], target_value)
+    version = cast(dict[str, Any], version_value)
+    required_modes = {
+        "local-single-gpu": "local",
+        "local-multi-gpu": "local",
+        "cloud-on-demand": "on-demand",
+        "cloud-spot": "spot",
+    }
+    target_class = target.get("targetClass")
+    images_value = version.get("images")
+    if not isinstance(target_class, str) or not isinstance(images_value, dict):
+        return False
+    images = cast(dict[str, Any], images_value)
+    return (
+        target.get("purchaseMode") == required_modes.get(target_class)
+        and target.get("acceleratorBackend") in images
+    )
 
 
 def encode(value: dict[str, Any]) -> str:

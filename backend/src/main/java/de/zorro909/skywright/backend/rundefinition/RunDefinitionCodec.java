@@ -4,7 +4,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 import com.networknt.schema.Schema;
 import com.networknt.schema.SchemaRegistry;
@@ -19,6 +22,8 @@ import tools.jackson.databind.node.ObjectNode;
 
 /** Strict JSON codec shared by schema-generated Run Definition models. */
 final class RunDefinitionCodec {
+
+	private static final int MAXIMUM_PORTABLE_DECIMAL_SCALE = 1_000_000_000;
 
 	private static final JsonMapper JSON = JsonMapper.builder()
 		.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -53,15 +58,68 @@ final class RunDefinitionCodec {
 		if (parsed.isObject() && parsed.path("schemaVersion").isFloatingPointNumber()) {
 			throw failure("RUN_DEFINITION_SCHEMA_VALIDATION", "/schemaVersion", "type");
 		}
-		List<RunDefinitionFailure> failures = SCHEMA.validate(parsed)
+		List<RunDefinitionFailure> failures = new ArrayList<>(SCHEMA.validate(parsed)
 			.stream()
 			.map(error -> new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
 					error.getInstanceLocation().toString(), error.getKeyword()))
-			.toList();
+			.toList());
+		validatePortableDecimals(parsed, "", failures);
+		validateTargetRelationships(parsed, failures);
 		if (!failures.isEmpty()) {
 			throw new RunDefinitionValidationException(failures);
 		}
 		return ((ObjectNode) parsed).deepCopy();
+	}
+
+	private static void validatePortableDecimals(JsonNode value, String pointer, List<RunDefinitionFailure> failures) {
+		if (value.isFloatingPointNumber()
+				&& Math.abs((long) value.decimalValue().scale()) > MAXIMUM_PORTABLE_DECIMAL_SCALE) {
+			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition", pointer,
+					"portableDecimal"));
+		}
+		if (value.isArray()) {
+			for (int index = 0; index < value.size(); index++) {
+				validatePortableDecimals(value.get(index), pointer + "/" + index, failures);
+			}
+		}
+		if (value.isObject()) {
+			Iterator<Map.Entry<String, JsonNode>> fields = value.properties().iterator();
+			while (fields.hasNext()) {
+				Map.Entry<String, JsonNode> field = fields.next();
+				validatePortableDecimals(field.getValue(), pointer + "/" + escape(field.getKey()), failures);
+			}
+		}
+	}
+
+	private static void validateTargetRelationships(JsonNode definition, List<RunDefinitionFailure> failures) {
+		if (!definition.isObject()) {
+			return;
+		}
+		JsonNode target = definition.path("targetRequest");
+		JsonNode version = definition.path("trainingProjectVersion");
+		if (!target.isObject() || !version.isObject()) {
+			return;
+		}
+		String targetClass = target.path("targetClass").asText();
+		String requiredPurchaseMode = switch (targetClass) {
+			case "local-single-gpu", "local-multi-gpu" -> "local";
+			case "cloud-on-demand" -> "on-demand";
+			case "cloud-spot" -> "spot";
+			default -> null;
+		};
+		if (requiredPurchaseMode != null && !requiredPurchaseMode.equals(target.path("purchaseMode").asText())) {
+			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
+					"/targetRequest/purchaseMode", "targetRelationship"));
+		}
+		String backend = target.path("acceleratorBackend").asText();
+		if (!backend.isEmpty() && !version.path("images").has(backend)) {
+			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
+					"/targetRequest/acceleratorBackend", "targetRelationship"));
+		}
+	}
+
+	private static String escape(String token) {
+		return token.replace("~", "~0").replace("/", "~1");
 	}
 
 	private static RunDefinitionValidationException failure(String code, String pointer, String keyword) {

@@ -26,6 +26,23 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
         with pytest.raises(RunDefinitionValidationError) as failure:
             RunDefinition.decode(invalid["json"])
         assert failure.value.code == invalid["code"]
+    for invalid in corpus["invalidMutations"]:
+        value = corpus["valid"][0]
+        document = json.dumps(value)
+        replacement = invalid["replacementJson"]
+        if invalid["pointer"] == "/targetRequest/purchaseMode":
+            document = document.replace(
+                '"purchaseMode": "spot"', f'"purchaseMode": {replacement}'
+            )
+        elif invalid["pointer"] == "/targetRequest/acceleratorBackend":
+            document = document.replace(
+                '"acceleratorBackend": "cuda"', f'"acceleratorBackend": {replacement}'
+            )
+        else:
+            document = document.replace("0.1", replacement)
+        with pytest.raises(RunDefinitionValidationError) as failure:
+            RunDefinition.decode(document)
+        assert failure.value.code == invalid["code"]
 
 
 def test_python_preserves_large_decimal_exponents_compactly() -> None:
