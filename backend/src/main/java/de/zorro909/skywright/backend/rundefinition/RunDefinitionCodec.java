@@ -2,6 +2,7 @@ package de.zorro909.skywright.backend.rundefinition;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -73,9 +74,12 @@ final class RunDefinitionCodec {
 		return ((ObjectNode) parsed).deepCopy();
 	}
 
+	static boolean hasPortableDecimal(BigDecimal value) {
+		return Math.abs((long) value.scale()) <= MAXIMUM_PORTABLE_DECIMAL_SCALE;
+	}
+
 	private static void validatePortableDecimals(JsonNode value, String pointer, List<RunDefinitionFailure> failures) {
-		if (value.isFloatingPointNumber()
-				&& Math.abs((long) value.decimalValue().scale()) > MAXIMUM_PORTABLE_DECIMAL_SCALE) {
+		if (value.isFloatingPointNumber() && !hasPortableDecimal(value.decimalValue())) {
 			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition", pointer,
 					"portableDecimal"));
 		}

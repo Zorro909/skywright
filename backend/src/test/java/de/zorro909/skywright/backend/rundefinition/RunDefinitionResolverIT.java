@@ -3,6 +3,7 @@ package de.zorro909.skywright.backend.rundefinition;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -249,6 +250,17 @@ class RunDefinitionResolverIT {
 		assertThat(runtimePolicy.has("costCeiling")).isFalse();
 		assertThat(costPolicy.has("runtimeCeiling")).isFalse();
 		assertThat(costPolicy.at("/costCeiling/currency").asText()).isEqualTo("EUR");
+	}
+
+	@Test
+	void nonPortableDecimalsReturnStableResolutionFailures() {
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				targets(), storage(), "EUR");
+		RunSubmission base = submission(TargetClass.CLOUD_SPOT);
+		RunSubmission cost = withCeilings(base, base.runtimeCeiling(), new BigDecimal(BigInteger.ONE, 1_000_000_001));
+
+		assertThat(resolver.resolve(cost, null).failures()).extracting(RunDefinitionFailure::code)
+			.containsExactly("COST_CEILING_INVALID");
 	}
 
 	@Test

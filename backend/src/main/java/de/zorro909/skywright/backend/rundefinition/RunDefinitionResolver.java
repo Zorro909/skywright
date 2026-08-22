@@ -68,8 +68,13 @@ public final class RunDefinitionResolver {
 		if (!ordered.isEmpty()) {
 			return new RunDefinitionResolution(null, ordered);
 		}
-		return new RunDefinitionResolution(build(submission, version, configuration, target, storage, currency),
-				List.of());
+		try {
+			return new RunDefinitionResolution(build(submission, version, configuration, target, storage, currency),
+					List.of());
+		}
+		catch (RunDefinitionValidationException error) {
+			return new RunDefinitionResolution(null, error.failures().stream().distinct().sorted().toList());
+		}
 	}
 
 	private static void validateSubmission(RunSubmission submission, CheckpointSeedFacts checkpointSeed,
@@ -97,8 +102,10 @@ public final class RunDefinitionResolver {
 		if (runtime != null && (runtime.isNegative() || runtime.isZero())) {
 			failures.add(failure("RUNTIME_CEILING_INVALID", "submission", "/runtimeCeiling", "minimum"));
 		}
-		if (submission.costCeiling() != null && submission.costCeiling().signum() <= 0) {
-			failures.add(failure("COST_CEILING_INVALID", "submission", "/costCeiling/amount", "exclusiveMinimum"));
+		if (submission.costCeiling() != null && (submission.costCeiling().signum() <= 0
+				|| !RunDefinitionCodec.hasPortableDecimal(submission.costCeiling()))) {
+			failures.add(failure("COST_CEILING_INVALID", "submission", "/costCeiling/amount",
+					submission.costCeiling().signum() <= 0 ? "exclusiveMinimum" : "portableDecimal"));
 		}
 		if (submission.orderingReset() && checkpointSeed == null) {
 			failures.add(failure("ORDERING_RESET_REQUIRES_CHECKPOINT", "submission", "/orderingReset", "requires"));
