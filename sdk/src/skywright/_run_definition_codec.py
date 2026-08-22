@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from copy import deepcopy
 from decimal import Decimal
 from importlib.resources import files
@@ -99,13 +100,17 @@ def decode(document: str) -> dict[str, Any]:
 
 
 def _has_portable_nesting(value: Any) -> bool:
-    pending = [(value, 1)]
+    pending: list[tuple[Any, int]] = [(value, 1)]
     while pending:
         current, depth = pending.pop()
         if isinstance(current, (list, dict)):
             if depth > _MAXIMUM_PORTABLE_NESTING_DEPTH:
                 return False
-            children = current if isinstance(current, list) else current.values()
+            children: Iterable[Any] = (
+                cast(list[Any], current)
+                if isinstance(current, list)
+                else cast(dict[str, Any], current).values()
+            )
             pending.extend((child, depth + 1) for child in children)
     return True
 
@@ -238,13 +243,17 @@ def equal_values(left: Any, right: Any) -> bool:
     if type(left) is not type(right):
         return False
     if isinstance(left, list):
-        return len(left) == len(right) and all(
+        left_items = cast(list[Any], left)
+        right_items = cast(list[Any], right)
+        return len(left_items) == len(right_items) and all(
             equal_values(left_item, right_item)
-            for left_item, right_item in zip(left, right, strict=True)
+            for left_item, right_item in zip(left_items, right_items, strict=True)
         )
     if isinstance(left, dict):
-        return left.keys() == right.keys() and all(
-            equal_values(left[key], right[key]) for key in left
+        left_mapping = cast(dict[str, Any], left)
+        right_mapping = cast(dict[str, Any], right)
+        return left_mapping.keys() == right_mapping.keys() and all(
+            equal_values(left_mapping[key], right_mapping[key]) for key in left_mapping
         )
     return bool(left == right)
 
