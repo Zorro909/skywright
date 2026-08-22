@@ -52,6 +52,7 @@
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/purchaseMode", "replacementJson": "\"on-demand\""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/targetClass", "replacementJson": "\"local-single-gpu\""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest", "replacementJson": "{\"targetClass\":\"local-multi-gpu\",\"purchaseMode\":\"local\",\"gpuCount\":1}"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/gpuCount", "replacementJson": "2147483648"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/configuration/nested/array/2", "replacementJson": "1e-1000000001"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/datasetDefinition/datasetIdentity", "replacementJson": "\"   \""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/datasetDefinition/version", "replacementJson": "\"   \""},
@@ -62,7 +63,9 @@
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/repatriation/destination/region", "replacementJson": "\"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/compatibilityOptions", "replacementJson": "{\"checksumCalculation\":\"garbage\"}"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/trainingProjectVersion/versionLabel", "replacementJson": "\"unrelated-label\""},
-    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/trainingProjectVersion/environmentProfiles", "replacementJson": "{\"cuda\":\"registry.example/skywright:cuda@sha256:3333333333333333333333333333333333333333333333333333333333333333\"}"}
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/trainingProjectVersion/pipeline", "replacementJson": "\"   \""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/trainingProjectVersion/environmentProfiles", "replacementJson": "{\"cuda\":\"registry.example/skywright:cuda@sha256:3333333333333333333333333333333333333333333333333333333333333333\"}"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/trainingProjectVersion/environmentProfiles", "replacementJson": "{\"cuda\":\"https://user:secret@example/image@sha256:3333333333333333333333333333333333333333333333333333333333333333\",\"rocm\":\"registry.example/skywright:rocm@sha256:4444444444444444444444444444444444444444444444444444444444444444\"}"}
   ],
   "numberLengthCases": [
     {"digits": 1001, "code": null},
@@ -78,5 +81,9 @@
     {"number": "1e-1000000001", "code": "RUN_DEFINITION_SCHEMA_VALIDATION"},
     {"number": "1e-2147483648", "code": "RUN_DEFINITION_INVALID_JSON"},
     {"number": "1e2147483649", "code": "RUN_DEFINITION_INVALID_JSON"}
+  ],
+  "endpointCases": [
+    {"endpoint": "https://storage.example.", "code": null},
+    {"endpoint": "https://example.com:garbage", "code": "RUN_DEFINITION_SCHEMA_VALIDATION"}
   ]
 }

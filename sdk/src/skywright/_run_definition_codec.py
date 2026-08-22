@@ -207,6 +207,7 @@ def _is_valid_storage_endpoint(value: Any) -> bool:
         return False
     try:
         endpoint = urlsplit(value)
+        _port = endpoint.port
         return (
             endpoint.scheme.lower() in {"http", "https"}
             and endpoint.hostname is not None
@@ -225,9 +226,12 @@ def _is_java_uri_host(host: str) -> bool:
         ip_address(host)
         return True
     except ValueError:
+        dns_host = host[:-1] if host.endswith(".") else host
+        if not dns_host:
+            return False
         return all(
             re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
-            for label in host.split(".")
+            for label in dns_host.split(".")
         )
 
 

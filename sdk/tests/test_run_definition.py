@@ -44,6 +44,8 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
             document = (
                 document[:start] + f'"targetRequest": {replacement}' + document[end:]
             )
+        elif invalid["pointer"] == "/targetRequest/gpuCount":
+            document = document.replace('"gpuCount": 2', f'"gpuCount": {replacement}')
         elif invalid["pointer"] == "/configuration/nested/array/2":
             document = document.replace("0.1", replacement)
         elif invalid["pointer"] == "/datasetDefinition/datasetIdentity":
@@ -74,6 +76,10 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
             document = document.replace(
                 '"versionLabel": "0123456789abcdef0123456789abcdef01234567-42"',
                 f'"versionLabel": {replacement}',
+            )
+        elif invalid["pointer"] == "/trainingProjectVersion/pipeline":
+            document = document.replace(
+                '"pipeline": "42"', f'"pipeline": {replacement}'
             )
         else:
             start = document.index('"environmentProfiles": {')
@@ -117,6 +123,16 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
         with pytest.raises(RunDefinitionValidationError) as failure:
             RunDefinition.decode(document)
         assert failure.value.code == exponent_case["code"]
+    for endpoint_case in corpus["endpointCases"]:
+        document = template.replace(
+            "https://objects.example", endpoint_case["endpoint"]
+        )
+        if endpoint_case["code"] is None:
+            assert RunDefinition.decode(document)
+        else:
+            with pytest.raises(RunDefinitionValidationError) as failure:
+                RunDefinition.decode(document)
+            assert failure.value.code == endpoint_case["code"]
 
 
 def test_python_preserves_large_decimal_exponents_compactly() -> None:

@@ -83,6 +83,19 @@ class RunDefinitionCorpusTest {
 				.satisfies(error -> assertThat(((RunDefinitionValidationException) error).failures().getFirst().code())
 					.isEqualTo(exponentCase.path("code").asText()));
 		}
+		for (JsonNode endpointCase : corpus.path("endpointCases")) {
+			String document = template.replace("https://objects.example", endpointCase.path("endpoint").asText());
+			if (endpointCase.path("code").isNull()) {
+				assertThat(RunDefinition.decode(document)).isNotNull();
+			}
+			else {
+				assertThatThrownBy(() -> RunDefinition.decode(document))
+					.isInstanceOf(RunDefinitionValidationException.class)
+					.satisfies(
+							error -> assertThat(((RunDefinitionValidationException) error).failures().getFirst().code())
+								.isEqualTo(endpointCase.path("code").asText()));
+			}
+		}
 	}
 
 	private static void set(JsonNode root, String pointer, JsonNode replacement) {
