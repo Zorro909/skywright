@@ -45,12 +45,15 @@ final class GraalPySkyPilotClientIT {
 		apiServer.restart();
 		client.probe();
 
-		var submission = client.submit(task());
+		var submittedTask = task();
+		var submission = client.submit(submittedTask);
+		var duplicateSubmission = client.submit(submittedTask);
 		var status = client.observe(new StatusRequest(List.of("missing-job")));
 		var control = client.control(new ControlRequest("missing-job", ControlRequest.Action.CANCEL));
 		var cleanup = client.cleanup(new CleanupRequest("missing-cluster"));
 
 		assertThat(submission.kind()).isEqualTo(OperationKind.SUBMISSION);
+		assertThat(duplicateSubmission).isEqualTo(submission);
 		assertThat(control.kind()).isEqualTo(OperationKind.CONTROL);
 		assertThat(cleanup.kind()).isEqualTo(OperationKind.CLEANUP);
 		assertThat(client.complete(status))
