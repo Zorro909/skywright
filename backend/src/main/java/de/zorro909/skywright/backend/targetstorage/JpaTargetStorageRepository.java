@@ -79,7 +79,12 @@ class JpaTargetStorageRepository implements TargetStorageRepository {
 				Long.class)
 			.setParameter("id", id)
 			.getSingleResult();
-		return references > 0L;
+		Long datasetCopies = this.entityManager.createQuery(
+				"select count(catalog) from DatasetCatalogEntity catalog join catalog.copies copy where copy.targetStorageId = :id",
+				Long.class)
+			.setParameter("id", id)
+			.getSingleResult();
+		return references > 0L || datasetCopies > 0L;
 	}
 
 	@Override

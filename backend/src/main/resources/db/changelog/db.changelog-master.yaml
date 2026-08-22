@@ -4,4 +4,6 @@ databaseChangeLog:
   - include:
       file: db/changelog/versions/0002-target-storage-registry.yaml
   - include:
+      file: db/changelog/versions/0004-dataset-catalog.yaml
+  - include:
       file: db/changelog/versions/0003-training-project-registry.yaml
