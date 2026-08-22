@@ -105,6 +105,23 @@ class RunDefinitionResolverIT {
 	}
 
 	@Test
+	void nullTargetClassesFailBeforeTargetDependencyLookups() {
+		RunDefinitionResolver resolver = new RunDefinitionResolver(
+				new TrainingProjectVersions(eligibleVersionRegistry(), this.configurationContracts,
+						this.metricContracts),
+				ignored -> DatasetDefinitionAssessment.accepted(), () -> {
+					throw new AssertionError("target eligibility must not be queried");
+				}, (targetClass, overrides) -> {
+					throw new AssertionError("Target Storage must not be queried");
+				}, () -> "EUR");
+		RunSubmission submission = withTarget(submission(TargetClass.CLOUD_SPOT),
+				new TargetRequest(null, 1, null, null, "H100", null));
+
+		assertThat(resolver.resolve(submission, null).failures()).extracting(RunDefinitionFailure::code)
+			.containsExactly("TARGET_CLASS_INVALID");
+	}
+
+	@Test
 	void checkpointDatasetChangesRequireAnExplicitResetAndOrderingInputsCannotChange() {
 		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
 				targets(), storage(), "EUR");

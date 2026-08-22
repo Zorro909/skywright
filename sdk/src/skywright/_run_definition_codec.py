@@ -86,7 +86,7 @@ def _encode_json(value: Any) -> str:
     if isinstance(value, int):
         return str(value)
     if isinstance(value, Decimal):
-        return format(value, "f")
+        return str(value)
     if isinstance(value, list):
         items = cast(list[Any], value)
         return "[" + ",".join(_encode_json(item) for item in items) + "]"

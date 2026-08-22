@@ -75,7 +75,7 @@ public final class RunDefinitionResolver {
 	private static void validateSubmission(RunSubmission submission, CheckpointSeedFacts checkpointSeed,
 			List<RunDefinitionFailure> failures) {
 		TargetRequest target = submission.targetRequest();
-		if (target == null) {
+		if (target == null || target.targetClass() == null) {
 			failures.add(failure("TARGET_CLASS_INVALID", "submission", "/targetRequest/targetClass", "enum"));
 		}
 		if (target == null || target.gpuCount() <= 0) {
@@ -159,7 +159,7 @@ public final class RunDefinitionResolver {
 
 	private ResolvedTarget resolveTarget(TargetRequest request, TrainingProjectVersion version,
 			List<RunDefinitionFailure> failures) {
-		if (request == null || request.gpuCount() <= 0) {
+		if (request == null || request.targetClass() == null || request.gpuCount() <= 0) {
 			return null;
 		}
 		TargetEligibilityAssessment assessment;
@@ -213,7 +213,7 @@ public final class RunDefinitionResolver {
 
 	private RunDefinitionStorageSelection resolveStorage(RunSubmission submission,
 			List<RunDefinitionFailure> failures) {
-		if (submission.targetRequest() == null) {
+		if (submission.targetRequest() == null || submission.targetRequest().targetClass() == null) {
 			return null;
 		}
 		try {
