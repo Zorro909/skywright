@@ -171,6 +171,22 @@ class RunDefinitionResolverIT {
 	}
 
 	@Test
+	void missingDatasetsDoNotSuppressOtherCheckpointFailures() {
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				targets(), storage(), "EUR");
+		RunSubmission base = submission(TargetClass.CLOUD_SPOT);
+		RunDefinition source = resolver.resolve(base, null).definition();
+		RunSubmission missingDataset = new RunSubmission(base.trainingProject(), base.manifestArtifactDigest(),
+				"{\"reproducibility\":{\"seed\":10}}", null, base.targetRequest(), base.storageOverrides(),
+				base.maximumRecoveryDebt(), base.runtimeCeiling(), base.costCeiling(), false);
+
+		assertThat(resolver.resolve(missingDataset, new CheckpointSeedFacts(source, false)).failures())
+			.extracting(RunDefinitionFailure::code)
+			.contains("DATASET_DEFINITION_INVALID", "CHECKPOINT_ORDERING_SEED_CHANGED",
+					"CHECKPOINT_CONFIGURATION_INCOMPATIBLE");
+	}
+
+	@Test
 	void exactTargetPinsNeverFallBackAndImageMapsMustCoverEligibleBackends() {
 		RunDefinitionResolver pinnedResolver = resolver(eligibleVersionRegistry(),
 				DatasetDefinitionAssessment.accepted(),

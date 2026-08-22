@@ -253,7 +253,7 @@ public final class RunDefinitionResolver {
 
 	private static void assessCheckpoint(RunSubmission submission, CheckpointSeedFacts seed,
 			TrainingProjectVersion version, JsonNode configuration, List<RunDefinitionFailure> failures) {
-		if (seed == null || submission.datasetDefinition() == null) {
+		if (seed == null) {
 			return;
 		}
 		RunDefinition source = seed.sourceDefinition();
@@ -277,12 +277,14 @@ public final class RunDefinitionResolver {
 			failures.add(failure("CHECKPOINT_CONFIGURATION_INCOMPATIBLE", "checkpoint-seed", "/configuration",
 					"resumeCompatible"));
 		}
-		boolean datasetChanged = !source.datasetDefinition().equals(dataset(submission.datasetDefinition()));
-		if (datasetChanged && !submission.orderingReset()) {
-			failures.add(failure("ORDERING_RESET_REQUIRED", "checkpoint-seed", "/orderingReset", "required"));
-		}
-		else if (!datasetChanged && submission.orderingReset()) {
-			failures.add(failure("ORDERING_RESET_UNNECESSARY", "checkpoint-seed", "/orderingReset", "const"));
+		if (submission.datasetDefinition() != null) {
+			boolean datasetChanged = !source.datasetDefinition().equals(dataset(submission.datasetDefinition()));
+			if (datasetChanged && !submission.orderingReset()) {
+				failures.add(failure("ORDERING_RESET_REQUIRED", "checkpoint-seed", "/orderingReset", "required"));
+			}
+			else if (!datasetChanged && submission.orderingReset()) {
+				failures.add(failure("ORDERING_RESET_UNNECESSARY", "checkpoint-seed", "/orderingReset", "const"));
+			}
 		}
 	}
 
