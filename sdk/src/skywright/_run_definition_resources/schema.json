@@ -36,8 +36,8 @@
         "manifestArtifactDigest": {"$ref": "#/$defs/digest"},
         "sourceRevision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "pipeline": {"type": "string", "minLength": 1},
-        "images": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/digest"}},
-        "environmentProfiles": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "pattern": "^.+@sha256:[0-9a-f]{64}$"}},
+        "images": {"type": "object", "minProperties": 1, "additionalProperties": false, "properties": {"cuda": {"$ref": "#/$defs/digest"}, "rocm": {"$ref": "#/$defs/digest"}}},
+        "environmentProfiles": {"type": "object", "minProperties": 1, "additionalProperties": false, "properties": {"cuda": {"type": "string", "pattern": "^.+@sha256:[0-9a-f]{64}$"}, "rocm": {"type": "string", "pattern": "^.+@sha256:[0-9a-f]{64}$"}}},
         "configurationContract": {"$ref": "#/$defs/contractIdentity"},
         "metricContract": {"$ref": "#/$defs/contractIdentity"}
       }
@@ -46,8 +46,8 @@
       "type": "object", "additionalProperties": false,
       "required": ["datasetIdentity", "version", "contentFingerprint"],
       "properties": {
-        "datasetIdentity": {"type": "string", "minLength": 1},
-        "version": {"type": "string", "minLength": 1},
+        "datasetIdentity": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "version": {"type": "string", "minLength": 1, "pattern": "\\S"},
         "contentFingerprint": {"$ref": "#/$defs/digest"}
       }
     },

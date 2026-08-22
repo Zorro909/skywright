@@ -99,7 +99,7 @@ def decode(document: str) -> dict[str, Any]:
 
 
 def _has_portable_nesting(value: Any) -> bool:
-    pending = [(value, 0)]
+    pending = [(value, 1)]
     while pending:
         current, depth = pending.pop()
         if isinstance(current, (list, dict)):
@@ -162,8 +162,13 @@ def _has_valid_target_relationships(value: Any) -> bool:
     if not isinstance(target_class, str):
         return False
     gpu_count = target.get("gpuCount")
-    return target.get("purchaseMode") == required_modes.get(target_class) and not (
-        target_class == "local-single-gpu" and gpu_count != 1
+    return (
+        target.get("purchaseMode") == required_modes.get(target_class)
+        and not (target_class == "local-single-gpu" and gpu_count != 1)
+        and not (
+            target_class == "local-multi-gpu"
+            and (not isinstance(gpu_count, int) or gpu_count < 2)
+        )
     )
 
 

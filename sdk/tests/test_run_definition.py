@@ -38,8 +38,20 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
             document = document.replace(
                 '"targetClass": "cloud-spot"', f'"targetClass": {replacement}'
             )
+        elif invalid["pointer"] == "/targetRequest":
+            start = document.index('"targetRequest": {')
+            end = document.index('}, "storage"', start) + 1
+            document = (
+                document[:start] + f'"targetRequest": {replacement}' + document[end:]
+            )
         elif invalid["pointer"] == "/configuration/nested/array/2":
             document = document.replace("0.1", replacement)
+        elif invalid["pointer"] == "/datasetDefinition/datasetIdentity":
+            document = document.replace(
+                '"datasetIdentity": "dataset-1"', f'"datasetIdentity": {replacement}'
+            )
+        elif invalid["pointer"] == "/datasetDefinition/version":
+            document = document.replace('"version": "v1"', f'"version": {replacement}')
         elif invalid["pointer"] == "/storage/execution/endpoint":
             document = document.replace(
                 '"endpoint": "https://objects.example"',

@@ -51,7 +51,10 @@
   "invalidMutations": [
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/purchaseMode", "replacementJson": "\"on-demand\""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/targetClass", "replacementJson": "\"local-single-gpu\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest", "replacementJson": "{\"targetClass\":\"local-multi-gpu\",\"purchaseMode\":\"local\",\"gpuCount\":1}"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/configuration/nested/array/2", "replacementJson": "1e-1000000001"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/datasetDefinition/datasetIdentity", "replacementJson": "\"   \""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/datasetDefinition/version", "replacementJson": "\"   \""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/endpoint", "replacementJson": "\"https://access-key:secret@objects.example\""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/repatriation/destination/endpoint", "replacementJson": "\"https://home.example?credential=secret#fragment\""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/endpoint", "replacementJson": "\"https://storage_internal.example\""},
@@ -67,6 +70,8 @@
   ],
   "nestingCases": [
     {"depth": 100, "code": null},
+    {"depth": 254, "code": null},
+    {"depth": 255, "code": "RUN_DEFINITION_INVALID_JSON"},
     {"depth": 300, "code": "RUN_DEFINITION_INVALID_JSON"}
   ],
   "decimalExponentCases": [

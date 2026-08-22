@@ -84,7 +84,11 @@ class RunDefinitionResolverIT {
 		}
 		RunDefinitionResolution invalidSingleGpu = resolver.resolve(withTarget(submission(TargetClass.LOCAL_SINGLE_GPU),
 				new TargetRequest(TargetClass.LOCAL_SINGLE_GPU, 2, null, null, null, null)), null);
+		RunDefinitionResolution invalidMultiGpu = resolver.resolve(withTarget(submission(TargetClass.LOCAL_MULTI_GPU),
+				new TargetRequest(TargetClass.LOCAL_MULTI_GPU, 1, null, null, null, null)), null);
 		assertThat(invalidSingleGpu.failures()).extracting(RunDefinitionFailure::code)
+			.containsExactly("GPU_COUNT_INVALID");
+		assertThat(invalidMultiGpu.failures()).extracting(RunDefinitionFailure::code)
 			.containsExactly("GPU_COUNT_INVALID");
 	}
 

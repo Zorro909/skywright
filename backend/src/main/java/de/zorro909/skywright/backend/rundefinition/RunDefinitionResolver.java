@@ -416,7 +416,8 @@ public final class RunDefinitionResolver {
 
 	private static boolean validGpuCount(TargetRequest request) {
 		return request.gpuCount() > 0
-				&& (request.targetClass() != TargetClass.LOCAL_SINGLE_GPU || request.gpuCount() == 1);
+				&& (request.targetClass() != TargetClass.LOCAL_SINGLE_GPU || request.gpuCount() == 1)
+				&& (request.targetClass() != TargetClass.LOCAL_MULTI_GPU || request.gpuCount() >= 2);
 	}
 
 	private record ResolvedTarget(TargetRequest request, String purchaseMode, String gpuModel) {

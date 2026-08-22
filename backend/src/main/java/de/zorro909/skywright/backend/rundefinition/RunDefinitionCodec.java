@@ -157,6 +157,11 @@ final class RunDefinitionCodec {
 			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
 					"/targetRequest/gpuCount", "targetRelationship"));
 		}
+		if ("local-multi-gpu".equals(targetClass) && target.path("gpuCount").canConvertToInt()
+				&& target.path("gpuCount").intValue() < 2) {
+			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
+					"/targetRequest/gpuCount", "targetRelationship"));
+		}
 	}
 
 	private static String escape(String token) {
