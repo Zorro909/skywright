@@ -161,10 +161,12 @@ public final class RunDefinitionResolver {
 						? List
 							.of(failure("DATASET_DEFINITION_UNAVAILABLE", "dataset", "/datasetDefinition", "available"))
 						: assessment.failures());
+				return false;
 			}
 		}
 		catch (RuntimeException error) {
 			failures.add(failure("DATASET_DEPENDENCY_UNAVAILABLE", "dataset", "/datasetDefinition", "available"));
+			return false;
 		}
 		return true;
 	}

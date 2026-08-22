@@ -111,7 +111,8 @@ final class RunDefinitionCodec {
 	}
 
 	static boolean hasPortableDecimal(BigDecimal value) {
-		return Math.abs((long) value.scale()) <= MAXIMUM_PORTABLE_DECIMAL_SCALE;
+		return Math.abs((long) value.scale()) <= MAXIMUM_PORTABLE_DECIMAL_SCALE
+				&& value.toString().length() <= MAXIMUM_PORTABLE_NUMBER_LENGTH;
 	}
 
 	private static void validatePortableDecimals(JsonNode value, String pointer, List<RunDefinitionFailure> failures) {
@@ -183,7 +184,7 @@ final class RunDefinitionCodec {
 			URI endpoint = URI.create(value.asText());
 			valid = ("http".equalsIgnoreCase(endpoint.getScheme()) || "https".equalsIgnoreCase(endpoint.getScheme()))
 					&& endpoint.getHost() != null && endpoint.getUserInfo() == null && endpoint.getQuery() == null
-					&& endpoint.getFragment() == null && value.asText().length() <= 2048;
+					&& endpoint.getFragment() == null && endpoint.getPort() <= 65535 && value.asText().length() <= 2048;
 		}
 		catch (IllegalArgumentException error) {
 			valid = false;

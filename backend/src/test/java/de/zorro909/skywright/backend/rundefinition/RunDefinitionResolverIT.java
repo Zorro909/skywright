@@ -212,6 +212,17 @@ class RunDefinitionResolverIT {
 		assertThat(resolver.resolve(malformed, new CheckpointSeedFacts(source, true)).failures())
 			.extracting(RunDefinitionFailure::code)
 			.containsExactly("DATASET_DEFINITION_INVALID");
+		DatasetDefinitionAssessment rejected = new DatasetDefinitionAssessment(false, List
+			.of(new RunDefinitionFailure("DATASET_FINGERPRINT_MISMATCH", "dataset", "/datasetDefinition", "const")));
+		RunDefinitionResolver rejectingResolver = resolver(eligibleVersionRegistry(), rejected, targets(), storage(),
+				"EUR");
+		RunSubmission changed = new RunSubmission(base.trainingProject(), base.manifestArtifactDigest(),
+				base.configurationJson(), new DatasetDefinitionReference("dataset-1", "v2", "sha256:" + "4".repeat(64)),
+				base.targetRequest(), base.storageOverrides(), base.maximumRecoveryDebt(), base.runtimeCeiling(),
+				base.costCeiling(), false);
+		assertThat(rejectingResolver.resolve(changed, new CheckpointSeedFacts(source, true)).failures())
+			.extracting(RunDefinitionFailure::code)
+			.containsExactly("DATASET_FINGERPRINT_MISMATCH");
 	}
 
 	@Test
@@ -306,6 +317,9 @@ class RunDefinitionResolverIT {
 		RunSubmission cost = withCeilings(base, base.runtimeCeiling(), new BigDecimal(BigInteger.ONE, 1_000_000_001));
 
 		assertThat(resolver.resolve(cost, null).failures()).extracting(RunDefinitionFailure::code)
+			.containsExactly("COST_CEILING_INVALID");
+		RunSubmission overlong = withCeilings(base, base.runtimeCeiling(), new BigDecimal("1".repeat(4_001)));
+		assertThat(resolver.resolve(overlong, null).failures()).extracting(RunDefinitionFailure::code)
 			.containsExactly("COST_CEILING_INVALID");
 	}
 

@@ -20,6 +20,13 @@ final class TargetStorageRegistryTest {
 	private final TargetStorageRegistry registry = new TargetStorageRegistry(this.repository);
 
 	@Test
+	void rejectsPortsOutsideTheNetworkRange() {
+		assertThatThrownBy(() -> configuration("https://storage.example:65536", "eu-central-1"))
+			.isInstanceOf(TargetStorageValidationException.class)
+			.hasMessageContaining("TARGET_STORAGE_CONFIGURATION_INVALID");
+	}
+
+	@Test
 	void successfulQualificationPromotesCandidateAndDerivesEligibility() {
 		List<TargetStorageBinding> bindings = readyBindings();
 		UUID id = this.registry.register("Run outputs", TargetStoragePurpose.RUN_OUTPUT, "runs",

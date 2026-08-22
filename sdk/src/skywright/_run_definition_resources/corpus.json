@@ -84,6 +84,7 @@
   ],
   "endpointCases": [
     {"endpoint": "https://storage.example.", "code": null},
-    {"endpoint": "https://example.com:garbage", "code": "RUN_DEFINITION_SCHEMA_VALIDATION"}
+    {"endpoint": "https://example.com:garbage", "code": "RUN_DEFINITION_SCHEMA_VALIDATION"},
+    {"endpoint": "https://example.com:65536", "code": "RUN_DEFINITION_SCHEMA_VALIDATION"}
   ]
 }
