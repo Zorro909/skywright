@@ -2,6 +2,7 @@ package de.zorro909.skywright.backend.rundefinition;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -43,7 +44,7 @@ final class RunDefinitionCodec {
 			throw failure("RUN_DEFINITION_INVALID_JSON", "", "parse");
 		}
 		if (parsed.isObject() && parsed.path("schemaVersion").isIntegralNumber()
-				&& parsed.path("schemaVersion").asInt() != 1) {
+				&& !parsed.path("schemaVersion").bigIntegerValue().equals(BigInteger.ONE)) {
 			throw failure("RUN_DEFINITION_SCHEMA_VERSION_UNSUPPORTED", "/schemaVersion", "const");
 		}
 		if (parsed.isObject() && parsed.path("schemaVersion").isFloatingPointNumber()) {
