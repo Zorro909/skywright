@@ -13,7 +13,7 @@ record TargetStorageConfiguration(URI endpoint, String region, boolean pathStyle
 			throw invalid("endpoint must use http or https");
 		}
 		if (endpoint.getHost() == null || endpoint.getUserInfo() != null || endpoint.getQuery() != null
-				|| endpoint.getFragment() != null) {
+				|| endpoint.getFragment() != null || endpoint.getPort() > 65535) {
 			throw invalid("endpoint must name a host and must not contain user info, a query, or a fragment");
 		}
 		if (endpoint.toString().length() > 2048) {

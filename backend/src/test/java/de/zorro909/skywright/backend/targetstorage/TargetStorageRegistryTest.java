@@ -20,6 +20,13 @@ final class TargetStorageRegistryTest {
 	private final TargetStorageRegistry registry = new TargetStorageRegistry(this.repository);
 
 	@Test
+	void rejectsPortsOutsideTheNetworkRange() {
+		assertThatThrownBy(() -> configuration("https://storage.example:65536", "eu-central-1"))
+			.isInstanceOf(TargetStorageValidationException.class)
+			.hasMessageContaining("TARGET_STORAGE_CONFIGURATION_INVALID");
+	}
+
+	@Test
 	void successfulQualificationPromotesCandidateAndDerivesEligibility() {
 		List<TargetStorageBinding> bindings = readyBindings();
 		UUID id = this.registry.register("Run outputs", TargetStoragePurpose.RUN_OUTPUT, "runs",
@@ -302,6 +309,26 @@ final class TargetStorageRegistryTest {
 			.isInstanceOf(TargetStorageIneligibleException.class);
 		assertThatThrownBy(() -> this.registry.delete(id)).isInstanceOf(TargetStorageReferencedException.class)
 			.hasMessageContaining("TARGET_STORAGE_REFERENCED");
+	}
+
+	@Test
+	void runDefinitionStorageSnapshotsRetainTheQualifiedRevision() {
+		UUID id = eligibleRunOutput();
+		this.registry.assignDefaults(TargetClass.CLOUD_SPOT, id, false, id);
+		RunDefinitionStorageSelection before = this.registry.resolveForRunDefinition(TargetClass.CLOUD_SPOT,
+				RunDefinitionStorageOverrides.none());
+		long candidate = this.registry.stageRevision(id, this.registry.get(id).registrationRevision(),
+				configuration("http://new-storage.example", "eu-west-1"));
+		this.registry.recordQualification(id,
+				successfulAssessment(candidate, this.registry.qualificationRequest(id).bindings()));
+		this.registry.activate(id, this.registry.get(id).registrationRevision());
+		RunDefinitionStorageSelection after = this.registry.resolveForRunDefinition(TargetClass.CLOUD_SPOT,
+				RunDefinitionStorageOverrides.none());
+
+		assertThat(before.execution().endpoint()).hasToString("http://storage.example");
+		assertThat(before.execution().configurationRevision()).isEqualTo(1);
+		assertThat(after.execution().endpoint()).hasToString("http://new-storage.example");
+		assertThat(after.execution().configurationRevision()).isEqualTo(candidate);
 	}
 
 	@Test

@@ -86,6 +86,27 @@ class FrontendSetupContractTest(unittest.TestCase):
         self.assertIn("playwright install chromium", download_step)
 
 
+class JavaSetupContractTest(unittest.TestCase):
+    def test_archive_cache_is_exact_and_download_is_resilient(self) -> None:
+        archive_cache = named_step(JAVA_ACTION, "Cache GraalVM Community archive")
+        download = named_step(
+            JAVA_ACTION, "Download exact GraalVM Community archive on cache miss"
+        )
+        verification = named_step(JAVA_ACTION, "Verify GraalVM Community archive")
+
+        self.assertRegex(archive_cache, r"uses: actions/cache@[0-9a-f]{40}")
+        self.assertIn("${{ runner.os }}", archive_cache)
+        self.assertIn("${{ runner.arch }}", archive_cache)
+        self.assertIn(
+            "${{ steps.toolchain.outputs.java_archive_sha256 }}", archive_cache
+        )
+        self.assertIn("${{ runner.temp }}/graalvm-community.tar.gz", archive_cache)
+        self.assertIn("steps.graalvm-cache.outputs.cache-hit != 'true'", download)
+        self.assertIn("--retry-all-errors", download)
+        self.assertIn("sha256sum --check --strict", verification)
+        self.assertNotIn("if:", verification)
+
+
 class QualityWorkflowContractTest(unittest.TestCase):
     def test_setup_actions_own_repository_toolchain_versions(self) -> None:
         self.assertIn("quality/toolchain.json", JAVA_ACTION)

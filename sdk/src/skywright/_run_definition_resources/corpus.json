@@ -1,0 +1,91 @@
+{
+  "valid": [
+    {
+      "schemaVersion": 1,
+      "trainingProjectVersion": {
+        "projectIdentity": "project-é-é",
+        "versionLabel": "0123456789abcdef0123456789abcdef01234567-42",
+        "manifestArtifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sourceRevision": "0123456789abcdef0123456789abcdef01234567",
+        "pipeline": "42",
+        "images": {
+          "cuda": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "rocm": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "environmentProfiles": {
+          "cuda": "registry.example/skywright:cuda@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "rocm": "registry.example/skywright:rocm@sha256:4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "configurationContract": {
+          "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "skywrightSchema": {"version": "0.3.0", "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}
+        },
+        "metricContract": {
+          "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "skywrightSchema": {"version": "0.1.0", "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"}
+        }
+      },
+      "configuration": {"nested": {"array": [null, 9007199254740993, 0.1000000000000000001], "é": "é"}},
+      "datasetDefinition": {"datasetIdentity": "dataset-1", "version": "v1", "contentFingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+      "targetRequest": {"targetClass": "cloud-spot", "purchaseMode": "spot", "gpuCount": 2, "minimumGpuMemoryBytes": 85899345920, "gpuModel": "H100"},
+      "storage": {
+        "execution": {"storageId": "00000000-0000-0000-0000-000000000001", "registrationRevision": 4, "configurationRevision": 2, "endpoint": "https://objects.example", "bucket": "runs", "region": "eu-central-1", "addressingMode": "path", "compatibilityOptions": {"chunkedEncoding": "disabled"}},
+        "repatriation": {"enabled": false, "destination": {"storageId": "00000000-0000-0000-0000-000000000002", "registrationRevision": 3, "configurationRevision": 1, "endpoint": "https://home.example", "bucket": "home", "region": "local", "addressingMode": "virtual-hosted", "compatibilityOptions": {}}}
+      },
+      "executionPolicy": {"maximumRecoveryDebt": 3, "runtimeCeiling": "PT1H", "costCeiling": {"amount": 12.3400, "currency": "EUR"}},
+      "orderingReset": false
+    }
+  ],
+  "invalid": [
+    {"code": "RUN_DEFINITION_INVALID_JSON", "json": ""},
+    {"code": "RUN_DEFINITION_INVALID_JSON", "json": "  \n\t"},
+    {"code": "RUN_DEFINITION_SCHEMA_VERSION_UNSUPPORTED", "json": "{\"schemaVersion\":2}"},
+    {"code": "RUN_DEFINITION_SCHEMA_VERSION_UNSUPPORTED", "json": "{\"schemaVersion\":4294967297}"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "json": "{\"schemaVersion\":1.0}"},
+    {"code": "RUN_DEFINITION_INVALID_JSON", "json": "{\"schemaVersion\":1,\"configuration\":{\"value\":NaN}}"},
+    {"code": "RUN_DEFINITION_INVALID_JSON", "json": "{\"schemaVersion\":1,\"schemaVersion\":1}"},
+    {"code": "RUN_DEFINITION_INVALID_JSON", "json": "{\"schemaVersion\":1} {\"schemaVersion\":1}"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "json": "[]"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "json": "{\"schemaVersion\":1,\"unknown\":true}"}
+  ],
+  "invalidMutations": [
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/purchaseMode", "replacementJson": "\"on-demand\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/targetClass", "replacementJson": "\"local-single-gpu\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest", "replacementJson": "{\"targetClass\":\"local-multi-gpu\",\"purchaseMode\":\"local\",\"gpuCount\":1}"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/gpuCount", "replacementJson": "2147483648"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/configuration/nested/array/2", "replacementJson": "1e-1000000001"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/datasetDefinition/datasetIdentity", "replacementJson": "\"   \""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/datasetDefinition/version", "replacementJson": "\"   \""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/endpoint", "replacementJson": "\"https://access-key:secret@objects.example\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/repatriation/destination/endpoint", "replacementJson": "\"https://home.example?credential=secret#fragment\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/endpoint", "replacementJson": "\"https://storage_internal.example\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/bucket", "replacementJson": "\"   \""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/repatriation/destination/region", "replacementJson": "\"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/compatibilityOptions", "replacementJson": "{\"checksumCalculation\":\"garbage\"}"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/trainingProjectVersion/versionLabel", "replacementJson": "\"unrelated-label\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/trainingProjectVersion/manifestArtifactDigest", "replacementJson": "\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/trainingProjectVersion/pipeline", "replacementJson": "\"   \""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/trainingProjectVersion/environmentProfiles", "replacementJson": "{\"cuda\":\"registry.example/skywright:cuda@sha256:3333333333333333333333333333333333333333333333333333333333333333\"}"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/trainingProjectVersion/environmentProfiles", "replacementJson": "{\"cuda\":\"https://user:secret@example/image@sha256:3333333333333333333333333333333333333333333333333333333333333333\",\"rocm\":\"registry.example/skywright:rocm@sha256:4444444444444444444444444444444444444444444444444444444444444444\"}"}
+  ],
+  "numberLengthCases": [
+    {"digits": 1001, "code": null},
+    {"digits": 4001, "code": "RUN_DEFINITION_INVALID_JSON"}
+  ],
+  "nestingCases": [
+    {"depth": 100, "code": null},
+    {"depth": 254, "code": null},
+    {"depth": 255, "code": "RUN_DEFINITION_INVALID_JSON"},
+    {"depth": 300, "code": "RUN_DEFINITION_INVALID_JSON"}
+  ],
+  "decimalExponentCases": [
+    {"number": "1e-1000000001", "code": "RUN_DEFINITION_SCHEMA_VALIDATION"},
+    {"number": "1e-2147483648", "code": "RUN_DEFINITION_INVALID_JSON"},
+    {"number": "1e2147483649", "code": "RUN_DEFINITION_INVALID_JSON"}
+  ],
+  "endpointCases": [
+    {"endpoint": "https://storage.example.", "code": null},
+    {"endpoint": "https://example.com:garbage", "code": "RUN_DEFINITION_SCHEMA_VALIDATION"},
+    {"endpoint": "https://example.com:65536", "code": "RUN_DEFINITION_SCHEMA_VALIDATION"}
+  ]
+}

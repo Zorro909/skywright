@@ -92,6 +92,7 @@ testpaths = [
   "tests/test_metric_contract.py",
   "tests/test_package.py",
   "tests/test_release.py",
+  "tests/test_run_definition.py",
   "tests/test_run_store.py",
   "tests/test_run_store_system.py",
   "tests/test_training_process.py",

@@ -130,6 +130,15 @@
           <exclude>**/*.pyc</exclude>
         </excludes>
       </resource>
+      <resource>
+        <directory>${maven.multiModuleProjectDirectory}/sdk/src/skywright/_run_definition_resources</directory>
+        <targetPath>META-INF/skywright/run-definition</targetPath>
+        <filtering>false</filtering>
+        <excludes>
+          <exclude>**/__pycache__/**</exclude>
+          <exclude>**/*.pyc</exclude>
+        </excludes>
+      </resource>
     </resources>
     <plugins>
       <plugin>

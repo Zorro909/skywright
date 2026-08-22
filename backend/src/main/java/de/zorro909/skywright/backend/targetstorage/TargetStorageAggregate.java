@@ -82,6 +82,10 @@ final class TargetStorageAggregate {
 		return this.bucket;
 	}
 
+	long registrationRevision() {
+		return this.registrationRevision;
+	}
+
 	Long activeRevision() {
 		return this.activeRevision;
 	}

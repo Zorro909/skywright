@@ -113,6 +113,32 @@ public class TargetStorageRegistry {
 		return new TargetStorageSelection(execution, repatriationEnabled, repatriation);
 	}
 
+	/**
+	 * Resolves and snapshots both definition-owned storage selections without
+	 * credentials.
+	 */
+	@Transactional(readOnly = true)
+	public RunDefinitionStorageSelection resolveForRunDefinition(TargetClass targetClass,
+			RunDefinitionStorageOverrides overrides) {
+		TargetStorageDefaults defaults = this.repository.findDefaults(targetClass)
+			.orElseThrow(() -> new TargetStorageIneligibleException("TARGET_STORAGE_DEFAULT_MISSING",
+					"No Target Storage defaults are assigned for " + targetClass.wireValue()));
+		UUID executionId = overrides.executionStorage() == null ? defaults.executionStorageId()
+				: overrides.executionStorage();
+		boolean repatriationEnabled = overrides.repatriationEnabled() == null ? defaults.repatriationEnabled()
+				: overrides.repatriationEnabled();
+		UUID destinationId = overrides.repatriationStorage() == null ? defaults.repatriationStorageId()
+				: overrides.repatriationStorage();
+		TargetStorageAggregate execution = requireRunOutput(executionId);
+		TargetStorageAggregate destination = requireRunOutput(destinationId);
+		if (!execution.eligible() || !destination.eligible()) {
+			throw new TargetStorageIneligibleException("TARGET_STORAGE_INELIGIBLE",
+					"Both Run Definition storage selections must be eligible");
+		}
+		return new RunDefinitionStorageSelection(definitionSnapshot(execution), repatriationEnabled,
+				definitionSnapshot(destination));
+	}
+
 	@Transactional(readOnly = true)
 	public TargetStorageDescriptor resolveDescriptor(UUID id) {
 		TargetStorageAggregate storage = this.storage(id);
@@ -173,6 +199,13 @@ public class TargetStorageRegistry {
 					"Run-output selection requires a run-output Target Storage");
 		}
 		return storage;
+	}
+
+	private static RunDefinitionStorageSnapshot definitionSnapshot(TargetStorageAggregate storage) {
+		TargetStorageDescriptor descriptor = storage.descriptor();
+		return new RunDefinitionStorageSnapshot(descriptor.storageId(), storage.registrationRevision(),
+				storage.activeRevision(), descriptor.endpoint(), descriptor.bucket(), descriptor.region(),
+				descriptor.pathStyleAccess(), descriptor.compatibilityOptions());
 	}
 
 	private void requireEligibleRunOutput(UUID id) {

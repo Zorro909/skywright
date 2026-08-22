@@ -164,7 +164,10 @@ public final class ConfigurationContracts {
 
 	ObjectNode parseObject(String source, String layer) {
 		JsonNode parsed = parse(source, layer);
-		if (!parsed.isObject()) {
+		if (parsed == null || !parsed.isObject()) {
+			if (parsed == null || parsed.isMissingNode()) {
+				throw failure("CONFIG_INVALID_JSON", layer, "", "parse");
+			}
 			throw failure("CONFIG_LAYER_NOT_OBJECT", layer, "", "type");
 		}
 		return (ObjectNode) parsed;
