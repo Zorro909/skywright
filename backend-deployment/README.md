@@ -36,7 +36,8 @@ DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock" \
 
 The initial deployment is Linux amd64. The Dockerfile starts from the immutable amd64 manifest of
 the official GraalVM Community image for GraalVM CE 25.2.4 / OpenJDK 25.0.4. It retains the complete
-JDK rather than using `jlink`, preserving JVMCI and the future in-process GraalPy facilities.
+JDK rather than using `jlink`, packages the locked SkyPilot 0.13.0 GraalPy environment beside the
+application, and starts the JVM with the required 16 MiB thread stack.
 
 ## Run the image
 
@@ -59,7 +60,6 @@ docker run --rm \
   --env SKYWRIGHT_DATABASE_RUNTIME_URL='jdbc:postgresql://<database-host>:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
   --env SKYWRIGHT_DATABASE_RUNTIME_USERNAME=skywright_runtime \
   --env SKYWRIGHT_DATABASE_RUNTIME_PASSWORD='<runtime-password>' \
-  --env JAVA_TOOL_OPTIONS=-Xss2m \
   --publish 127.0.0.1:8080:8080 \
   skywright-backend:0.1.0-SNAPSHOT
 ```
@@ -93,7 +93,7 @@ docker run --rm \
   --env SKYWRIGHT_DATABASE_RUNTIME_URL='jdbc:postgresql://<database-host>:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
   --env SKYWRIGHT_DATABASE_RUNTIME_USERNAME=skywright_runtime \
   --env SKYWRIGHT_DATABASE_RUNTIME_PASSWORD='<runtime-password>' \
-  --env 'JAVA_TOOL_OPTIONS=-Xss2m -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005' \
+  --env 'JAVA_TOOL_OPTIONS=-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005' \
   --publish 127.0.0.1:8080:8080 \
   --publish 127.0.0.1:5005:5005 \
   skywright-backend:0.1.0-SNAPSHOT

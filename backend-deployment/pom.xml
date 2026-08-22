@@ -79,6 +79,12 @@
                 <filter>@</filter>
                 <assembly>
                   <inline>
+                    <fileSets>
+                      <fileSet>
+                        <directory>${maven.multiModuleProjectDirectory}/backend/target/graalpy-resources</directory>
+                        <outputDirectory>graalpy-resources</outputDirectory>
+                      </fileSet>
+                    </fileSets>
                     <dependencySets>
                       <dependencySet>
                         <includes>

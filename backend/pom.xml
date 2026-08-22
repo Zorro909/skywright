@@ -73,6 +73,17 @@
       </exclusions>
     </dependency>
     <dependency>
+      <groupId>org.graalvm.polyglot</groupId>
+      <artifactId>python</artifactId>
+      <version>${graalpy.version}</version>
+      <type>pom</type>
+    </dependency>
+    <dependency>
+      <groupId>org.graalvm.python</groupId>
+      <artifactId>python-embedding</artifactId>
+      <version>${graalpy.version}</version>
+    </dependency>
+    <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>netty-nio-client</artifactId>
       <version>2.53.2</version>
@@ -258,6 +269,25 @@
             </goals>
           </execution>
         </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.graalvm.python</groupId>
+        <artifactId>graalpy-maven-plugin</artifactId>
+        <version>${graalpy.version}</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>process-graalpy-resources</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <externalDirectory>${project.build.directory}/graalpy-resources</externalDirectory>
+          <graalPyLockFile>${project.basedir}/graalpy.lock</graalPyLockFile>
+          <packages>
+            <package>skypilot==${skypilot.version}</package>
+          </packages>
+        </configuration>
       </plugin>
       <plugin>
         <groupId>org.springframework.boot</groupId>

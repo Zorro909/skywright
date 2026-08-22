@@ -46,6 +46,13 @@ before readiness. Diagnostics omit supplied values, generated metadata ships in 
 and Actuator does not expose configuration. This process setting is not Run Configuration and must
 never contain credentials or make Skywright a Credential Authority.
 
+The SkyPilot bridge has separate bounded queues for short control calls and held operation work.
+`skywright.skypilot.bridge.control-queue-capacity` and `held-queue-capacity` must be positive. The
+defaults are 8 and 4. `shutdown-grace` defaults to 20 seconds, and
+`availability-probe-interval` defaults to 30 seconds. These are deployment settings, not Run
+Configuration. A full queue returns `bridge-busy`; client, authentication, reachability, and
+version failures return `skypilot-unavailable` with a safe cause category.
+
 ## Logging
 
 The production default writes Elastic Common Schema JSON to standard output, one event per line,
@@ -76,7 +83,9 @@ Package the executable layered JAR from the repository root:
 ./mvnw -pl backend -am -DskipTests package
 ```
 
-The artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`. It contains version, build
+The artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`. Maven also creates the locked
+GraalPy and SkyPilot 0.13.0 environment at `backend/target/graalpy-resources`; production packaging
+places it beside the executable. Runtime startup never installs Python packages. The JAR contains version, build
 time, and the full source revision in `META-INF/build-info.properties`; the same non-sensitive
 identity is available from `GET /actuator/info` while it is running.
 

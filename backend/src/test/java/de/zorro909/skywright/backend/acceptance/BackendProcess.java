@@ -76,6 +76,9 @@ final class BackendProcess implements AutoCloseable {
 			Map<String, String> environment, List<String> jvmArguments, String... arguments) throws IOException {
 		var command = new ArrayList<String>();
 		command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
+		command.add("--enable-native-access=ALL-UNNAMED");
+		command.add("--sun-misc-unsafe-memory-access=allow");
+		command.add("-Xss16m");
 		command.addAll(jvmArguments);
 		command.add("-jar");
 		command.add(System.getProperty("backend.executable"));

@@ -15,10 +15,11 @@ RUN groupadd --gid 10001 skywright \
     && install --directory --owner 0 --group 0 --mode 0755 /opt/skywright
 
 COPY --chown=0:0 maven/application.jar /opt/skywright/application.jar
+COPY --chown=0:0 maven/graalpy-resources /opt/skywright/graalpy-resources
 
 USER 10001:10001
 WORKDIR /opt/skywright
 EXPOSE 8080
 STOPSIGNAL SIGTERM
 
-ENTRYPOINT ["java", "-jar", "/opt/skywright/application.jar"]
+ENTRYPOINT ["java", "--enable-native-access=ALL-UNNAMED", "--sun-misc-unsafe-memory-access=allow", "-Xss16m", "-jar", "/opt/skywright/application.jar"]
