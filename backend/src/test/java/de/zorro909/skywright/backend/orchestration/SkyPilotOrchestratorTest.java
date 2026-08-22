@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -25,6 +26,7 @@ final class SkyPilotOrchestratorTest {
 	void controlWorkCompletesWhileHeldWorkOccupiesItsWorkerAndQueue() throws Exception {
 		var client = new ControllableSkyPilotClient();
 		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
+		awaitInitialProbe();
 
 		var firstHeld = this.orchestrator.complete(new OrchestratorOperation("held-1", OperationKind.SUBMISSION));
 		assertThat(client.heldStarted.await(1, TimeUnit.SECONDS)).isTrue();
@@ -51,6 +53,7 @@ final class SkyPilotOrchestratorTest {
 		var client = new ControllableSkyPilotClient();
 		client.reachable.set(false);
 		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
+		awaitInitialProbe();
 
 		assertThat(this.orchestrator.availability().available()).isFalse();
 		var failure = this.orchestrator.observe(new StatusRequest(List.of()))
@@ -77,6 +80,7 @@ final class SkyPilotOrchestratorTest {
 		client.submitFailure = new SkyPilotClientFailure(BridgeFailure.FailureCause.AUTHENTICATION,
 				"Authorization: Bearer secret-value");
 		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
+		awaitInitialProbe();
 
 		var failure = this.orchestrator
 			.submit(new OrchestratorTaskSpecification("job", null, "true",
@@ -104,13 +108,66 @@ final class SkyPilotOrchestratorTest {
 		assertThat(client.closeCount).isEqualTo(1);
 	}
 
+	@Test
+	void initialProbeDoesNotBlockConstruction() throws Exception {
+		var client = new ControllableSkyPilotClient();
+		client.holdProbe.set(true);
+
+		var creating = CompletableFuture.supplyAsync(
+				() -> new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1))));
+		try {
+			this.orchestrator = creating.get(1, TimeUnit.SECONDS);
+			assertThat(client.probeStarted.await(1, TimeUnit.SECONDS)).isTrue();
+			assertThat(this.orchestrator.availability().available()).isFalse();
+		}
+		finally {
+			client.releaseProbe.countDown();
+		}
+		awaitInitialProbe();
+		assertThat(this.orchestrator.availability().available()).isTrue();
+	}
+
+	@Test
+	void forcedShutdownCompletesQueuedWork() throws Exception {
+		var client = new ControllableSkyPilotClient();
+		client.releaseHeldOnClose.set(false);
+		client.ignoreHeldInterrupt.set(true);
+		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ZERO));
+		awaitInitialProbe();
+
+		var active = this.orchestrator.complete(new OrchestratorOperation("held-1", OperationKind.SUBMISSION));
+		assertThat(client.heldStarted.await(1, TimeUnit.SECONDS)).isTrue();
+		var queued = this.orchestrator.complete(new OrchestratorOperation("held-2", OperationKind.SUBMISSION));
+
+		this.orchestrator.close();
+
+		assertThat(queued.toCompletableFuture().get(1, TimeUnit.SECONDS).failure().cause())
+			.isEqualTo(BridgeFailure.FailureCause.SHUTDOWN);
+		client.releaseHeld.countDown();
+		assertThat(active.toCompletableFuture()).succeedsWithin(Duration.ofSeconds(1));
+	}
+
+	private void awaitInitialProbe() throws Exception {
+		this.orchestrator.refreshAvailability().toCompletableFuture().get(1, TimeUnit.SECONDS);
+	}
+
 	private static final class ControllableSkyPilotClient implements SkyPilotClient {
 
 		private final CountDownLatch heldStarted = new CountDownLatch(1);
 
 		private final CountDownLatch releaseHeld = new CountDownLatch(1);
 
+		private final CountDownLatch probeStarted = new CountDownLatch(1);
+
+		private final CountDownLatch releaseProbe = new CountDownLatch(1);
+
 		private final AtomicBoolean reachable = new AtomicBoolean(true);
+
+		private final AtomicBoolean holdProbe = new AtomicBoolean(false);
+
+		private final AtomicBoolean releaseHeldOnClose = new AtomicBoolean(true);
+
+		private final AtomicBoolean ignoreHeldInterrupt = new AtomicBoolean(false);
 
 		private int closeCount;
 
@@ -123,6 +180,10 @@ final class SkyPilotOrchestratorTest {
 
 		@Override
 		public void probe() throws Exception {
+			this.probeStarted.countDown();
+			if (this.holdProbe.get()) {
+				this.releaseProbe.await();
+			}
 			if (!this.reachable.get()) {
 				throw new java.net.ConnectException("API server unreachable");
 			}
@@ -157,14 +218,27 @@ final class SkyPilotOrchestratorTest {
 		@Override
 		public OperationOutcome complete(OrchestratorOperation operation) throws InterruptedException {
 			this.heldStarted.countDown();
-			this.releaseHeld.await();
+			while (true) {
+				try {
+					this.releaseHeld.await();
+					break;
+				}
+				catch (InterruptedException interrupted) {
+					if (!this.ignoreHeldInterrupt.get()) {
+						throw interrupted;
+					}
+				}
+			}
 			return new OperationOutcome.Controlled(true);
 		}
 
 		@Override
 		public void close() {
 			this.closeCount++;
-			this.releaseHeld.countDown();
+			if (this.releaseHeldOnClose.get()) {
+				this.releaseHeld.countDown();
+			}
+			this.releaseProbe.countDown();
 		}
 
 	}

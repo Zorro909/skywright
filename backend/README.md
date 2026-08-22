@@ -48,7 +48,7 @@ never contain credentials or make Skywright a Credential Authority.
 
 The SkyPilot bridge has separate bounded queues for short control calls and held operation work.
 `skywright.skypilot.bridge.control-queue-capacity` and `held-queue-capacity` must be positive. The
-defaults are 8 and 4. `shutdown-grace` defaults to 20 seconds, and
+defaults are 8 and 4. `shutdown-grace` defaults to 5 seconds, and
 `availability-probe-interval` defaults to 30 seconds. These are deployment settings, not Run
 Configuration. A full queue returns `bridge-busy`; client, authentication, reachability, and
 version failures return `skypilot-unavailable` with a safe cause category.

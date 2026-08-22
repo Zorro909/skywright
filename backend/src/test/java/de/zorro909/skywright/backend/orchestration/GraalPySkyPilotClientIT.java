@@ -57,6 +57,7 @@ final class GraalPySkyPilotClientIT {
 			.isEqualTo(new OperationOutcome.Failed("ClusterNotUpError", "SkyPilot target is unavailable"));
 
 		var orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(2, 1, Duration.ofMillis(100)));
+		orchestrator.refreshAvailability().toCompletableFuture().get(10, TimeUnit.SECONDS);
 		var operation = orchestrator.submit(task()).toCompletableFuture().get(10, TimeUnit.SECONDS).value();
 		var held = orchestrator.complete(operation);
 

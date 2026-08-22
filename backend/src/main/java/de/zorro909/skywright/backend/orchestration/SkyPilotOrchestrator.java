@@ -31,7 +31,9 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		this.settings = settings;
 		this.controlLane = lane("skypilot-control", settings.controlQueueCapacity());
 		this.heldLane = lane("skypilot-held", settings.heldQueueCapacity());
-		recordAvailability(probeAvailability());
+		this.availability = SkyPilotAvailability.unavailable(BridgeFailure
+			.unavailable(FailureCause.CLIENT_INITIALIZATION, "SkyPilot availability check is pending"));
+		refreshAvailability();
 	}
 
 	@Override
@@ -72,10 +74,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 			return refreshed;
 		}
 		try {
-			this.controlLane.execute(() -> {
-				recordAvailability(probeAvailability());
-				refreshed.complete(this.availability);
-			});
+			this.controlLane.execute(new AvailabilityRefresh(refreshed));
 		}
 		catch (java.util.concurrent.RejectedExecutionException exception) {
 			refreshed.complete(this.availability);
@@ -113,6 +112,9 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 	}
 
 	private <T> CompletionStage<OrchestratorResult<T>> control(CheckedSupplier<T> call) {
+		if (!this.admitting.get()) {
+			return CompletableFuture.completedFuture(shutdownResult());
+		}
 		if (!this.availability.available()) {
 			return CompletableFuture.completedFuture(OrchestratorResult.failure(this.availability.failure()));
 		}
@@ -126,10 +128,10 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		}
 		var result = new CompletableFuture<OrchestratorResult<T>>();
 		try {
-			lane.execute(() -> run(call, result));
+			lane.execute(new BridgeCall<>(call, result));
 		}
 		catch (java.util.concurrent.RejectedExecutionException exception) {
-			result.complete(OrchestratorResult.failure(BridgeFailure.busy()));
+			result.complete(this.admitting.get() ? OrchestratorResult.failure(BridgeFailure.busy()) : shutdownResult());
 		}
 		return result;
 	}
@@ -195,9 +197,22 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		var deadline = System.nanoTime() + this.settings.shutdownGrace().toNanos();
 		await(this.controlLane, deadline);
 		await(this.heldLane, deadline);
+		completeDiscarded(this.controlLane.shutdownNow());
+		completeDiscarded(this.heldLane.shutdownNow());
 		this.client.close();
-		this.controlLane.shutdownNow();
-		this.heldLane.shutdownNow();
+	}
+
+	private static void completeDiscarded(java.util.List<Runnable> discarded) {
+		for (var task : discarded) {
+			if (task instanceof ShutdownAwareTask shutdownAwareTask) {
+				shutdownAwareTask.rejectForShutdown();
+			}
+		}
+	}
+
+	private static <T> OrchestratorResult<T> shutdownResult() {
+		return OrchestratorResult
+			.failure(BridgeFailure.unavailable(FailureCause.SHUTDOWN, "SkyPilot bridge is shutting down"));
 	}
 
 	private static void await(ThreadPoolExecutor lane, long deadline) {
@@ -213,6 +228,56 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 	private interface CheckedSupplier<T> {
 
 		T get() throws Exception;
+
+	}
+
+	private interface ShutdownAwareTask extends Runnable {
+
+		void rejectForShutdown();
+
+	}
+
+	private final class AvailabilityRefresh implements ShutdownAwareTask {
+
+		private final CompletableFuture<SkyPilotAvailability> result;
+
+		private AvailabilityRefresh(CompletableFuture<SkyPilotAvailability> result) {
+			this.result = result;
+		}
+
+		@Override
+		public void run() {
+			recordAvailability(probeAvailability());
+			this.result.complete(availability);
+		}
+
+		@Override
+		public void rejectForShutdown() {
+			this.result.complete(availability);
+		}
+
+	}
+
+	private final class BridgeCall<T> implements ShutdownAwareTask {
+
+		private final CheckedSupplier<T> call;
+
+		private final CompletableFuture<OrchestratorResult<T>> result;
+
+		private BridgeCall(CheckedSupplier<T> call, CompletableFuture<OrchestratorResult<T>> result) {
+			this.call = call;
+			this.result = result;
+		}
+
+		@Override
+		public void run() {
+			SkyPilotOrchestrator.this.run(this.call, this.result);
+		}
+
+		@Override
+		public void rejectForShutdown() {
+			this.result.complete(shutdownResult());
+		}
 
 	}
 
