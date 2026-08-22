@@ -233,6 +233,18 @@ final class DatasetCatalogAggregate {
 		return released;
 	}
 
+	boolean hasActiveLeaseForRun(UUID runRecordId) {
+		return this.leases.stream().anyMatch(lease -> lease.runRecordId().equals(runRecordId) && lease.active());
+	}
+
+	boolean removeEndedLeasesForRun(UUID runRecordId) {
+		boolean removed = this.leases.removeIf(lease -> lease.runRecordId().equals(runRecordId) && !lease.active());
+		if (removed) {
+			this.revision++;
+		}
+		return removed;
+	}
+
 	DatasetCopyOperationView startDelete(UUID copyId, long generation, long expectedRevision, Instant now) {
 		this.requireNoActiveOperation(copyId);
 		DatasetCopyView selected = this.copy(copyId);

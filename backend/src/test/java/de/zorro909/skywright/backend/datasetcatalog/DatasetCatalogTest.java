@@ -203,6 +203,24 @@ final class DatasetCatalogTest {
 	}
 
 	@Test
+	void runDeletionCleanupRejectsActiveLeasesAndRemovesEndedLeases() {
+		DatasetPublication publication = publication();
+		DatasetCatalogView published = this.catalog.publish(publication);
+		UUID runId = UUID.randomUUID();
+		DatasetLeaseView lease = this.catalog.acquireLease(publication.definitionId(), publication.copyId(), 1,
+				published.revision(), runId);
+
+		assertThatThrownBy(() -> this.catalog.removeEndedLeasesForRun(runId))
+			.isInstanceOf(DatasetCatalogConflictException.class)
+			.hasMessageContaining("DATASET_LEASE_CONFLICT");
+
+		this.catalog.endLease(publication.definitionId(), lease.id(), RunTerminalEvidence.FINISHED, 2);
+
+		assertThat(this.catalog.removeEndedLeasesForRun(runId)).isEqualTo(1);
+		assertThat(this.catalog.get(publication.definitionId()).leases()).isEmpty();
+	}
+
+	@Test
 	void cancellingBeforePublicationRestoresTheOriginalLeaseAdmissionState() {
 		DatasetCatalogView published = this.catalog.publish(publication());
 		DatasetCopyView authority = published.copies().getFirst();

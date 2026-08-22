@@ -21,6 +21,8 @@ import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 
 final class S3DatasetCopyStorage implements DatasetCopyStorage {
 
+	private static final int MAX_DELETE_OBJECTS = 1_000;
+
 	private final TargetStorageResolver targetStorages;
 
 	S3DatasetCopyStorage(TargetStorageResolver targetStorages) {
@@ -108,22 +110,26 @@ final class S3DatasetCopyStorage implements DatasetCopyStorage {
 			List<ObjectIdentifier> objects = manifest.stream()
 				.map(entry -> ObjectIdentifier.builder().key(key(selected.location(), entry.objectKey())).build())
 				.toList();
-			client
-				.deleteObjects(DeleteObjectsRequest.builder()
-					.bucket(target.bucket())
-					.delete(Delete.builder().objects(objects).build())
-					.build())
-				.join();
-			for (ObjectIdentifier object : objects) {
-				try {
-					client.headObject(HeadObjectRequest.builder().bucket(target.bucket()).key(object.key()).build())
-						.join();
-					throw new DatasetStorageUnavailableException(copy.targetStorageId().toString(),
-							"Dataset object absence could not be verified");
-				}
-				catch (RuntimeException failure) {
-					if (!isMissing(failure)) {
-						throw failure;
+			for (int start = 0; start < objects.size(); start += MAX_DELETE_OBJECTS) {
+				List<ObjectIdentifier> batch = objects.subList(start,
+						Math.min(start + MAX_DELETE_OBJECTS, objects.size()));
+				client
+					.deleteObjects(DeleteObjectsRequest.builder()
+						.bucket(target.bucket())
+						.delete(Delete.builder().objects(batch).build())
+						.build())
+					.join();
+				for (ObjectIdentifier object : batch) {
+					try {
+						client.headObject(HeadObjectRequest.builder().bucket(target.bucket()).key(object.key()).build())
+							.join();
+						throw new DatasetStorageUnavailableException(copy.targetStorageId().toString(),
+								"Dataset object absence could not be verified");
+					}
+					catch (RuntimeException failure) {
+						if (!isMissing(failure)) {
+							throw failure;
+						}
 					}
 				}
 			}

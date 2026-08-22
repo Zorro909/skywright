@@ -140,7 +140,7 @@ databaseChangeLog:
         - addUniqueConstraint: { tableName: dataset_copy, columnNames: copy_id, constraintName: uq_dataset_copy_id }
         - addUniqueConstraint: { tableName: dataset_catalog, columnNames: "dataset_id, version_label", constraintName: uq_dataset_catalog_version_label }
         - addUniqueConstraint: { tableName: dataset_lease, columnNames: lease_id, constraintName: uq_dataset_lease_id }
-        - addUniqueConstraint: { tableName: dataset_lease, columnNames: run_record_id, constraintName: uq_dataset_lease_run }
+        - addUniqueConstraint: { tableName: dataset_lease, columnNames: "definition_id, run_record_id", constraintName: uq_dataset_lease_run }
         - addUniqueConstraint: { tableName: dataset_copy_operation, columnNames: operation_id, constraintName: uq_dataset_copy_operation_id }
         - addUniqueConstraint: { tableName: dataset_cache, columnNames: cache_id, constraintName: uq_dataset_cache_id }
         - addUniqueConstraint: { tableName: dataset_cache, columnNames: "definition_id, owner_type, owner_id", constraintName: uq_dataset_cache_owner }

@@ -114,6 +114,22 @@ public class DatasetCatalog {
 		return operation;
 	}
 
+	public int removeEndedLeasesForRun(UUID runRecordId) {
+		List<DatasetCatalogAggregate> catalogs = this.repository.findAll();
+		if (catalogs.stream().anyMatch(catalog -> catalog.hasActiveLeaseForRun(runRecordId))) {
+			throw new DatasetCatalogConflictException("DATASET_LEASE_CONFLICT",
+					"Active Dataset Leases cannot be removed with a Run Record");
+		}
+		int removed = 0;
+		for (DatasetCatalogAggregate catalog : catalogs) {
+			if (catalog.removeEndedLeasesForRun(runRecordId)) {
+				this.repository.save(catalog);
+				removed++;
+			}
+		}
+		return removed;
+	}
+
 	public DatasetCopyOperationView startDelete(UUID definitionId, UUID copyId, long generation,
 			long expectedRevision) {
 		DatasetCatalogAggregate catalog = this.catalog(definitionId);
