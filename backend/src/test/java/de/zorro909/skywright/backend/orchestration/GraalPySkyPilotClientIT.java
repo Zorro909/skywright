@@ -34,10 +34,9 @@ final class GraalPySkyPilotClientIT {
 	void oneLockedGraalPyContextExercisesThePortAndCancelsHeldNativeWorkOnClose() throws Exception {
 		var client = client();
 		client.probe();
-		var interruptedStatus = client.observe(new StatusRequest(List.of("missing-job")));
 		apiServer.stop();
 		try {
-			client.complete(interruptedStatus);
+			client.observe(new StatusRequest(List.of("missing-job")));
 			throw new AssertionError("Reachability loss was not reported");
 		}
 		catch (SkyPilotClientFailure failure) {

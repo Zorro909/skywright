@@ -1,5 +1,26 @@
 import json
 import sky
+from sky.server import common as server_common
+
+
+def _bridge_boundary(function):
+    def guarded(*arguments):
+        try:
+            return function(*arguments)
+        except sky.exceptions.ApiServerConnectionError:
+            server_common.get_api_server_status_response.cache_clear()
+            return _bridge_failure("REACHABILITY", "SkyPilot API server is unreachable")
+        except sky.exceptions.ApiServerAuthenticationError:
+            server_common.get_api_server_status_response.cache_clear()
+            return _bridge_failure("AUTHENTICATION", "SkyPilot API authentication failed")
+        except sky.exceptions.APIVersionMismatchError:
+            server_common.get_api_server_status_response.cache_clear()
+            return _bridge_failure("VERSION_MISMATCH", "SkyPilot API version is incompatible")
+    return guarded
+
+
+def _bridge_failure(cause, message):
+    return json.dumps({"bridge_failure": {"cause": cause, "message": message}})
 
 
 def _field(value, name):
@@ -18,11 +39,13 @@ def _handle(value):
     }
 
 
+@_bridge_boundary
 def bridge_probe():
     info = sky.api_info()
     return json.dumps({"server_version": str(info.version)})
 
 
+@_bridge_boundary
 def bridge_submit(serialized):
     specification = json.loads(serialized)
     requested = specification["resources"]
@@ -43,6 +66,7 @@ def bridge_submit(serialized):
     return json.dumps({"operation_id": str(request_id)})
 
 
+@_bridge_boundary
 def bridge_status(serialized_names):
     names = set(json.loads(serialized_names))
     request_id = sky.jobs.queue_v2(refresh=False)
@@ -50,16 +74,19 @@ def bridge_status(serialized_names):
     return json.dumps({"operation_id": str(request_id)})
 
 
+@_bridge_boundary
 def bridge_cancel(job_name):
     request_id = sky.jobs.cancel(name=str(job_name))
     return json.dumps({"operation_id": str(request_id)})
 
 
+@_bridge_boundary
 def bridge_cleanup(cluster_name):
     request_id = sky.down(str(cluster_name))
     return json.dumps({"operation_id": str(request_id)})
 
 
+@_bridge_boundary
 def bridge_complete(operation_id, kind):
     try:
         value = sky.stream_and_get(str(operation_id))

@@ -34,10 +34,11 @@ DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock" \
 ./mvnw -pl backend-deployment -am package
 ```
 
-The initial deployment is Linux amd64. The Dockerfile starts from the immutable amd64 manifest of
-the official GraalVM Community image for GraalVM CE 25.2.4 / OpenJDK 25.0.4. It retains the complete
-JDK rather than using `jlink`, packages the locked SkyPilot 0.13.0 GraalPy environment beside the
-application, and starts the JVM with the required 16 MiB thread stack.
+The initial deployment is Linux amd64. The Dockerfile copies GraalVM CE 25.2.4 / OpenJDK 25.0.4
+from its immutable official image into a digest-pinned Fedora 44 runtime. Fedora matches the glibc
+ABI of the repository toolchain that builds GraalPy's locked native extensions. The image retains
+the complete JDK rather than using `jlink`, packages the locked SkyPilot 0.13.0 GraalPy environment
+beside the application, and starts the JVM with the required 16 MiB thread stack.
 
 ## Run the image
 
@@ -45,15 +46,15 @@ Provision the `skywright` database and schema with separate migration and runtim
 in [`backend/README.md`](../backend/README.md), then supply deployment configuration only at runtime.
 Replace `<database-host>` below with a hostname or address reachable from the backend container.
 Replace `<skypilot-host>` with the separately operated, version-paired SkyPilot API server.
-The root filesystem can remain read-only; `/tmp`
-is the only documented writable location. `JAVA_TOOL_OPTIONS` injects JVM settings without
-replacing the image entry point:
+The root filesystem can remain read-only; a bounded `/tmp` is the only documented writable
+location. It must permit execution because Graal installs its pinned native runtime helper there.
+`JAVA_TOOL_OPTIONS` injects JVM settings without replacing the image entry point:
 
 ```bash
 docker run --rm \
   --name skywright-backend \
   --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --tmpfs /tmp:rw,exec,nosuid,size=128m \
   --env SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=production \
   --env SKYWRIGHT_DATABASE_MIGRATION_URL='jdbc:postgresql://<database-host>:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
   --env SKYWRIGHT_DATABASE_MIGRATION_USERNAME=skywright_migrator \
@@ -87,7 +88,7 @@ Bind both application and JDWP ports only to loopback:
 docker run --rm \
   --name skywright-backend-debug \
   --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --tmpfs /tmp:rw,exec,nosuid,size=128m \
   --env SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=local \
   --env SKYWRIGHT_DATABASE_MIGRATION_URL='jdbc:postgresql://<database-host>:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
   --env SKYWRIGHT_DATABASE_MIGRATION_USERNAME=skywright_migrator \

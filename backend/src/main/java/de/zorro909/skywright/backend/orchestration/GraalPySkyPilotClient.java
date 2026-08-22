@@ -92,7 +92,13 @@ final class GraalPySkyPilotClient implements SkyPilotClient {
 		initialize();
 		var currentBindings = this.bindings;
 		try {
-			return JSON.readTree(currentBindings.getMember(function).execute(arguments).asString());
+			var result = JSON.readTree(currentBindings.getMember(function).execute(arguments).asString());
+			if (result.has("bridge_failure")) {
+				var failure = result.required("bridge_failure");
+				throw new SkyPilotClientFailure(BridgeFailure.FailureCause.valueOf(requiredText(failure, "cause")),
+						requiredText(failure, "message"));
+			}
+			return result;
 		}
 		catch (org.graalvm.polyglot.PolyglotException failure) {
 			throw SkyPilotClientFailure.from(failure);

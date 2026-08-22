@@ -3,6 +3,7 @@ package de.zorro909.skywright.deployment;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -16,6 +17,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -60,7 +66,7 @@ final class ProductionImageIT {
 						+ " GRANT USAGE ON SCHEMA skywright TO skywright_runtime;");
 		runningContainer = containerName("running");
 		var arguments = applicationContainerArguments(runningContainer);
-		arguments.addAll(List.of("--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "--publish",
+		arguments.addAll(List.of("--read-only", "--tmpfs", "/tmp:rw,exec,nosuid,size=128m", "--publish",
 				"127.0.0.1::8080", imageName()));
 		docker(arguments.toArray(String[]::new));
 		var port = awaitPublishedPort(runningContainer, STARTUP_TIMEOUT);
@@ -158,20 +164,32 @@ final class ProductionImageIT {
 	@Test
 	void productionProcessTerminatesWithinTheDocumentedStopWindow() throws Exception {
 		var container = containerName("termination");
-		try {
+		try (var skyPilot = HeldSkyPilotServer.start()) {
 			var arguments = applicationContainerArguments(container);
-			arguments.add(imageName());
+			arguments.addAll(
+					List.of("--read-only", "--tmpfs", "/tmp:rw,exec,nosuid,size=128m", "--add-host",
+							"skywright-test-host:host-gateway", "--env",
+							"SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT=http://skywright-test-host:"
+									+ skyPilot.port(),
+							"--env", "NO_PROXY=skywright-test-host,127.0.0.1,localhost", "--env",
+							"no_proxy=skywright-test-host,127.0.0.1,localhost", "--env",
+							"SKYWRIGHT_SKYPILOT_BRIDGE_AVAILABILITY_PROBE_INTERVAL=100ms", imageName()));
 			docker(arguments.toArray(String[]::new));
-			awaitLogsContaining(container, "Started SkywrightBackendApplication", STARTUP_TIMEOUT);
+			awaitLogsContaining(container, "SkyPilot capability available", STARTUP_TIMEOUT);
+			skyPilot.holdRequests();
+			skyPilot.awaitHeld(Duration.ofSeconds(10));
+			skyPilot.releaseAfter(Duration.ofSeconds(10));
 
 			var started = Instant.now();
 			docker("stop", "--time", "30", container);
+			var elapsed = Duration.between(started, Instant.now());
+			var logs = docker("logs", container);
 
-			assertThat(Duration.between(started, Instant.now())).isLessThan(Duration.ofSeconds(30));
 			assertThat(docker("inspect", "--format", "{{.State.OOMKilled}}", container).strip()).isEqualTo("false");
-			assertThat(docker("logs", container))
-				.contains("SkyPilot capability unavailable", "REFUSING_TRAFFIC", "Graceful shutdown complete")
+			assertThat(docker("inspect", "--format", "{{.State.ExitCode}}", container).strip()).isIn("0", "143");
+			assertThat(logs).contains("SkyPilot capability available", "REFUSING_TRAFFIC", "Graceful shutdown complete")
 				.doesNotContain("SIGSEGV", "A fatal error has been detected", "hs_err_pid");
+			assertThat(elapsed).isLessThan(Duration.ofSeconds(30));
 		}
 		finally {
 			dockerIgnoringFailure("rm", "--force", container);
@@ -269,7 +287,8 @@ final class ProductionImageIT {
 			}
 			Thread.sleep(Duration.ofMillis(100));
 		}
-		throw new AssertionError("Container logs did not contain " + expected);
+		throw new AssertionError(
+				"Container logs did not contain " + expected + ":\n" + dockerCombinedOutput("logs", container));
 	}
 
 	private static JsonNode readEvent(String line) {
@@ -332,6 +351,82 @@ final class ProductionImageIT {
 
 	private static String sourceRevision() {
 		return System.getProperty("source.revision");
+	}
+
+	private static final class HeldSkyPilotServer implements AutoCloseable {
+
+		private static final byte[] HEALTH = ("{\"status\":\"healthy\",\"api_version\":\"56\","
+				+ "\"version\":\"0.13.0\",\"version_on_disk\":\"0.13.0\",\"commit\":\"test\","
+				+ "\"basic_auth_enabled\":false,\"user\":null}")
+			.getBytes(StandardCharsets.UTF_8);
+
+		private final HttpServer server;
+
+		private final java.util.concurrent.ScheduledExecutorService executor;
+
+		private final AtomicBoolean holding = new AtomicBoolean();
+
+		private final CountDownLatch held = new CountDownLatch(1);
+
+		private final CountDownLatch release = new CountDownLatch(1);
+
+		private HeldSkyPilotServer(HttpServer server, java.util.concurrent.ScheduledExecutorService executor) {
+			this.server = server;
+			this.executor = executor;
+		}
+
+		static HeldSkyPilotServer start() throws IOException {
+			var server = HttpServer.create(new InetSocketAddress("0.0.0.0", 0), 0);
+			var executor = Executors.newScheduledThreadPool(2,
+					Thread.ofPlatform().daemon().name("skypilot-test-", 0).factory());
+			var fixture = new HeldSkyPilotServer(server, executor);
+			server.createContext("/api/health", exchange -> fixture.respond(exchange));
+			server.setExecutor(executor);
+			server.start();
+			return fixture;
+		}
+
+		int port() {
+			return this.server.getAddress().getPort();
+		}
+
+		void holdRequests() {
+			this.holding.set(true);
+		}
+
+		void awaitHeld(Duration timeout) throws InterruptedException {
+			assertThat(this.held.await(timeout.toMillis(), TimeUnit.MILLISECONDS)).isTrue();
+		}
+
+		void releaseAfter(Duration delay) {
+			this.executor.schedule(this.release::countDown, delay.toMillis(), TimeUnit.MILLISECONDS);
+		}
+
+		private void respond(com.sun.net.httpserver.HttpExchange exchange) throws IOException {
+			if (this.holding.get()) {
+				this.held.countDown();
+				try {
+					this.release.await();
+				}
+				catch (InterruptedException interrupted) {
+					Thread.currentThread().interrupt();
+				}
+			}
+			exchange.getResponseHeaders().set("Content-Type", "application/json");
+			exchange.getResponseHeaders().set("X-SkyPilot-API-Version", "56");
+			exchange.sendResponseHeaders(200, HEALTH.length);
+			try (var body = exchange.getResponseBody()) {
+				body.write(HEALTH);
+			}
+		}
+
+		@Override
+		public void close() {
+			this.release.countDown();
+			this.server.stop(0);
+			this.executor.shutdownNow();
+		}
+
 	}
 
 }

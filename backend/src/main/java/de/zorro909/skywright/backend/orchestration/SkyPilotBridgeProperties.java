@@ -12,7 +12,7 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "skywright.skypilot.bridge", ignoreUnknownFields = false)
 @Validated
 public record SkyPilotBridgeProperties(@DefaultValue("8") @Min(1) int controlQueueCapacity,
-		@DefaultValue("4") @Min(1) int heldQueueCapacity, @DefaultValue("20s") @NotNull Duration shutdownGrace,
+		@DefaultValue("4") @Min(1) int heldQueueCapacity, @DefaultValue("5s") @NotNull Duration shutdownGrace,
 		@DefaultValue("30s") @NotNull Duration availabilityProbeInterval,
 		@DefaultValue("graalpy-resources") @NotNull Path externalDirectory,
 		@DefaultValue("http://127.0.0.1:46580") @NotNull URI apiServerEndpoint) {
