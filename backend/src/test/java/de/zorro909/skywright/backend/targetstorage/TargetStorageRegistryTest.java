@@ -305,6 +305,26 @@ final class TargetStorageRegistryTest {
 	}
 
 	@Test
+	void runDefinitionStorageSnapshotsRetainTheQualifiedRevision() {
+		UUID id = eligibleRunOutput();
+		this.registry.assignDefaults(TargetClass.CLOUD_SPOT, id, false, id);
+		RunDefinitionStorageSelection before = this.registry.resolveForRunDefinition(TargetClass.CLOUD_SPOT,
+				RunDefinitionStorageOverrides.none());
+		long candidate = this.registry.stageRevision(id, this.registry.get(id).registrationRevision(),
+				configuration("http://new-storage.example", "eu-west-1"));
+		this.registry.recordQualification(id,
+				successfulAssessment(candidate, this.registry.qualificationRequest(id).bindings()));
+		this.registry.activate(id, this.registry.get(id).registrationRevision());
+		RunDefinitionStorageSelection after = this.registry.resolveForRunDefinition(TargetClass.CLOUD_SPOT,
+				RunDefinitionStorageOverrides.none());
+
+		assertThat(before.execution().endpoint()).hasToString("http://storage.example");
+		assertThat(before.execution().configurationRevision()).isEqualTo(1);
+		assertThat(after.execution().endpoint()).hasToString("http://new-storage.example");
+		assertThat(after.execution().configurationRevision()).isEqualTo(candidate);
+	}
+
+	@Test
 	void failureConstructionCannotCarryCredentialValues() {
 		assertThatThrownBy(() -> TargetStorageCapabilityResult.failure("put-object", "access-denied",
 				"The binding cannot perform PutObject", Map.of("provider-detail", "do-not-store")))
