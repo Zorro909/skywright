@@ -59,7 +59,7 @@ final class RunDefinitionCodec {
 		try {
 			parsed = JSON.readTree(document);
 		}
-		catch (JacksonException error) {
+		catch (JacksonException | NumberFormatException error) {
 			throw failure("RUN_DEFINITION_INVALID_JSON", "", "parse");
 		}
 		if (parsed == null || parsed.isMissingNode()) {
@@ -78,12 +78,36 @@ final class RunDefinitionCodec {
 					error.getInstanceLocation().toString(), error.getKeyword()))
 			.toList());
 		validatePortableDecimals(parsed, "", failures);
+		validateProjectVersionRelationships(parsed, failures);
 		validateTargetRelationships(parsed, failures);
 		validateStorageEndpoints(parsed, failures);
 		if (!failures.isEmpty()) {
 			throw new RunDefinitionValidationException(failures);
 		}
 		return ((ObjectNode) parsed).deepCopy();
+	}
+
+	private static void validateProjectVersionRelationships(JsonNode definition, List<RunDefinitionFailure> failures) {
+		JsonNode version = definition.path("trainingProjectVersion");
+		if (!version.isObject()) {
+			return;
+		}
+		String expectedLabel = version.path("sourceRevision").asText() + "-" + version.path("pipeline").asText();
+		if (!expectedLabel.equals(version.path("versionLabel").asText())) {
+			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
+					"/trainingProjectVersion/versionLabel", "projectVersionRelationship"));
+		}
+		if (version.path("images").isObject() && version.path("environmentProfiles").isObject()
+				&& !fieldNames(version.path("images")).equals(fieldNames(version.path("environmentProfiles")))) {
+			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
+					"/trainingProjectVersion/environmentProfiles", "projectVersionRelationship"));
+		}
+	}
+
+	private static List<String> fieldNames(JsonNode value) {
+		List<String> names = new ArrayList<>();
+		value.propertyStream().map(Map.Entry::getKey).sorted().forEach(names::add);
+		return names;
 	}
 
 	static boolean hasPortableDecimal(BigDecimal value) {

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from decimal import Decimal
 from importlib.resources import files
+from ipaddress import ip_address
 from typing import Any, cast
 from urllib.parse import urlsplit
 
@@ -42,7 +44,11 @@ def _parse_integer(value: str) -> int:
 def _parse_decimal(value: str) -> Decimal:
     if len(value) > _MAXIMUM_PORTABLE_NUMBER_LENGTH:
         raise RunDefinitionValidationError("RUN_DEFINITION_INVALID_JSON")
-    return Decimal(value)
+    parsed = Decimal(value)
+    exponent = parsed.as_tuple().exponent
+    if isinstance(exponent, int) and not (-2_147_483_647 <= exponent <= 2_147_483_648):
+        raise RunDefinitionValidationError("RUN_DEFINITION_INVALID_JSON")
+    return parsed
 
 
 _SCHEMA = json.loads(
@@ -84,6 +90,7 @@ def decode(document: str) -> dict[str, Any]:
     if (
         errors
         or not _has_portable_decimals(value)
+        or not _has_valid_project_version_relationships(value)
         or not _has_valid_target_relationships(value)
         or not _has_valid_storage_endpoints(value)
     ):
@@ -115,6 +122,26 @@ def _has_portable_decimals(value: Any) -> bool:
         mapping = cast(dict[str, Any], value)
         return all(_has_portable_decimals(item) for item in mapping.values())
     return True
+
+
+def _has_valid_project_version_relationships(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return True
+    version = cast(dict[str, Any], value).get("trainingProjectVersion")
+    if not isinstance(version, dict):
+        return True
+    project_version = cast(dict[str, Any], version)
+    images = project_version.get("images")
+    profiles = project_version.get("environmentProfiles")
+    return (
+        project_version.get("versionLabel")
+        == (
+            f"{project_version.get('sourceRevision')}-{project_version.get('pipeline')}"
+        )
+        and isinstance(images, dict)
+        and isinstance(profiles, dict)
+        and images.keys() == profiles.keys()
+    )
 
 
 def _has_valid_target_relationships(value: Any) -> bool:
@@ -173,6 +200,7 @@ def _is_valid_storage_endpoint(value: Any) -> bool:
         return (
             endpoint.scheme.lower() in {"http", "https"}
             and endpoint.hostname is not None
+            and _is_java_uri_host(endpoint.hostname)
             and endpoint.username is None
             and endpoint.password is None
             and "?" not in value
@@ -182,12 +210,38 @@ def _is_valid_storage_endpoint(value: Any) -> bool:
         return False
 
 
+def _is_java_uri_host(host: str) -> bool:
+    try:
+        ip_address(host)
+        return True
+    except ValueError:
+        return all(
+            re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+            for label in host.split(".")
+        )
+
+
 def encode(value: dict[str, Any]) -> str:
     return _encode_json(value)
 
 
 def copy_value(value: dict[str, Any]) -> dict[str, Any]:
     return deepcopy(value)
+
+
+def equal_values(left: Any, right: Any) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            equal_values(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            equal_values(left[key], right[key]) for key in left
+        )
+    return bool(left == right)
 
 
 def _encode_json(value: Any) -> str:

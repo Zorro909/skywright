@@ -52,6 +52,10 @@ class RunDefinitionResolverIT {
 		assertThat(definition.path("schemaVersion").asInt()).isEqualTo(1);
 		assertThat(definition.at("/trainingProjectVersion/images/cuda").asText()).isEqualTo("sha256:" + "a".repeat(64));
 		assertThat(definition.at("/trainingProjectVersion/images/rocm").asText()).isEqualTo("sha256:" + "b".repeat(64));
+		assertThat(definition.at("/trainingProjectVersion/environmentProfiles/cuda").asText())
+			.isEqualTo("registry.example/environment:cuda@sha256:" + "c".repeat(64));
+		assertThat(definition.at("/trainingProjectVersion/environmentProfiles/rocm").asText())
+			.isEqualTo("registry.example/environment:rocm@sha256:" + "d".repeat(64));
 		assertThat(definition.at("/configuration/reproducibility/seed").asInt()).isEqualTo(9);
 		assertThat(definition.at("/configuration/checkpoint/retention").asInt()).isEqualTo(3);
 		assertThat(definition.at("/datasetDefinition/datasetIdentity").asText()).isEqualTo("dataset-1");
@@ -183,6 +187,27 @@ class RunDefinitionResolverIT {
 
 		assertThat(resolver.resolve(empty, null).failures()).extracting(RunDefinitionFailure::code)
 			.containsExactly("CONFIG_INVALID_JSON");
+		RunSubmission missing = new RunSubmission(base.trainingProject(), base.manifestArtifactDigest(), null,
+				base.datasetDefinition(), base.targetRequest(), base.storageOverrides(), base.maximumRecoveryDebt(),
+				base.runtimeCeiling(), base.costCeiling(), false);
+		assertThat(resolver.resolve(missing, null).failures()).extracting(RunDefinitionFailure::code)
+			.containsExactly("CONFIG_INVALID_JSON");
+	}
+
+	@Test
+	void malformedCheckpointDatasetsDoNotProduceOrderingResetAdvice() {
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				targets(), storage(), "EUR");
+		RunSubmission base = submission(TargetClass.CLOUD_SPOT);
+		RunDefinition source = resolver.resolve(base, null).definition();
+		RunSubmission malformed = new RunSubmission(base.trainingProject(), base.manifestArtifactDigest(),
+				base.configurationJson(), new DatasetDefinitionReference("dataset-1", "v2", "malformed"),
+				base.targetRequest(), base.storageOverrides(), base.maximumRecoveryDebt(), base.runtimeCeiling(),
+				base.costCeiling(), false);
+
+		assertThat(resolver.resolve(malformed, new CheckpointSeedFacts(source, true)).failures())
+			.extracting(RunDefinitionFailure::code)
+			.containsExactly("DATASET_DEFINITION_INVALID");
 	}
 
 	@Test

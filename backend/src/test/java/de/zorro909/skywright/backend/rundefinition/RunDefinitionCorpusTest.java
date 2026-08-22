@@ -76,6 +76,13 @@ class RunDefinitionCorpusTest {
 								.isEqualTo(nestingCase.path("code").asText()));
 			}
 		}
+		for (JsonNode exponentCase : corpus.path("decimalExponentCases")) {
+			String document = template.replace(",0.1]", "," + exponentCase.path("number").asText() + "]");
+			assertThatThrownBy(() -> RunDefinition.decode(document))
+				.isInstanceOf(RunDefinitionValidationException.class)
+				.satisfies(error -> assertThat(((RunDefinitionValidationException) error).failures().getFirst().code())
+					.isEqualTo(exponentCase.path("code").asText()));
+		}
 	}
 
 	private static void set(JsonNode root, String pointer, JsonNode replacement) {

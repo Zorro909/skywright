@@ -12,6 +12,10 @@
           "cuda": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "rocm": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         },
+        "environmentProfiles": {
+          "cuda": "registry.example/skywright:cuda@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "rocm": "registry.example/skywright:rocm@sha256:4444444444444444444444444444444444444444444444444444444444444444"
+        },
         "configurationContract": {
           "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
           "skywrightSchema": {"version": "0.3.0", "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}
@@ -50,8 +54,12 @@
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/configuration/nested/array/2", "replacementJson": "1e-1000000001"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/endpoint", "replacementJson": "\"https://access-key:secret@objects.example\""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/repatriation/destination/endpoint", "replacementJson": "\"https://home.example?credential=secret#fragment\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/endpoint", "replacementJson": "\"https://storage_internal.example\""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/bucket", "replacementJson": "\"   \""},
-    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/repatriation/destination/region", "replacementJson": "\"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\""}
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/repatriation/destination/region", "replacementJson": "\"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/compatibilityOptions", "replacementJson": "{\"checksumCalculation\":\"garbage\"}"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/trainingProjectVersion/versionLabel", "replacementJson": "\"unrelated-label\""},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/trainingProjectVersion/environmentProfiles", "replacementJson": "{\"cuda\":\"registry.example/skywright:cuda@sha256:3333333333333333333333333333333333333333333333333333333333333333\"}"}
   ],
   "numberLengthCases": [
     {"digits": 1001, "code": null},
@@ -60,5 +68,10 @@
   "nestingCases": [
     {"depth": 100, "code": null},
     {"depth": 300, "code": "RUN_DEFINITION_INVALID_JSON"}
+  ],
+  "decimalExponentCases": [
+    {"number": "1e-1000000001", "code": "RUN_DEFINITION_SCHEMA_VALIDATION"},
+    {"number": "1e-2147483648", "code": "RUN_DEFINITION_INVALID_JSON"},
+    {"number": "1e2147483649", "code": "RUN_DEFINITION_INVALID_JSON"}
   ]
 }

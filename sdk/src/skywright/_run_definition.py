@@ -9,12 +9,13 @@ from skywright._run_definition_codec import (
     copy_value,
     decode,
     encode,
+    equal_values,
 )
 
 __all__ = ["RunDefinition", "RunDefinitionValidationError"]
 
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True, init=False, eq=False)
 class RunDefinition:
     """Immutable internal model generated for Run Definition schema version 1."""
 
@@ -31,3 +32,11 @@ class RunDefinition:
 
     def value(self) -> dict[str, Any]:
         return copy_value(self._value)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, RunDefinition) and equal_values(
+            self._value, other._value
+        )
+
+    def __hash__(self) -> int:
+        raise TypeError("unhashable type: 'RunDefinition'")

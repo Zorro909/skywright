@@ -58,11 +58,11 @@ public final class RunDefinitionResolver {
 
 		TrainingProjectVersion version = resolveVersion(submission, failures);
 		JsonNode configuration = resolveConfiguration(submission, version, failures);
-		assessDataset(submission.datasetDefinition(), failures);
+		boolean datasetReferenceValid = assessDataset(submission.datasetDefinition(), failures);
 		ResolvedTarget target = resolveTarget(submission.targetRequest(), version, failures);
 		RunDefinitionStorageSelection storage = resolveStorage(submission, failures);
 		String currency = resolveCurrency(submission.costCeiling(), failures);
-		assessCheckpoint(submission, checkpointSeed, version, configuration, failures);
+		assessCheckpoint(submission, checkpointSeed, version, configuration, datasetReferenceValid, failures);
 
 		List<RunDefinitionFailure> ordered = failures.stream().distinct().sorted().toList();
 		if (!ordered.isEmpty()) {
@@ -133,6 +133,10 @@ public final class RunDefinitionResolver {
 		if (version == null) {
 			return null;
 		}
+		if (submission.configurationJson() == null) {
+			failures.add(failure("CONFIG_INVALID_JSON", "configuration", "", "parse"));
+			return null;
+		}
 		try {
 			return version.configurationContract().resolve(submission.configurationJson());
 		}
@@ -143,12 +147,12 @@ public final class RunDefinitionResolver {
 		}
 	}
 
-	private void assessDataset(DatasetDefinitionReference reference, List<RunDefinitionFailure> failures) {
+	private boolean assessDataset(DatasetDefinitionReference reference, List<RunDefinitionFailure> failures) {
 		if (reference == null || blank(reference.datasetIdentity()) || blank(reference.version())
 				|| reference.contentFingerprint() == null
 				|| !DIGEST.matcher(reference.contentFingerprint()).matches()) {
 			failures.add(failure("DATASET_DEFINITION_INVALID", "submission", "/datasetDefinition", "required"));
-			return;
+			return false;
 		}
 		try {
 			DatasetDefinitionAssessment assessment = this.datasets.assess(reference);
@@ -162,6 +166,7 @@ public final class RunDefinitionResolver {
 		catch (RuntimeException error) {
 			failures.add(failure("DATASET_DEPENDENCY_UNAVAILABLE", "dataset", "/datasetDefinition", "available"));
 		}
+		return true;
 	}
 
 	private ResolvedTarget resolveTarget(TargetRequest request, TrainingProjectVersion version,
@@ -253,7 +258,8 @@ public final class RunDefinitionResolver {
 	}
 
 	private static void assessCheckpoint(RunSubmission submission, CheckpointSeedFacts seed,
-			TrainingProjectVersion version, JsonNode configuration, List<RunDefinitionFailure> failures) {
+			TrainingProjectVersion version, JsonNode configuration, boolean datasetReferenceValid,
+			List<RunDefinitionFailure> failures) {
 		if (seed == null) {
 			return;
 		}
@@ -278,7 +284,7 @@ public final class RunDefinitionResolver {
 			failures.add(failure("CHECKPOINT_CONFIGURATION_INCOMPATIBLE", "checkpoint-seed", "/configuration",
 					"resumeCompatible"));
 		}
-		if (submission.datasetDefinition() != null) {
+		if (datasetReferenceValid) {
 			boolean datasetChanged = !source.datasetDefinition().equals(dataset(submission.datasetDefinition()));
 			if (datasetChanged && !submission.orderingReset()) {
 				failures.add(failure("ORDERING_RESET_REQUIRED", "checkpoint-seed", "/orderingReset", "required"));
@@ -312,6 +318,8 @@ public final class RunDefinitionResolver {
 		result.put("pipeline", version.pipeline());
 		ObjectNode images = result.putObject("images");
 		new TreeMap<>(version.images()).forEach(images::put);
+		ObjectNode profiles = result.putObject("environmentProfiles");
+		new TreeMap<>(version.environmentProfiles()).forEach(profiles::put);
 		ObjectNode configuration = result.putObject("configurationContract");
 		configuration.put("digest", version.configurationContractDigest());
 		try {

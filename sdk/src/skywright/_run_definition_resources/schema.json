@@ -29,7 +29,7 @@
     },
     "trainingProjectVersion": {
       "type": "object", "additionalProperties": false,
-      "required": ["projectIdentity", "versionLabel", "manifestArtifactDigest", "sourceRevision", "pipeline", "images", "configurationContract", "metricContract"],
+      "required": ["projectIdentity", "versionLabel", "manifestArtifactDigest", "sourceRevision", "pipeline", "images", "environmentProfiles", "configurationContract", "metricContract"],
       "properties": {
         "projectIdentity": {"type": "string", "minLength": 1},
         "versionLabel": {"type": "string", "minLength": 1},
@@ -37,6 +37,7 @@
         "sourceRevision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "pipeline": {"type": "string", "minLength": 1},
         "images": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/digest"}},
+        "environmentProfiles": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "pattern": "^.+@sha256:[0-9a-f]{64}$"}},
         "configurationContract": {"$ref": "#/$defs/contractIdentity"},
         "metricContract": {"$ref": "#/$defs/contractIdentity"}
       }
@@ -73,7 +74,13 @@
         "bucket": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "\\S"},
         "region": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "\\S"},
         "addressingMode": {"enum": ["path", "virtual-hosted"]},
-        "compatibilityOptions": {"type": "object", "additionalProperties": {"type": "string"}}
+        "compatibilityOptions": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "chunkedEncoding": {"enum": ["enabled", "disabled"]},
+            "checksumCalculation": {"enum": ["when-required", "when-supported"]}
+          }
+        }
       }
     },
     "storage": {

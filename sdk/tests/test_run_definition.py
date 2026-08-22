@@ -51,8 +51,26 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
             )
         elif invalid["pointer"] == "/storage/execution/bucket":
             document = document.replace('"bucket": "runs"', f'"bucket": {replacement}')
-        else:
+        elif invalid["pointer"] == "/storage/repatriation/destination/region":
             document = document.replace('"region": "local"', f'"region": {replacement}')
+        elif invalid["pointer"] == "/storage/execution/compatibilityOptions":
+            document = document.replace(
+                '"compatibilityOptions": {"chunkedEncoding": "disabled"}',
+                f'"compatibilityOptions": {replacement}',
+            )
+        elif invalid["pointer"] == "/trainingProjectVersion/versionLabel":
+            document = document.replace(
+                '"versionLabel": "0123456789abcdef0123456789abcdef01234567-42"',
+                f'"versionLabel": {replacement}',
+            )
+        else:
+            start = document.index('"environmentProfiles": {')
+            end = document.index('}, "configurationContract"', start) + 1
+            document = (
+                document[:start]
+                + f'"environmentProfiles": {replacement}'
+                + document[end:]
+            )
         with pytest.raises(RunDefinitionValidationError) as failure:
             RunDefinition.decode(document)
         assert failure.value.code == invalid["code"]
@@ -82,6 +100,11 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
             with pytest.raises(RunDefinitionValidationError) as failure:
                 RunDefinition.decode(document)
             assert failure.value.code == nesting_case["code"]
+    for exponent_case in corpus["decimalExponentCases"]:
+        document = template.replace(", 0.1]", f", {exponent_case['number']}]")
+        with pytest.raises(RunDefinitionValidationError) as failure:
+            RunDefinition.decode(document)
+        assert failure.value.code == exponent_case["code"]
 
 
 def test_python_preserves_large_decimal_exponents_compactly() -> None:
@@ -95,3 +118,15 @@ def test_python_preserves_large_decimal_exponents_compactly() -> None:
     assert "1E+1000000000" in encoded
     assert len(encoded) < 10_000
     assert RunDefinition.decode(encoded) == RunDefinition.decode(document)
+
+
+def test_python_equality_preserves_json_scalar_types() -> None:
+    corpus = json.loads(
+        files("skywright._run_definition_resources").joinpath("corpus.json").read_text()
+    )
+    numeric = json.dumps(corpus["valid"][0]).replace('"array": [null,', '"array": [1,')
+    boolean = numeric.replace('"array": [1,', '"array": [true,')
+
+    assert RunDefinition.decode(numeric) != RunDefinition.decode(boolean)
+    with pytest.raises(TypeError):
+        hash(RunDefinition.decode(numeric))
