@@ -123,6 +123,8 @@ final class GraalPySkyPilotClient implements SkyPilotClient {
 				.allowEnvironmentAccess(EnvironmentAccess.INHERIT)
 				.environment("SKYPILOT_API_SERVER_ENDPOINT", this.apiServerEndpoint.toString())
 				.allowIO(IOAccess.newBuilder().allowHostFileAccess(true).allowHostSocketAccess(true).build())
+				.out(OutputStream.nullOutputStream())
+				.err(OutputStream.nullOutputStream())
 				.logHandler(OutputStream.nullOutputStream())
 				.arguments("python", new String[] { "skywright-backend" })
 				.option("python.PosixModuleBackend", "native")

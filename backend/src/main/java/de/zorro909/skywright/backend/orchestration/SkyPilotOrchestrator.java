@@ -74,7 +74,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 			return refreshed;
 		}
 		try {
-			this.controlLane.execute(new AvailabilityRefresh(refreshed));
+			this.heldLane.execute(new AvailabilityRefresh(refreshed));
 		}
 		catch (java.util.concurrent.RejectedExecutionException exception) {
 			refreshed.complete(this.availability);

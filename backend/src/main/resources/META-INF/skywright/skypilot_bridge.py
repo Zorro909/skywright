@@ -76,13 +76,16 @@ def bridge_submit(serialized):
             {"operation_id": _submission_operation(request_id, existing_job_id)}
         )
 
-    requested = specification["resources"]
-    resources = sky.Resources(
-        infra=requested["infrastructure"],
-        cpus=requested["cpus"],
-        memory=requested["memory"],
-        image_id=requested.get("imageId"),
-    )
+    resources = [
+        sky.Resources(
+            infra=requested["infrastructure"],
+            cpus=requested["cpus"],
+            memory=requested["memory"],
+            accelerators=requested.get("accelerators"),
+            image_id=requested.get("imageId"),
+        )
+        for requested in specification["resources"]
+    ]
     task = sky.Task(
         name=name,
         setup=specification.get("setup"),

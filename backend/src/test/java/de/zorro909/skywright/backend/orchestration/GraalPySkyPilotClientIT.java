@@ -76,7 +76,7 @@ final class GraalPySkyPilotClientIT {
 
 	private static OrchestratorTaskSpecification task() {
 		return new OrchestratorTaskSpecification("skywright-bridge-test-" + UUID.randomUUID(), null, "echo bridge-test",
-				new OrchestratorTaskSpecification.Resources("kubernetes", "2", "4", null), Map.of());
+				List.of(new OrchestratorTaskSpecification.Resources("kubernetes", "2", "4", null, null)), Map.of());
 	}
 
 }

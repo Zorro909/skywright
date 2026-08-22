@@ -4,7 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import jakarta.persistence.Entity;
 import java.lang.reflect.RecordComponent;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
@@ -25,6 +28,20 @@ final class OrchestratorContractTest {
 			.noneMatch(annotation -> annotation.annotationType() == Entity.class);
 		assertThat(Stream.of(OperationOutcome.Observed.class.getRecordComponents()).map(RecordComponent::getType))
 			.doesNotContain(org.graalvm.polyglot.Value.class, org.graalvm.polyglot.Context.class);
+	}
+
+	@Test
+	void taskContractRetainsImmutableAcceleratorImageCandidates() {
+		var cuda = new OrchestratorTaskSpecification.Resources("aws", "8", "32", "A100:1",
+				"docker:project@sha256:cuda");
+		var rocm = new OrchestratorTaskSpecification.Resources("kubernetes/rocm", "8", "32", "MI300X:1",
+				"docker:project@sha256:rocm");
+		var candidates = new ArrayList<>(List.of(cuda, rocm));
+
+		var task = new OrchestratorTaskSpecification("run-1", null, "train", candidates, Map.of());
+		candidates.clear();
+
+		assertThat(task.resources()).containsExactly(cuda, rocm);
 	}
 
 }

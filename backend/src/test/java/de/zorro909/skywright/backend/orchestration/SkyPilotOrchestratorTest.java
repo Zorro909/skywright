@@ -82,9 +82,8 @@ final class SkyPilotOrchestratorTest {
 		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
 		awaitInitialProbe();
 
-		var failure = this.orchestrator
-			.submit(new OrchestratorTaskSpecification("job", null, "true",
-					new OrchestratorTaskSpecification.Resources("aws", "2", "4", null), java.util.Map.of()))
+		var failure = this.orchestrator.submit(new OrchestratorTaskSpecification("job", null, "true",
+				List.of(new OrchestratorTaskSpecification.Resources("aws", "2", "4", null, null)), java.util.Map.of()))
 			.toCompletableFuture()
 			.get(1, TimeUnit.SECONDS)
 			.failure();
@@ -117,7 +116,7 @@ final class SkyPilotOrchestratorTest {
 				() -> new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1))));
 		try {
 			this.orchestrator = creating.get(1, TimeUnit.SECONDS);
-			assertThat(client.probeStarted.await(1, TimeUnit.SECONDS)).isTrue();
+			assertThat(client.heldProbeStarted.await(1, TimeUnit.SECONDS)).isTrue();
 			assertThat(this.orchestrator.availability().available()).isFalse();
 		}
 		finally {
@@ -147,6 +146,25 @@ final class SkyPilotOrchestratorTest {
 		assertThat(active.toCompletableFuture()).succeedsWithin(Duration.ofSeconds(1));
 	}
 
+	@Test
+	void stalledAvailabilityRefreshDoesNotBlockControlWork() throws Exception {
+		var client = new ControllableSkyPilotClient();
+		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
+		awaitInitialProbe();
+		client.holdProbe.set(true);
+
+		var refresh = this.orchestrator.refreshAvailability();
+		assertThat(client.heldProbeStarted.await(1, TimeUnit.SECONDS)).isTrue();
+		var status = this.orchestrator.observe(new StatusRequest(List.of("job")))
+			.toCompletableFuture()
+			.get(1, TimeUnit.SECONDS);
+
+		assertThat(status)
+			.isEqualTo(OrchestratorResult.accepted(new OrchestratorOperation("status-1", OperationKind.STATUS)));
+		assertThat(refresh).isNotDone();
+		client.releaseProbe.countDown();
+	}
+
 	private void awaitInitialProbe() throws Exception {
 		this.orchestrator.refreshAvailability().toCompletableFuture().get(1, TimeUnit.SECONDS);
 	}
@@ -157,7 +175,7 @@ final class SkyPilotOrchestratorTest {
 
 		private final CountDownLatch releaseHeld = new CountDownLatch(1);
 
-		private final CountDownLatch probeStarted = new CountDownLatch(1);
+		private final CountDownLatch heldProbeStarted = new CountDownLatch(1);
 
 		private final CountDownLatch releaseProbe = new CountDownLatch(1);
 
@@ -180,8 +198,8 @@ final class SkyPilotOrchestratorTest {
 
 		@Override
 		public void probe() throws Exception {
-			this.probeStarted.countDown();
-			if (this.holdProbe.get()) {
+			if (this.holdProbe.compareAndSet(true, false)) {
+				this.heldProbeStarted.countDown();
 				this.releaseProbe.await();
 			}
 			if (!this.reachable.get()) {
