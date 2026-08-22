@@ -407,8 +407,286 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/RegistryRebindingOperation' }
         '409': { $ref: '#/components/responses/Problem' }
+  /dataset-catalog:
+    get:
+      operationId: listDatasetCatalog
+      summary: List Dataset Definitions and their catalog facts in stable order.
+      parameters:
+        - { name: datasetId, in: query, schema: { $ref: '#/components/schemas/SkywrightId' } }
+        - { name: targetStorageId, in: query, schema: { $ref: '#/components/schemas/SkywrightId' } }
+        - { name: role, in: query, schema: { $ref: '#/components/schemas/DatasetCopyRole' } }
+        - { name: acceptingLeases, in: query, schema: { type: boolean } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200':
+          description: One bounded page of Dataset Catalog records.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetCatalogPage' }
+  /dataset-catalog/{definitionId}:
+    parameters:
+      - name: definitionId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    get:
+      operationId: getDatasetCatalogRecord
+      summary: Inspect one Dataset Definition's copies, generations, leases, and operations.
+      responses:
+        '200':
+          description: Current Dataset Catalog record.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetCatalogRecord' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /dataset-catalog/{definitionId}/copies/{copyId}/promotion:
+    parameters:
+      - { name: definitionId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+      - { name: copyId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: promoteDatasetCopy
+      summary: Reverify a replica and make it authoritative atomically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DatasetCatalogRevisionCommand' }
+      responses:
+        '200':
+          description: Authority assignment changed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetCatalogRecord' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /dataset-catalog/{definitionId}/copies/{copyId}/refresh:
+    parameters:
+      - { name: definitionId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+      - { name: copyId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: refreshDatasetCopy
+      summary: Start guarded replacement of one Dataset Copy generation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartDatasetCopyOperation' }
+      responses:
+        '201':
+          description: Durable refresh operation created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetCopyOperation' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /dataset-catalog/{definitionId}/copies/{copyId}/deletion:
+    parameters:
+      - { name: definitionId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+      - { name: copyId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: deleteDatasetCopy
+      summary: Start guarded deletion of one non-authoritative Dataset Copy generation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartDatasetCopyOperation' }
+      responses:
+        '201':
+          description: Durable deletion operation created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetCopyOperation' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /dataset-catalog/{definitionId}/operations/{operationId}:
+    parameters:
+      - { name: definitionId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+      - { name: operationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      operationId: getDatasetCopyOperation
+      summary: Inspect one durable Dataset Copy Operation.
+      responses:
+        '200':
+          description: Current operation progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetCopyOperation' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /dataset-catalog/{definitionId}/operations/{operationId}/retry:
+    parameters:
+      - { name: definitionId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+      - { name: operationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: retryDatasetCopyOperation
+      summary: Retry a failed Dataset Copy Operation under its existing identity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DatasetCatalogRevisionCommand' }
+      responses:
+        '200':
+          description: Operation retried.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetCopyOperation' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /dataset-catalog/{definitionId}/operations/{operationId}/cancellation:
+    parameters:
+      - { name: definitionId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+      - { name: operationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: cancelDatasetCopyOperation
+      summary: Cancel a Dataset Copy Operation before its publication or deletion boundary.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DatasetCatalogRevisionCommand' }
+      responses:
+        '200':
+          description: Operation cancelled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetCopyOperation' }
+        '409': { $ref: '#/components/responses/Problem' }
 components:
   schemas:
+    DatasetCopyRole:
+      type: string
+      enum: [authority, replica]
+    DatasetCopyAvailability:
+      type: string
+      enum: [available, transiently-unavailable, unavailable]
+    DatasetCopyOperationKind:
+      type: string
+      enum: [refresh, delete]
+    DatasetCopyOperationProgress:
+      type: string
+      enum: [waiting-for-leases, transferring, verifying, publishing, deleting-old-bytes, completed, cancelled, failed]
+    DatasetDefinition:
+      type: object
+      additionalProperties: false
+      required: [datasetId, definitionId, versionLabel, contentFingerprint, manifestIdentity, createdAt]
+      properties:
+        datasetId: { $ref: '#/components/schemas/SkywrightId' }
+        definitionId: { $ref: '#/components/schemas/SkywrightId' }
+        versionLabel: { type: [string, 'null'] }
+        contentFingerprint: { type: string }
+        manifestIdentity: { type: string }
+        createdAt: { $ref: '#/components/schemas/UtcInstant' }
+    DatasetCopyGeneration:
+      type: object
+      additionalProperties: false
+      required: [number, location, manifestIdentity, contentFingerprint, verifiedBytes, createdAt, verifiedAt, acceptingLeases, availability]
+      properties:
+        number: { type: integer, format: int64, minimum: 1 }
+        location: { type: string }
+        manifestIdentity: { type: string }
+        contentFingerprint: { type: string }
+        verifiedBytes: { type: integer, format: int64, minimum: 0 }
+        createdAt: { $ref: '#/components/schemas/UtcInstant' }
+        verifiedAt: { $ref: '#/components/schemas/UtcInstant' }
+        acceptingLeases: { type: boolean }
+        availability: { $ref: '#/components/schemas/DatasetCopyAvailability' }
+    DatasetCopy:
+      type: object
+      additionalProperties: false
+      required: [id, targetStorageId, role, revision, currentGeneration, generationHistory, activeLeaseCount]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        targetStorageId: { $ref: '#/components/schemas/SkywrightId' }
+        role: { $ref: '#/components/schemas/DatasetCopyRole' }
+        revision: { type: integer, format: int64, minimum: 1 }
+        currentGeneration: { $ref: '#/components/schemas/DatasetCopyGeneration' }
+        generationHistory:
+          type: array
+          items: { $ref: '#/components/schemas/DatasetCopyGeneration' }
+        activeLeaseCount: { type: integer, format: int64, minimum: 0 }
+    DatasetLease:
+      type: object
+      additionalProperties: false
+      required: [id, runRecordId, copyId, generation, acquiredAt, endedAt, endReason]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        runRecordId: { $ref: '#/components/schemas/SkywrightId' }
+        copyId: { $ref: '#/components/schemas/SkywrightId' }
+        generation: { type: integer, format: int64, minimum: 1 }
+        acquiredAt: { $ref: '#/components/schemas/UtcInstant' }
+        endedAt: { type: [string, 'null'], format: date-time }
+        endReason: { type: [string, 'null'] }
+    DatasetCacheOwnerType:
+      type: string
+      enum: [host, run]
+    DatasetCache:
+      type: object
+      additionalProperties: false
+      required: [id, ownerType, ownerId, measuredBytes, verifiedAt, lastUsedAt, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        ownerType: { $ref: '#/components/schemas/DatasetCacheOwnerType' }
+        ownerId: { type: string }
+        measuredBytes: { type: integer, format: int64, minimum: 0 }
+        verifiedAt: { $ref: '#/components/schemas/UtcInstant' }
+        lastUsedAt: { $ref: '#/components/schemas/UtcInstant' }
+        createdAt: { $ref: '#/components/schemas/UtcInstant' }
+    DatasetCopyOperation:
+      type: object
+      additionalProperties: false
+      required: [id, kind, copyId, generation, progress, attempts, failureCode, failureSummary, retryable, startedAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        kind: { $ref: '#/components/schemas/DatasetCopyOperationKind' }
+        copyId: { $ref: '#/components/schemas/SkywrightId' }
+        generation: { type: integer, format: int64, minimum: 1 }
+        progress: { $ref: '#/components/schemas/DatasetCopyOperationProgress' }
+        attempts: { type: integer, minimum: 1 }
+        failureCode: { type: [string, 'null'] }
+        failureSummary: { type: [string, 'null'] }
+        retryable: { type: boolean }
+        startedAt: { $ref: '#/components/schemas/UtcInstant' }
+        updatedAt: { $ref: '#/components/schemas/UtcInstant' }
+    DatasetCatalogRecord:
+      type: object
+      additionalProperties: false
+      required: [revision, definition, copies, leases, caches, operations]
+      properties:
+        revision: { type: integer, format: int64, minimum: 1 }
+        definition: { $ref: '#/components/schemas/DatasetDefinition' }
+        copies:
+          type: array
+          items: { $ref: '#/components/schemas/DatasetCopy' }
+        leases:
+          type: array
+          items: { $ref: '#/components/schemas/DatasetLease' }
+        caches:
+          type: array
+          items: { $ref: '#/components/schemas/DatasetCache' }
+        operations:
+          type: array
+          items: { $ref: '#/components/schemas/DatasetCopyOperation' }
+    DatasetCatalogPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DatasetCatalogRecord' }
+        nextCursor: { type: [string, 'null'] }
+    DatasetCatalogRevisionCommand:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision]
+      properties:
+        expectedRevision: { type: integer, format: int64, minimum: 1 }
+    StartDatasetCopyOperation:
+      type: object
+      additionalProperties: false
+      required: [generation, expectedRevision]
+      properties:
+        generation: { type: integer, format: int64, minimum: 1 }
+        expectedRevision: { type: integer, format: int64, minimum: 1 }
     SystemInformation:
       type: object
       additionalProperties: false

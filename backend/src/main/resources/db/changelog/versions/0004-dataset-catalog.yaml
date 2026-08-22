@@ -1,0 +1,159 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-43-dataset-catalog-tables
+      author: skywright
+      logicalFilePath: db/changelog/versions/0004-dataset-catalog.yaml
+      changes:
+        - createTable:
+            tableName: dataset_catalog
+            columns:
+              - column: { name: definition_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: dataset_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: version_label, type: varchar(255) }
+              - column: { name: content_fingerprint, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: manifest_identity, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: created_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+        - createTable:
+            tableName: dataset_copy
+            columns:
+              - column: { name: definition_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: copy_position, type: integer, constraints: { nullable: false } }
+              - column: { name: copy_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: target_storage_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: role, type: varchar(16), constraints: { nullable: false } }
+              - column: { name: revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: current_generation, type: bigint, constraints: { nullable: false } }
+              - column: { name: active_lease_count, type: bigint, constraints: { nullable: false } }
+        - createTable:
+            tableName: dataset_copy_generation
+            columns:
+              - column: { name: definition_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: generation_position, type: integer, constraints: { nullable: false } }
+              - column: { name: copy_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: generation_number, type: bigint, constraints: { nullable: false } }
+              - column: { name: location, type: varchar(2048), constraints: { nullable: false } }
+              - column: { name: manifest_identity, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: content_fingerprint, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: verified_bytes, type: bigint, constraints: { nullable: false } }
+              - column: { name: created_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: verified_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: accepting_leases, type: boolean, constraints: { nullable: false } }
+              - column: { name: availability, type: varchar(32), constraints: { nullable: false } }
+        - createTable:
+            tableName: dataset_lease
+            columns:
+              - column: { name: definition_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: lease_position, type: integer, constraints: { nullable: false } }
+              - column: { name: lease_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: run_record_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: copy_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: generation_number, type: bigint, constraints: { nullable: false } }
+              - column: { name: acquired_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: ended_at, type: timestamp with time zone }
+              - column: { name: end_reason, type: varchar(64) }
+        - createTable:
+            tableName: dataset_copy_operation
+            columns:
+              - column: { name: definition_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: operation_position, type: integer, constraints: { nullable: false } }
+              - column: { name: operation_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: kind, type: varchar(16), constraints: { nullable: false } }
+              - column: { name: copy_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: generation_number, type: bigint, constraints: { nullable: false } }
+              - column: { name: progress, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: attempts, type: integer, constraints: { nullable: false } }
+              - column: { name: failure_code, type: varchar(255) }
+              - column: { name: failure_summary, type: varchar(1024) }
+              - column: { name: retryable, type: boolean, constraints: { nullable: false } }
+              - column: { name: started_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: updated_at, type: timestamp with time zone, constraints: { nullable: false } }
+        - createTable:
+            tableName: dataset_cache
+            columns:
+              - column: { name: definition_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: cache_position, type: integer, constraints: { nullable: false } }
+              - column: { name: cache_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: owner_type, type: varchar(16), constraints: { nullable: false } }
+              - column: { name: owner_id, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: measured_bytes, type: bigint, constraints: { nullable: false } }
+              - column: { name: verified_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: last_used_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: created_at, type: timestamp with time zone, constraints: { nullable: false } }
+  - changeSet:
+      id: issue-43-dataset-catalog-primary-keys
+      author: skywright
+      logicalFilePath: db/changelog/versions/0004-dataset-catalog.yaml
+      changes:
+        - addPrimaryKey: { tableName: dataset_copy, columnNames: "definition_id, copy_position", constraintName: pk_dataset_copy }
+        - addPrimaryKey: { tableName: dataset_copy_generation, columnNames: "definition_id, generation_position", constraintName: pk_dataset_copy_generation }
+        - addPrimaryKey: { tableName: dataset_lease, columnNames: "definition_id, lease_position", constraintName: pk_dataset_lease }
+        - addPrimaryKey: { tableName: dataset_copy_operation, columnNames: "definition_id, operation_position", constraintName: pk_dataset_copy_operation }
+        - addPrimaryKey: { tableName: dataset_cache, columnNames: "definition_id, cache_position", constraintName: pk_dataset_cache }
+      rollback:
+        - dropPrimaryKey: { tableName: dataset_cache, constraintName: pk_dataset_cache }
+        - dropPrimaryKey: { tableName: dataset_copy_operation, constraintName: pk_dataset_copy_operation }
+        - dropPrimaryKey: { tableName: dataset_lease, constraintName: pk_dataset_lease }
+        - dropPrimaryKey: { tableName: dataset_copy_generation, constraintName: pk_dataset_copy_generation }
+        - dropPrimaryKey: { tableName: dataset_copy, constraintName: pk_dataset_copy }
+  - changeSet:
+      id: issue-43-dataset-catalog-unique-constraints
+      author: skywright
+      logicalFilePath: db/changelog/versions/0004-dataset-catalog.yaml
+      changes:
+        - addUniqueConstraint: { tableName: dataset_copy, columnNames: copy_id, constraintName: uq_dataset_copy_id }
+        - addUniqueConstraint: { tableName: dataset_catalog, columnNames: "dataset_id, version_label", constraintName: uq_dataset_catalog_version_label }
+        - addUniqueConstraint: { tableName: dataset_lease, columnNames: lease_id, constraintName: uq_dataset_lease_id }
+        - addUniqueConstraint: { tableName: dataset_lease, columnNames: run_record_id, constraintName: uq_dataset_lease_run }
+        - addUniqueConstraint: { tableName: dataset_copy_operation, columnNames: operation_id, constraintName: uq_dataset_copy_operation_id }
+        - addUniqueConstraint: { tableName: dataset_cache, columnNames: cache_id, constraintName: uq_dataset_cache_id }
+        - addUniqueConstraint: { tableName: dataset_cache, columnNames: "definition_id, owner_type, owner_id", constraintName: uq_dataset_cache_owner }
+      rollback:
+        - dropUniqueConstraint: { tableName: dataset_cache, constraintName: uq_dataset_cache_owner }
+        - dropUniqueConstraint: { tableName: dataset_cache, constraintName: uq_dataset_cache_id }
+        - dropUniqueConstraint: { tableName: dataset_copy_operation, constraintName: uq_dataset_copy_operation_id }
+        - dropUniqueConstraint: { tableName: dataset_lease, constraintName: uq_dataset_lease_run }
+        - dropUniqueConstraint: { tableName: dataset_lease, constraintName: uq_dataset_lease_id }
+        - dropUniqueConstraint: { tableName: dataset_catalog, constraintName: uq_dataset_catalog_version_label }
+        - dropUniqueConstraint: { tableName: dataset_copy, constraintName: uq_dataset_copy_id }
+  - changeSet:
+      id: issue-43-dataset-catalog-foreign-keys
+      author: skywright
+      logicalFilePath: db/changelog/versions/0004-dataset-catalog.yaml
+      changes:
+        - addForeignKeyConstraint: { baseTableName: dataset_copy, baseColumnNames: definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_copy_catalog, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: dataset_copy, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_dataset_copy_target_storage }
+        - addForeignKeyConstraint: { baseTableName: dataset_copy_generation, baseColumnNames: definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_generation_catalog, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: dataset_lease, baseColumnNames: definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_lease_catalog, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: dataset_copy_operation, baseColumnNames: definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_operation_catalog, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: dataset_cache, baseColumnNames: definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_cache_catalog, onDelete: CASCADE }
+      rollback:
+        - dropForeignKeyConstraint: { baseTableName: dataset_cache, constraintName: fk_dataset_cache_catalog }
+        - dropForeignKeyConstraint: { baseTableName: dataset_copy_operation, constraintName: fk_dataset_operation_catalog }
+        - dropForeignKeyConstraint: { baseTableName: dataset_lease, constraintName: fk_dataset_lease_catalog }
+        - dropForeignKeyConstraint: { baseTableName: dataset_copy_generation, constraintName: fk_dataset_generation_catalog }
+        - dropForeignKeyConstraint: { baseTableName: dataset_copy, constraintName: fk_dataset_copy_target_storage }
+        - dropForeignKeyConstraint: { baseTableName: dataset_copy, constraintName: fk_dataset_copy_catalog }
+  - changeSet:
+      id: issue-43-dataset-catalog-indexes
+      author: skywright
+      logicalFilePath: db/changelog/versions/0004-dataset-catalog.yaml
+      changes:
+        - createIndex: { tableName: dataset_catalog, indexName: ix_dataset_catalog_dataset, columns: [ { column: { name: dataset_id } } ] }
+        - createIndex: { tableName: dataset_copy, indexName: ix_dataset_copy_storage, columns: [ { column: { name: target_storage_id } } ] }
+        - createIndex: { tableName: dataset_lease, indexName: ix_dataset_lease_copy_generation, columns: [ { column: { name: copy_id } }, { column: { name: generation_number } } ] }
+      rollback:
+        - dropIndex: { tableName: dataset_lease, indexName: ix_dataset_lease_copy_generation }
+        - dropIndex: { tableName: dataset_copy, indexName: ix_dataset_copy_storage }
+        - dropIndex: { tableName: dataset_catalog, indexName: ix_dataset_catalog_dataset }
+  - changeSet:
+      id: issue-43-dataset-catalog-grants
+      author: skywright
+      logicalFilePath: db/changelog/versions/0004-dataset-catalog.yaml
+      changes:
+        - sql:
+            comment: Grant the runtime role the JPA access required by the Dataset Catalog.
+            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON dataset_catalog, dataset_copy, dataset_copy_generation, dataset_lease, dataset_copy_operation, dataset_cache TO "${runtimeRole}"
+      rollback:
+        - sql: { sql: 'REVOKE ALL PRIVILEGES ON dataset_catalog, dataset_copy, dataset_copy_generation, dataset_lease, dataset_copy_operation, dataset_cache FROM "${runtimeRole}"' }
