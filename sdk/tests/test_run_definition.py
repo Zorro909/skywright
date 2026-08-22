@@ -34,10 +34,6 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
             document = document.replace(
                 '"purchaseMode": "spot"', f'"purchaseMode": {replacement}'
             )
-        elif invalid["pointer"] == "/targetRequest/acceleratorBackend":
-            document = document.replace(
-                '"acceleratorBackend": "cuda"', f'"acceleratorBackend": {replacement}'
-            )
         elif invalid["pointer"] == "/configuration/nested/array/2":
             document = document.replace("0.1", replacement)
         elif invalid["pointer"] == "/storage/execution/endpoint":

@@ -60,7 +60,6 @@ class RunDefinitionResolverIT {
 		assertThat(definition.at("/storage/repatriation/enabled").asBoolean()).isFalse();
 		assertThat(definition.at("/executionPolicy/maximumRecoveryDebt").asInt()).isEqualTo(3);
 		assertThat(definition.at("/targetRequest/purchaseMode").asText()).isEqualTo("spot");
-		assertThat(definition.at("/targetRequest/acceleratorBackend").asText()).isEqualTo("cuda");
 		assertThat(definition.at("/executionPolicy/runtimeCeiling").asText()).isEqualTo("PT1H");
 		assertThat(definition.at("/executionPolicy/costCeiling/amount").decimalValue()).isEqualByComparingTo("12.3400");
 		assertThat(definition.at("/executionPolicy/costCeiling/currency").asText()).isEqualTo("EUR");
@@ -78,8 +77,6 @@ class RunDefinitionResolverIT {
 			assertThat(resolution.accepted()).as(targetClass + ": " + resolution.failures()).isTrue();
 			assertThat(resolution.definition().value().at("/targetRequest/targetClass").asText())
 				.isEqualTo(targetClass.wireValue());
-			assertThat(resolution.definition().value().at("/targetRequest/acceleratorBackend").asText())
-				.isEqualTo("cuda");
 		}
 	}
 
@@ -225,7 +222,7 @@ class RunDefinitionResolverIT {
 	}
 
 	@Test
-	void derivesTargetFactsAndRejectsAmbiguousEligibleEvidence() {
+	void derivesUniqueModelEvidenceAndDefersAmbiguousAcceleratorChoices() {
 		TargetEligibilityAssessment oneCandidate = new TargetEligibilityAssessment(List.of(new EligibleTarget(
 				"pinned-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8, 80L * 1024 * 1024 * 1024)), List.of());
 		RunDefinitionResolver resolved = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
@@ -237,12 +234,15 @@ class RunDefinitionResolverIT {
 
 		JsonNode target = resolved.resolve(omittedModel, null).definition().value().path("targetRequest");
 		assertThat(target.path("purchaseMode").asText()).isEqualTo("spot");
-		assertThat(target.path("acceleratorBackend").asText()).isEqualTo("cuda");
 		assertThat(target.path("gpuModel").asText()).isEqualTo("H100");
-		assertThat(ambiguous
+		JsonNode deferred = ambiguous
 			.resolve(withTarget(submission(TargetClass.CLOUD_SPOT),
 					new TargetRequest(TargetClass.CLOUD_SPOT, 1, null, null, null, null)), null)
-			.failures()).extracting(RunDefinitionFailure::code).containsExactly("TARGET_EVIDENCE_AMBIGUOUS");
+			.definition()
+			.value()
+			.path("targetRequest");
+		assertThat(deferred.has("acceleratorBackend")).isFalse();
+		assertThat(deferred.has("gpuModel")).isFalse();
 	}
 
 	@Test

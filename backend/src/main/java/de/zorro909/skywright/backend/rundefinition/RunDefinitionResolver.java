@@ -198,24 +198,18 @@ public final class RunDefinitionResolver {
 		if (version == null) {
 			return null;
 		}
-		List<TargetEvidence> compatible = matching.stream()
+		List<EligibleTarget> compatible = matching.stream()
 			.filter(candidate -> version.images().containsKey(candidate.acceleratorBackend()))
-			.map(candidate -> new TargetEvidence(candidate.acceleratorBackend(), candidate.gpuModel()))
-			.distinct()
 			.toList();
 		if (compatible.isEmpty()) {
 			failures.add(failure("PROJECT_CAPABILITIES_INCOMPATIBLE", "training-project-version", "/targetRequest",
 					"acceleratorBackend"));
 			return null;
 		}
-		if (compatible.size() > 1) {
-			failures.add(
-					failure("TARGET_EVIDENCE_AMBIGUOUS", "target-eligibility", "/targetRequest", "acceleratorBackend"));
-			return null;
-		}
-		TargetEvidence evidence = compatible.getFirst();
-		return new ResolvedTarget(request, purchaseMode(request.targetClass()), evidence.acceleratorBackend(),
-				evidence.gpuModel());
+		List<String> models = compatible.stream().map(EligibleTarget::gpuModel).distinct().toList();
+		String gpuModel = request.gpuModel() != null ? request.gpuModel()
+				: models.size() == 1 ? models.getFirst() : null;
+		return new ResolvedTarget(request, purchaseMode(request.targetClass()), gpuModel);
 	}
 
 	private RunDefinitionStorageSelection resolveStorage(RunSubmission submission,
@@ -347,7 +341,6 @@ public final class RunDefinitionResolver {
 		ObjectNode result = JSON.createObjectNode()
 			.put("targetClass", request.targetClass().wireValue())
 			.put("purchaseMode", resolved.purchaseMode())
-			.put("acceleratorBackend", resolved.acceleratorBackend())
 			.put("gpuCount", request.gpuCount());
 		if (request.minimumGpuMemoryBytes() != null) {
 			result.put("minimumGpuMemoryBytes", request.minimumGpuMemoryBytes());
@@ -355,7 +348,9 @@ public final class RunDefinitionResolver {
 		if (request.target() != null) {
 			result.put("target", request.target());
 		}
-		result.put("gpuModel", resolved.gpuModel());
+		if (resolved.gpuModel() != null) {
+			result.put("gpuModel", resolved.gpuModel());
+		}
 		return result;
 	}
 
@@ -411,11 +406,7 @@ public final class RunDefinitionResolver {
 		};
 	}
 
-	private record TargetEvidence(String acceleratorBackend, String gpuModel) {
-	}
-
-	private record ResolvedTarget(TargetRequest request, String purchaseMode, String acceleratorBackend,
-			String gpuModel) {
+	private record ResolvedTarget(TargetRequest request, String purchaseMode, String gpuModel) {
 	}
 
 }

@@ -52,11 +52,10 @@
     },
     "targetRequest": {
       "type": "object", "additionalProperties": false,
-      "required": ["targetClass", "purchaseMode", "acceleratorBackend", "gpuCount", "gpuModel"],
+      "required": ["targetClass", "purchaseMode", "gpuCount"],
       "properties": {
         "targetClass": {"enum": ["local-single-gpu", "local-multi-gpu", "cloud-on-demand", "cloud-spot"]},
         "purchaseMode": {"enum": ["local", "on-demand", "spot"]},
-        "acceleratorBackend": {"type": "string", "minLength": 1},
         "gpuCount": {"type": "integer", "minimum": 1},
         "minimumGpuMemoryBytes": {"type": "integer", "minimum": 1},
         "target": {"type": "string", "minLength": 1},

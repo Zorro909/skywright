@@ -102,8 +102,7 @@ final class RunDefinitionCodec {
 			return;
 		}
 		JsonNode target = definition.path("targetRequest");
-		JsonNode version = definition.path("trainingProjectVersion");
-		if (!target.isObject() || !version.isObject()) {
+		if (!target.isObject()) {
 			return;
 		}
 		String targetClass = target.path("targetClass").asText();
@@ -116,11 +115,6 @@ final class RunDefinitionCodec {
 		if (requiredPurchaseMode != null && !requiredPurchaseMode.equals(target.path("purchaseMode").asText())) {
 			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
 					"/targetRequest/purchaseMode", "targetRelationship"));
-		}
-		String backend = target.path("acceleratorBackend").asText();
-		if (!backend.isEmpty() && !version.path("images").has(backend)) {
-			failures.add(new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
-					"/targetRequest/acceleratorBackend", "targetRelationship"));
 		}
 	}
 

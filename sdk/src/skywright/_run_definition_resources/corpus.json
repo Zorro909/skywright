@@ -23,7 +23,7 @@
       },
       "configuration": {"nested": {"array": [null, 9007199254740993, 0.1000000000000000001], "é": "é"}},
       "datasetDefinition": {"datasetIdentity": "dataset-1", "version": "v1", "contentFingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
-      "targetRequest": {"targetClass": "cloud-spot", "purchaseMode": "spot", "acceleratorBackend": "cuda", "gpuCount": 2, "minimumGpuMemoryBytes": 85899345920, "gpuModel": "H100"},
+      "targetRequest": {"targetClass": "cloud-spot", "purchaseMode": "spot", "gpuCount": 2, "minimumGpuMemoryBytes": 85899345920, "gpuModel": "H100"},
       "storage": {
         "execution": {"storageId": "00000000-0000-0000-0000-000000000001", "registrationRevision": 4, "configurationRevision": 2, "endpoint": "https://objects.example", "bucket": "runs", "region": "eu-central-1", "addressingMode": "path", "compatibilityOptions": {"chunkedEncoding": "disabled"}},
         "repatriation": {"enabled": false, "destination": {"storageId": "00000000-0000-0000-0000-000000000002", "registrationRevision": 3, "configurationRevision": 1, "endpoint": "https://home.example", "bucket": "home", "region": "local", "addressingMode": "virtual-hosted", "compatibilityOptions": {}}}
@@ -46,7 +46,6 @@
   ],
   "invalidMutations": [
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/purchaseMode", "replacementJson": "\"on-demand\""},
-    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/acceleratorBackend", "replacementJson": "\"metal\""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/configuration/nested/array/2", "replacementJson": "1e-1000000001"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/execution/endpoint", "replacementJson": "\"https://access-key:secret@objects.example\""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/storage/repatriation/destination/endpoint", "replacementJson": "\"https://home.example?credential=secret#fragment\""}

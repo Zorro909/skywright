@@ -92,11 +92,9 @@ def _has_valid_target_relationships(value: Any) -> bool:
         return True
     definition = cast(dict[str, Any], value)
     target_value = definition.get("targetRequest")
-    version_value = definition.get("trainingProjectVersion")
-    if not isinstance(target_value, dict) or not isinstance(version_value, dict):
+    if not isinstance(target_value, dict):
         return True
     target = cast(dict[str, Any], target_value)
-    version = cast(dict[str, Any], version_value)
     required_modes = {
         "local-single-gpu": "local",
         "local-multi-gpu": "local",
@@ -104,14 +102,9 @@ def _has_valid_target_relationships(value: Any) -> bool:
         "cloud-spot": "spot",
     }
     target_class = target.get("targetClass")
-    images_value = version.get("images")
-    if not isinstance(target_class, str) or not isinstance(images_value, dict):
+    if not isinstance(target_class, str):
         return False
-    images = cast(dict[str, Any], images_value)
-    return (
-        target.get("purchaseMode") == required_modes.get(target_class)
-        and target.get("acceleratorBackend") in images
-    )
+    return target.get("purchaseMode") == required_modes.get(target_class)
 
 
 def _has_valid_storage_endpoints(value: Any) -> bool:
