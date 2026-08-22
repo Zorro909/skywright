@@ -165,6 +165,21 @@ final class SkyPilotOrchestratorTest {
 		client.releaseProbe.countDown();
 	}
 
+	@Test
+	void heldWorkDoesNotBlockAvailabilityRefresh() throws Exception {
+		var client = new ControllableSkyPilotClient();
+		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
+		awaitInitialProbe();
+
+		var held = this.orchestrator.complete(new OrchestratorOperation("held-1", OperationKind.SUBMISSION));
+		assertThat(client.heldStarted.await(1, TimeUnit.SECONDS)).isTrue();
+
+		assertThat(this.orchestrator.refreshAvailability().toCompletableFuture().get(1, TimeUnit.SECONDS).available())
+			.isTrue();
+		assertThat(held).isNotDone();
+		client.releaseHeld.countDown();
+	}
+
 	private void awaitInitialProbe() throws Exception {
 		this.orchestrator.refreshAvailability().toCompletableFuture().get(1, TimeUnit.SECONDS);
 	}

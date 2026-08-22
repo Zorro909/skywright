@@ -22,6 +22,8 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 
 	private final ThreadPoolExecutor heldLane;
 
+	private final ThreadPoolExecutor probeLane;
+
 	private final AtomicBoolean admitting = new AtomicBoolean(true);
 
 	private volatile SkyPilotAvailability availability;
@@ -31,6 +33,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		this.settings = settings;
 		this.controlLane = lane("skypilot-control", settings.controlQueueCapacity());
 		this.heldLane = lane("skypilot-held", settings.heldQueueCapacity());
+		this.probeLane = lane("skypilot-probe", 1);
 		this.availability = SkyPilotAvailability.unavailable(BridgeFailure
 			.unavailable(FailureCause.CLIENT_INITIALIZATION, "SkyPilot availability check is pending"));
 		refreshAvailability();
@@ -74,7 +77,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 			return refreshed;
 		}
 		try {
-			this.heldLane.execute(new AvailabilityRefresh(refreshed));
+			this.probeLane.execute(new AvailabilityRefresh(refreshed));
 		}
 		catch (java.util.concurrent.RejectedExecutionException exception) {
 			refreshed.complete(this.availability);
@@ -194,11 +197,14 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		}
 		this.controlLane.shutdown();
 		this.heldLane.shutdown();
+		this.probeLane.shutdown();
 		var deadline = System.nanoTime() + this.settings.shutdownGrace().toNanos();
 		await(this.controlLane, deadline);
 		await(this.heldLane, deadline);
+		await(this.probeLane, deadline);
 		completeDiscarded(this.controlLane.shutdownNow());
 		completeDiscarded(this.heldLane.shutdownNow());
+		completeDiscarded(this.probeLane.shutdownNow());
 		this.client.close();
 	}
 

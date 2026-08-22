@@ -1,12 +1,8 @@
 import json
-from collections import OrderedDict
 
 import sky
 from sky.server import common as server_common
 from sky.utils import common as sky_common
-
-_PENDING_SUBMISSION_LIMIT = 1024
-_pending_submissions = OrderedDict()
 
 
 def _bridge_boundary(function):
@@ -63,46 +59,20 @@ def bridge_probe():
 @_bridge_boundary
 def bridge_submit(serialized):
     specification = json.loads(serialized)
-    name = specification["name"]
-    pending = _pending_submissions.get(name)
-    if pending is not None:
-        _pending_submissions.move_to_end(name)
-        return json.dumps({"operation_id": pending})
-
-    existing_job_id = _existing_managed_job_id(name)
-    if existing_job_id is not None:
-        request_id = sky.status(cluster_names=[sky_common.JOB_CONTROLLER_NAME])
-        return json.dumps(
-            {"operation_id": _submission_operation(request_id, existing_job_id)}
-        )
-
-    resources = [
-        sky.Resources(
-            infra=requested["infrastructure"],
-            cpus=requested["cpus"],
-            memory=requested["memory"],
-            accelerators=requested.get("accelerators"),
-            image_id=requested.get("imageId"),
-        )
-        for requested in specification["resources"]
-    ]
-    task = sky.Task(
-        name=name,
-        setup=specification.get("setup"),
-        run=specification["run"],
-        envs=specification.get("environment", {}),
-        resources=resources,
+    sky.jobs.queue_v2(refresh=True, all_users=True)
+    return json.dumps(
+        {
+            "operation_id": json.dumps(
+                {"specification": specification}, separators=(",", ":")
+            )
+        }
     )
-    request_id = sky.jobs.launch(task, name=name)
-    operation_id = _submission_operation(request_id)
-    _remember_pending_submission(name, operation_id)
-    return json.dumps({"operation_id": operation_id})
 
 
 @_bridge_boundary
 def bridge_status(serialized_names):
     names = set(json.loads(serialized_names))
-    request_id = sky.jobs.queue_v2(refresh=False)
+    request_id = sky.jobs.queue_v2(refresh=False, all_users=True)
     operation_id = json.dumps(
         {
             "request_id": str(request_id),
@@ -129,16 +99,15 @@ def bridge_cleanup(cluster_name):
 def bridge_complete(operation_id, kind):
     request_id = str(operation_id)
     names = set()
-    existing_job_id = None
     if kind == "submission":
         submission = json.loads(operation_id)
-        request_id = submission["request_id"]
-        existing_job_id = submission.get("existing_job_id")
     elif kind == "status":
         status = json.loads(operation_id)
         request_id = status["request_id"]
         names = set(status["names"])
     try:
+        if kind == "submission":
+            return json.dumps(_complete_submission(submission))
         value = sky.stream_and_get(str(request_id))
     except (
         sky.exceptions.ApiServerConnectionError,
@@ -147,8 +116,6 @@ def bridge_complete(operation_id, kind):
     ):
         raise
     except Exception as failure:
-        if kind == "submission":
-            _forget_pending_submission(operation_id)
         return json.dumps(
             {
                 "failure": {
@@ -157,17 +124,7 @@ def bridge_complete(operation_id, kind):
                 }
             }
         )
-    if kind == "submission":
-        if existing_job_id is None:
-            job_ids, handle = value
-        else:
-            job_ids = [existing_job_id]
-            handle = _field(value[0], "handle") if value else None
-        _forget_pending_submission(operation_id)
-        if not job_ids or handle is None:
-            raise ValueError("managed job launch returned no identity")
-        result = {"job_id": int(job_ids[0]), "handle": _handle(handle)}
-    elif kind == "status":
+    if kind == "status":
         records = value[0]
         jobs = []
         for record in records:
@@ -193,41 +150,55 @@ def bridge_complete(operation_id, kind):
     return json.dumps(result)
 
 
-def _existing_managed_job_id(name):
+def _complete_submission(submission):
+    specification = submission["specification"]
+    name = specification["name"]
     try:
         request_id = sky.jobs.queue_v2(refresh=True, all_users=True)
-        records = sky.get(request_id)[0]
+        records = sky.stream_and_get(request_id)[0]
     except Exception as failure:
         if type(failure).__name__ in ("ClusterNotUpError", "ClusterDoesNotExist"):
-            return None
-        raise
+            records = []
+        else:
+            raise
     matching_ids = [
         int(_field(record, "job_id"))
         for record in records
         if str(_field(record, "job_name")) == name
         and _field(record, "job_id") is not None
     ]
-    return max(matching_ids, default=None)
-
-
-def _submission_operation(request_id, existing_job_id=None):
-    operation = {"request_id": str(request_id)}
+    existing_job_id = max(matching_ids, default=None)
     if existing_job_id is not None:
-        operation["existing_job_id"] = int(existing_job_id)
-    return json.dumps(operation, separators=(",", ":"))
+        request_id = sky.status(cluster_names=[sky_common.JOB_CONTROLLER_NAME])
+        status = sky.stream_and_get(request_id)
+        handle = _field(status[0], "handle") if status else None
+        job_ids = [existing_job_id]
+    else:
+        request_id = sky.jobs.launch(_task(specification), name=name)
+        job_ids, handle = sky.stream_and_get(request_id)
+    if not job_ids or handle is None:
+        raise ValueError("managed job launch returned no identity")
+    return {"job_id": int(job_ids[0]), "handle": _handle(handle)}
 
 
-def _remember_pending_submission(name, operation_id):
-    _pending_submissions[name] = operation_id
-    _pending_submissions.move_to_end(name)
-    while len(_pending_submissions) > _PENDING_SUBMISSION_LIMIT:
-        _pending_submissions.popitem(last=False)
-
-
-def _forget_pending_submission(operation_id):
-    for name, pending in list(_pending_submissions.items()):
-        if pending == operation_id:
-            _pending_submissions.pop(name, None)
+def _task(specification):
+    resources = [
+        sky.Resources(
+            infra=requested["infrastructure"],
+            cpus=requested["cpus"],
+            memory=requested["memory"],
+            accelerators=requested.get("accelerators"),
+            image_id=requested.get("imageId"),
+        )
+        for requested in specification["resources"]
+    ]
+    return sky.Task(
+        name=specification["name"],
+        setup=specification.get("setup"),
+        run=specification["run"],
+        envs=specification.get("environment", {}),
+        resources=resources,
+    )
 
 
 def _operation_failure_message(failure):
