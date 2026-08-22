@@ -228,7 +228,9 @@ class QualityWorkflowContractTest(unittest.TestCase):
         self.assertIn("graalpy-resources: true", preparation)
         self.assertIn("steps.java.outputs.graalpy-cache-hit != 'true'", preparation)
         self.assertIn("timeout --verbose 30m", preparation)
-        self.assertIn("graalpy-maven-plugin:process-graalpy-resources", preparation)
+        self.assertIn("-Dmaven.test.skip=true", preparation)
+        self.assertIn("-pl backend", preparation)
+        self.assertIn("-am package", preparation)
 
         for name in ("java", "integration", "application", "image"):
             with self.subTest(job=name):

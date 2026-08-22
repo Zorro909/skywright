@@ -116,13 +116,20 @@ jobs:
         uses: ./.github/actions/setup-java
         with:
           graalpy-resources: true
+      - name: Set up frontend prerequisites
+        uses: ./.github/actions/setup-frontend
+        with:
+          install-browser: false
       - name: Build packaged GraalPy environment on cache miss
         if: steps.java.outputs.graalpy-cache-hit != 'true'
         run: >-
           timeout --verbose 30m
           ./mvnw --batch-mode
+          -DskipFrontendInstall=true
+          -DskipFrontendTests=true
+          -Dmaven.test.skip=true
           -pl backend
-          org.graalvm.python:graalpy-maven-plugin:process-graalpy-resources
+          -am package
 
   java:
     name: Java and backend
