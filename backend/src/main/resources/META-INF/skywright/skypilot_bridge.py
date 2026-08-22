@@ -91,7 +91,12 @@ def bridge_status(serialized_names):
 
 @_bridge_boundary
 def bridge_cancel(job_name):
-    request_id = sky.jobs.cancel(name=str(job_name))
+    job_name = str(job_name)
+    existing_job_id = _existing_managed_job_id(job_name, refresh=False)
+    if existing_job_id is None:
+        request_id = sky.jobs.cancel(name=job_name)
+    else:
+        request_id = sky.jobs.cancel(job_ids=[existing_job_id])
     return json.dumps({"operation_id": str(request_id)})
 
 
@@ -166,9 +171,9 @@ def bridge_complete(operation_id, kind):
     return json.dumps(result)
 
 
-def _existing_managed_job_id(name):
+def _existing_managed_job_id(name, refresh=True):
     try:
-        request_id = sky.jobs.queue_v2(refresh=True, all_users=True)
+        request_id = sky.jobs.queue_v2(refresh=refresh, all_users=True)
         records = sky.stream_and_get(request_id)[0]
     except Exception as failure:
         if type(failure).__name__ in ("ClusterNotUpError", "ClusterDoesNotExist"):

@@ -204,6 +204,25 @@ final class SkyPilotOrchestratorTest {
 	}
 
 	@Test
+	void actionPreflightDoesNotBlockObservation() throws Exception {
+		var client = new ControllableSkyPilotClient();
+		client.holdControl.set(true);
+		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
+		awaitInitialProbe();
+
+		var action = this.orchestrator.control(new ControlRequest("job", ControlRequest.Action.CANCEL));
+		assertThat(client.controlStarted.await(1, TimeUnit.SECONDS)).isTrue();
+
+		assertThat(this.orchestrator.observe(new StatusRequest(List.of("job")))
+			.toCompletableFuture()
+			.get(1, TimeUnit.SECONDS)
+			.value()
+			.kind()).isEqualTo(OperationKind.STATUS);
+		assertThat(action).isNotDone();
+		client.releaseControl.countDown();
+	}
+
+	@Test
 	void forcedShutdownClassifiesInterruptedActiveWorkAsShutdown() throws Exception {
 		var client = new ControllableSkyPilotClient();
 		client.releaseHeldOnClose.set(false);
@@ -237,11 +256,17 @@ final class SkyPilotOrchestratorTest {
 
 		private final CountDownLatch releaseSubmit = new CountDownLatch(1);
 
+		private final CountDownLatch controlStarted = new CountDownLatch(1);
+
+		private final CountDownLatch releaseControl = new CountDownLatch(1);
+
 		private final AtomicBoolean reachable = new AtomicBoolean(true);
 
 		private final AtomicBoolean holdProbe = new AtomicBoolean(false);
 
 		private final AtomicBoolean holdSubmit = new AtomicBoolean(false);
+
+		private final AtomicBoolean holdControl = new AtomicBoolean(false);
 
 		private final AtomicBoolean releaseHeldOnClose = new AtomicBoolean(true);
 
@@ -288,7 +313,11 @@ final class SkyPilotOrchestratorTest {
 		}
 
 		@Override
-		public OrchestratorOperation control(ControlRequest request) {
+		public OrchestratorOperation control(ControlRequest request) throws InterruptedException {
+			if (this.holdControl.compareAndSet(true, false)) {
+				this.controlStarted.countDown();
+				this.releaseControl.await();
+			}
 			return new OrchestratorOperation("control-1", OperationKind.CONTROL);
 		}
 
@@ -322,6 +351,7 @@ final class SkyPilotOrchestratorTest {
 			}
 			this.releaseProbe.countDown();
 			this.releaseSubmit.countDown();
+			this.releaseControl.countDown();
 		}
 
 	}

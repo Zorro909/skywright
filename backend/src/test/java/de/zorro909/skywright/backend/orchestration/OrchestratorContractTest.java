@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import jakarta.persistence.Entity;
 import java.lang.reflect.RecordComponent;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -44,6 +45,13 @@ final class OrchestratorContractTest {
 		assertThat(task.resources()).containsExactly(cuda, rocm);
 		assertThat(task.resources()).extracting(OrchestratorTaskSpecification.Resources::useSpot)
 			.containsExactly(true, false);
+	}
+
+	@Test
+	void relativeGraalPyEnvironmentResolvesBesideTheArtifact() {
+		assertThat(GraalPySkyPilotClient.resolveResources(Path.of("graalpy-resources"),
+				Path.of("/opt/skywright/application.jar")))
+			.isEqualTo(Path.of("/opt/skywright/graalpy-resources"));
 	}
 
 }

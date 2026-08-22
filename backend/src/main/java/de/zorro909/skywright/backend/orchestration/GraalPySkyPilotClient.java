@@ -31,8 +31,28 @@ final class GraalPySkyPilotClient implements SkyPilotClient {
 	private Value bindings;
 
 	GraalPySkyPilotClient(Path resources, URI apiServerEndpoint) {
-		this.resources = resources.toAbsolutePath();
+		this.resources = resolveResources(resources, codeLocation());
 		this.apiServerEndpoint = apiServerEndpoint;
+	}
+
+	static Path resolveResources(Path configured, Path codeLocation) {
+		if (configured.isAbsolute() || Files.isDirectory(configured)) {
+			return configured.toAbsolutePath().normalize();
+		}
+		var artifactDirectory = codeLocation.getParent();
+		if (artifactDirectory == null) {
+			return configured.toAbsolutePath().normalize();
+		}
+		return artifactDirectory.resolve(configured).toAbsolutePath().normalize();
+	}
+
+	private static Path codeLocation() {
+		try {
+			return Path.of(GraalPySkyPilotClient.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+		}
+		catch (java.net.URISyntaxException failure) {
+			throw new IllegalStateException("GraalPy artifact location is invalid", failure);
+		}
 	}
 
 	@Override

@@ -22,6 +22,8 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 
 	private final ThreadPoolExecutor submissionLane;
 
+	private final ThreadPoolExecutor actionLane;
+
 	private final ThreadPoolExecutor heldLane;
 
 	private final ThreadPoolExecutor probeLane;
@@ -35,6 +37,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		this.settings = settings;
 		this.controlLane = lane("skypilot-control", settings.controlQueueCapacity());
 		this.submissionLane = lane("skypilot-submission", settings.controlQueueCapacity());
+		this.actionLane = lane("skypilot-action", settings.controlQueueCapacity());
 		this.heldLane = lane("skypilot-held", settings.heldQueueCapacity());
 		this.probeLane = lane("skypilot-probe", 1);
 		this.availability = SkyPilotAvailability.unavailable(BridgeFailure
@@ -54,7 +57,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 
 	@Override
 	public CompletionStage<OrchestratorResult<OrchestratorOperation>> control(ControlRequest request) {
-		return control(() -> this.client.control(request));
+		return action(() -> this.client.control(request));
 	}
 
 	@Override
@@ -123,6 +126,10 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 
 	private <T> CompletionStage<OrchestratorResult<T>> submit(CheckedSupplier<T> call) {
 		return availableDispatch(this.submissionLane, call);
+	}
+
+	private <T> CompletionStage<OrchestratorResult<T>> action(CheckedSupplier<T> call) {
+		return availableDispatch(this.actionLane, call);
 	}
 
 	private <T> CompletionStage<OrchestratorResult<T>> availableDispatch(ThreadPoolExecutor lane,
@@ -213,15 +220,18 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		}
 		this.controlLane.shutdown();
 		this.submissionLane.shutdown();
+		this.actionLane.shutdown();
 		this.heldLane.shutdown();
 		this.probeLane.shutdown();
 		var deadline = System.nanoTime() + this.settings.shutdownGrace().toNanos();
 		await(this.controlLane, deadline);
 		await(this.submissionLane, deadline);
+		await(this.actionLane, deadline);
 		await(this.heldLane, deadline);
 		await(this.probeLane, deadline);
 		completeDiscarded(this.controlLane.shutdownNow());
 		completeDiscarded(this.submissionLane.shutdownNow());
+		completeDiscarded(this.actionLane.shutdownNow());
 		completeDiscarded(this.heldLane.shutdownNow());
 		completeDiscarded(this.probeLane.shutdownNow());
 		this.client.close();
