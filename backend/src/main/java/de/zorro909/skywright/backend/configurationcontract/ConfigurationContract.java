@@ -26,4 +26,9 @@ public final class ConfigurationContract {
 		return resolved;
 	}
 
+	/** Exact Skywright Configuration Schema identity pinned by this compiled contract. */
+	public String skywrightSchemaIdentityJson() {
+		return this.owner.skywrightSchemaIdentityJson();
+	}
+
 }

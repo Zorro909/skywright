@@ -1,0 +1,41 @@
+{
+  "valid": [
+    {
+      "schemaVersion": 1,
+      "trainingProjectVersion": {
+        "projectIdentity": "project-é-é",
+        "versionLabel": "0123456789abcdef0123456789abcdef01234567-42",
+        "manifestArtifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sourceRevision": "0123456789abcdef0123456789abcdef01234567",
+        "pipeline": "42",
+        "images": {
+          "cuda": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "rocm": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "configurationContract": {
+          "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "skywrightSchema": {"version": "0.3.0", "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}
+        },
+        "metricContract": {
+          "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "skywrightSchema": {"version": "0.1.0", "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"}
+        }
+      },
+      "configuration": {"nested": {"array": [null, 9007199254740993, 0.1000000000000000001], "é": "é"}},
+      "datasetDefinition": {"datasetIdentity": "dataset-1", "version": "v1", "contentFingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+      "targetRequest": {"targetClass": "cloud-spot", "gpuCount": 2, "minimumGpuMemoryBytes": 85899345920, "gpuModel": "H100"},
+      "storage": {
+        "execution": {"storageId": "00000000-0000-0000-0000-000000000001", "registrationRevision": 4, "configurationRevision": 2, "endpoint": "https://objects.example", "bucket": "runs", "region": "eu-central-1", "addressingMode": "path", "compatibilityOptions": {"chunkedEncoding": "disabled"}},
+        "repatriation": {"enabled": false, "destination": {"storageId": "00000000-0000-0000-0000-000000000002", "registrationRevision": 3, "configurationRevision": 1, "endpoint": "https://home.example", "bucket": "home", "region": "local", "addressingMode": "virtual-hosted", "compatibilityOptions": {}}}
+      },
+      "executionPolicy": {"maximumRecoveryDebt": 3, "runtimeCeilingSeconds": 3600, "costCeiling": {"amount": 12.3400, "currency": "EUR"}},
+      "orderingReset": false
+    }
+  ],
+  "invalid": [
+    {"code": "RUN_DEFINITION_SCHEMA_VERSION_UNSUPPORTED", "json": "{\"schemaVersion\":2}"},
+    {"code": "RUN_DEFINITION_INVALID_JSON", "json": "{\"schemaVersion\":1,\"schemaVersion\":1}"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "json": "[]"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "json": "{\"schemaVersion\":1,\"unknown\":true}"}
+  ]
+}

@@ -113,6 +113,38 @@ public class TargetStorageRegistry {
 		return new TargetStorageSelection(execution, repatriationEnabled, repatriation);
 	}
 
+	/**
+	 * Resolves and snapshots both definition-owned storage selections without
+	 * credentials.
+	 */
+	@Transactional(readOnly = true)
+	public RunDefinitionStorageSelection resolveForRunDefinition(String targetClass, UUID executionOverride,
+			Boolean repatriationEnabledOverride, UUID repatriationStorageOverride) {
+		TargetClass resolvedClass = switch (targetClass) {
+			case "local-single-gpu" -> TargetClass.LOCAL_SINGLE_GPU;
+			case "local-multi-gpu" -> TargetClass.LOCAL_MULTI_GPU;
+			case "cloud-on-demand" -> TargetClass.CLOUD_ON_DEMAND;
+			case "cloud-spot" -> TargetClass.CLOUD_SPOT;
+			default -> throw new TargetStorageIneligibleException("TARGET_CLASS_INVALID", "Unknown Target Class");
+		};
+		TargetStorageDefaults defaults = this.repository.findDefaults(resolvedClass)
+			.orElseThrow(() -> new TargetStorageIneligibleException("TARGET_STORAGE_DEFAULT_MISSING",
+					"No Target Storage defaults are assigned for " + resolvedClass.wireValue()));
+		UUID executionId = executionOverride == null ? defaults.executionStorageId() : executionOverride;
+		boolean repatriationEnabled = repatriationEnabledOverride == null ? defaults.repatriationEnabled()
+				: repatriationEnabledOverride;
+		UUID destinationId = repatriationStorageOverride == null ? defaults.repatriationStorageId()
+				: repatriationStorageOverride;
+		TargetStorageAggregate execution = requireRunOutput(executionId);
+		TargetStorageAggregate destination = requireRunOutput(destinationId);
+		if (!execution.eligible() || !destination.eligible()) {
+			throw new TargetStorageIneligibleException("TARGET_STORAGE_INELIGIBLE",
+					"Both Run Definition storage selections must be eligible");
+		}
+		return new RunDefinitionStorageSelection(definitionSnapshot(execution), repatriationEnabled,
+				definitionSnapshot(destination));
+	}
+
 	@Transactional(readOnly = true)
 	public TargetStorageDescriptor resolveDescriptor(UUID id) {
 		TargetStorageAggregate storage = this.storage(id);
@@ -173,6 +205,13 @@ public class TargetStorageRegistry {
 					"Run-output selection requires a run-output Target Storage");
 		}
 		return storage;
+	}
+
+	private static RunDefinitionStorageSnapshot definitionSnapshot(TargetStorageAggregate storage) {
+		TargetStorageDescriptor descriptor = storage.descriptor();
+		return new RunDefinitionStorageSnapshot(descriptor.storageId(), storage.registrationRevision(),
+				storage.activeRevision(), descriptor.endpoint(), descriptor.bucket(), descriptor.region(),
+				descriptor.pathStyleAccess(), descriptor.compatibilityOptions());
 	}
 
 	private void requireEligibleRunOutput(UUID id) {

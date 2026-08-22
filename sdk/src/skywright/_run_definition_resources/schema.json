@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:skywright:run-definition:v1",
+  "title": "Skywright Run Definition v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "trainingProjectVersion", "configuration", "datasetDefinition", "targetRequest", "storage", "executionPolicy", "orderingReset"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "trainingProjectVersion": {"$ref": "#/$defs/trainingProjectVersion"},
+    "configuration": {"type": "object"},
+    "datasetDefinition": {"$ref": "#/$defs/datasetDefinition"},
+    "targetRequest": {"$ref": "#/$defs/targetRequest"},
+    "storage": {"$ref": "#/$defs/storage"},
+    "executionPolicy": {"$ref": "#/$defs/executionPolicy"},
+    "orderingReset": {"type": "boolean"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "schemaIdentity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "digest"],
+      "properties": {"version": {"type": "string", "minLength": 1}, "digest": {"$ref": "#/$defs/digest"}}
+    },
+    "contractIdentity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["digest", "skywrightSchema"],
+      "properties": {"digest": {"$ref": "#/$defs/digest"}, "skywrightSchema": {"$ref": "#/$defs/schemaIdentity"}}
+    },
+    "trainingProjectVersion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["projectIdentity", "versionLabel", "manifestArtifactDigest", "sourceRevision", "pipeline", "images", "configurationContract", "metricContract"],
+      "properties": {
+        "projectIdentity": {"type": "string", "minLength": 1},
+        "versionLabel": {"type": "string", "minLength": 1},
+        "manifestArtifactDigest": {"$ref": "#/$defs/digest"},
+        "sourceRevision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "pipeline": {"type": "string", "minLength": 1},
+        "images": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/digest"}},
+        "configurationContract": {"$ref": "#/$defs/contractIdentity"},
+        "metricContract": {"$ref": "#/$defs/contractIdentity"}
+      }
+    },
+    "datasetDefinition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["datasetIdentity", "version", "contentFingerprint"],
+      "properties": {
+        "datasetIdentity": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "contentFingerprint": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "targetRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["targetClass", "gpuCount"],
+      "properties": {
+        "targetClass": {"enum": ["local-single-gpu", "local-multi-gpu", "cloud-on-demand", "cloud-spot"]},
+        "gpuCount": {"type": "integer", "minimum": 1},
+        "minimumGpuMemoryBytes": {"type": "integer", "minimum": 1},
+        "target": {"type": "string", "minLength": 1},
+        "gpuModel": {"type": "string", "minLength": 1}
+      }
+    },
+    "storageDescriptor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["storageId", "registrationRevision", "configurationRevision", "endpoint", "bucket", "region", "addressingMode", "compatibilityOptions"],
+      "properties": {
+        "storageId": {"type": "string", "format": "uuid"},
+        "registrationRevision": {"type": "integer", "minimum": 1},
+        "configurationRevision": {"type": "integer", "minimum": 1},
+        "endpoint": {"type": "string", "format": "uri"},
+        "bucket": {"type": "string", "minLength": 1},
+        "region": {"type": "string", "minLength": 1},
+        "addressingMode": {"enum": ["path", "virtual-hosted"]},
+        "compatibilityOptions": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "storage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["execution", "repatriation"],
+      "properties": {
+        "execution": {"$ref": "#/$defs/storageDescriptor"},
+        "repatriation": {
+          "type": "object", "additionalProperties": false,
+          "required": ["enabled", "destination"],
+          "properties": {"enabled": {"type": "boolean"}, "destination": {"$ref": "#/$defs/storageDescriptor"}}
+        }
+      }
+    },
+    "costCeiling": {
+      "type": "object", "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {"amount": {"type": "number", "exclusiveMinimum": 0}, "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}}
+    },
+    "executionPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["maximumRecoveryDebt"],
+      "properties": {
+        "maximumRecoveryDebt": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "runtimeCeilingSeconds": {"type": "integer", "minimum": 1},
+        "costCeiling": {"$ref": "#/$defs/costCeiling"}
+      }
+    }
+  }
+}
