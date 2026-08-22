@@ -16,7 +16,7 @@
     "orderingReset": {"type": "boolean"}
   },
   "$defs": {
-    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "digest": {"type": "string", "minLength": 71, "maxLength": 71, "pattern": "^sha256:[0-9a-f]{64}$"},
     "schemaIdentity": {
       "type": "object", "additionalProperties": false,
       "required": ["version", "digest"],
@@ -34,8 +34,8 @@
         "projectIdentity": {"type": "string", "minLength": 1},
         "versionLabel": {"type": "string", "minLength": 1},
         "manifestArtifactDigest": {"$ref": "#/$defs/digest"},
-        "sourceRevision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-        "pipeline": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,86}$"},
+        "sourceRevision": {"type": "string", "minLength": 40, "maxLength": 40, "pattern": "^[0-9a-f]{40}$"},
+        "pipeline": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,86}(?![\\s\\S])"},
         "images": {"type": "object", "minProperties": 1, "additionalProperties": false, "properties": {"cuda": {"$ref": "#/$defs/digest"}, "rocm": {"$ref": "#/$defs/digest"}}},
         "environmentProfiles": {"type": "object", "minProperties": 1, "additionalProperties": false, "properties": {"cuda": {"$ref": "#/$defs/environmentProfile"}, "rocm": {"$ref": "#/$defs/environmentProfile"}}},
         "configurationContract": {"$ref": "#/$defs/contractIdentity"},
@@ -63,7 +63,7 @@
         "gpuModel": {"type": "string", "minLength": 1}
       }
     },
-    "environmentProfile": {"type": "string", "pattern": "^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?|\\[[0-9A-Fa-f:.]+\\](?::[0-9]+)?)/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[0-9a-f]{64}$"},
+    "environmentProfile": {"type": "string", "pattern": "^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?|\\[[0-9A-Fa-f:.]+\\](?::[0-9]+)?)/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[0-9a-f]{64}(?![\\s\\S])"},
     "storageDescriptor": {
       "type": "object", "additionalProperties": false,
       "required": ["storageId", "registrationRevision", "configurationRevision", "endpoint", "bucket", "region", "addressingMode", "compatibilityOptions"],

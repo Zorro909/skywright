@@ -77,6 +77,11 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
                 '"versionLabel": "0123456789abcdef0123456789abcdef01234567-42"',
                 f'"versionLabel": {replacement}',
             )
+        elif invalid["pointer"] == "/trainingProjectVersion/manifestArtifactDigest":
+            document = document.replace(
+                '"manifestArtifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"',
+                f'"manifestArtifactDigest": {replacement}',
+            )
         elif invalid["pointer"] == "/trainingProjectVersion/pipeline":
             document = document.replace(
                 '"pipeline": "42"', f'"pipeline": {replacement}'
