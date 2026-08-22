@@ -20,6 +20,8 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 
 	private final ThreadPoolExecutor controlLane;
 
+	private final ThreadPoolExecutor submissionLane;
+
 	private final ThreadPoolExecutor heldLane;
 
 	private final ThreadPoolExecutor probeLane;
@@ -32,6 +34,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		this.client = client;
 		this.settings = settings;
 		this.controlLane = lane("skypilot-control", settings.controlQueueCapacity());
+		this.submissionLane = lane("skypilot-submission", settings.controlQueueCapacity());
 		this.heldLane = lane("skypilot-held", settings.heldQueueCapacity());
 		this.probeLane = lane("skypilot-probe", 1);
 		this.availability = SkyPilotAvailability.unavailable(BridgeFailure
@@ -41,7 +44,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 
 	@Override
 	public CompletionStage<OrchestratorResult<OrchestratorOperation>> submit(OrchestratorTaskSpecification task) {
-		return control(() -> this.client.submit(task));
+		return submit(() -> this.client.submit(task));
 	}
 
 	@Override
@@ -115,13 +118,22 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 	}
 
 	private <T> CompletionStage<OrchestratorResult<T>> control(CheckedSupplier<T> call) {
+		return availableDispatch(this.controlLane, call);
+	}
+
+	private <T> CompletionStage<OrchestratorResult<T>> submit(CheckedSupplier<T> call) {
+		return availableDispatch(this.submissionLane, call);
+	}
+
+	private <T> CompletionStage<OrchestratorResult<T>> availableDispatch(ThreadPoolExecutor lane,
+			CheckedSupplier<T> call) {
 		if (!this.admitting.get()) {
 			return CompletableFuture.completedFuture(shutdownResult());
 		}
 		if (!this.availability.available()) {
 			return CompletableFuture.completedFuture(OrchestratorResult.failure(this.availability.failure()));
 		}
-		return dispatch(this.controlLane, call);
+		return dispatch(lane, call);
 	}
 
 	private <T> CompletionStage<OrchestratorResult<T>> dispatch(ThreadPoolExecutor lane, CheckedSupplier<T> call) {
@@ -144,6 +156,10 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 			result.complete(OrchestratorResult.accepted(call.get()));
 		}
 		catch (Exception failure) {
+			if (!this.admitting.get()) {
+				result.complete(shutdownResult());
+				return;
+			}
 			var mapped = mapFailure(failure);
 			if (mapped.cause() != FailureCause.ADAPTER_CONTRACT) {
 				recordAvailability(SkyPilotAvailability.unavailable(mapped));
@@ -196,13 +212,16 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 			return;
 		}
 		this.controlLane.shutdown();
+		this.submissionLane.shutdown();
 		this.heldLane.shutdown();
 		this.probeLane.shutdown();
 		var deadline = System.nanoTime() + this.settings.shutdownGrace().toNanos();
 		await(this.controlLane, deadline);
+		await(this.submissionLane, deadline);
 		await(this.heldLane, deadline);
 		await(this.probeLane, deadline);
 		completeDiscarded(this.controlLane.shutdownNow());
+		completeDiscarded(this.submissionLane.shutdownNow());
 		completeDiscarded(this.heldLane.shutdownNow());
 		completeDiscarded(this.probeLane.shutdownNow());
 		this.client.close();

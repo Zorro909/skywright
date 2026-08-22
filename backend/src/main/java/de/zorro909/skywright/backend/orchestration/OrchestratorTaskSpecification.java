@@ -23,7 +23,8 @@ public record OrchestratorTaskSpecification(String name, String setup, String ru
 		}
 	}
 
-	public record Resources(String infrastructure, String cpus, String memory, String accelerators, String imageId) {
+	public record Resources(String infrastructure, String cpus, String memory, String accelerators, String imageId,
+			boolean useSpot) {
 
 		public Resources {
 			requireText(infrastructure, "infrastructure");

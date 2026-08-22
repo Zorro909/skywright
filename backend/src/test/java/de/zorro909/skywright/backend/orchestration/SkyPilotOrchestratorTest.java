@@ -82,8 +82,10 @@ final class SkyPilotOrchestratorTest {
 		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
 		awaitInitialProbe();
 
-		var failure = this.orchestrator.submit(new OrchestratorTaskSpecification("job", null, "true",
-				List.of(new OrchestratorTaskSpecification.Resources("aws", "2", "4", null, null)), java.util.Map.of()))
+		var failure = this.orchestrator
+			.submit(new OrchestratorTaskSpecification("job", null, "true",
+					List.of(new OrchestratorTaskSpecification.Resources("aws", "2", "4", null, null, false)),
+					java.util.Map.of()))
 			.toCompletableFuture()
 			.get(1, TimeUnit.SECONDS)
 			.failure();
@@ -180,6 +182,43 @@ final class SkyPilotOrchestratorTest {
 		client.releaseHeld.countDown();
 	}
 
+	@Test
+	void submissionPreflightDoesNotBlockControlWork() throws Exception {
+		var client = new ControllableSkyPilotClient();
+		client.holdSubmit.set(true);
+		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
+		awaitInitialProbe();
+
+		var submission = this.orchestrator.submit(new OrchestratorTaskSpecification("job", null, "true",
+				List.of(new OrchestratorTaskSpecification.Resources("aws", "2", "4", null, null, false)),
+				java.util.Map.of()));
+		assertThat(client.submitStarted.await(1, TimeUnit.SECONDS)).isTrue();
+
+		assertThat(this.orchestrator.observe(new StatusRequest(List.of("job")))
+			.toCompletableFuture()
+			.get(1, TimeUnit.SECONDS)
+			.value()
+			.kind()).isEqualTo(OperationKind.STATUS);
+		assertThat(submission).isNotDone();
+		client.releaseSubmit.countDown();
+	}
+
+	@Test
+	void forcedShutdownClassifiesInterruptedActiveWorkAsShutdown() throws Exception {
+		var client = new ControllableSkyPilotClient();
+		client.releaseHeldOnClose.set(false);
+		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ZERO));
+		awaitInitialProbe();
+
+		var active = this.orchestrator.complete(new OrchestratorOperation("held-1", OperationKind.SUBMISSION));
+		assertThat(client.heldStarted.await(1, TimeUnit.SECONDS)).isTrue();
+
+		this.orchestrator.close();
+
+		assertThat(active.toCompletableFuture().get(1, TimeUnit.SECONDS).failure().cause())
+			.isEqualTo(BridgeFailure.FailureCause.SHUTDOWN);
+	}
+
 	private void awaitInitialProbe() throws Exception {
 		this.orchestrator.refreshAvailability().toCompletableFuture().get(1, TimeUnit.SECONDS);
 	}
@@ -194,9 +233,15 @@ final class SkyPilotOrchestratorTest {
 
 		private final CountDownLatch releaseProbe = new CountDownLatch(1);
 
+		private final CountDownLatch submitStarted = new CountDownLatch(1);
+
+		private final CountDownLatch releaseSubmit = new CountDownLatch(1);
+
 		private final AtomicBoolean reachable = new AtomicBoolean(true);
 
 		private final AtomicBoolean holdProbe = new AtomicBoolean(false);
+
+		private final AtomicBoolean holdSubmit = new AtomicBoolean(false);
 
 		private final AtomicBoolean releaseHeldOnClose = new AtomicBoolean(true);
 
@@ -226,6 +271,10 @@ final class SkyPilotOrchestratorTest {
 		public OrchestratorOperation submit(OrchestratorTaskSpecification task) throws Exception {
 			if (this.submitFailure != null) {
 				throw this.submitFailure;
+			}
+			if (this.holdSubmit.compareAndSet(true, false)) {
+				this.submitStarted.countDown();
+				this.releaseSubmit.await();
 			}
 			return new OrchestratorOperation("submit-1", OperationKind.SUBMISSION);
 		}
@@ -272,6 +321,7 @@ final class SkyPilotOrchestratorTest {
 				this.releaseHeld.countDown();
 			}
 			this.releaseProbe.countDown();
+			this.releaseSubmit.countDown();
 		}
 
 	}

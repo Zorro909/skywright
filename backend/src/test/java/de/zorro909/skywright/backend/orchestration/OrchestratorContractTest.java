@@ -32,16 +32,18 @@ final class OrchestratorContractTest {
 
 	@Test
 	void taskContractRetainsImmutableAcceleratorImageCandidates() {
-		var cuda = new OrchestratorTaskSpecification.Resources("aws", "8", "32", "A100:1",
-				"docker:project@sha256:cuda");
+		var cuda = new OrchestratorTaskSpecification.Resources("aws", "8", "32", "A100:1", "docker:project@sha256:cuda",
+				true);
 		var rocm = new OrchestratorTaskSpecification.Resources("kubernetes/rocm", "8", "32", "MI300X:1",
-				"docker:project@sha256:rocm");
+				"docker:project@sha256:rocm", false);
 		var candidates = new ArrayList<>(List.of(cuda, rocm));
 
 		var task = new OrchestratorTaskSpecification("run-1", null, "train", candidates, Map.of());
 		candidates.clear();
 
 		assertThat(task.resources()).containsExactly(cuda, rocm);
+		assertThat(task.resources()).extracting(OrchestratorTaskSpecification.Resources::useSpot)
+			.containsExactly(true, false);
 	}
 
 }
