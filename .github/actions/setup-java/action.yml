@@ -15,15 +15,27 @@ runs:
         for name in ("java_archive_sha256", "java_archive_url", "java_version"):
             print(f"{name}={toolchain[name]}")
         PY
-    - name: Download exact GraalVM Community archive
+    - name: Cache GraalVM Community archive
+      id: graalvm-cache
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ${{ runner.temp }}/graalvm-community.tar.gz
+        key: ${{ runner.os }}-${{ runner.arch }}-graalvm-community-${{ steps.toolchain.outputs.java_archive_sha256 }}
+    - name: Download exact GraalVM Community archive on cache miss
+      if: steps.graalvm-cache.outputs.cache-hit != 'true'
       shell: bash
       env:
-        JAVA_ARCHIVE_SHA256: ${{ steps.toolchain.outputs.java_archive_sha256 }}
         JAVA_ARCHIVE_URL: ${{ steps.toolchain.outputs.java_archive_url }}
       run: |
         curl --fail --location --silent --show-error \
+          --retry 5 --retry-delay 2 --retry-all-errors \
           --output "${RUNNER_TEMP}/graalvm-community.tar.gz" \
           "$JAVA_ARCHIVE_URL"
+    - name: Verify GraalVM Community archive
+      shell: bash
+      env:
+        JAVA_ARCHIVE_SHA256: ${{ steps.toolchain.outputs.java_archive_sha256 }}
+      run: |
         echo "${JAVA_ARCHIVE_SHA256}  ${RUNNER_TEMP}/graalvm-community.tar.gz" \
           | sha256sum --check --strict
     - name: Set up GraalVM Community
