@@ -66,6 +66,19 @@ public final class RunStoreAccess {
 		return object;
 	}
 
+	public ProgressRecord readProgress() {
+		RunStoreObject object = require(this.protocol.progressKey());
+		validate(object);
+		if (!"progress-record".equals(object.metadata().get("skywright-kind"))) {
+			throw new RunStoreIntegrityException("RUN_STORE_METADATA_MISMATCH: expected Progress Record");
+		}
+		ProgressRecord progress = ProgressRecord.decode(object.bytes());
+		if (!this.protocol.runId().equals(progress.runId())) {
+			throw new RunStoreIntegrityException("RUN_STORE_WRONG_RUN: Progress Record belongs to another Run");
+		}
+		return progress;
+	}
+
 	public URI presignDownload(String key, int expiresInSeconds) {
 		String prefix = this.protocol.runPrefix();
 		if (!(key.startsWith(prefix + "checkpoints/") || key.startsWith(prefix + "artifacts/")

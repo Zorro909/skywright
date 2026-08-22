@@ -8,9 +8,16 @@ public final class RunStoreProtocol {
 
 	private final String runPrefix;
 
+	private final String runId;
+
 	public RunStoreProtocol(String trainingProjectId, String runId) {
+		this.runId = runId;
 		this.runPrefix = component(trainingProjectId, "Training Project identity") + "/"
 				+ component(runId, "Run identity") + "/v1/";
+	}
+
+	public String runId() {
+		return this.runId;
 	}
 
 	public String runPrefix() {
@@ -27,6 +34,15 @@ public final class RunStoreProtocol {
 
 	public String checkpointKey(long step, String digest) {
 		return this.runPrefix + "checkpoints/" + step(step) + "/" + digest(digest) + ".safetensors";
+	}
+
+	public String metricSegmentKey(String attemptId, long segment) {
+		return this.runPrefix + "metrics/" + attempt(attemptId) + "/events.out.tfevents." + step(segment)
+				+ ".skywright";
+	}
+
+	public String progressKey() {
+		return this.runPrefix + "progress.json";
 	}
 
 	public String artifactKey(String attemptId, long step, String name) {

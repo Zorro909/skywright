@@ -196,15 +196,17 @@ the Environment Profile supplies them, without becoming SDK runtime dependencies
 grace; grace expiry or a repeated signal forces immediate termination. Cancellation wins when both
 requests are present.
 
-This milestone keeps checkpoint, metric-event, Sample, Artifact, and Dataset transport behind
-explicit protocols. A `DatasetAccess` implementation supplies batches and their next cursor; the
-Run Context accepts only a context-issued batch. `commit_step()` advances its cursor while
-atomically publishing the Step's project metrics, throughput, data-loading wait, and progress.
+Checkpoint, metric-event, Sample, Artifact, and Dataset transport stays behind explicit protocols.
+A `DatasetAccess` implementation supplies batches and their next cursor; the Run Context accepts
+only a context-issued batch. `commit_step()` advances its cursor while atomically publishing the
+Step's project metrics, throughput, data-loading wait, and progress.
 The Run Context also sends cgroup memory observations through the recorder at
 `metrics.systemSamplingInterval`. A `TrainingProcessRecorder` synchronously confirms attempt,
 checkpoint, metric/progress, output, and termination-report publication. Completion and
 recoverable interruption are returned only after a checkpoint reference and the final report are
-durable. The SDK does not implement a TensorBoard writer or MosaicML Streaming transport.
+durable. The production Run Store recorder writes accepted observations to attempt-scoped
+TensorBoard event segments and maintains the Run's current Progress Record. The SDK does not
+implement MosaicML Streaming transport.
 
 ## Operational runtime command
 

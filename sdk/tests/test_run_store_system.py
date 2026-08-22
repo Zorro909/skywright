@@ -21,6 +21,7 @@ import boto3
 import pytest
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from tensorboard.backend.event_processing.event_file_loader import EventFileLoader
 
 from skywright import (
     ArtifactRecord,
@@ -36,6 +37,7 @@ from skywright.metrics import MetricSchema
 from skywright.run_store import (
     CheckpointCodec,
     CheckpointReference,
+    RunStoreProtocol,
     RunStoreReader,
     RunStoreRecorder,
     TargetStorage,
@@ -483,6 +485,41 @@ def test_training_lifecycle_scenarios_persist_to_pinned_seaweedfs(tmp_path) -> N
             "resumed": True,
             "terminal_report_closed_writer": True,
         }
+        resume_target = TargetStorage(
+            "seaweedfs",
+            endpoint,
+            bucket,
+            "us-east-1",
+            "project",
+            "resume-run",
+        )
+        progress = RunStoreReader(resume_target, client=client).read_progress()
+        assert progress.current_step == 2
+        assert progress.latest_durable_step == 2
+        assert progress.latest_durable_checkpoint == resumed["checkpoint"]
+        assert progress.target_step is None
+        metric_objects = [
+            item
+            for item in client.list_objects_v2(
+                Bucket=bucket,
+                Prefix=RunStoreProtocol("project", "resume-run").run_prefix
+                + "metrics/",
+            )["Contents"]
+        ]
+        metric_events = []
+        for index, item in enumerate(metric_objects):
+            path = tmp_path / f"resume-metrics-{index}.tfevents"
+            path.write_bytes(
+                client.get_object(Bucket=bucket, Key=item["Key"])["Body"].read()
+            )
+            metric_events.extend(EventFileLoader(str(path)).Load())
+        tags = [value.tag for event in metric_events for value in event.summary.value]
+        assert tags.count("skywright/run_configuration") == 1
+        assert "skywright/system/throughput" in tags
+        assert "skywright/system/data_loading_wait" in tags
+        assert [
+            event.step for event in metric_events if event.HasField("session_log")
+        ] == [1]
 
         cancelled = run_scenario("cancelled", "cancelled-run")
         assert cancelled == {

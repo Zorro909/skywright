@@ -25,6 +25,7 @@ from skywright._training_protocols import (
     MetricContractResolver,
     TrainingProcessRecorder,
     TrainingProject,
+    configure_recorder_observability,
 )
 from skywright._training_results import (
     durable_result,
@@ -137,6 +138,11 @@ def run_training_process(
     try:
         resolved_recorder = cast(
             TrainingProcessRecorder, resolve_component(recorder, "recorder")
+        )
+        configure_recorder_observability(
+            resolved_recorder,
+            configuration,
+            shutdown_grace_seconds,
         )
         resolved_resume = (
             cast(

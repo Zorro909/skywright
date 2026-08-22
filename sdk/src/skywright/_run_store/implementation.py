@@ -25,7 +25,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType, TracebackType
-from typing import Any, BinaryIO, NoReturn, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, NoReturn, cast
 from urllib.parse import quote, unquote
 
 import numpy as np
@@ -34,6 +34,9 @@ from skywright._training_errors import (
     CheckpointPublicationCancelled,
     TrainingContractViolation,
 )
+
+if TYPE_CHECKING:
+    from skywright._run_store.progress import ProgressRecord
 from skywright._training_types import (
     ArtifactRecord,
     CheckpointRejectionEvidence,
@@ -163,6 +166,15 @@ class RunStoreProtocol:
         return (
             f"{self.run_prefix}checkpoints/{_step(step)}/{_digest(digest)}.safetensors"
         )
+
+    def metric_segment_key(self, attempt_id: str, segment: int) -> str:
+        return (
+            f"{self.run_prefix}metrics/{_attempt(attempt_id)}/"
+            f"events.out.tfevents.{_step(segment)}.skywright"
+        )
+
+    def progress_key(self) -> str:
+        return f"{self.run_prefix}progress.json"
 
     def artifact_key(self, attempt_id: str, step: int, name: str) -> str:
         return self._output_key("artifacts", attempt_id, step, name)
@@ -1359,6 +1371,26 @@ class RunStoreReader:
                 )
             seen.add(item.step)
         return tuple(summaries)
+
+    def read_progress(self) -> ProgressRecord:
+        """Read and validate the Run's current Progress Record."""
+        from skywright._run_store.progress import ProgressRecord
+
+        body, response = self._read_verified_object(self.protocol.progress_key())
+        metadata = response.get("Metadata", {})
+        if (
+            metadata.get("skywright-kind") != "progress-record"
+            or metadata.get("skywright-schema") != "v1"
+        ):
+            raise RunStoreIntegrityError(
+                "RUN_STORE_METADATA_MISMATCH: expected Progress Record schema v1"
+            )
+        progress = ProgressRecord.decode(body)
+        if progress.run_id != self.target.run_id:
+            raise RunStoreIntegrityError(
+                "RUN_STORE_WRONG_RUN: Progress Record belongs to another Run"
+            )
+        return progress
 
     def read_exact(
         self,

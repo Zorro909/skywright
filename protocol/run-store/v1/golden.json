@@ -11,12 +11,55 @@
       "runPrefix": "project-%CE%B1/run-1/v1/",
       "checkpointReference": "skywright-checkpoint:v1:42:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "checkpointKey": "project-%CE%B1/run-1/v1/checkpoints/0000000000000000042/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.safetensors",
-      "artifactKey": "project-%CE%B1/run-1/v1/artifacts/123e4567-e89b-12d3-a456-426614174000/0000000000000000042/plots%2Floss%20100%25.png"
+      "artifactKey": "project-%CE%B1/run-1/v1/artifacts/123e4567-e89b-12d3-a456-426614174000/0000000000000000042/plots%2Floss%20100%25.png",
+      "metricSegmentKey": "project-%CE%B1/run-1/v1/metrics/123e4567-e89b-12d3-a456-426614174000/events.out.tfevents.0000000000000000042.skywright",
+      "progressKey": "project-%CE%B1/run-1/v1/progress.json"
     }
   ],
   "invalidReferences": [
     "skywright-checkpoint:v2:42:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "skywright-checkpoint:v1:042:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "skywright-checkpoint:v1:42:sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  ],
+  "progressRecords": [
+    {
+      "json": "{\"currentStep\":42,\"latestDurableCheckpoint\":\"skywright-checkpoint:v1:40:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"latestDurableStep\":40,\"runId\":\"run-1\",\"schemaVersion\":1,\"writtenAt\":\"2026-08-22T12:34:56.123456Z\"}",
+      "runId": "run-1",
+      "currentStep": 42,
+      "latestDurableStep": 40,
+      "latestDurableCheckpoint": "skywright-checkpoint:v1:40:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "targetStep": null,
+      "writtenAt": "2026-08-22T12:34:56.123456Z"
+    },
+    {
+      "json": "{\"currentStep\":3,\"latestDurableCheckpoint\":null,\"latestDurableStep\":null,\"runId\":\"run-2\",\"schemaVersion\":1,\"targetStep\":100,\"writtenAt\":\"2026-08-22T13:00:00Z\"}",
+      "runId": "run-2",
+      "currentStep": 3,
+      "latestDurableStep": null,
+      "latestDurableCheckpoint": null,
+      "targetStep": 100,
+      "writtenAt": "2026-08-22T13:00:00Z"
+    }
+  ],
+  "invalidProgressRecords": [
+    "{\"currentStep\":0,\"latestDurableCheckpoint\":null,\"latestDurableStep\":null,\"runId\":\"run-1\",\"schemaVersion\":2,\"writtenAt\":\"2026-08-22T12:34:56Z\"}",
+    "{\"currentStep\":0,\"latestDurableCheckpoint\":null,\"latestDurableStep\":null,\"runId\":\"run-1\",\"schemaVersion\":true,\"writtenAt\":\"2026-08-22T12:34:56Z\"}"
+  ],
+  "invalidProgressStepRecords": [
+    "{\"currentStep\":0,\"latestDurableCheckpoint\":null,\"latestDurableStep\":null,\"runId\":\"run-1\",\"schemaVersion\":1,\"targetStep\":9223372036854775808,\"writtenAt\":\"2026-08-22T12:34:56Z\"}"
+  ],
+  "progressIntegrityMetadata": [
+    {
+      "metadata": {"skywright-kind": "progress-record", "skywright-schema": "v1"},
+      "valid": true
+    },
+    {
+      "metadata": {"skywright-kind": "artifact", "skywright-schema": "v1"},
+      "valid": false
+    },
+    {
+      "metadata": {"skywright-kind": "progress-record", "skywright-schema": "v2"},
+      "valid": false
+    }
   ]
 }

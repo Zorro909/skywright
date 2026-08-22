@@ -72,6 +72,27 @@ class TrainingProcessRecorder(Protocol):
     def publish_report(self, report: ExecutionTerminationReport) -> None: ...
 
 
+def configure_recorder_observability(
+    recorder: TrainingProcessRecorder,
+    configuration: Mapping[str, object],
+    shutdown_grace_seconds: float,
+) -> None:
+    """Configure the optional observability lifecycle through one adapter."""
+    configure = getattr(recorder, "configure_metrics", None)
+    if callable(configure):
+        configure(
+            configuration,
+            shutdown_grace_seconds=shutdown_grace_seconds,
+        )
+
+
+def finalize_recorder_observability(recorder: TrainingProcessRecorder) -> None:
+    """Finalize the optional observability lifecycle through one adapter."""
+    finalize = getattr(recorder, "finalize_observability", None)
+    if callable(finalize):
+        finalize()
+
+
 class MetricContractResolver(Protocol):
     """Loads pinned contracts and composes their immutable Metric Catalog."""
 
