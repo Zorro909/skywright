@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "trainingProjectVersion", "configuration", "datasetDefinition", "targetRequest", "storage", "executionPolicy", "orderingReset"],
   "properties": {
-    "schemaVersion": {"const": 1},
+    "schemaVersion": {"type": "integer", "const": 1},
     "trainingProjectVersion": {"$ref": "#/$defs/trainingProjectVersion"},
     "configuration": {"type": "object"},
     "datasetDefinition": {"$ref": "#/$defs/datasetDefinition"},
@@ -52,9 +52,11 @@
     },
     "targetRequest": {
       "type": "object", "additionalProperties": false,
-      "required": ["targetClass", "gpuCount"],
+      "required": ["targetClass", "purchaseMode", "acceleratorBackend", "gpuCount", "gpuModel"],
       "properties": {
         "targetClass": {"enum": ["local-single-gpu", "local-multi-gpu", "cloud-on-demand", "cloud-spot"]},
+        "purchaseMode": {"enum": ["local", "on-demand", "spot"]},
+        "acceleratorBackend": {"type": "string", "minLength": 1},
         "gpuCount": {"type": "integer", "minimum": 1},
         "minimumGpuMemoryBytes": {"type": "integer", "minimum": 1},
         "target": {"type": "string", "minLength": 1},
@@ -97,7 +99,7 @@
       "required": ["maximumRecoveryDebt"],
       "properties": {
         "maximumRecoveryDebt": {"type": "integer", "minimum": 1, "maximum": 2147483647},
-        "runtimeCeilingSeconds": {"type": "integer", "minimum": 1},
+        "runtimeCeiling": {"type": "string", "pattern": "^PT(?=.*[1-9])(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\\.[0-9]+)?S)?$"},
         "costCeiling": {"$ref": "#/$defs/costCeiling"}
       }
     }

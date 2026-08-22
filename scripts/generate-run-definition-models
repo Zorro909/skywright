@@ -51,6 +51,18 @@ def outputs() -> dict[Path, str]:
         \t\treturn this.value.deepCopy();
         \t}}
 
+        \tpublic String manifestArtifactDigest() {{
+        \t\treturn this.value.at("/trainingProjectVersion/manifestArtifactDigest").asText();
+        \t}}
+
+        \tpublic JsonNode configuration() {{
+        \t\treturn this.value.path("configuration").deepCopy();
+        \t}}
+
+        \tpublic JsonNode datasetDefinition() {{
+        \t\treturn this.value.path("datasetDefinition").deepCopy();
+        \t}}
+
         \tpublic String encode() {{
         \t\treturn this.value.toString();
         \t}}

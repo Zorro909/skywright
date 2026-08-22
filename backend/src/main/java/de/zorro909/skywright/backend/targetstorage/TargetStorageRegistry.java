@@ -118,23 +118,17 @@ public class TargetStorageRegistry {
 	 * credentials.
 	 */
 	@Transactional(readOnly = true)
-	public RunDefinitionStorageSelection resolveForRunDefinition(String targetClass, UUID executionOverride,
-			Boolean repatriationEnabledOverride, UUID repatriationStorageOverride) {
-		TargetClass resolvedClass = switch (targetClass) {
-			case "local-single-gpu" -> TargetClass.LOCAL_SINGLE_GPU;
-			case "local-multi-gpu" -> TargetClass.LOCAL_MULTI_GPU;
-			case "cloud-on-demand" -> TargetClass.CLOUD_ON_DEMAND;
-			case "cloud-spot" -> TargetClass.CLOUD_SPOT;
-			default -> throw new TargetStorageIneligibleException("TARGET_CLASS_INVALID", "Unknown Target Class");
-		};
-		TargetStorageDefaults defaults = this.repository.findDefaults(resolvedClass)
+	public RunDefinitionStorageSelection resolveForRunDefinition(TargetClass targetClass,
+			RunDefinitionStorageOverrides overrides) {
+		TargetStorageDefaults defaults = this.repository.findDefaults(targetClass)
 			.orElseThrow(() -> new TargetStorageIneligibleException("TARGET_STORAGE_DEFAULT_MISSING",
-					"No Target Storage defaults are assigned for " + resolvedClass.wireValue()));
-		UUID executionId = executionOverride == null ? defaults.executionStorageId() : executionOverride;
-		boolean repatriationEnabled = repatriationEnabledOverride == null ? defaults.repatriationEnabled()
-				: repatriationEnabledOverride;
-		UUID destinationId = repatriationStorageOverride == null ? defaults.repatriationStorageId()
-				: repatriationStorageOverride;
+					"No Target Storage defaults are assigned for " + targetClass.wireValue()));
+		UUID executionId = overrides.executionStorage() == null ? defaults.executionStorageId()
+				: overrides.executionStorage();
+		boolean repatriationEnabled = overrides.repatriationEnabled() == null ? defaults.repatriationEnabled()
+				: overrides.repatriationEnabled();
+		UUID destinationId = overrides.repatriationStorage() == null ? defaults.repatriationStorageId()
+				: overrides.repatriationStorage();
 		TargetStorageAggregate execution = requireRunOutput(executionId);
 		TargetStorageAggregate destination = requireRunOutput(destinationId);
 		if (!execution.eligible() || !destination.eligible()) {

@@ -1,8 +1,7 @@
 package de.zorro909.skywright.backend.targetstorage;
 
-import java.util.UUID;
-
 import de.zorro909.skywright.backend.rundefinition.RunDefinitionStorageReader;
+import de.zorro909.skywright.backend.rundefinition.RunDefinitionStorageException;
 
 /** Production Run Definition adapter over the Target Storage selection boundary. */
 public final class TargetStorageRunDefinitionReader implements RunDefinitionStorageReader {
@@ -14,10 +13,13 @@ public final class TargetStorageRunDefinitionReader implements RunDefinitionStor
 	}
 
 	@Override
-	public RunDefinitionStorageSelection resolve(String targetClass, UUID executionOverride,
-			Boolean repatriationEnabledOverride, UUID repatriationStorageOverride) {
-		return this.registry.resolveForRunDefinition(targetClass, executionOverride, repatriationEnabledOverride,
-				repatriationStorageOverride);
+	public RunDefinitionStorageSelection resolve(TargetClass targetClass, RunDefinitionStorageOverrides overrides) {
+		try {
+			return this.registry.resolveForRunDefinition(targetClass, overrides);
+		}
+		catch (TargetStorageException error) {
+			throw new RunDefinitionStorageException(error.code(), "Target Storage selection failed", error);
+		}
 	}
 
 }

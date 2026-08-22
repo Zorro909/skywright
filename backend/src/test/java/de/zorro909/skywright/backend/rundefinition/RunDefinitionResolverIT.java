@@ -27,9 +27,11 @@ import de.zorro909.skywright.backend.projectversion.TrainingProjectBinding;
 import de.zorro909.skywright.backend.projectversion.TrainingProjectVersions;
 import de.zorro909.skywright.backend.targetstorage.RunDefinitionStorageSelection;
 import de.zorro909.skywright.backend.targetstorage.RunDefinitionStorageSnapshot;
+import de.zorro909.skywright.backend.targetstorage.RunDefinitionStorageOverrides;
+import de.zorro909.skywright.backend.targetstorage.TargetClass;
 import tools.jackson.databind.JsonNode;
 
-class RunDefinitionResolverTest {
+class RunDefinitionResolverIT {
 
 	private static final String VERSION_DIGEST = "sha256:" + "9".repeat(64);
 
@@ -42,7 +44,7 @@ class RunDefinitionResolverTest {
 		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
 				targets(), storage(), "EUR");
 
-		RunDefinitionResolution resolution = resolver.resolve(submission("cloud-spot"), null);
+		RunDefinitionResolution resolution = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null);
 
 		assertThat(resolution.accepted()).isTrue();
 		JsonNode definition = resolution.definition().value();
@@ -56,7 +58,9 @@ class RunDefinitionResolverTest {
 		assertThat(definition.at("/storage/execution/registrationRevision").asLong()).isEqualTo(7);
 		assertThat(definition.at("/storage/repatriation/enabled").asBoolean()).isFalse();
 		assertThat(definition.at("/executionPolicy/maximumRecoveryDebt").asInt()).isEqualTo(3);
-		assertThat(definition.at("/executionPolicy/runtimeCeilingSeconds").asLong()).isEqualTo(3600);
+		assertThat(definition.at("/targetRequest/purchaseMode").asText()).isEqualTo("spot");
+		assertThat(definition.at("/targetRequest/acceleratorBackend").asText()).isEqualTo("cuda");
+		assertThat(definition.at("/executionPolicy/runtimeCeiling").asText()).isEqualTo("PT1H");
 		assertThat(definition.at("/executionPolicy/costCeiling/amount").decimalValue()).isEqualByComparingTo("12.3400");
 		assertThat(definition.at("/executionPolicy/costCeiling/currency").asText()).isEqualTo("EUR");
 		assertThat(definition.toString()).doesNotContain("credential", "runId", "checkpointReference", "metricCatalog",
@@ -68,12 +72,13 @@ class RunDefinitionResolverTest {
 		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
 				targets(), storage(), "EUR");
 
-		for (String targetClass : List.of("local-single-gpu", "local-multi-gpu", "cloud-on-demand", "cloud-spot")) {
+		for (TargetClass targetClass : TargetClass.values()) {
 			RunDefinitionResolution resolution = resolver.resolve(submission(targetClass), null);
 			assertThat(resolution.accepted()).as(targetClass + ": " + resolution.failures()).isTrue();
 			assertThat(resolution.definition().value().at("/targetRequest/targetClass").asText())
-				.isEqualTo(targetClass);
-			assertThat(resolution.definition().value().at("/targetRequest").has("acceleratorBackend")).isFalse();
+				.isEqualTo(targetClass.wireValue());
+			assertThat(resolution.definition().value().at("/targetRequest/acceleratorBackend").asText())
+				.isEqualTo("cuda");
 		}
 	}
 
@@ -86,8 +91,8 @@ class RunDefinitionResolverTest {
 				new TargetEligibilityAssessment(List.of(), List.of()), storage(), "EUR");
 		RunSubmission submission = new RunSubmission(new TrainingProjectBinding("stable-project", "registry"),
 				VERSION_DIGEST, "{}", dataset(),
-				new TargetRequest("cloud-spot", 0, -1L, "missing", "H100", BigDecimal.ONE), null, null, null, 0,
-				Duration.ZERO, BigDecimal.ZERO, true);
+				new TargetRequest(TargetClass.CLOUD_SPOT, 0, -1L, "missing", "H100", BigDecimal.ONE),
+				RunDefinitionStorageOverrides.none(), 0, Duration.ZERO, BigDecimal.ZERO, true);
 
 		RunDefinitionResolution resolution = resolver.resolve(submission, null);
 
@@ -103,13 +108,13 @@ class RunDefinitionResolverTest {
 	void checkpointDatasetChangesRequireAnExplicitResetAndOrderingInputsCannotChange() {
 		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
 				targets(), storage(), "EUR");
-		RunDefinition source = resolver.resolve(submission("cloud-spot"), null).definition();
+		RunDefinition source = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null).definition();
 		RunSubmission changed = new RunSubmission(new TrainingProjectBinding("stable-project", "registry"),
 				VERSION_DIGEST,
 				"{\"reproducibility\":{\"seed\":10},\"dataset\":{\"ordering\":{\"policy\":\"deterministic-shuffle\"}}}",
 				new DatasetDefinitionReference("dataset-1", "v2", "sha256:" + "4".repeat(64)),
-				new TargetRequest("cloud-spot", 2, 80L * 1024 * 1024 * 1024, null, "H100", null), null, null, null,
-				null, null, null, false);
+				new TargetRequest(TargetClass.CLOUD_SPOT, 2, 80L * 1024 * 1024 * 1024, null, "H100", null),
+				RunDefinitionStorageOverrides.none(), null, null, null, false);
 
 		RunDefinitionResolution resolution = resolver.resolve(changed, new CheckpointSeedFacts(source, true));
 
@@ -121,43 +126,64 @@ class RunDefinitionResolverTest {
 	void exactTargetPinsNeverFallBackAndImageMapsMustCoverEligibleBackends() {
 		RunDefinitionResolver pinnedResolver = resolver(eligibleVersionRegistry(),
 				DatasetDefinitionAssessment.accepted(),
-				new TargetEligibilityAssessment(List.of(new EligibleTarget("another-target", "cloud-spot", "cuda",
-						"H100", 8, 80L * 1024 * 1024 * 1024)), List.of()),
+				new TargetEligibilityAssessment(List.of(new EligibleTarget("another-target", TargetClass.CLOUD_SPOT,
+						"cuda", "H100", 8, 80L * 1024 * 1024 * 1024)), List.of()),
 				storage(), "EUR");
-		RunSubmission pinned = withTarget(submission("cloud-spot"),
-				new TargetRequest("cloud-spot", 1, null, "pinned-target", null, null));
+		RunSubmission pinned = withTarget(submission(TargetClass.CLOUD_SPOT),
+				new TargetRequest(TargetClass.CLOUD_SPOT, 1, null, "pinned-target", null, null));
 		RunDefinitionResolver incompatibleResolver = resolver(eligibleVersionRegistry(),
 				DatasetDefinitionAssessment.accepted(),
-				new TargetEligibilityAssessment(
-						List.of(new EligibleTarget("tpu-target", "cloud-spot", "tpu", "TPU", 8, Long.MAX_VALUE)),
+				new TargetEligibilityAssessment(List
+					.of(new EligibleTarget("tpu-target", TargetClass.CLOUD_SPOT, "tpu", "TPU", 8, Long.MAX_VALUE)),
 						List.of()),
 				storage(), "EUR");
 
 		assertThat(pinnedResolver.resolve(pinned, null).failures()).extracting(RunDefinitionFailure::code)
 			.containsExactly("TARGET_UNSUPPORTED");
 		assertThat(incompatibleResolver
-			.resolve(withTarget(submission("cloud-spot"), new TargetRequest("cloud-spot", 1, null, null, "TPU", null)),
-					null)
+			.resolve(withTarget(submission(TargetClass.CLOUD_SPOT),
+					new TargetRequest(TargetClass.CLOUD_SPOT, 1, null, null, "TPU", null)), null)
 			.failures()).extracting(RunDefinitionFailure::code).containsExactly("PROJECT_CAPABILITIES_INCOMPATIBLE");
+	}
+
+	@Test
+	void derivesTargetFactsAndRejectsAmbiguousEligibleEvidence() {
+		TargetEligibilityAssessment oneCandidate = new TargetEligibilityAssessment(List.of(new EligibleTarget(
+				"pinned-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8, 80L * 1024 * 1024 * 1024)), List.of());
+		RunDefinitionResolver resolved = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				oneCandidate, storage(), "EUR");
+		RunSubmission omittedModel = withTarget(submission(TargetClass.CLOUD_SPOT),
+				new TargetRequest(TargetClass.CLOUD_SPOT, 1, null, "pinned-target", null, null));
+		RunDefinitionResolver ambiguous = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				targets(), storage(), "EUR");
+
+		JsonNode target = resolved.resolve(omittedModel, null).definition().value().path("targetRequest");
+		assertThat(target.path("purchaseMode").asText()).isEqualTo("spot");
+		assertThat(target.path("acceleratorBackend").asText()).isEqualTo("cuda");
+		assertThat(target.path("gpuModel").asText()).isEqualTo("H100");
+		assertThat(ambiguous
+			.resolve(withTarget(submission(TargetClass.CLOUD_SPOT),
+					new TargetRequest(TargetClass.CLOUD_SPOT, 1, null, null, null, null)), null)
+			.failures()).extracting(RunDefinitionFailure::code).containsExactly("TARGET_EVIDENCE_AMBIGUOUS");
 	}
 
 	@Test
 	void runtimeAndCostCeilingsRemainIndependentAndOptional() {
 		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
 				targets(), storage(), "EUR");
-		RunSubmission base = submission("cloud-spot");
+		RunSubmission base = submission(TargetClass.CLOUD_SPOT);
 		RunSubmission absent = withCeilings(base, null, null);
-		RunSubmission runtimeOnly = withCeilings(base, Duration.ofMinutes(5), null);
+		RunSubmission runtimeOnly = withCeilings(base, Duration.ofNanos(1), null);
 		RunSubmission costOnly = withCeilings(base, null, new BigDecimal("1.25"));
 
 		JsonNode absentPolicy = resolver.resolve(absent, null).definition().value().path("executionPolicy");
 		JsonNode runtimePolicy = resolver.resolve(runtimeOnly, null).definition().value().path("executionPolicy");
 		JsonNode costPolicy = resolver.resolve(costOnly, null).definition().value().path("executionPolicy");
-		assertThat(absentPolicy.has("runtimeCeilingSeconds")).isFalse();
+		assertThat(absentPolicy.has("runtimeCeiling")).isFalse();
 		assertThat(absentPolicy.has("costCeiling")).isFalse();
-		assertThat(runtimePolicy.path("runtimeCeilingSeconds").asLong()).isEqualTo(300);
+		assertThat(runtimePolicy.path("runtimeCeiling").asText()).isEqualTo("PT0.000000001S");
 		assertThat(runtimePolicy.has("costCeiling")).isFalse();
-		assertThat(costPolicy.has("runtimeCeilingSeconds")).isFalse();
+		assertThat(costPolicy.has("runtimeCeiling")).isFalse();
 		assertThat(costPolicy.at("/costCeiling/currency").asText()).isEqualTo("EUR");
 	}
 
@@ -168,43 +194,55 @@ class RunDefinitionResolverTest {
 					throw new IllegalStateException("offline");
 				}, () -> {
 					throw new IllegalStateException("offline");
-				}, (targetClass, execution, enabled, destination) -> {
+				}, (targetClass, overrides) -> {
 					throw new IllegalStateException("TARGET_STORAGE_INELIGIBLE: inactive");
 				}, () -> {
 					throw new IllegalStateException("offline");
 				});
 
-		assertThat(resolver.resolve(submission("cloud-spot"), null).failures()).extracting(RunDefinitionFailure::code)
-			.contains("DATASET_DEPENDENCY_UNAVAILABLE", "TARGET_ELIGIBILITY_UNAVAILABLE", "TARGET_STORAGE_INELIGIBLE",
+		assertThat(resolver.resolve(submission(TargetClass.CLOUD_SPOT), null).failures())
+			.extracting(RunDefinitionFailure::code)
+			.contains("DATASET_DEPENDENCY_UNAVAILABLE", "TARGET_ELIGIBILITY_UNAVAILABLE", "TARGET_STORAGE_UNAVAILABLE",
 					"REPORTING_CURRENCY_UNAVAILABLE");
+	}
+
+	@Test
+	void preservesStableTargetStorageDomainCodes() {
+		RunDefinitionResolver resolver = new RunDefinitionResolver(
+				new TrainingProjectVersions(eligibleVersionRegistry(), this.configurationContracts,
+						this.metricContracts),
+				ignored -> DatasetDefinitionAssessment.accepted(), () -> targets(), (targetClass, overrides) -> {
+					throw new RunDefinitionStorageException("TARGET_STORAGE_INELIGIBLE", "inactive", null);
+				}, () -> "EUR");
+
+		assertThat(resolver.resolve(submission(TargetClass.CLOUD_SPOT), null).failures())
+			.extracting(RunDefinitionFailure::code)
+			.containsExactly("TARGET_STORAGE_INELIGIBLE");
 	}
 
 	private RunDefinitionResolver resolver(ProjectVersionRegistry registry, DatasetDefinitionAssessment dataset,
 			TargetEligibilityAssessment eligibility, RunDefinitionStorageSelection storage, String currency) {
 		return new RunDefinitionResolver(
 				new TrainingProjectVersions(registry, this.configurationContracts, this.metricContracts),
-				ignored -> dataset, () -> eligibility, (targetClass, execution, enabled, destination) -> storage,
-				() -> currency);
+				ignored -> dataset, () -> eligibility, (targetClass, overrides) -> storage, () -> currency);
 	}
 
-	private RunSubmission submission(String targetClass) {
+	private RunSubmission submission(TargetClass targetClass) {
 		return new RunSubmission(new TrainingProjectBinding("stable-project", "registry"), VERSION_DIGEST,
 				"{\"reproducibility\":{\"seed\":9}}", dataset(),
-				new TargetRequest(targetClass, 2, 80L * 1024 * 1024 * 1024, null, "H100", null), null, null, null, null,
-				Duration.ofHours(1), new BigDecimal("12.3400"), false);
+				new TargetRequest(targetClass, 2, 80L * 1024 * 1024 * 1024, null, "H100", null),
+				RunDefinitionStorageOverrides.none(), null, Duration.ofHours(1), new BigDecimal("12.3400"), false);
 	}
 
 	private static RunSubmission withTarget(RunSubmission source, TargetRequest target) {
 		return new RunSubmission(source.trainingProject(), source.manifestArtifactDigest(), source.configurationJson(),
-				source.datasetDefinition(), target, source.executionStorageOverride(),
-				source.repatriationEnabledOverride(), source.repatriationStorageOverride(),
-				source.maximumRecoveryDebt(), source.runtimeCeiling(), source.costCeiling(), source.orderingReset());
+				source.datasetDefinition(), target, source.storageOverrides(), source.maximumRecoveryDebt(),
+				source.runtimeCeiling(), source.costCeiling(), source.orderingReset());
 	}
 
 	private static RunSubmission withCeilings(RunSubmission source, Duration runtime, BigDecimal cost) {
 		return new RunSubmission(source.trainingProject(), source.manifestArtifactDigest(), source.configurationJson(),
-				source.datasetDefinition(), source.targetRequest(), source.executionStorageOverride(),
-				source.repatriationEnabledOverride(), source.repatriationStorageOverride(),
+				source.datasetDefinition(), source.targetRequest(), source.storageOverrides(),
 				source.maximumRecoveryDebt(), runtime, cost, source.orderingReset());
 	}
 
@@ -214,7 +252,7 @@ class RunDefinitionResolverTest {
 
 	private static TargetEligibilityAssessment targets() {
 		List<EligibleTarget> targets = new ArrayList<>();
-		for (String targetClass : List.of("local-single-gpu", "local-multi-gpu", "cloud-on-demand", "cloud-spot")) {
+		for (TargetClass targetClass : TargetClass.values()) {
 			targets.add(new EligibleTarget("target-" + targetClass, targetClass, "cuda", "H100", 8,
 					80L * 1024 * 1024 * 1024));
 			targets.add(new EligibleTarget("rocm-" + targetClass, targetClass, "rocm", "MI300X", 8,

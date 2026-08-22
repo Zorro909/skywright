@@ -24,6 +24,10 @@ def _reject_duplicate(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _reject_non_json_number(value: str) -> None:
+    raise RunDefinitionValidationError("RUN_DEFINITION_INVALID_JSON")
+
+
 _SCHEMA = json.loads(
     files("skywright._run_definition_resources").joinpath("schema.json").read_text()
 )
@@ -37,6 +41,7 @@ def decode(document: str) -> dict[str, Any]:
             object_pairs_hook=_reject_duplicate,
             parse_float=Decimal,
             parse_int=int,
+            parse_constant=_reject_non_json_number,
         )
     except RunDefinitionValidationError:
         raise
@@ -53,6 +58,8 @@ def decode(document: str) -> dict[str, Any]:
         and schema_version != 1
     ):
         raise RunDefinitionValidationError("RUN_DEFINITION_SCHEMA_VERSION_UNSUPPORTED")
+    if isinstance(schema_version, Decimal):
+        raise RunDefinitionValidationError("RUN_DEFINITION_SCHEMA_VALIDATION")
     errors = sorted(_VALIDATOR.iter_errors(value), key=lambda error: list(error.path))
     if errors:
         raise RunDefinitionValidationError("RUN_DEFINITION_SCHEMA_VALIDATION")

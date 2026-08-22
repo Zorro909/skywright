@@ -27,6 +27,18 @@ public final class RunDefinition {
 		return this.value.deepCopy();
 	}
 
+	public String manifestArtifactDigest() {
+		return this.value.at("/trainingProjectVersion/manifestArtifactDigest").asText();
+	}
+
+	public JsonNode configuration() {
+		return this.value.path("configuration").deepCopy();
+	}
+
+	public JsonNode datasetDefinition() {
+		return this.value.path("datasetDefinition").deepCopy();
+	}
+
 	public String encode() {
 		return this.value.toString();
 	}

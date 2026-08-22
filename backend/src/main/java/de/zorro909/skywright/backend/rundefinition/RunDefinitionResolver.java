@@ -5,7 +5,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
 
@@ -15,6 +14,8 @@ import de.zorro909.skywright.backend.projectversion.TrainingProjectVersion;
 import de.zorro909.skywright.backend.projectversion.TrainingProjectVersions;
 import de.zorro909.skywright.backend.targetstorage.RunDefinitionStorageSelection;
 import de.zorro909.skywright.backend.targetstorage.RunDefinitionStorageSnapshot;
+import de.zorro909.skywright.backend.targetstorage.RunDefinitionStorageOverrides;
+import de.zorro909.skywright.backend.targetstorage.TargetClass;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -28,9 +29,6 @@ public final class RunDefinitionResolver {
 	private static final Pattern DIGEST = Pattern.compile("sha256:[0-9a-f]{64}");
 
 	private static final Pattern CURRENCY = Pattern.compile("[A-Z]{3}");
-
-	private static final Set<String> TARGET_CLASSES = Set.of("local-single-gpu", "local-multi-gpu", "cloud-on-demand",
-			"cloud-spot");
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -61,7 +59,7 @@ public final class RunDefinitionResolver {
 		TrainingProjectVersion version = resolveVersion(submission, failures);
 		JsonNode configuration = resolveConfiguration(submission, version, failures);
 		assessDataset(submission.datasetDefinition(), failures);
-		assessTarget(submission.targetRequest(), version, failures);
+		ResolvedTarget target = resolveTarget(submission.targetRequest(), version, failures);
 		RunDefinitionStorageSelection storage = resolveStorage(submission, failures);
 		String currency = resolveCurrency(submission.costCeiling(), failures);
 		assessCheckpoint(submission, checkpointSeed, version, configuration, failures);
@@ -70,13 +68,14 @@ public final class RunDefinitionResolver {
 		if (!ordered.isEmpty()) {
 			return new RunDefinitionResolution(null, ordered);
 		}
-		return new RunDefinitionResolution(build(submission, version, configuration, storage, currency), List.of());
+		return new RunDefinitionResolution(build(submission, version, configuration, target, storage, currency),
+				List.of());
 	}
 
 	private static void validateSubmission(RunSubmission submission, CheckpointSeedFacts checkpointSeed,
 			List<RunDefinitionFailure> failures) {
 		TargetRequest target = submission.targetRequest();
-		if (target == null || !TARGET_CLASSES.contains(target.targetClass())) {
+		if (target == null) {
 			failures.add(failure("TARGET_CLASS_INVALID", "submission", "/targetRequest/targetClass", "enum"));
 		}
 		if (target == null || target.gpuCount() <= 0) {
@@ -95,7 +94,7 @@ public final class RunDefinitionResolver {
 			failures.add(failure("MAXIMUM_RECOVERY_DEBT_INVALID", "submission", "/maximumRecoveryDebt", "minimum"));
 		}
 		Duration runtime = submission.runtimeCeiling();
-		if (runtime != null && (runtime.isNegative() || runtime.isZero() || runtime.getNano() != 0)) {
+		if (runtime != null && (runtime.isNegative() || runtime.isZero())) {
 			failures.add(failure("RUNTIME_CEILING_INVALID", "submission", "/runtimeCeiling", "minimum"));
 		}
 		if (submission.costCeiling() != null && submission.costCeiling().signum() <= 0) {
@@ -158,10 +157,10 @@ public final class RunDefinitionResolver {
 		}
 	}
 
-	private void assessTarget(TargetRequest request, TrainingProjectVersion version,
+	private ResolvedTarget resolveTarget(TargetRequest request, TrainingProjectVersion version,
 			List<RunDefinitionFailure> failures) {
-		if (request == null || !TARGET_CLASSES.contains(request.targetClass()) || request.gpuCount() <= 0) {
-			return;
+		if (request == null || request.gpuCount() <= 0) {
+			return null;
 		}
 		TargetEligibilityAssessment assessment;
 		try {
@@ -170,11 +169,11 @@ public final class RunDefinitionResolver {
 		catch (RuntimeException error) {
 			failures
 				.add(failure("TARGET_ELIGIBILITY_UNAVAILABLE", "target-eligibility", "/targetRequest", "available"));
-			return;
+			return null;
 		}
 		if (!assessment.failures().isEmpty()) {
 			failures.addAll(assessment.failures());
-			return;
+			return null;
 		}
 		List<EligibleTarget> matching = assessment.targets()
 			.stream()
@@ -187,28 +186,47 @@ public final class RunDefinitionResolver {
 			.toList();
 		if (matching.isEmpty()) {
 			failures.add(failure("TARGET_UNSUPPORTED", "target-eligibility", "/targetRequest", "eligible"));
+			return null;
 		}
-		else if (version != null && matching.stream()
-			.noneMatch(candidate -> version.images().containsKey(candidate.acceleratorBackend()))) {
+		if (version == null) {
+			return null;
+		}
+		List<TargetEvidence> compatible = matching.stream()
+			.filter(candidate -> version.images().containsKey(candidate.acceleratorBackend()))
+			.map(candidate -> new TargetEvidence(candidate.acceleratorBackend(), candidate.gpuModel()))
+			.distinct()
+			.toList();
+		if (compatible.isEmpty()) {
 			failures.add(failure("PROJECT_CAPABILITIES_INCOMPATIBLE", "training-project-version", "/targetRequest",
 					"acceleratorBackend"));
+			return null;
 		}
+		if (compatible.size() > 1) {
+			failures.add(
+					failure("TARGET_EVIDENCE_AMBIGUOUS", "target-eligibility", "/targetRequest", "acceleratorBackend"));
+			return null;
+		}
+		TargetEvidence evidence = compatible.getFirst();
+		return new ResolvedTarget(request, purchaseMode(request.targetClass()), evidence.acceleratorBackend(),
+				evidence.gpuModel());
 	}
 
 	private RunDefinitionStorageSelection resolveStorage(RunSubmission submission,
 			List<RunDefinitionFailure> failures) {
-		if (submission.targetRequest() == null || !TARGET_CLASSES.contains(submission.targetRequest().targetClass())) {
+		if (submission.targetRequest() == null) {
 			return null;
 		}
 		try {
-			return this.targetStorages.resolve(submission.targetRequest().targetClass(),
-					submission.executionStorageOverride(), submission.repatriationEnabledOverride(),
-					submission.repatriationStorageOverride());
+			RunDefinitionStorageOverrides overrides = submission.storageOverrides() == null
+					? RunDefinitionStorageOverrides.none() : submission.storageOverrides();
+			return this.targetStorages.resolve(submission.targetRequest().targetClass(), overrides);
+		}
+		catch (RunDefinitionStorageException error) {
+			failures.add(failure(error.code(), "target-storage", "/storage", "eligible"));
+			return null;
 		}
 		catch (RuntimeException error) {
-			String code = error.getMessage() == null ? "TARGET_STORAGE_UNAVAILABLE"
-					: error.getMessage().split(":", 2)[0];
-			failures.add(failure(code, "target-storage", "/storage", "eligible"));
+			failures.add(failure("TARGET_STORAGE_UNAVAILABLE", "target-storage", "/storage", "available"));
 			return null;
 		}
 	}
@@ -238,15 +256,12 @@ public final class RunDefinitionResolver {
 		if (seed == null || version == null || configuration == null || submission.datasetDefinition() == null) {
 			return;
 		}
-		JsonNode source = seed.sourceDefinition().value();
-		if (!source.path("trainingProjectVersion")
-			.path("manifestArtifactDigest")
-			.asText()
-			.equals(version.manifestArtifactDigest())) {
+		RunDefinition source = seed.sourceDefinition();
+		if (!source.manifestArtifactDigest().equals(version.manifestArtifactDigest())) {
 			failures.add(failure("CHECKPOINT_PROJECT_VERSION_CHANGED", "checkpoint-seed", "/trainingProjectVersion",
 					"const"));
 		}
-		JsonNode sourceConfiguration = source.path("configuration");
+		JsonNode sourceConfiguration = source.configuration();
 		if (!sourceConfiguration.at("/reproducibility/seed").equals(configuration.at("/reproducibility/seed"))) {
 			failures.add(failure("CHECKPOINT_ORDERING_SEED_CHANGED", "checkpoint-seed",
 					"/configuration/reproducibility/seed", "const"));
@@ -259,20 +274,20 @@ public final class RunDefinitionResolver {
 			failures.add(failure("CHECKPOINT_CONFIGURATION_INCOMPATIBLE", "checkpoint-seed", "/configuration",
 					"resumeCompatible"));
 		}
-		boolean datasetChanged = !source.path("datasetDefinition").equals(dataset(submission.datasetDefinition()));
+		boolean datasetChanged = !source.datasetDefinition().equals(dataset(submission.datasetDefinition()));
 		if (datasetChanged && !submission.orderingReset()) {
 			failures.add(failure("ORDERING_RESET_REQUIRED", "checkpoint-seed", "/orderingReset", "required"));
 		}
 	}
 
 	private static RunDefinition build(RunSubmission submission, TrainingProjectVersion version, JsonNode configuration,
-			RunDefinitionStorageSelection storage, String currency) {
+			ResolvedTarget target, RunDefinitionStorageSelection storage, String currency) {
 		ObjectNode root = JSON.createObjectNode();
 		root.put("schemaVersion", 1);
 		root.set("trainingProjectVersion", projectVersion(version));
 		root.set("configuration", configuration.deepCopy());
 		root.set("datasetDefinition", dataset(submission.datasetDefinition()));
-		root.set("targetRequest", target(submission.targetRequest()));
+		root.set("targetRequest", target(target));
 		root.set("storage", storage(storage));
 		root.set("executionPolicy", executionPolicy(submission, currency));
 		root.put("orderingReset", submission.orderingReset());
@@ -312,9 +327,12 @@ public final class RunDefinitionResolver {
 			.put("contentFingerprint", reference.contentFingerprint());
 	}
 
-	private static ObjectNode target(TargetRequest request) {
+	private static ObjectNode target(ResolvedTarget resolved) {
+		TargetRequest request = resolved.request();
 		ObjectNode result = JSON.createObjectNode()
-			.put("targetClass", request.targetClass())
+			.put("targetClass", request.targetClass().wireValue())
+			.put("purchaseMode", resolved.purchaseMode())
+			.put("acceleratorBackend", resolved.acceleratorBackend())
 			.put("gpuCount", request.gpuCount());
 		if (request.minimumGpuMemoryBytes() != null) {
 			result.put("minimumGpuMemoryBytes", request.minimumGpuMemoryBytes());
@@ -322,9 +340,7 @@ public final class RunDefinitionResolver {
 		if (request.target() != null) {
 			result.put("target", request.target());
 		}
-		if (request.gpuModel() != null) {
-			result.put("gpuModel", request.gpuModel());
-		}
+		result.put("gpuModel", resolved.gpuModel());
 		return result;
 	}
 
@@ -356,7 +372,7 @@ public final class RunDefinitionResolver {
 			.put("maximumRecoveryDebt", submission.maximumRecoveryDebt() == null ? DEFAULT_MAXIMUM_RECOVERY_DEBT
 					: submission.maximumRecoveryDebt());
 		if (submission.runtimeCeiling() != null) {
-			result.put("runtimeCeilingSeconds", submission.runtimeCeiling().toSeconds());
+			result.put("runtimeCeiling", submission.runtimeCeiling().toString());
 		}
 		if (submission.costCeiling() != null) {
 			result.putObject("costCeiling").put("amount", submission.costCeiling()).put("currency", currency);
@@ -370,6 +386,21 @@ public final class RunDefinitionResolver {
 
 	private static boolean blank(String value) {
 		return value == null || value.isBlank();
+	}
+
+	private static String purchaseMode(TargetClass targetClass) {
+		return switch (targetClass) {
+			case LOCAL_SINGLE_GPU, LOCAL_MULTI_GPU -> "local";
+			case CLOUD_ON_DEMAND -> "on-demand";
+			case CLOUD_SPOT -> "spot";
+		};
+	}
+
+	private record TargetEvidence(String acceleratorBackend, String gpuModel) {
+	}
+
+	private record ResolvedTarget(TargetRequest request, String purchaseMode, String acceleratorBackend,
+			String gpuModel) {
 	}
 
 }

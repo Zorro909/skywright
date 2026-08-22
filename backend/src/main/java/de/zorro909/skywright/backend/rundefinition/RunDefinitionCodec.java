@@ -45,6 +45,9 @@ final class RunDefinitionCodec {
 				&& parsed.path("schemaVersion").asInt() != 1) {
 			throw failure("RUN_DEFINITION_SCHEMA_VERSION_UNSUPPORTED", "/schemaVersion", "const");
 		}
+		if (parsed.isObject() && parsed.path("schemaVersion").isFloatingPointNumber()) {
+			throw failure("RUN_DEFINITION_SCHEMA_VALIDATION", "/schemaVersion", "type");
+		}
 		List<RunDefinitionFailure> failures = SCHEMA.validate(parsed)
 			.stream()
 			.map(error -> new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
