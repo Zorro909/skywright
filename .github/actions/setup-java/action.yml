@@ -1,5 +1,18 @@
 name: Set up Java toolchain
 description: Download and install the repository's exact verified GraalVM Community toolchain.
+inputs:
+  graalpy-resources:
+    description: Restore or save the packaged GraalPy environment.
+    required: false
+    default: "false"
+  require-graalpy-cache:
+    description: Fail instead of rebuilding when the packaged environment is absent.
+    required: false
+    default: "false"
+outputs:
+  graalpy-cache-hit:
+    description: Whether the exact packaged GraalPy environment was restored.
+    value: ${{ steps.graalpy-cache.outputs.cache-hit }}
 runs:
   using: composite
   steps:
@@ -45,3 +58,16 @@ runs:
         jdk-file: ${{ runner.temp }}/graalvm-community.tar.gz
         java-version: ${{ steps.toolchain.outputs.java_version }}
         cache: maven
+    - name: Cache packaged GraalPy environment
+      id: graalpy-cache
+      if: inputs.graalpy-resources == 'true'
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: backend/target/graalpy-resources
+        key: ${{ runner.os }}-${{ runner.arch }}-graalpy-${{ steps.toolchain.outputs.java_version }}-${{ hashFiles('backend/graalpy.lock') }}
+    - name: Require packaged GraalPy environment cache
+      if: inputs.require-graalpy-cache == 'true' && steps.graalpy-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "The prerequisite GraalPy environment was not restored from cache." >&2
+        exit 1

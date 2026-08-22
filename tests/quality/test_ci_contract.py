@@ -106,6 +106,19 @@ class JavaSetupContractTest(unittest.TestCase):
         self.assertIn("sha256sum --check --strict", verification)
         self.assertNotIn("if:", verification)
 
+    def test_packaged_graalpy_environment_cache_is_exact(self) -> None:
+        environment_cache = named_step(
+            JAVA_ACTION, "Cache packaged GraalPy environment"
+        )
+
+        self.assertRegex(environment_cache, r"uses: actions/cache@[0-9a-f]{40}")
+        self.assertIn("inputs.graalpy-resources == 'true'", environment_cache)
+        self.assertIn("${{ runner.os }}", environment_cache)
+        self.assertIn("${{ runner.arch }}", environment_cache)
+        self.assertIn("${{ steps.toolchain.outputs.java_version }}", environment_cache)
+        self.assertIn("${{ hashFiles('backend/graalpy.lock') }}", environment_cache)
+        self.assertIn("backend/target/graalpy-resources", environment_cache)
+
 
 class QualityWorkflowContractTest(unittest.TestCase):
     def test_setup_actions_own_repository_toolchain_versions(self) -> None:
@@ -208,6 +221,21 @@ class QualityWorkflowContractTest(unittest.TestCase):
         for name in ("java", "frontend", "application", "image"):
             with self.subTest(job=name):
                 self.assertIn("--frontend-dependencies-ready", job(WORKFLOW, name))
+
+    def test_graalpy_environment_is_built_once_before_maven_fanout(self) -> None:
+        preparation = job(WORKFLOW, "graalpy")
+        self.assertIn("needs: plan", preparation)
+        self.assertIn("graalpy-resources: true", preparation)
+        self.assertIn("steps.java.outputs.graalpy-cache-hit != 'true'", preparation)
+        self.assertIn("timeout --verbose 30m", preparation)
+        self.assertIn("graalpy-maven-plugin:process-graalpy-resources", preparation)
+
+        for name in ("java", "integration", "application", "image"):
+            with self.subTest(job=name):
+                consumer = job(WORKFLOW, name)
+                self.assertIn("needs: [plan, graalpy]", consumer)
+                self.assertIn("graalpy-resources: true", consumer)
+                self.assertIn("require-graalpy-cache: true", consumer)
 
 
 if __name__ == "__main__":
