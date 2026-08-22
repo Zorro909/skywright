@@ -169,7 +169,9 @@ final class ProductionImageIT {
 
 			assertThat(Duration.between(started, Instant.now())).isLessThan(Duration.ofSeconds(30));
 			assertThat(docker("inspect", "--format", "{{.State.OOMKilled}}", container).strip()).isEqualTo("false");
-			assertThat(docker("logs", container)).contains("REFUSING_TRAFFIC", "Graceful shutdown complete");
+			assertThat(docker("logs", container))
+				.contains("SkyPilot capability unavailable", "REFUSING_TRAFFIC", "Graceful shutdown complete")
+				.doesNotContain("SIGSEGV", "A fatal error has been detected", "hs_err_pid");
 		}
 		finally {
 			dockerIgnoringFailure("rm", "--force", container);

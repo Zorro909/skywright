@@ -7,8 +7,12 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(SkyPilotOrchestrator.class);
 
 	private final SkyPilotClient client;
 
@@ -27,7 +31,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		this.settings = settings;
 		this.controlLane = lane("skypilot-control", settings.controlQueueCapacity());
 		this.heldLane = lane("skypilot-held", settings.heldQueueCapacity());
-		this.availability = probeAvailability();
+		recordAvailability(probeAvailability());
 	}
 
 	@Override
@@ -69,7 +73,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		}
 		try {
 			this.controlLane.execute(() -> {
-				this.availability = probeAvailability();
+				recordAvailability(probeAvailability());
 				refreshed.complete(this.availability);
 			});
 		}
@@ -77,6 +81,22 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 			refreshed.complete(this.availability);
 		}
 		return refreshed;
+	}
+
+	private void recordAvailability(SkyPilotAvailability next) {
+		var previous = this.availability;
+		this.availability = next;
+		if (previous != null && previous.available() == next.available()
+				&& (next.available() || previous.failure().cause() == next.failure().cause())) {
+			return;
+		}
+		if (next.available()) {
+			LOGGER.info("SkyPilot capability available");
+		}
+		else {
+			LOGGER.warn("SkyPilot capability unavailable: {} ({})", next.failure().diagnostic(),
+					next.failure().cause());
+		}
 	}
 
 	private SkyPilotAvailability probeAvailability() {
@@ -121,7 +141,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		catch (Exception failure) {
 			var mapped = mapFailure(failure);
 			if (mapped.cause() != FailureCause.ADAPTER_CONTRACT) {
-				this.availability = SkyPilotAvailability.unavailable(mapped);
+				recordAvailability(SkyPilotAvailability.unavailable(mapped));
 			}
 			result.complete(OrchestratorResult.failure(mapped));
 		}

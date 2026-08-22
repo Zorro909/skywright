@@ -44,6 +44,7 @@ application, and starts the JVM with the required 16 MiB thread stack.
 Provision the `skywright` database and schema with separate migration and runtime roles as described
 in [`backend/README.md`](../backend/README.md), then supply deployment configuration only at runtime.
 Replace `<database-host>` below with a hostname or address reachable from the backend container.
+Replace `<skypilot-host>` with the separately operated, version-paired SkyPilot API server.
 The root filesystem can remain read-only; `/tmp`
 is the only documented writable location. `JAVA_TOOL_OPTIONS` injects JVM settings without
 replacing the image entry point:
@@ -60,6 +61,7 @@ docker run --rm \
   --env SKYWRIGHT_DATABASE_RUNTIME_URL='jdbc:postgresql://<database-host>:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
   --env SKYWRIGHT_DATABASE_RUNTIME_USERNAME=skywright_runtime \
   --env SKYWRIGHT_DATABASE_RUNTIME_PASSWORD='<runtime-password>' \
+  --env SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT='http://<skypilot-host>:46580' \
   --publish 127.0.0.1:8080:8080 \
   skywright-backend:0.1.0-SNAPSHOT
 ```
@@ -93,6 +95,7 @@ docker run --rm \
   --env SKYWRIGHT_DATABASE_RUNTIME_URL='jdbc:postgresql://<database-host>:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
   --env SKYWRIGHT_DATABASE_RUNTIME_USERNAME=skywright_runtime \
   --env SKYWRIGHT_DATABASE_RUNTIME_PASSWORD='<runtime-password>' \
+  --env SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT='http://<skypilot-host>:46580' \
   --env 'JAVA_TOOL_OPTIONS=-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005' \
   --publish 127.0.0.1:8080:8080 \
   --publish 127.0.0.1:5005:5005 \

@@ -39,12 +39,14 @@ def bridge_submit(serialized):
         envs=specification.get("environment", {}),
         resources=resources,
     )
-    request_id = sky.launch(task, cluster_name=specification["name"])
+    request_id = sky.jobs.launch(task, name=specification["name"])
     return json.dumps({"operation_id": str(request_id)})
 
 
 def bridge_status(serialized_names):
-    request_id = sky.status(cluster_names=json.loads(serialized_names))
+    names = set(json.loads(serialized_names))
+    request_id = sky.jobs.queue_v2(refresh=False)
+    _operation_filters[str(request_id)] = names
     return json.dumps({"operation_id": str(request_id)})
 
 
@@ -61,28 +63,56 @@ def bridge_cleanup(cluster_name):
 def bridge_complete(operation_id, kind):
     try:
         value = sky.stream_and_get(str(operation_id))
-        if kind == "submission":
-            job_id, handle = value
-            result = {"job_id": int(job_id), "handle": _handle(handle)}
-        elif kind == "status":
-            clusters = []
-            for record in value:
-                status = _field(record, "status")
-                clusters.append({
-                    "name": str(_field(record, "name")),
-                    "status": str(getattr(status, "value", status)),
-                    "handle": _handle(_field(record, "handle")),
-                })
-            result = {"clusters": clusters}
-        elif kind == "control":
-            result = {"applied": True}
-        elif kind == "cleanup":
-            result = {"removed": True}
-        else:
-            raise ValueError(f"unsupported operation kind: {kind}")
-        return json.dumps(result)
+    except (sky.exceptions.ApiServerConnectionError,
+            sky.exceptions.ApiServerAuthenticationError,
+            sky.exceptions.APIVersionMismatchError):
+        raise
     except Exception as failure:
+        if kind == "status":
+            _operation_filters.pop(str(operation_id), None)
         return json.dumps({"failure": {
             "category": type(failure).__name__,
-            "message": str(failure).splitlines()[0][:240],
+            "message": _operation_failure_message(failure),
         }})
+    if kind == "submission":
+        job_ids, handle = value
+        if not job_ids or handle is None:
+            raise ValueError("managed job launch returned no identity")
+        result = {"job_id": int(job_ids[0]), "handle": _handle(handle)}
+    elif kind == "status":
+        records = value[0]
+        names = _operation_filters.pop(str(operation_id), set())
+        jobs = []
+        for record in records:
+            job_name = str(_field(record, "job_name"))
+            if names and job_name not in names:
+                continue
+            status = _field(record, "status")
+            jobs.append({
+                "job_id": int(_field(record, "job_id")),
+                "job_name": job_name,
+                "status": str(getattr(status, "value", status)),
+                "recovery_count": int(_field(record, "recovery_count")),
+            })
+        result = {"jobs": jobs}
+    elif kind == "control":
+        result = {"applied": True}
+    elif kind == "cleanup":
+        result = {"removed": True}
+    else:
+        raise ValueError(f"unsupported operation kind: {kind}")
+    return json.dumps(result)
+
+
+_operation_filters = {}
+
+
+def _operation_failure_message(failure):
+    category = type(failure).__name__
+    if category == "ResourcesUnavailableError":
+        return "Requested resources are unavailable"
+    if category in ("NoCloudAccessError", "CloudUserIdentityError"):
+        return "Target credentials are unavailable"
+    if category in ("ClusterDoesNotExist", "ClusterNotUpError"):
+        return "SkyPilot target is unavailable"
+    return "SkyPilot operation failed"

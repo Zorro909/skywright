@@ -7,9 +7,9 @@ public sealed interface OperationOutcome {
 	record Submitted(long jobId, ResourceHandle handle) implements OperationOutcome {
 	}
 
-	record Observed(List<ClusterStatus> clusters) implements OperationOutcome {
+	record Observed(List<ManagedJobStatus> jobs) implements OperationOutcome {
 		public Observed {
-			clusters = List.copyOf(clusters);
+			jobs = List.copyOf(jobs);
 		}
 	}
 
@@ -22,7 +22,7 @@ public sealed interface OperationOutcome {
 	record Failed(String category, String message) implements OperationOutcome {
 	}
 
-	record ClusterStatus(String name, String status, ResourceHandle handle) {
+	record ManagedJobStatus(long jobId, String jobName, String status, int recoveryCount) {
 	}
 
 	record ResourceHandle(String type, String clusterName, String clusterNameOnCloud, int launchedNodes,

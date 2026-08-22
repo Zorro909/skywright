@@ -14,7 +14,8 @@ class SkyPilotBridgeConfiguration {
 	Orchestrator skyPilotOrchestrator(SkyPilotBridgeProperties properties) {
 		var settings = new SkyPilotBridgeSettings(properties.controlQueueCapacity(), properties.heldQueueCapacity(),
 				properties.shutdownGrace());
-		return new SkyPilotOrchestrator(new GraalPySkyPilotClient(properties.externalDirectory()), settings);
+		return new SkyPilotOrchestrator(
+				new GraalPySkyPilotClient(properties.externalDirectory(), properties.apiServerEndpoint()), settings);
 	}
 
 	@Bean

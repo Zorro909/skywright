@@ -252,8 +252,11 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>
         <configuration>
+          <argLine>@{argLine} --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Xss16m</argLine>
           <systemPropertyVariables>
             <backend.executable>${project.build.directory}/${project.build.finalName}.jar</backend.executable>
+            <graalpy.external.directory>${project.build.directory}/graalpy-resources</graalpy.external.directory>
+            <repository.root>${maven.multiModuleProjectDirectory}</repository.root>
             <postgresql.container.image>${postgresql.container.image}</postgresql.container.image>
           </systemPropertyVariables>
         </configuration>

@@ -52,6 +52,8 @@ defaults are 8 and 4. `shutdown-grace` defaults to 20 seconds, and
 `availability-probe-interval` defaults to 30 seconds. These are deployment settings, not Run
 Configuration. A full queue returns `bridge-busy`; client, authentication, reachability, and
 version failures return `skypilot-unavailable` with a safe cause category.
+Set `skywright.skypilot.bridge.api-server-endpoint` to the separately operated, version-paired
+SkyPilot API server. The client never starts an API server inside the backend process.
 
 ## Logging
 
