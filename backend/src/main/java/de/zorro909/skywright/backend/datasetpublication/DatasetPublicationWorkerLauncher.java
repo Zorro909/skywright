@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
 import tools.jackson.databind.json.JsonMapper;
@@ -25,7 +26,7 @@ final class DatasetPublicationWorkerLauncher {
 
 	private final DatasetPublicationCredentialProjections projections;
 
-	private final Set<Process> activeWorkers = ConcurrentHashMap.newKeySet();
+	private final Set<ActiveWorker> activeWorkers = ConcurrentHashMap.newKeySet();
 
 	DatasetPublicationWorkerLauncher(TargetStorageResolver targetStorages,
 			DatasetPublicationCredentialProjections projections) {
@@ -40,6 +41,7 @@ final class DatasetPublicationWorkerLauncher {
 		Path directory = null;
 		Process worker = null;
 		UUID projectionId = null;
+		ActiveWorker activeWorker = null;
 		try {
 			projectionId = this.projections.projected(publication.publicationId(), target.credentialBindingId(),
 					target.credentialBindingRevision());
@@ -57,7 +59,10 @@ final class DatasetPublicationWorkerLauncher {
 				.redirectOutput(ProcessBuilder.Redirect.DISCARD);
 			projectEnvironment(process.environment(), credentials);
 			worker = process.start();
-			this.activeWorkers.add(worker);
+			activeWorker = new ActiveWorker(worker, projectionId, directory);
+			this.activeWorkers.add(activeWorker);
+			ActiveWorker trackedWorker = activeWorker;
+			worker.onExit().thenRun(() -> completeIfReady(trackedWorker));
 			if (!worker.waitFor(Duration.ofMinutes(10).toMillis(), TimeUnit.MILLISECONDS)) {
 				terminate(worker);
 				return failure();
@@ -75,26 +80,16 @@ final class DatasetPublicationWorkerLauncher {
 			return failure();
 		}
 		finally {
-			boolean workerStopped = true;
-			if (worker != null) {
-				workerStopped = terminate(worker);
-				if (workerStopped) {
-					this.activeWorkers.remove(worker);
-				}
+			if (activeWorker != null) {
+				terminate(activeWorker.process);
+				activeWorker.verificationFinished.set(true);
+				completeIfReady(activeWorker);
 			}
-			if (projectionId != null && workerStopped) {
-				this.projections.released(projectionId);
-			}
-			if (directory != null) {
-				try {
-					Files.deleteIfExists(directory.resolve("job.json"));
-					Files.deleteIfExists(directory.resolve("result.json"));
-					Files.deleteIfExists(directory);
+			else {
+				if (projectionId != null) {
+					this.projections.released(projectionId);
 				}
-				catch (IOException ignored) {
-					// Job files contain no credential and are not durable publication
-					// state.
-				}
+				deleteJobFiles(directory);
 			}
 		}
 	}
@@ -129,7 +124,41 @@ final class DatasetPublicationWorkerLauncher {
 
 	@PreDestroy
 	void close() {
-		this.activeWorkers.forEach(DatasetPublicationWorkerLauncher::terminate);
+		this.activeWorkers.forEach(activeWorker -> {
+			terminate(activeWorker.process);
+			activeWorker.verificationFinished.set(true);
+			completeIfReady(activeWorker);
+		});
+	}
+
+	private void completeIfReady(ActiveWorker activeWorker) {
+		if (!activeWorker.verificationFinished.get() || activeWorker.process.isAlive()
+				|| !activeWorker.completing.compareAndSet(false, true)) {
+			return;
+		}
+		try {
+			this.projections.released(activeWorker.projectionId);
+			deleteJobFiles(activeWorker.directory);
+			this.activeWorkers.remove(activeWorker);
+		}
+		catch (RuntimeException exception) {
+			activeWorker.completing.set(false);
+			throw exception;
+		}
+	}
+
+	private static void deleteJobFiles(Path directory) {
+		if (directory == null) {
+			return;
+		}
+		try {
+			Files.deleteIfExists(directory.resolve("job.json"));
+			Files.deleteIfExists(directory.resolve("result.json"));
+			Files.deleteIfExists(directory);
+		}
+		catch (IOException ignored) {
+			// Job files contain no credential and are not durable publication state.
+		}
 	}
 
 	private static java.util.List<String> command(Path job, Path result) {
@@ -156,6 +185,26 @@ final class DatasetPublicationWorkerLauncher {
 	private static DatasetPublicationWorkerResult failure() {
 		return new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0, null, 0,
 				"DATASET_VERIFICATION_UNAVAILABLE", true);
+	}
+
+	private static final class ActiveWorker {
+
+		private final Process process;
+
+		private final UUID projectionId;
+
+		private final Path directory;
+
+		private final AtomicBoolean verificationFinished = new AtomicBoolean();
+
+		private final AtomicBoolean completing = new AtomicBoolean();
+
+		private ActiveWorker(Process process, UUID projectionId, Path directory) {
+			this.process = process;
+			this.projectionId = projectionId;
+			this.directory = directory;
+		}
+
 	}
 
 }
