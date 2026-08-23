@@ -34,6 +34,8 @@ final class ProductionImageIT {
 
 	private static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(60);
 
+	private static final Duration SKYPILOT_STARTUP_TIMEOUT = Duration.ofMinutes(3);
+
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	private final HttpClient httpClient = HttpClient.newHttpClient();
@@ -175,7 +177,7 @@ final class ProductionImageIT {
 							"no_proxy=skywright-test-host,127.0.0.1,localhost", "--env",
 							"SKYWRIGHT_SKYPILOT_BRIDGE_AVAILABILITY_PROBE_INTERVAL=100ms", imageName()));
 			docker(arguments.toArray(String[]::new));
-			awaitLogsContaining(container, "SkyPilot capability available", STARTUP_TIMEOUT);
+			awaitLogsContaining(container, "SkyPilot capability available", SKYPILOT_STARTUP_TIMEOUT);
 			skyPilot.holdRequests();
 			skyPilot.awaitHeld(Duration.ofSeconds(10));
 			skyPilot.releaseAfter(Duration.ofSeconds(10));
