@@ -255,7 +255,7 @@ jobs:
             --extract \
             --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
             --directory=.graalpy
-          test -x .graalpy/resources/venv/bin/python
+          test -f .graalpy/resources/venv/installed.txt
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
@@ -305,7 +305,7 @@ jobs:
             --extract \
             --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
             --directory=.graalpy
-          test -x .graalpy/resources/venv/bin/python
+          test -f .graalpy/resources/venv/installed.txt
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
@@ -384,7 +384,7 @@ jobs:
             --extract \
             --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
             --directory=.graalpy
-          test -x .graalpy/resources/venv/bin/python
+          test -f .graalpy/resources/venv/installed.txt
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
@@ -434,7 +434,7 @@ jobs:
             --extract \
             --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
             --directory=.graalpy
-          test -x .graalpy/resources/venv/bin/python
+          test -f .graalpy/resources/venv/installed.txt
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:

@@ -368,6 +368,12 @@ class QualityWorkflowContractTest(unittest.TestCase):
                 self.assertIn("actions/download-artifact@", consumer)
                 self.assertIn("graalpy-resources.tar.zst", consumer)
                 self.assertIn("tar --zstd", consumer)
+                self.assertIn(
+                    "test -f .graalpy/resources/venv/installed.txt", consumer
+                )
+                self.assertNotIn(
+                    "test -x .graalpy/resources/venv/bin/python", consumer
+                )
                 self.assertIn("-Dgraalpy.environment.prebuilt=true", consumer)
                 self.assertNotIn("require-graalpy-cache", consumer)
 
