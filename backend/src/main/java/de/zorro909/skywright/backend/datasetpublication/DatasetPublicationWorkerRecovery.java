@@ -39,7 +39,7 @@ final class DatasetPublicationWorkerRecovery {
 
 	void whenRecovered(UUID publicationId, Runnable action) {
 		this.recoveringPublications.getOrDefault(publicationId, CompletableFuture.completedFuture(null))
-			.whenComplete((ignored, failure) -> action.run());
+			.thenRun(action);
 	}
 
 	private void complete(DatasetPublicationOpenCredentialProjection projection) {

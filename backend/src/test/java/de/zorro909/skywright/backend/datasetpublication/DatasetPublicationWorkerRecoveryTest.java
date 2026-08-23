@@ -127,11 +127,32 @@ class DatasetPublicationWorkerRecoveryTest {
 		assertThat(projections.released).containsExactly(open.projectionId());
 	}
 
+	@Test
+	void restartDoesNotRedispatchWhenProjectionReleaseFails() {
+		UUID publicationId = UUID.randomUUID();
+		var open = new DatasetPublicationOpenCredentialProjection(UUID.randomUUID(), publicationId, 123L, Instant.EPOCH,
+				null);
+		var projections = new RecordingProjectionLifecycle(open);
+		projections.releaseFailure = new IllegalStateException("database unavailable");
+		var exited = new CompletableFuture<Void>();
+		var recovery = new DatasetPublicationWorkerRecovery(projections, ignored -> Optional.of(exited));
+		var redispatched = new CompletableFuture<Void>();
+
+		recovery.resume();
+		recovery.whenRecovered(publicationId, () -> redispatched.complete(null));
+		exited.complete(null);
+
+		assertThat(redispatched).isNotDone();
+		assertThat(projections.released).isEmpty();
+	}
+
 	private static final class RecordingProjectionLifecycle implements DatasetPublicationCredentialProjectionLifecycle {
 
 		private final List<DatasetPublicationOpenCredentialProjection> open;
 
 		private final List<UUID> released = new ArrayList<>();
+
+		private RuntimeException releaseFailure;
 
 		private RecordingProjectionLifecycle(DatasetPublicationOpenCredentialProjection open) {
 			this.open = List.of(open);
@@ -159,6 +180,9 @@ class DatasetPublicationWorkerRecoveryTest {
 
 		@Override
 		public void released(UUID projectionId) {
+			if (this.releaseFailure != null) {
+				throw this.releaseFailure;
+			}
 			this.released.add(projectionId);
 		}
 
