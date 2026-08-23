@@ -36,6 +36,7 @@ dependencies = [
 
 [project.scripts]
 skywright-config = "skywright.configuration:main"
+skywright-datasets = "skywright._dataset_cli:main"
 skywright-metrics = "skywright.metrics:main"
 skywright-runtime = "skywright._runtime:main"
 
@@ -89,6 +90,7 @@ path = "hatch_build.py"
 [tool.pytest.ini_options]
 testpaths = [
   "tests/test_configuration_contract.py",
+  "tests/test_dataset_cli.py",
   "tests/test_metric_contract.py",
   "tests/test_package.py",
   "tests/test_release.py",

@@ -22,7 +22,7 @@ final class DatabaseStartupIT {
 			try (var backend = BackendProcess.start(arguments(database, port))) {
 				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
 
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(21);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(24);
 				assertThat(database.countTables("public")).isZero();
 			}
 		}
@@ -43,7 +43,7 @@ final class DatabaseStartupIT {
 					throw new AssertionError(failure.getMessage() + "\n" + backend.output(), failure);
 				}
 
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(21);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(24);
 			}
 		}
 	}
@@ -65,7 +65,7 @@ final class DatabaseStartupIT {
 			var upgradedPort = BackendProcess.availablePort();
 			try (var backend = BackendProcess.start(arguments(database, upgradedPort))) {
 				BackendProcess.awaitReadiness(upgradedPort, Duration.ofSeconds(30));
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(21);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(24);
 			}
 		}
 	}

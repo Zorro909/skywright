@@ -38,7 +38,7 @@ public final class TargetStorageResolver {
 					"The required Credential Projection is unavailable"));
 		return new ResolvedTargetStorage(descriptor.storageId().toString(), descriptor.endpoint(), descriptor.bucket(),
 				Region.of(descriptor.region()), descriptor.pathStyleAccess(), descriptor.compatibilityOptions(),
-				provider, trainingProjectId, runId);
+				provider, trainingProjectId, runId, binding.bindingId(), binding.bindingRevision());
 	}
 
 	public ResolvedTargetStorage resolveDataset(UUID storageId, String consumingRole) {
@@ -52,7 +52,7 @@ public final class TargetStorageResolver {
 					"The required Credential Projection is unavailable"));
 		return new ResolvedTargetStorage(descriptor.storageId().toString(), descriptor.endpoint(), descriptor.bucket(),
 				Region.of(descriptor.region()), descriptor.pathStyleAccess(), descriptor.compatibilityOptions(),
-				provider, "dataset-catalog", "maintenance");
+				provider, "dataset-catalog", "maintenance", binding.bindingId(), binding.bindingRevision());
 	}
 
 	private TargetStorageCredentialAccess credentials() {

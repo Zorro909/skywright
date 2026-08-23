@@ -1,0 +1,102 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-164-dataset-format-identity
+      author: skywright
+      logicalFilePath: db/changelog/versions/0005-dataset-publication.yaml
+      changes:
+        - addColumn:
+            tableName: dataset_catalog
+            columns:
+              - column: { name: format_identity, type: varchar(255), defaultValue: legacy, constraints: { nullable: false } }
+      rollback:
+        - dropColumn: { tableName: dataset_catalog, columnName: format_identity }
+        - sql:
+            comment: Restore the application schema for earlier raw-SQL rollbacks.
+            sql: SET search_path TO skywright
+  - changeSet:
+      id: issue-164-dataset-publication-tables
+      author: skywright
+      logicalFilePath: db/changelog/versions/0005-dataset-publication.yaml
+      changes:
+        - createTable:
+            tableName: dataset_lineage
+            columns:
+              - column: { name: dataset_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: preferred_definition_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: created_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+        - createTable:
+            tableName: dataset_publication
+            columns:
+              - column: { name: publication_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: state, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: dataset_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: definition_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: copy_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: target_storage_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: version_label, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: format_identity, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: manifest_identity, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: content_fingerprint, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: object_count, type: bigint, constraints: { nullable: false } }
+              - column: { name: byte_count, type: bigint, constraints: { nullable: false } }
+              - column: { name: payload_location, type: varchar(2048), constraints: { nullable: false } }
+              - column: { name: operation_location, type: varchar(2048), constraints: { nullable: false } }
+              - column: { name: verified_object_count, type: bigint, constraints: { nullable: false } }
+              - column: { name: verified_byte_count, type: bigint, constraints: { nullable: false } }
+              - column: { name: preferred_definition_id, type: uuid }
+              - column: { name: preferred_definition_changed, type: boolean, constraints: { nullable: false } }
+              - column: { name: retryable, type: boolean, constraints: { nullable: false } }
+              - column: { name: failure_code, type: varchar(255) }
+              - column: { name: created_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: verified_at, type: timestamp with time zone }
+              - column: { name: completed_at, type: timestamp with time zone }
+              - column: { name: verification_worker_pid, type: bigint, constraints: { nullable: false } }
+              - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+        - createTable:
+            tableName: credential_projection_record
+            columns:
+              - column: { name: projection_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: publication_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: binding_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: binding_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: consumer_role, type: varchar(64), constraints: { nullable: false } }
+              - column: { name: projected_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: released_at, type: timestamp with time zone }
+              - column: { name: worker_pid, type: bigint }
+              - column: { name: worker_started_at, type: timestamp with time zone }
+              - column: { name: job_directory, type: varchar(2048) }
+      rollback:
+        - dropTable: { tableName: credential_projection_record }
+        - dropTable: { tableName: dataset_publication }
+        - dropTable: { tableName: dataset_lineage }
+  - changeSet:
+      id: issue-164-dataset-publication-constraints
+      author: skywright
+      logicalFilePath: db/changelog/versions/0005-dataset-publication.yaml
+      changes:
+        - addUniqueConstraint: { tableName: dataset_publication, columnNames: definition_id, constraintName: uq_dataset_publication_definition }
+        - addUniqueConstraint: { tableName: dataset_publication, columnNames: copy_id, constraintName: uq_dataset_publication_copy }
+        - addForeignKeyConstraint: { baseTableName: dataset_publication, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_dataset_publication_storage }
+        - addForeignKeyConstraint: { baseTableName: credential_projection_record, baseColumnNames: publication_id, referencedTableName: dataset_publication, referencedColumnNames: publication_id, constraintName: fk_credential_projection_publication }
+        - addForeignKeyConstraint: { baseTableName: dataset_lineage, baseColumnNames: preferred_definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_lineage_preferred, deferrable: true, initiallyDeferred: true }
+      rollback:
+        - dropForeignKeyConstraint: { baseTableName: credential_projection_record, constraintName: fk_credential_projection_publication }
+        - dropForeignKeyConstraint: { baseTableName: dataset_lineage, constraintName: fk_dataset_lineage_preferred }
+        - dropForeignKeyConstraint: { baseTableName: dataset_publication, constraintName: fk_dataset_publication_storage }
+        - dropUniqueConstraint: { tableName: dataset_publication, constraintName: uq_dataset_publication_copy }
+        - dropUniqueConstraint: { tableName: dataset_publication, constraintName: uq_dataset_publication_definition }
+  - changeSet:
+      id: issue-164-dataset-publication-grants
+      author: skywright
+      logicalFilePath: db/changelog/versions/0005-dataset-publication.yaml
+      changes:
+        - sql:
+            comment: Grant the runtime role the JPA access required by Dataset Publication.
+            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON dataset_lineage, dataset_publication TO "${runtimeRole}"
+        - sql:
+            comment: Credential projection evidence may be completed but not deleted by the runtime role.
+            sql: GRANT SELECT, INSERT, UPDATE ON credential_projection_record TO "${runtimeRole}"
+      rollback:
+        - sql: { sql: 'REVOKE ALL PRIVILEGES ON dataset_lineage, dataset_publication, credential_projection_record FROM "${runtimeRole}"' }

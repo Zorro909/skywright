@@ -407,6 +407,64 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/RegistryRebindingOperation' }
         '409': { $ref: '#/components/responses/Problem' }
+  /dataset-publications:
+    post:
+      operationId: initiateDatasetPublication
+      summary: Allocate one durable Dataset Publication before direct upload.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InitiateDatasetPublication' }
+      responses:
+        '201':
+          description: Stable publication and storage identities allocated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetPublication' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /dataset-publications/{publicationId}:
+    parameters:
+      - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      operationId: getDatasetPublication
+      summary: Inspect one durable Dataset Publication.
+      responses:
+        '200':
+          description: Current publication state and stable result, when committed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetPublication' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /dataset-publications/{publicationId}/completion:
+    parameters:
+      - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: completeDatasetPublication
+      summary: Independently verify staged objects and atomically publish the Dataset.
+      responses:
+        '202':
+          description: Independent verification accepted or already complete.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetPublication' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /datasets/{datasetId}:
+    parameters:
+      - { name: datasetId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      operationId: getDataset
+      summary: Inspect one Dataset lineage and its preferred definition.
+      responses:
+        '200':
+          description: Current Dataset lineage facts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetLineage' }
+        '404': { $ref: '#/components/responses/Problem' }
   /dataset-catalog:
     get:
       operationId: listDatasetCatalog
@@ -557,6 +615,62 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
 components:
   schemas:
+    DatasetPublicationState:
+      type: string
+      enum: [awaiting-upload, verifying, committed, failed]
+    InitiateDatasetPublication:
+      type: object
+      additionalProperties: false
+      required: [targetStorageId, versionLabel, formatIdentity, manifestIdentity, contentFingerprint, objectCount, byteCount]
+      properties:
+        targetStorageId: { $ref: '#/components/schemas/SkywrightId' }
+        versionLabel: { type: string, minLength: 1, maxLength: 255 }
+        formatIdentity: { type: string, enum: [mosaicml-streaming-mds@2] }
+        manifestIdentity: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        contentFingerprint: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        objectCount: { type: integer, format: int64, minimum: 1 }
+        byteCount: { type: integer, format: int64, minimum: 0 }
+    DatasetPublication:
+      type: object
+      additionalProperties: false
+      required: [publicationId, state, datasetId, definitionId, copyId, targetStorageId, versionLabel, formatIdentity, manifestIdentity, contentFingerprint, objectCount, byteCount, payloadLocation, operationLocation, verifiedObjectCount, verifiedByteCount, preferredDefinitionId, preferredDefinitionChanged, retryable, failureCode, createdAt, verifiedAt, completedAt, verificationWorkerPid]
+      properties:
+        publicationId: { $ref: '#/components/schemas/SkywrightId' }
+        state: { $ref: '#/components/schemas/DatasetPublicationState' }
+        datasetId: { $ref: '#/components/schemas/SkywrightId' }
+        definitionId: { $ref: '#/components/schemas/SkywrightId' }
+        copyId: { $ref: '#/components/schemas/SkywrightId' }
+        targetStorageId: { $ref: '#/components/schemas/SkywrightId' }
+        versionLabel: { type: string }
+        formatIdentity: { type: string }
+        manifestIdentity: { type: string }
+        contentFingerprint: { type: string }
+        objectCount: { type: integer, format: int64, minimum: 1 }
+        byteCount: { type: integer, format: int64, minimum: 0 }
+        payloadLocation: { type: string }
+        operationLocation: { type: string }
+        verifiedObjectCount: { type: integer, format: int64, minimum: 0 }
+        verifiedByteCount: { type: integer, format: int64, minimum: 0 }
+        preferredDefinitionId:
+          oneOf:
+            - { $ref: '#/components/schemas/SkywrightId' }
+            - { type: 'null' }
+        preferredDefinitionChanged: { type: boolean }
+        retryable: { type: boolean }
+        failureCode: { type: [string, 'null'] }
+        createdAt: { $ref: '#/components/schemas/UtcInstant' }
+        verifiedAt: { type: [string, 'null'], format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        verificationWorkerPid: { type: integer, format: int64, minimum: 0 }
+    DatasetLineage:
+      type: object
+      additionalProperties: false
+      required: [datasetId, revision, preferredDefinitionId, createdAt]
+      properties:
+        datasetId: { $ref: '#/components/schemas/SkywrightId' }
+        revision: { type: integer, format: int64, minimum: 1 }
+        preferredDefinitionId: { $ref: '#/components/schemas/SkywrightId' }
+        createdAt: { $ref: '#/components/schemas/UtcInstant' }
     DatasetCopyRole:
       type: string
       enum: [authority, replica]
@@ -572,11 +686,12 @@ components:
     DatasetDefinition:
       type: object
       additionalProperties: false
-      required: [datasetId, definitionId, versionLabel, contentFingerprint, manifestIdentity, createdAt]
+      required: [datasetId, definitionId, versionLabel, formatIdentity, contentFingerprint, manifestIdentity, createdAt]
       properties:
         datasetId: { $ref: '#/components/schemas/SkywrightId' }
         definitionId: { $ref: '#/components/schemas/SkywrightId' }
         versionLabel: { type: [string, 'null'] }
+        formatIdentity: { type: string }
         contentFingerprint: { type: string }
         manifestIdentity: { type: string }
         createdAt: { $ref: '#/components/schemas/UtcInstant' }

@@ -41,10 +41,11 @@ final class DatasetCatalogTest {
 	void publicationRequiresACompleteIntegrityManifest() {
 		DatasetPublication publication = publication();
 
-		assertThatThrownBy(() -> this.catalog.publish(new DatasetPublication(publication.datasetId(),
-				publication.definitionId(), publication.versionLabel(), publication.contentFingerprint(),
-				publication.manifestIdentity(), publication.copyId(), publication.targetStorageId(),
-				publication.location(), publication.verifiedBytes(), publication.verifiedAt(), List.of())))
+		assertThatThrownBy(
+				() -> this.catalog.publish(new DatasetPublication(publication.datasetId(), publication.definitionId(),
+						publication.versionLabel(), publication.formatIdentity(), publication.contentFingerprint(),
+						publication.manifestIdentity(), publication.copyId(), publication.targetStorageId(),
+						publication.location(), publication.verifiedBytes(), publication.verifiedAt(), List.of())))
 			.isInstanceOf(IllegalArgumentException.class)
 			.hasMessageContaining("manifest must not be empty");
 	}
@@ -54,10 +55,10 @@ final class DatasetCatalogTest {
 		DatasetPublication publication = publication();
 		this.catalog.publish(publication);
 
-		assertThatThrownBy(
-				() -> this.catalog.publish(new DatasetPublication(publication.datasetId(), publication.definitionId(),
-						"v1", "different-fingerprint", publication.manifestIdentity(), publication.copyId(),
-						publication.targetStorageId(), publication.location(), 42, NOW, publication.manifestEntries())))
+		assertThatThrownBy(() -> this.catalog.publish(new DatasetPublication(publication.datasetId(),
+				publication.definitionId(), "v1", publication.formatIdentity(), "different-fingerprint",
+				publication.manifestIdentity(), publication.copyId(), publication.targetStorageId(),
+				publication.location(), 42, NOW, publication.manifestEntries())))
 			.isInstanceOf(DatasetCatalogConflictException.class)
 			.hasMessageContaining("DATASET_DEFINITION_CONFLICT");
 	}
@@ -67,10 +68,10 @@ final class DatasetCatalogTest {
 		DatasetPublication publication = publication();
 		this.catalog.publish(publication);
 
-		assertThatThrownBy(() -> this.catalog
-			.publish(new DatasetPublication(publication.datasetId(), UUID.randomUUID(), publication.versionLabel(),
-					"different-fingerprint", "different-manifest", UUID.randomUUID(), publication.targetStorageId(),
-					"datasets/project/other", 7, NOW, List.of(new DatasetManifestEntry("other.bin", 7, "checksum")))))
+		assertThatThrownBy(() -> this.catalog.publish(new DatasetPublication(publication.datasetId(), UUID.randomUUID(),
+				publication.versionLabel(), publication.formatIdentity(), "different-fingerprint", "different-manifest",
+				UUID.randomUUID(), publication.targetStorageId(), "datasets/project/other", 7, NOW,
+				List.of(new DatasetManifestEntry("other.bin", 7, "checksum")))))
 			.isInstanceOf(DatasetCatalogConflictException.class)
 			.hasMessageContaining("DATASET_VERSION_LABEL_CONFLICT");
 	}
@@ -296,8 +297,8 @@ final class DatasetCatalogTest {
 	@Test
 	void maintenanceWorkerResumesEveryDurableRefreshStage() {
 		DatasetPublication publication = new DatasetPublication(UUID.randomUUID(), UUID.randomUUID(), "v1",
-				"sha256:content", "sha256:manifest", UUID.randomUUID(), UUID.randomUUID(), "datasets/project/v1", 42,
-				NOW, List.of(new DatasetManifestEntry("shard.bin", 42, "checksum")));
+				"mosaicml-streaming-mds@2", "sha256:content", "sha256:manifest", UUID.randomUUID(), UUID.randomUUID(),
+				"datasets/project/v1", 42, NOW, List.of(new DatasetManifestEntry("shard.bin", 42, "checksum")));
 		DatasetCatalogView published = this.catalog.publish(publication);
 		DatasetCopyOperationView operation = this.catalog.startRefresh(publication.definitionId(), publication.copyId(),
 				1, published.revision());
@@ -358,8 +359,8 @@ final class DatasetCatalogTest {
 
 	private static DatasetPublication publication() {
 		return new DatasetPublication(UUID.fromString("00000000-0000-0000-0000-000000000001"),
-				UUID.fromString("00000000-0000-0000-0000-000000000002"), "v1", "sha256:content", "sha256:manifest",
-				UUID.fromString("00000000-0000-0000-0000-000000000003"),
+				UUID.fromString("00000000-0000-0000-0000-000000000002"), "v1", "mosaicml-streaming-mds@2",
+				"sha256:content", "sha256:manifest", UUID.fromString("00000000-0000-0000-0000-000000000003"),
 				UUID.fromString("00000000-0000-0000-0000-000000000004"), "datasets/project/v1", 42, NOW,
 				List.of(new DatasetManifestEntry("shard.bin", 42, "checksum")));
 	}

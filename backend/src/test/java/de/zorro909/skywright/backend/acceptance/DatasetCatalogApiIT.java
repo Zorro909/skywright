@@ -57,8 +57,8 @@ final class DatasetCatalogApiIT {
 						.build(), AsyncRequestBody.fromBytes(shard))
 					.join();
 				backend.bean(DatasetCatalog.class)
-					.publish(new DatasetPublication(datasetId, definitionId, "release-1", "sha256:content",
-							"sha256:manifest", copyId, storageId, "datasets/release-1", 4096,
+					.publish(new DatasetPublication(datasetId, definitionId, "release-1", "mosaicml-streaming-mds@2",
+							"sha256:content", "sha256:manifest", copyId, storageId, "datasets/release-1", 4096,
 							Instant.parse("2026-08-22T10:00:00Z"),
 							List.of(new DatasetManifestEntry("shard.bin", 4096, checksum))));
 				DatasetCatalog catalog = backend.bean(DatasetCatalog.class);

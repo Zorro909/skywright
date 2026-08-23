@@ -74,7 +74,8 @@ class RunStoreS3IT {
 					.join();
 
 				ResolvedTargetStorage target = new ResolvedTargetStorage("seaweedfs", service.endpoint(), bucket,
-						Region.US_EAST_1, true, Map.of("chunkedEncoding", "disabled"), credentials, "project", "run");
+						Region.US_EAST_1, true, Map.of("chunkedEncoding", "disabled"), credentials, "project", "run",
+						UUID.randomUUID(), 1);
 				try (S3RunStoreObjectStore objects = new S3RunStoreObjectStore(target)) {
 					RunStoreAccess access = new RunStoreAccess(protocol, objects);
 					assertThat(access.listOutputs()).extracting(RunStoreOutput::name)

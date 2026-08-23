@@ -7,6 +7,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.UUID;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
@@ -90,6 +91,15 @@ final class BackendFixture implements AutoCloseable {
 
 	<T> T bean(Class<T> type) {
 		return this.application.getBean(type);
+	}
+
+	URI baseUri() {
+		return this.baseUri;
+	}
+
+	long countReleasedCredentialProjections(UUID publicationId, UUID bindingId, long bindingRevision)
+			throws java.sql.SQLException {
+		return this.database.countReleasedCredentialProjections(publicationId, bindingId, bindingRevision);
 	}
 
 	@Override
