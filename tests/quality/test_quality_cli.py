@@ -69,10 +69,10 @@ class PlanningTest(unittest.TestCase):
                     "deployment": False,
                     "frontend": True,
                     "image": True,
-                    "integration": False,
+                    "integration": True,
                     "java": True,
                     "profile": False,
-                    "sdk": False,
+                    "sdk": True,
                     "security": True,
                 },
             ),
@@ -238,7 +238,9 @@ class PlanningTest(unittest.TestCase):
     def test_dependency_backed_implementation_paths_select_integration(self) -> None:
         for path in (
             "backend/src/main/java/de/zorro909/skywright/backend/persistence/Store.java",
+            "backend/src/main/java/de/zorro909/skywright/backend/datasetpublication/Service.java",
             "backend/src/main/resources/application.properties",
+            "sdk/src/skywright/_dataset_cli.py",
             "sdk/src/skywright/_run_store/implementation.py",
             "sdk/tests/support/run_store_training_scenario.py",
         ):

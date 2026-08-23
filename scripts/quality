@@ -67,7 +67,9 @@ CHECKS = (*LOCAL_CHECKS, "security")
 ALL_CHECKS = frozenset(CHECKS)
 BROWSER_CHECKS = frozenset(("application", "frontend"))
 CATEGORY_CHECKS = {
-    "api": frozenset(("application", "image", "java", "frontend", "security")),
+    "api": frozenset(
+        ("application", "image", "integration", "java", "frontend", "sdk", "security")
+    ),
     "backend": frozenset(("application", "image", "java", "security")),
     "deployment": ALL_CHECKS,
     "documentation": frozenset(),
@@ -106,9 +108,7 @@ COMMANDS = {
             "verify",
         ),
     ),
-    "deployment": (
-        ("deployment/scripts/run-contract-tests",),
-    ),
+    "deployment": (("deployment/scripts/run-contract-tests",),),
     "image": (
         FRONTEND_INSTALL,
         (
@@ -282,6 +282,7 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
     )
     integration_prefixes = (
         "backend/src/main/java/de/zorro909/skywright/backend/availability/",
+        "backend/src/main/java/de/zorro909/skywright/backend/datasetpublication/",
         "backend/src/main/java/de/zorro909/skywright/backend/persistence/",
         "backend/src/main/java/de/zorro909/skywright/backend/runstore/",
         "backend/src/main/resources/db/",
@@ -289,9 +290,11 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         "backend/src/test/java/de/zorro909/skywright/backend/runstore/",
         "protocol/run-store/",
         "sdk/src/skywright/_run_store/",
+        "sdk/src/skywright/_dataset_",
         "sdk/src/skywright/run_store.py",
         "sdk/src/skywright/_training_process.py",
         "sdk/tests/test_run_store",
+        "sdk/tests/test_dataset_cli.py",
         "sdk/tests/support/",
     )
     integration_files = {

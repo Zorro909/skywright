@@ -112,7 +112,7 @@ public class DatasetCatalogHttpAdapter implements DatasetCatalogApi {
 		DatasetDefinitionView definition = value.definition();
 		var generatedDefinition = new de.zorro909.skywright.backend.boundary.generated.model.DatasetDefinition(
 				definition.datasetId(), definition.definitionId(), definition.versionLabel(),
-				definition.contentFingerprint(), definition.manifestIdentity(),
+				definition.formatIdentity(), definition.contentFingerprint(), definition.manifestIdentity(),
 				definition.createdAt().atOffset(ZoneOffset.UTC));
 		return new DatasetCatalogRecord(value.revision(), generatedDefinition,
 				value.copies().stream().map(this::copy).toList(), value.leases().stream().map(this::lease).toList(),

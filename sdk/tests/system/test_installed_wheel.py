@@ -179,6 +179,24 @@ def test_runtime_command_help_is_available_without_runtime_services(
     assert "Execute a Skywright Training Project" in completed.stdout
 
 
+def test_dataset_command_help_is_available_without_runtime_services(
+    installed_sdk: Path,
+    tmp_path: Path,
+    isolated_process_environment: dict[str, str],
+) -> None:
+    completed = subprocess.run(
+        [installed_sdk / "bin" / "skywright-datasets", "--help"],
+        check=True,
+        cwd=tmp_path,
+        env=isolated_process_environment,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "usage: skywright-datasets" in completed.stdout
+    assert "Publish storage-ready Dataset corpora" in completed.stdout
+
+
 def test_runtime_command_reports_version_and_source_revision(
     installed_sdk: Path,
     tmp_path: Path,

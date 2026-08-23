@@ -29,6 +29,9 @@ class DatasetCatalogEntity {
 	@Column(name = "version_label")
 	String versionLabel;
 
+	@Column(name = "format_identity", nullable = false)
+	String formatIdentity;
+
 	@Column(name = "content_fingerprint", nullable = false)
 	String contentFingerprint;
 
@@ -88,6 +91,7 @@ class DatasetCatalogEntity {
 		this.definitionId = value.definition().definitionId();
 		this.datasetId = value.definition().datasetId();
 		this.versionLabel = value.definition().versionLabel();
+		this.formatIdentity = value.definition().formatIdentity();
 		this.contentFingerprint = value.definition().contentFingerprint();
 		this.manifestIdentity = value.definition().manifestIdentity();
 		this.createdAt = value.definition().createdAt();
@@ -107,7 +111,7 @@ class DatasetCatalogEntity {
 
 	DatasetCatalogAggregate domain() {
 		DatasetDefinitionView definition = new DatasetDefinitionView(this.datasetId, this.definitionId,
-				this.versionLabel, this.contentFingerprint, this.manifestIdentity, this.createdAt);
+				this.versionLabel, this.formatIdentity, this.contentFingerprint, this.manifestIdentity, this.createdAt);
 		List<DatasetCopyView> decodedCopies = this.copies.stream().map(copy -> {
 			List<DatasetCopyGenerationView> history = this.generations.stream()
 				.filter(generation -> generation.copyId.equals(copy.id))

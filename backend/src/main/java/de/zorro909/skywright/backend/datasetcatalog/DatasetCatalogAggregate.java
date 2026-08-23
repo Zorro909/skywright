@@ -45,7 +45,8 @@ final class DatasetCatalogAggregate {
 		}
 		validateManifest(request.manifestEntries(), request.verifiedBytes());
 		DatasetDefinitionView definition = new DatasetDefinitionView(request.datasetId(), request.definitionId(),
-				request.versionLabel(), request.contentFingerprint(), request.manifestIdentity(), createdAt);
+				request.versionLabel(), request.formatIdentity(), request.contentFingerprint(),
+				request.manifestIdentity(), createdAt);
 		DatasetCopyGenerationView generation = new DatasetCopyGenerationView(1, request.location(),
 				request.manifestIdentity(), request.contentFingerprint(), request.verifiedBytes(), createdAt,
 				request.verifiedAt(), true, DatasetCopyAvailability.AVAILABLE);
@@ -66,6 +67,7 @@ final class DatasetCatalogAggregate {
 		return this.definition.datasetId().equals(request.datasetId())
 				&& this.definition.definitionId().equals(request.definitionId())
 				&& Objects.equals(this.definition.versionLabel(), request.versionLabel())
+				&& this.definition.formatIdentity().equals(request.formatIdentity())
 				&& this.definition.contentFingerprint().equals(request.contentFingerprint())
 				&& this.definition.manifestIdentity().equals(request.manifestIdentity())
 				&& authority.id().equals(request.copyId())

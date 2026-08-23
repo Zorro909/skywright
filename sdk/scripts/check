@@ -12,7 +12,7 @@ uv run --locked pyright --verifytypes skywright
 scripts/generate-configuration-reference --check
 ../scripts/generate-run-definition-models --check
 uv run --locked --group ml-test pytest \
-  tests/test_configuration_contract.py tests/test_metric_contract.py tests/test_package.py \
+  tests/test_configuration_contract.py tests/test_dataset_cli.py tests/test_metric_contract.py tests/test_package.py \
   tests/test_release.py tests/test_training_process.py tests/test_run_store.py tests/test_run_definition.py \
   --junitxml target/test-results/unit.xml \
   --cov skywright \

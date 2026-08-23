@@ -92,6 +92,10 @@ final class BackendFixture implements AutoCloseable {
 		return this.application.getBean(type);
 	}
 
+	URI baseUri() {
+		return this.baseUri;
+	}
+
 	@Override
 	public void close() throws Exception {
 		application.close();
