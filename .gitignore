@@ -1,5 +1,7 @@
 target/
 .venv/
+.graalpy/
+.ci-cache/
 dist/
 __pycache__/
 *.py[cod]

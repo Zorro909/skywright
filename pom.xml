@@ -22,6 +22,7 @@
   <modules>
     <module>api/skywright-api</module>
     <module>frontend</module>
+    <module>graalpy-environment</module>
     <module>backend</module>
     <module>backend-deployment</module>
     <module>sdk</module>
@@ -33,6 +34,7 @@
     <docker-maven.version>0.49.0</docker-maven.version>
     <exec-maven.version>3.6.3</exec-maven.version>
     <graalpy.version>25.2.4</graalpy.version>
+    <graalpy.external.directory>${maven.multiModuleProjectDirectory}/.graalpy/resources</graalpy.external.directory>
     <java.version>25</java.version>
     <jacoco.version>0.8.15</jacoco.version>
     <maven-antrun.version>3.2.0</maven-antrun.version>

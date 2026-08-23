@@ -81,7 +81,7 @@
                   <inline>
                     <fileSets>
                       <fileSet>
-                        <directory>${maven.multiModuleProjectDirectory}/backend/target/graalpy-resources</directory>
+                        <directory>${graalpy.external.directory}</directory>
                         <outputDirectory>graalpy-resources</outputDirectory>
                       </fileSet>
                     </fileSets>

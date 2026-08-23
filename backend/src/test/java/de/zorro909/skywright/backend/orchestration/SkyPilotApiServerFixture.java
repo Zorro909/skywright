@@ -38,7 +38,7 @@ final class SkyPilotApiServerFixture implements AutoCloseable {
 		var environment = repository.resolve("backend/target/skypilot-api-server-venv");
 		run(repository, "uv", "venv", "--python", "3.12", environment.toString());
 		run(repository, "uv", "pip", "sync", "--python", environment.resolve("bin/python").toString(),
-				repository.resolve("backend/graalpy.lock").toString());
+				repository.resolve("graalpy-environment/graalpy.lock").toString());
 
 		var port = availablePort();
 		var logs = repository.resolve("backend/target/service-logs/skypilot-api.log");

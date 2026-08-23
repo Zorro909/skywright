@@ -85,9 +85,10 @@ Package the executable layered JAR from the repository root:
 ./mvnw -pl backend -am -DskipTests package
 ```
 
-The artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`. Maven also creates the locked
-GraalPy and SkyPilot 0.13.0 environment at `backend/target/graalpy-resources`; production packaging
-places it beside the executable. Runtime startup never installs Python packages. The JAR contains version, build
+The artifact is `backend/target/skywright-backend-0.1.0-SNAPSHOT.jar`. The dedicated
+`graalpy-environment` Maven module creates the locked GraalPy and SkyPilot 0.13.0 environment at
+`.graalpy/resources`; production packaging places it beside the executable. Runtime startup never installs
+Python packages. The JAR contains version, build
 time, and the full source revision in `META-INF/build-info.properties`; the same non-sensitive
 identity is available from `GET /actuator/info` while it is running.
 

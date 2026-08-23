@@ -19,6 +19,8 @@ PYTHON_ACTION = (
     REPOSITORY / ".github/actions/setup-python-toolchain/action.yml"
 ).read_text(encoding="utf-8")
 WORKFLOW = (REPOSITORY / ".github/workflows/quality.yml").read_text(encoding="utf-8")
+ENVIRONMENT_POM = REPOSITORY / "graalpy-environment/pom.xml"
+ENVIRONMENT_LOCK = REPOSITORY / "graalpy-environment/graalpy.lock"
 sys.path.insert(0, str(REPOSITORY / "scripts"))
 try:
     QUALITY_IMPLEMENTATION = runpy.run_path(str(REPOSITORY / "scripts/quality"))
@@ -108,19 +110,27 @@ class JavaSetupContractTest(unittest.TestCase):
 
     def test_packaged_graalpy_environment_cache_is_exact(self) -> None:
         environment_cache = named_step(
-            JAVA_ACTION, "Cache packaged GraalPy environment"
+            JAVA_ACTION, "Restore exact packaged GraalPy environment"
         )
 
-        self.assertRegex(environment_cache, r"uses: actions/cache@[0-9a-f]{40}")
+        self.assertRegex(
+            environment_cache, r"uses: actions/cache/restore@[0-9a-f]{40}"
+        )
         self.assertIn("inputs.graalpy-resources == 'true'", environment_cache)
         self.assertIn("${{ runner.os }}", environment_cache)
         self.assertIn("${{ runner.arch }}", environment_cache)
-        self.assertIn("${{ steps.toolchain.outputs.java_version }}", environment_cache)
-        self.assertIn("${{ hashFiles('backend/graalpy.lock') }}", environment_cache)
-        self.assertIn("backend/target/graalpy-resources", environment_cache)
+        self.assertIn(
+            "${{ steps.toolchain.outputs.java_archive_sha256 }}", environment_cache
+        )
+        self.assertIn("graalpy-env-v3", environment_cache)
+        self.assertIn("graalpy-environment/graalpy.lock", environment_cache)
+        self.assertIn("graalpy-environment/pom.xml", environment_cache)
+        self.assertIn("backend-deployment/src/main/docker/Dockerfile", environment_cache)
+        self.assertIn(".graalpy/resources", environment_cache)
+        self.assertNotIn("restore-keys:", environment_cache)
 
     def test_graalpy_inputs_pin_qualified_native_dependencies(self) -> None:
-        pom = ET.parse(REPOSITORY / "backend/pom.xml")
+        pom = ET.parse(ENVIRONMENT_POM)
         namespace = {"m": "http://maven.apache.org/POM/4.0.0"}
         packages = {
             package.text
@@ -134,13 +144,60 @@ class JavaSetupContractTest(unittest.TestCase):
             "numpy==2.2.4",
             "pandas==2.2.3",
             "psutil==5.9.8",
+            "uvloop==0.19.0",
             "watchfiles==0.21.0",
         }
 
         self.assertTrue(expected.issubset(packages))
-        lock = (REPOSITORY / "backend/graalpy.lock").read_text(encoding="utf-8")
+        lock = ENVIRONMENT_LOCK.read_text(encoding="utf-8")
         for package in expected:
             self.assertIn(f"{package}\n", lock)
+
+    def test_graalpy_environment_is_a_dedicated_reactor_module(self) -> None:
+        parent = ET.parse(REPOSITORY / "pom.xml")
+        backend = ET.parse(REPOSITORY / "backend/pom.xml")
+        environment = ET.parse(ENVIRONMENT_POM)
+        namespace = {"m": "http://maven.apache.org/POM/4.0.0"}
+
+        modules = {
+            module.text for module in parent.findall(".//m:modules/m:module", namespace)
+        }
+        backend_dependencies = {
+            dependency.text
+            for dependency in backend.findall(
+                ".//m:dependencies/m:dependency/m:artifactId", namespace
+            )
+        }
+        self.assertIn("graalpy-environment", modules)
+        self.assertIn("skywright-graalpy-environment", backend_dependencies)
+        self.assertEqual(
+            parent.findtext(".//m:graalpy.external.directory", namespaces=namespace),
+            "${maven.multiModuleProjectDirectory}/.graalpy/resources",
+        )
+        self.assertIsNone(
+            backend.find(".//m:plugin[m:artifactId='graalpy-maven-plugin']", namespace)
+        )
+        self.assertIsNotNone(
+            environment.find(
+                ".//m:plugin[m:artifactId='graalpy-maven-plugin']", namespace
+            )
+        )
+        self.assertEqual(
+            environment.findtext(
+                ".//m:plugin[m:artifactId='graalpy-maven-plugin']"
+                "/m:configuration/m:externalDirectory",
+                namespaces=namespace,
+            ),
+            "${graalpy.external.directory}",
+        )
+        self.assertEqual(
+            environment.findtext(
+                ".//m:profile[m:id='build-graalpy-environment']"
+                "/m:activation/m:property/m:name",
+                namespaces=namespace,
+            ),
+            "!graalpy.environment.prebuilt",
+        )
 
 
 class QualityWorkflowContractTest(unittest.TestCase):
@@ -248,19 +305,38 @@ class QualityWorkflowContractTest(unittest.TestCase):
     def test_graalpy_environment_is_built_once_before_maven_fanout(self) -> None:
         preparation = job(WORKFLOW, "graalpy")
         self.assertIn("needs: plan", preparation)
+        self.assertIn("timeout-minutes: 90", preparation)
+        self.assertIn("PIP_CACHE_DIR:", preparation)
         self.assertIn("graalpy-resources: true", preparation)
         self.assertIn("steps.java.outputs.graalpy-cache-hit != 'true'", preparation)
-        self.assertIn("timeout --verbose 60m", preparation)
-        self.assertIn("-Dmaven.test.skip=true", preparation)
-        self.assertIn("-pl backend", preparation)
-        self.assertIn("-am package", preparation)
+        self.assertIn("actions/cache/restore@", preparation)
+        self.assertIn("actions/cache/save@", preparation)
+        self.assertIn("always()", preparation)
+        self.assertIn("github.run_attempt", preparation)
+        self.assertIn("--kill-after=2m", preparation)
+        self.assertIn("75m", preparation)
+        self.assertIn("--no-transfer-progress", preparation)
+        self.assertIn("-pl graalpy-environment", preparation)
+        self.assertIn("process-resources", preparation)
+        self.assertNotIn("setup-frontend", preparation)
+        self.assertIn("import cryptography", preparation)
+        self.assertIn("import sky", preparation)
+        self.assertIn("tar --zstd", preparation)
+        self.assertIn("actions/upload-artifact@", preparation)
+        self.assertIn("compression-level: 0", preparation)
+
+        concurrency = WORKFLOW.split("permissions:", 1)[0]
+        self.assertIn("cancel-in-progress: false", concurrency)
 
         for name in ("java", "integration", "application", "image"):
             with self.subTest(job=name):
                 consumer = job(WORKFLOW, name)
                 self.assertIn("needs: [plan, graalpy]", consumer)
-                self.assertIn("graalpy-resources: true", consumer)
-                self.assertIn("require-graalpy-cache: true", consumer)
+                self.assertIn("actions/download-artifact@", consumer)
+                self.assertIn("graalpy-resources.tar.zst", consumer)
+                self.assertIn("tar --zstd", consumer)
+                self.assertIn("-Dgraalpy.environment.prebuilt=true", consumer)
+                self.assertNotIn("require-graalpy-cache", consumer)
 
 
 if __name__ == "__main__":
