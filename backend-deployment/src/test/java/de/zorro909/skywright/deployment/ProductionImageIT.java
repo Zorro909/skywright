@@ -24,17 +24,21 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.MethodOrderer.OrderAnnotation;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestMethodOrder;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@TestMethodOrder(OrderAnnotation.class)
 final class ProductionImageIT {
 
 	private static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(60);
 
-	private static final Duration SKYPILOT_STARTUP_TIMEOUT = Duration.ofMinutes(3);
+	private static final Duration SKYPILOT_STARTUP_TIMEOUT = Duration.ofSeconds(60);
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -90,6 +94,7 @@ final class ProductionImageIT {
 	}
 
 	@Test
+	@Order(1)
 	void productionProcessRunsAsANonRootUser() throws Exception {
 		var processTable = docker("top", runningContainer, "-eo", "user,pid,comm");
 		var applicationProcess = processTable.lines()
@@ -102,6 +107,7 @@ final class ProductionImageIT {
 	}
 
 	@Test
+	@Order(2)
 	void healthAndApplicationIdentityAreAvailable() throws Exception {
 		assertThat(get("/livez").body()).contains("\"status\":\"UP\"");
 		assertThat(get("/readyz").body()).contains("\"status\":\"UP\"");
@@ -113,6 +119,7 @@ final class ProductionImageIT {
 	}
 
 	@Test
+	@Order(3)
 	void servedOpenApiIsTheCanonicalBuildInputByteForByte() throws Exception {
 		var response = getBytes("/openapi/skywright-api.yaml");
 
@@ -121,6 +128,7 @@ final class ProductionImageIT {
 	}
 
 	@Test
+	@Order(4)
 	void requestsProduceStructuredSafeConsoleOutput() throws Exception {
 		var correlationId = "image-acceptance-" + UUID.randomUUID();
 		var request = HttpRequest.newBuilder(baseUri.resolve("/readyz?secret=hidden-value"))
@@ -142,6 +150,7 @@ final class ProductionImageIT {
 	}
 
 	@Test
+	@Order(5)
 	void invalidConfigurationFailsWithoutDisclosingTheSuppliedValue() throws Exception {
 		var container = containerName("invalid-configuration");
 		var sensitiveValue = "production-private-token!";
@@ -164,7 +173,10 @@ final class ProductionImageIT {
 	}
 
 	@Test
+	@Order(6)
 	void productionProcessTerminatesWithinTheDocumentedStopWindow() throws Exception {
+		docker("rm", "--force", runningContainer);
+		runningContainer = null;
 		var container = containerName("termination");
 		try (var skyPilot = HeldSkyPilotServer.start()) {
 			var arguments = applicationContainerArguments(container);

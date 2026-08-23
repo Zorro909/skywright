@@ -1,33 +1,64 @@
 import json
+import os
+import urllib.error
+import urllib.request
 
-import sky
-from sky.server import common as server_common
-from sky.utils import common as sky_common
+
+_SKY_MODULES = None
+
+
+def _sky_modules():
+    global _SKY_MODULES
+    if _SKY_MODULES is None:
+        import sky
+        from sky.server import common as server_common
+        from sky.utils import common as sky_common
+
+        _SKY_MODULES = (sky, server_common, sky_common)
+    return _SKY_MODULES
 
 
 def _bridge_boundary(function):
     def guarded(*arguments):
         try:
             return function(*arguments)
-        except sky.exceptions.ApiServerConnectionError:
-            server_common.get_api_server_status_response.cache_clear()
-            return _bridge_failure("REACHABILITY", "SkyPilot API server is unreachable")
-        except sky.exceptions.ApiServerAuthenticationError:
-            server_common.get_api_server_status_response.cache_clear()
-            return _bridge_failure(
-                "AUTHENTICATION", "SkyPilot API authentication failed"
-            )
-        except sky.exceptions.APIVersionMismatchError:
-            server_common.get_api_server_status_response.cache_clear()
-            return _bridge_failure(
-                "VERSION_MISMATCH", "SkyPilot API version is incompatible"
-            )
-        except Exception:
+        except Exception as failure:
+            category = type(failure).__name__
+            if category == "ApiServerConnectionError":
+                _clear_api_server_status_cache()
+                return _bridge_failure(
+                    "REACHABILITY", "SkyPilot API server is unreachable"
+                )
+            if category == "ApiServerAuthenticationError":
+                _clear_api_server_status_cache()
+                return _bridge_failure(
+                    "AUTHENTICATION", "SkyPilot API authentication failed"
+                )
+            if category == "APIVersionMismatchError":
+                _clear_api_server_status_cache()
+                return _bridge_failure(
+                    "VERSION_MISMATCH", "SkyPilot API version is incompatible"
+                )
             return _bridge_failure(
                 "ADAPTER_CONTRACT", "SkyPilot bridge operation failed"
             )
 
     return guarded
+
+
+def _clear_api_server_status_cache():
+    if _SKY_MODULES is not None:
+        _SKY_MODULES[1].get_api_server_status_response.cache_clear()
+
+
+def _probe_failure(failure):
+    if isinstance(failure, urllib.error.HTTPError) and failure.code in (401, 403):
+        return _bridge_failure(
+            "AUTHENTICATION", "SkyPilot API authentication failed"
+        )
+    if isinstance(failure, (urllib.error.URLError, TimeoutError)):
+        return _bridge_failure("REACHABILITY", "SkyPilot API server is unreachable")
+    return _bridge_failure("ADAPTER_CONTRACT", "SkyPilot bridge operation failed")
 
 
 def _bridge_failure(cause, message):
@@ -52,12 +83,18 @@ def _handle(value):
 
 @_bridge_boundary
 def bridge_probe():
-    info = sky.api_info()
-    return json.dumps({"server_version": str(info.version)})
+    endpoint = os.environ["SKYPILOT_API_SERVER_ENDPOINT"].rstrip("/")
+    try:
+        with urllib.request.urlopen(f"{endpoint}/api/health", timeout=5) as response:
+            info = json.load(response)
+    except Exception as failure:
+        return _probe_failure(failure)
+    return json.dumps({"server_version": str(info["version"])})
 
 
 @_bridge_boundary
 def bridge_submit(serialized):
+    sky, _, sky_common = _sky_modules()
     specification = json.loads(serialized)
     name = specification["name"]
     existing_request_id = _existing_launch_request(name)
@@ -77,6 +114,7 @@ def bridge_submit(serialized):
 
 @_bridge_boundary
 def bridge_status(serialized_names):
+    sky, _, _ = _sky_modules()
     names = set(json.loads(serialized_names))
     request_id = sky.jobs.queue_v2(refresh=False, all_users=True)
     operation_id = json.dumps(
@@ -91,6 +129,7 @@ def bridge_status(serialized_names):
 
 @_bridge_boundary
 def bridge_cancel(job_name):
+    sky, _, _ = _sky_modules()
     job_name = str(job_name)
     existing_job_id = _existing_managed_job_id(job_name, refresh=False)
     if existing_job_id is None:
@@ -102,12 +141,14 @@ def bridge_cancel(job_name):
 
 @_bridge_boundary
 def bridge_cleanup(cluster_name):
+    sky, _, _ = _sky_modules()
     request_id = sky.down(str(cluster_name))
     return json.dumps({"operation_id": str(request_id)})
 
 
 @_bridge_boundary
 def bridge_complete(operation_id, kind):
+    sky, _, _ = _sky_modules()
     request_id = str(operation_id)
     names = set()
     existing_job_id = None
@@ -121,13 +162,13 @@ def bridge_complete(operation_id, kind):
         names = set(status["names"])
     try:
         value = sky.stream_and_get(str(request_id))
-    except (
-        sky.exceptions.ApiServerConnectionError,
-        sky.exceptions.ApiServerAuthenticationError,
-        sky.exceptions.APIVersionMismatchError,
-    ):
-        raise
     except Exception as failure:
+        if type(failure).__name__ in (
+            "ApiServerConnectionError",
+            "ApiServerAuthenticationError",
+            "APIVersionMismatchError",
+        ):
+            raise
         return json.dumps(
             {
                 "failure": {
@@ -172,6 +213,7 @@ def bridge_complete(operation_id, kind):
 
 
 def _existing_managed_job_id(name, refresh=True):
+    sky, _, _ = _sky_modules()
     try:
         request_id = sky.jobs.queue_v2(refresh=refresh, all_users=True)
         records = sky.stream_and_get(request_id)[0]
@@ -190,6 +232,7 @@ def _existing_managed_job_id(name, refresh=True):
 
 
 def _existing_launch_request(name):
+    sky, _, _ = _sky_modules()
     requests = sky.api_status(all_status=True)
     matching = [
         request
@@ -210,6 +253,7 @@ def _submission_operation(request_id, existing_job_id=None):
 
 
 def _task(specification):
+    sky, _, _ = _sky_modules()
     resources = [
         sky.Resources(
             infra=requested["infrastructure"],
