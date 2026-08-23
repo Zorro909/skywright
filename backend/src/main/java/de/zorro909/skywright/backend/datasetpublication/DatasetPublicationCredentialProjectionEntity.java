@@ -33,6 +33,15 @@ class DatasetPublicationCredentialProjectionEntity {
 	@Column(name = "released_at")
 	Instant releasedAt;
 
+	@Column(name = "worker_pid")
+	Long workerPid;
+
+	@Column(name = "worker_started_at")
+	Instant workerStartedAt;
+
+	@Column(name = "job_directory")
+	String jobDirectory;
+
 	protected DatasetPublicationCredentialProjectionEntity() {
 	}
 

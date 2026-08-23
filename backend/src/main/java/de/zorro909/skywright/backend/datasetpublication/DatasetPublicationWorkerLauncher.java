@@ -6,7 +6,7 @@ import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.Set;
@@ -24,12 +24,12 @@ final class DatasetPublicationWorkerLauncher {
 
 	private final TargetStorageResolver targetStorages;
 
-	private final DatasetPublicationCredentialProjections projections;
+	private final DatasetPublicationCredentialProjectionLifecycle projections;
 
 	private final Set<ActiveWorker> activeWorkers = ConcurrentHashMap.newKeySet();
 
 	DatasetPublicationWorkerLauncher(TargetStorageResolver targetStorages,
-			DatasetPublicationCredentialProjections projections) {
+			DatasetPublicationCredentialProjectionLifecycle projections) {
 		this.targetStorages = targetStorages;
 		this.projections = projections;
 	}
@@ -45,7 +45,8 @@ final class DatasetPublicationWorkerLauncher {
 		try {
 			projectionId = this.projections.projected(publication.publicationId(), target.credentialBindingId(),
 					target.credentialBindingRevision());
-			directory = Files.createTempDirectory("skywright-dataset-worker-job-");
+			directory = Files.createTempDirectory("skywright-dataset-worker-job-" + projectionId + "-");
+			this.projections.prepared(projectionId, directory);
 			Path job = directory.resolve("job.json");
 			Path result = directory.resolve("result.json");
 			JSON.writeValue(job.toFile(),
@@ -57,16 +58,18 @@ final class DatasetPublicationWorkerLauncher {
 							publication.payloadLocation(), publication.operationLocation()));
 			var process = new ProcessBuilder(command(job, result)).redirectErrorStream(true)
 				.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-			projectEnvironment(process.environment(), credentials);
+			clearEnvironment(process.environment());
 			worker = process.start();
 			activeWorker = new ActiveWorker(worker, projectionId, directory);
 			this.activeWorkers.add(activeWorker);
 			ActiveWorker trackedWorker = activeWorker;
 			worker.onExit().thenRun(() -> completeIfReady(trackedWorker));
-			if (!worker.waitFor(Duration.ofMinutes(10).toMillis(), TimeUnit.MILLISECONDS)) {
-				terminate(worker);
-				return failure();
+			Instant workerStartedAt = worker.toHandle().info().startInstant().orElse(null);
+			this.projections.launched(projectionId, worker.pid(), workerStartedAt);
+			try (var credentialStream = worker.getOutputStream()) {
+				JSON.writeValue(credentialStream, credential(credentials));
 			}
+			awaitCompletion(worker);
 			if (!Files.isRegularFile(result)) {
 				return failure();
 			}
@@ -94,13 +97,21 @@ final class DatasetPublicationWorkerLauncher {
 		}
 	}
 
-	static void projectEnvironment(Map<String, String> environment, AwsCredentials credentials) {
+	static void awaitCompletion(Process worker) throws InterruptedException {
+		worker.waitFor();
+	}
+
+	static void clearEnvironment(Map<String, String> environment) {
 		environment.clear();
-		environment.put("AWS_ACCESS_KEY_ID", credentials.accessKeyId());
-		environment.put("AWS_SECRET_ACCESS_KEY", credentials.secretAccessKey());
+	}
+
+	static DatasetPublicationWorkerCredential credential(AwsCredentials credentials) {
+		String sessionToken = null;
 		if (credentials instanceof AwsSessionCredentials session) {
-			environment.put("AWS_SESSION_TOKEN", session.sessionToken());
+			sessionToken = session.sessionToken();
 		}
+		return new DatasetPublicationWorkerCredential(credentials.accessKeyId(), credentials.secretAccessKey(),
+				sessionToken);
 	}
 
 	private static boolean terminate(Process worker) {
@@ -147,7 +158,7 @@ final class DatasetPublicationWorkerLauncher {
 		}
 	}
 
-	private static void deleteJobFiles(Path directory) {
+	static void deleteJobFiles(Path directory) {
 		if (directory == null) {
 			return;
 		}

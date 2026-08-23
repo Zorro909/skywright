@@ -15,7 +15,10 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
-import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
+import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
 import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
@@ -43,8 +46,9 @@ public final class DatasetPublicationWorkerMain {
 		Path resultPath = Path.of(arguments[1]);
 		DatasetPublicationWorkerResult result;
 		try {
+			var credential = JSON.readValue(System.in, DatasetPublicationWorkerCredential.class);
 			var job = JSON.readValue(Path.of(arguments[0]).toFile(), DatasetPublicationWorkerJob.class);
-			result = verify(job);
+			result = verify(job, credential);
 		}
 		catch (WorkerFailure failure) {
 			result = new DatasetPublicationWorkerResult(false, List.of(), 0, 0, null, ProcessHandle.current().pid(),
@@ -57,8 +61,9 @@ public final class DatasetPublicationWorkerMain {
 		JSON.writeValue(resultPath.toFile(), result);
 	}
 
-	private static DatasetPublicationWorkerResult verify(DatasetPublicationWorkerJob job) {
-		try (S3AsyncClient client = client(job)) {
+	private static DatasetPublicationWorkerResult verify(DatasetPublicationWorkerJob job,
+			DatasetPublicationWorkerCredential credential) {
+		try (S3AsyncClient client = client(job, credential)) {
 			byte[] manifestBytes = client
 				.getObject(GetObjectRequest.builder()
 					.bucket(job.bucket())
@@ -180,12 +185,17 @@ public final class DatasetPublicationWorkerMain {
 		return result;
 	}
 
-	private static S3AsyncClient client(DatasetPublicationWorkerJob job) {
+	private static S3AsyncClient client(DatasetPublicationWorkerJob job,
+			DatasetPublicationWorkerCredential credential) {
+		AwsCredentials awsCredential = credential.sessionToken() == null
+				? AwsBasicCredentials.create(credential.accessKeyId(), credential.secretAccessKey())
+				: AwsSessionCredentials.create(credential.accessKeyId(), credential.secretAccessKey(),
+						credential.sessionToken());
 		return S3AsyncClient.builder()
 			.httpClientBuilder(NettyNioAsyncHttpClient.builder())
 			.endpointOverride(job.endpoint())
 			.region(Region.of(job.region()))
-			.credentialsProvider(DefaultCredentialsProvider.create())
+			.credentialsProvider(StaticCredentialsProvider.create(awsCredential))
 			.serviceConfiguration(S3Configuration.builder()
 				.pathStyleAccessEnabled(job.pathStyleAccess())
 				.chunkedEncodingEnabled(job.chunkedEncoding())

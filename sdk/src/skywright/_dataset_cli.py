@@ -110,14 +110,7 @@ def _publish(
     if not isinstance(result, dict):
         raise _protocol_error()
     result = cast(dict[str, object], result)
-    deadline = time.monotonic() + 600
     while result.get("state") in {"awaiting-upload", "verifying"}:
-        if time.monotonic() >= deadline:
-            raise DatasetPublicationError(
-                "DATASET_VERIFICATION_UNAVAILABLE",
-                "Dataset verification did not complete before the command timeout",
-                retryable=True,
-            )
         time.sleep(0.1)
         result = _request(
             control_plane,

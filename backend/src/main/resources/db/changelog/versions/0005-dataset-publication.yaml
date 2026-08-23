@@ -64,6 +64,9 @@ databaseChangeLog:
               - column: { name: consumer_role, type: varchar(64), constraints: { nullable: false } }
               - column: { name: projected_at, type: timestamp with time zone, constraints: { nullable: false } }
               - column: { name: released_at, type: timestamp with time zone }
+              - column: { name: worker_pid, type: bigint }
+              - column: { name: worker_started_at, type: timestamp with time zone }
+              - column: { name: job_directory, type: varchar(2048) }
       rollback:
         - dropTable: { tableName: credential_projection_record }
         - dropTable: { tableName: dataset_publication }
