@@ -289,6 +289,11 @@
           <graalPyLockFile>${project.basedir}/graalpy.lock</graalPyLockFile>
           <packages>
             <package>skypilot==${skypilot.version}</package>
+            <!-- Keep native dependencies on the GraalPy-compatible versions qualified here. -->
+            <package>numpy==2.2.4</package>
+            <package>pandas==2.2.3</package>
+            <package>psutil==5.9.8</package>
+            <package>watchfiles==0.21.0</package>
           </packages>
         </configuration>
       </plugin>

@@ -123,7 +123,7 @@ jobs:
       - name: Build packaged GraalPy environment on cache miss
         if: steps.java.outputs.graalpy-cache-hit != 'true'
         run: >-
-          timeout --verbose 30m
+          timeout --verbose 60m
           ./mvnw --batch-mode
           -DskipFrontendInstall=true
           -DskipFrontendTests=true

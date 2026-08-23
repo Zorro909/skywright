@@ -119,6 +119,29 @@ class JavaSetupContractTest(unittest.TestCase):
         self.assertIn("${{ hashFiles('backend/graalpy.lock') }}", environment_cache)
         self.assertIn("backend/target/graalpy-resources", environment_cache)
 
+    def test_graalpy_inputs_pin_qualified_native_dependencies(self) -> None:
+        pom = ET.parse(REPOSITORY / "backend/pom.xml")
+        namespace = {"m": "http://maven.apache.org/POM/4.0.0"}
+        packages = {
+            package.text
+            for package in pom.findall(
+                ".//m:plugin[m:artifactId='graalpy-maven-plugin']"
+                "/m:configuration/m:packages/m:package",
+                namespace,
+            )
+        }
+        expected = {
+            "numpy==2.2.4",
+            "pandas==2.2.3",
+            "psutil==5.9.8",
+            "watchfiles==0.21.0",
+        }
+
+        self.assertTrue(expected.issubset(packages))
+        lock = (REPOSITORY / "backend/graalpy.lock").read_text(encoding="utf-8")
+        for package in expected:
+            self.assertIn(f"{package}\n", lock)
+
 
 class QualityWorkflowContractTest(unittest.TestCase):
     def test_setup_actions_own_repository_toolchain_versions(self) -> None:
@@ -227,7 +250,7 @@ class QualityWorkflowContractTest(unittest.TestCase):
         self.assertIn("needs: plan", preparation)
         self.assertIn("graalpy-resources: true", preparation)
         self.assertIn("steps.java.outputs.graalpy-cache-hit != 'true'", preparation)
-        self.assertIn("timeout --verbose 30m", preparation)
+        self.assertIn("timeout --verbose 60m", preparation)
         self.assertIn("-Dmaven.test.skip=true", preparation)
         self.assertIn("-pl backend", preparation)
         self.assertIn("-am package", preparation)
