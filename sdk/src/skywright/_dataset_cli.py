@@ -145,10 +145,10 @@ def _publish(
 def _request(base: str, method: str, path: str, body: object | None) -> object:
     url = base.rstrip("/") + path
     data = None if body is None else _json(body).encode()
-    request = urllib.request.Request(url, data=data, method=method)
-    if data is not None:
-        request.add_header("Content-Type", "application/json")
     try:
+        request = urllib.request.Request(url, data=data, method=method)
+        if data is not None:
+            request.add_header("Content-Type", "application/json")
         with urllib.request.urlopen(request, timeout=30) as response:
             try:
                 return cast(object, json.load(response))
@@ -180,6 +180,11 @@ def _request(base: str, method: str, path: str, body: object | None) -> object:
             "CONTROL_PLANE_UNAVAILABLE",
             "The control plane is unavailable",
             retryable=True,
+        ) from error
+    except ValueError as error:
+        raise DatasetPublicationError(
+            "CONTROL_PLANE_ADDRESS_INVALID",
+            "The control-plane address is invalid",
         ) from error
 
 

@@ -75,11 +75,14 @@ final class DatasetPublicationWorkerLauncher {
 			return failure();
 		}
 		finally {
+			boolean workerStopped = true;
 			if (worker != null) {
-				terminate(worker);
-				this.activeWorkers.remove(worker);
+				workerStopped = terminate(worker);
+				if (workerStopped) {
+					this.activeWorkers.remove(worker);
+				}
 			}
-			if (projectionId != null) {
+			if (projectionId != null && workerStopped) {
 				this.projections.released(projectionId);
 			}
 			if (directory != null) {
@@ -105,20 +108,22 @@ final class DatasetPublicationWorkerLauncher {
 		}
 	}
 
-	private static void terminate(Process worker) {
+	private static boolean terminate(Process worker) {
 		if (!worker.isAlive()) {
-			return;
+			return true;
 		}
 		worker.destroy();
 		try {
 			if (!worker.waitFor(5, TimeUnit.SECONDS)) {
 				worker.destroyForcibly();
-				worker.waitFor(5, TimeUnit.SECONDS);
+				return worker.waitFor(5, TimeUnit.SECONDS);
 			}
+			return true;
 		}
 		catch (InterruptedException exception) {
 			worker.destroyForcibly();
 			Thread.currentThread().interrupt();
+			return !worker.isAlive();
 		}
 	}
 

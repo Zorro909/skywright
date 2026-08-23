@@ -212,3 +212,34 @@ def test_command_reports_malformed_success_response_as_one_problem_line(
     assert json.loads(stderr.getvalue())["errorCode"] == (
         "SKYWRIGHT_CONTROL_PLANE_PROTOCOL_FAILURE"
     )
+
+
+def test_command_reports_invalid_control_plane_as_one_problem_line(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus)
+    stdout = StringIO()
+    stderr = StringIO()
+
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        status = main(
+            [
+                "publish",
+                str(corpus),
+                "--control-plane",
+                "::bad",
+                "--target-storage",
+                "00000000-0000-0000-0000-000000000001",
+                "--version-label",
+                "v1",
+            ]
+        )
+
+    assert status == 2
+    assert stdout.getvalue() == ""
+    assert stderr.getvalue().count("\n") == 1
+    assert "Traceback" not in stderr.getvalue()
+    assert json.loads(stderr.getvalue())["errorCode"] == (
+        "SKYWRIGHT_CONTROL_PLANE_ADDRESS_INVALID"
+    )
