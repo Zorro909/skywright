@@ -64,7 +64,7 @@ final class DatasetPublicationWorkerLauncher {
 			this.activeWorkers.add(activeWorker);
 			ActiveWorker trackedWorker = activeWorker;
 			worker.onExit().thenRun(() -> completeIfReady(trackedWorker));
-			Instant workerStartedAt = worker.toHandle().info().startInstant().orElse(null);
+			Instant workerStartedAt = requireWorkerStartedAt(worker.toHandle().info().startInstant());
 			this.projections.launched(projectionId, worker.pid(), workerStartedAt);
 			try (var credentialStream = worker.getOutputStream()) {
 				JSON.writeValue(credentialStream, credential(credentials));
@@ -99,6 +99,10 @@ final class DatasetPublicationWorkerLauncher {
 
 	static void awaitCompletion(Process worker) throws InterruptedException {
 		worker.waitFor();
+	}
+
+	static Instant requireWorkerStartedAt(java.util.Optional<Instant> workerStartedAt) throws IOException {
+		return workerStartedAt.orElseThrow(() -> new IOException("Worker start identity is unavailable"));
 	}
 
 	static void clearEnvironment(Map<String, String> environment) {

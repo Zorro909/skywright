@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -21,9 +22,11 @@ class DatasetPublicationWorkerRecoveryTest {
 	@Test
 	void restartReleasesProjectionAndJobFilesWhenSurvivingWorkerExits() throws Exception {
 		UUID projectionId = UUID.randomUUID();
+		UUID publicationId = UUID.randomUUID();
 		Path jobDirectory = Files.createDirectory(this.temporaryDirectory.resolve("job"));
 		Files.writeString(jobDirectory.resolve("job.json"), "{}");
-		var open = new DatasetPublicationOpenCredentialProjection(projectionId, 123L, null, jobDirectory);
+		var open = new DatasetPublicationOpenCredentialProjection(projectionId, publicationId, 123L, null,
+				jobDirectory);
 		var projections = new RecordingProjectionLifecycle(open);
 		var exited = new CompletableFuture<Void>();
 		DatasetPublicationWorkerProcessMonitor processes = ignored -> Optional.of(exited);
@@ -43,8 +46,10 @@ class DatasetPublicationWorkerRecoveryTest {
 	@Test
 	void restartClosesProjectionWhenItsWorkerAlreadyExited() throws Exception {
 		UUID projectionId = UUID.randomUUID();
+		UUID publicationId = UUID.randomUUID();
 		Path jobDirectory = Files.createDirectory(this.temporaryDirectory.resolve("completed-job"));
-		var open = new DatasetPublicationOpenCredentialProjection(projectionId, 456L, null, jobDirectory);
+		var open = new DatasetPublicationOpenCredentialProjection(projectionId, publicationId, 456L, null,
+				jobDirectory);
 		var projections = new RecordingProjectionLifecycle(open);
 		DatasetPublicationWorkerProcessMonitor processes = ignored -> Optional.empty();
 		var recovery = new DatasetPublicationWorkerRecovery(projections, processes);
@@ -66,8 +71,8 @@ class DatasetPublicationWorkerRecoveryTest {
 		try {
 			Thread.sleep(100);
 			assertThat(worker.isAlive()).as("marker process is running").isTrue();
-			var projection = new DatasetPublicationOpenCredentialProjection(projectionId, worker.pid(),
-					worker.toHandle().info().startInstant().orElse(null), null);
+			var projection = new DatasetPublicationOpenCredentialProjection(projectionId, UUID.randomUUID(),
+					worker.pid(), worker.toHandle().info().startInstant().orElseThrow(), null);
 			var monitor = new LocalDatasetPublicationWorkerProcessMonitor();
 			Optional<CompletableFuture<Void>> completion = Optional.empty();
 			long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
@@ -85,6 +90,41 @@ class DatasetPublicationWorkerRecoveryTest {
 		finally {
 			worker.destroyForcibly();
 		}
+	}
+
+	@Test
+	void localMonitorRejectsPidWithoutStartIdentity() {
+		var projection = new DatasetPublicationOpenCredentialProjection(UUID.randomUUID(), UUID.randomUUID(),
+				ProcessHandle.current().pid(), null, null);
+
+		assertThat(new LocalDatasetPublicationWorkerProcessMonitor().completion(projection)).isEmpty();
+	}
+
+	@Test
+	void localMonitorRejectsMismatchedStartIdentity() {
+		var projection = new DatasetPublicationOpenCredentialProjection(UUID.randomUUID(), UUID.randomUUID(),
+				ProcessHandle.current().pid(), Instant.EPOCH, null);
+
+		assertThat(new LocalDatasetPublicationWorkerProcessMonitor().completion(projection)).isEmpty();
+	}
+
+	@Test
+	void restartDefersRedispatchUntilTheSurvivingWorkerIsReaped() {
+		UUID publicationId = UUID.randomUUID();
+		var open = new DatasetPublicationOpenCredentialProjection(UUID.randomUUID(), publicationId, 123L, Instant.EPOCH,
+				null);
+		var projections = new RecordingProjectionLifecycle(open);
+		var exited = new CompletableFuture<Void>();
+		var recovery = new DatasetPublicationWorkerRecovery(projections, ignored -> Optional.of(exited));
+		var redispatched = new CompletableFuture<Void>();
+
+		recovery.resume();
+		recovery.whenRecovered(publicationId, () -> redispatched.complete(null));
+
+		assertThat(redispatched).isNotDone();
+		exited.complete(null);
+		assertThat(redispatched).isCompleted();
+		assertThat(projections.released).containsExactly(open.projectionId());
 	}
 
 	private static final class RecordingProjectionLifecycle implements DatasetPublicationCredentialProjectionLifecycle {

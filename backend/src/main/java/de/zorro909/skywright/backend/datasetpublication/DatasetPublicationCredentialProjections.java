@@ -52,7 +52,7 @@ class DatasetPublicationCredentialProjections implements DatasetPublicationCrede
 					+ "where projection.releasedAt is null", DatasetPublicationCredentialProjectionEntity.class)
 			.getResultStream()
 			.map(projection -> new DatasetPublicationOpenCredentialProjection(projection.projectionId,
-					projection.workerPid, projection.workerStartedAt,
+					projection.publicationId, projection.workerPid, projection.workerStartedAt,
 					projection.jobDirectory == null ? null : Path.of(projection.jobDirectory)))
 			.toList();
 	}

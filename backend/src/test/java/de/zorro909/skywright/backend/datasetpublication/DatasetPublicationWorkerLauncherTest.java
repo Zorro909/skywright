@@ -1,11 +1,14 @@
 package de.zorro909.skywright.backend.datasetpublication;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -42,6 +45,13 @@ class DatasetPublicationWorkerLauncherTest {
 
 		assertThat(process.untimedWait).isTrue();
 		assertThat(process.timedWait).isFalse();
+	}
+
+	@Test
+	void workerWithoutAStartIdentityCannotReceiveCredentials() {
+		assertThatThrownBy(() -> DatasetPublicationWorkerLauncher.requireWorkerStartedAt(Optional.empty()))
+			.isInstanceOf(IOException.class)
+			.hasMessage("Worker start identity is unavailable");
 	}
 
 	private static final class CompletionProbeProcess extends Process {

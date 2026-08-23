@@ -19,15 +19,18 @@ final class DatasetPublicationWorkerDispatcher {
 
 	private final DatasetPublicationWorkerLauncher launcher;
 
+	private final DatasetPublicationWorkerRecovery recovery;
+
 	private final ExecutorService executor = Executors
 		.newSingleThreadExecutor(Thread.ofPlatform().name("dataset-transfer-worker-dispatcher").factory());
 
 	private final Set<UUID> dispatched = ConcurrentHashMap.newKeySet();
 
 	DatasetPublicationWorkerDispatcher(DatasetPublicationService publications,
-			DatasetPublicationWorkerLauncher launcher) {
+			DatasetPublicationWorkerLauncher launcher, DatasetPublicationWorkerRecovery recovery) {
 		this.publications = publications;
 		this.launcher = launcher;
+		this.recovery = recovery;
 	}
 
 	@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -37,7 +40,8 @@ final class DatasetPublicationWorkerDispatcher {
 
 	@EventListener(ApplicationReadyEvent.class)
 	void resume() {
-		this.publications.pendingVerifications().forEach(this::dispatch);
+		this.publications.pendingVerifications()
+			.forEach(publicationId -> this.recovery.whenRecovered(publicationId, () -> dispatch(publicationId)));
 	}
 
 	private void dispatch(UUID publicationId) {

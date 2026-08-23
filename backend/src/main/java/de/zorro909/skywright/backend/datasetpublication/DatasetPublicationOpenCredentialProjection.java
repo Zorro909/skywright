@@ -4,6 +4,6 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.UUID;
 
-record DatasetPublicationOpenCredentialProjection(UUID projectionId, Long workerPid, Instant workerStartedAt,
-		Path jobDirectory) {
+record DatasetPublicationOpenCredentialProjection(UUID projectionId, UUID publicationId, Long workerPid,
+		Instant workerStartedAt, Path jobDirectory) {
 }

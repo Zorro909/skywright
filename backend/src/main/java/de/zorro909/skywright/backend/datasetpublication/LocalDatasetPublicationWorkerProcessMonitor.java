@@ -14,13 +14,12 @@ final class LocalDatasetPublicationWorkerProcessMonitor implements DatasetPublic
 	}
 
 	private static Optional<ProcessHandle> byPersistedPid(DatasetPublicationOpenCredentialProjection projection) {
-		if (projection.workerPid() == null) {
+		if (projection.workerPid() == null || projection.workerStartedAt() == null) {
 			return Optional.empty();
 		}
 		return ProcessHandle.of(projection.workerPid())
 			.filter(ProcessHandle::isAlive)
-			.filter(handle -> projection.workerStartedAt() == null
-					|| handle.info().startInstant().filter(projection.workerStartedAt()::equals).isPresent());
+			.filter(handle -> handle.info().startInstant().filter(projection.workerStartedAt()::equals).isPresent());
 	}
 
 }
