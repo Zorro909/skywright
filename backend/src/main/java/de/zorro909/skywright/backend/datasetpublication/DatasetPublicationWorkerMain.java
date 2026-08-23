@@ -1,8 +1,6 @@
 package de.zorro909.skywright.backend.datasetpublication;
 
 import de.zorro909.skywright.backend.datasetcatalog.DatasetManifestEntry;
-import de.zorro909.skywright.backend.runstore.ResolvedTargetStorage;
-import de.zorro909.skywright.backend.targetstorage.TargetStorageResolver;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -10,16 +8,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
 import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
+import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -28,73 +28,85 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-final class DatasetPublicationVerifier {
+/** Standalone managed Transfer Worker entry point. */
+public final class DatasetPublicationWorkerMain {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
-	private final TargetStorageResolver targetStorages;
-
-	private final Clock clock;
-
-	DatasetPublicationVerifier(TargetStorageResolver targetStorages, Clock clock) {
-		this.targetStorages = targetStorages;
-		this.clock = clock;
+	private DatasetPublicationWorkerMain() {
 	}
 
-	VerifiedPublication verify(DatasetPublicationView publication) {
-		ResolvedTargetStorage target = this.targetStorages.resolveDataset(publication.targetStorageId(),
-				"transfer-worker");
-		try (S3AsyncClient client = client(target)) {
+	public static void main(String[] arguments) throws IOException {
+		if (arguments.length != 2) {
+			throw new IllegalArgumentException("Expected job and result paths");
+		}
+		Path resultPath = Path.of(arguments[1]);
+		DatasetPublicationWorkerResult result;
+		try {
+			var job = JSON.readValue(Path.of(arguments[0]).toFile(), DatasetPublicationWorkerJob.class);
+			result = verify(job);
+		}
+		catch (WorkerFailure failure) {
+			result = new DatasetPublicationWorkerResult(false, List.of(), 0, 0, null, ProcessHandle.current().pid(),
+					failure.code, failure.retryable);
+		}
+		catch (RuntimeException failure) {
+			result = new DatasetPublicationWorkerResult(false, List.of(), 0, 0, null, ProcessHandle.current().pid(),
+					"DATASET_VERIFICATION_UNAVAILABLE", true);
+		}
+		JSON.writeValue(resultPath.toFile(), result);
+	}
+
+	private static DatasetPublicationWorkerResult verify(DatasetPublicationWorkerJob job) {
+		try (S3AsyncClient client = client(job)) {
 			byte[] manifestBytes = client
 				.getObject(GetObjectRequest.builder()
-					.bucket(target.bucket())
-					.key(key(publication.operationLocation(), "manifest.json"))
+					.bucket(job.bucket())
+					.key(key(job.operationLocation(), "manifest.json"))
 					.build(), AsyncResponseTransformer.toBytes())
 				.join()
 				.asByteArray();
-			if (!digest(manifestBytes).equals(publication.manifestIdentity())) {
-				throw mismatch("The staged manifest identity does not match the publication");
+			if (!digest(manifestBytes).equals(job.manifestIdentity())) {
+				throw mismatch();
 			}
-			String fingerprintDocument = "{\"format\":\"" + publication.formatIdentity() + "\",\"manifest\":\""
-					+ publication.manifestIdentity() + "\",\"version\":\"skywright-dataset-content@1\"}";
-			if (!digest(fingerprintDocument.getBytes(StandardCharsets.UTF_8))
-				.equals(publication.contentFingerprint())) {
-				throw mismatch("The Dataset content fingerprint does not match the staged manifest");
+			String fingerprintDocument = "{\"format\":\"" + job.formatIdentity() + "\",\"manifest\":\""
+					+ job.manifestIdentity() + "\",\"version\":\"skywright-dataset-content@1\"}";
+			if (!digest(fingerprintDocument.getBytes(StandardCharsets.UTF_8)).equals(job.contentFingerprint())) {
+				throw mismatch();
 			}
-			List<ManifestObject> objects = parseManifest(manifestBytes, publication);
+			List<ManifestObject> objects = parseManifest(manifestBytes, job);
 			Set<String> expectedKeys = new HashSet<>();
-			List<DatasetManifestEntry> catalogEntries = new ArrayList<>();
+			List<DatasetManifestEntry> entries = new ArrayList<>();
 			for (ManifestObject object : objects) {
-				String remoteKey = key(publication.payloadLocation(), object.objectKey());
+				String remoteKey = key(job.payloadLocation(), object.objectKey());
 				expectedKeys.add(remoteKey);
-				verifyObject(client, target.bucket(), remoteKey, object);
-				catalogEntries.add(new DatasetManifestEntry(object.objectKey(), object.byteCount(),
+				verifyObject(client, job.bucket(), remoteKey, object);
+				entries.add(new DatasetManifestEntry(object.objectKey(), object.byteCount(),
 						Base64.getEncoder().encodeToString(HexFormat.of().parseHex(object.sha256().substring(7)))));
 			}
-			if (!remoteKeys(client, target.bucket(), publication.payloadLocation() + "/").equals(expectedKeys)) {
-				throw mismatch("The staged payload contains missing or additional objects");
+			if (!remoteKeys(client, job.bucket(), job.payloadLocation() + "/").equals(expectedKeys)) {
+				throw mismatch();
 			}
-			return new VerifiedPublication(catalogEntries, objects.size(),
-					objects.stream().mapToLong(ManifestObject::byteCount).sum(), this.clock.instant());
+			return new DatasetPublicationWorkerResult(true, entries, objects.size(),
+					objects.stream().mapToLong(ManifestObject::byteCount).sum(), Instant.now(),
+					ProcessHandle.current().pid(), null, false);
 		}
-		catch (DatasetPublicationException failure) {
+		catch (WorkerFailure failure) {
 			throw failure;
 		}
 		catch (RuntimeException failure) {
-			throw new DatasetPublicationException("DATASET_VERIFICATION_UNAVAILABLE",
-					"The managed Transfer Worker could not read Dataset storage", true);
+			throw new WorkerFailure("DATASET_VERIFICATION_UNAVAILABLE", true);
 		}
 	}
 
-	private static List<ManifestObject> parseManifest(byte[] bytes, DatasetPublicationView publication) {
+	private static List<ManifestObject> parseManifest(byte[] bytes, DatasetPublicationWorkerJob job) {
 		try {
 			JsonNode root = JSON.readTree(bytes);
 			if (!"skywright-dataset-manifest@1".equals(root.path("version").asText())
-					|| !publication.formatIdentity().equals(root.path("format").asText())
-					|| publication.objectCount() != root.path("objectCount").asLong(-1)
-					|| publication.byteCount() != root.path("byteCount").asLong(-1)
-					|| !root.path("objects").isArray()) {
-				throw mismatch("The staged manifest facts do not match the publication");
+					|| !job.formatIdentity().equals(root.path("format").asText())
+					|| job.objectCount() != root.path("objectCount").asLong(-1)
+					|| job.byteCount() != root.path("byteCount").asLong(-1) || !root.path("objects").isArray()) {
+				throw mismatch();
 			}
 			List<ManifestObject> objects = new ArrayList<>();
 			Set<String> keys = new HashSet<>();
@@ -108,38 +120,37 @@ final class DatasetPublicationVerifier {
 						|| previousKey != null
 								&& java.util.Arrays.compareUnsigned(previousKey.getBytes(StandardCharsets.UTF_8),
 										objectKey.getBytes(StandardCharsets.UTF_8)) >= 0) {
-					throw mismatch("The staged manifest contains an invalid object entry");
+					throw mismatch();
 				}
 				objects.add(new ManifestObject(objectKey, byteCount, sha256));
 				previousKey = objectKey;
 			}
-			if (objects.size() != publication.objectCount()
-					|| objects.stream().mapToLong(ManifestObject::byteCount).sum() != publication.byteCount()) {
-				throw mismatch("The staged manifest totals do not match the publication");
+			if (objects.size() != job.objectCount()
+					|| objects.stream().mapToLong(ManifestObject::byteCount).sum() != job.byteCount()) {
+				throw mismatch();
 			}
 			return List.copyOf(objects);
 		}
 		catch (JacksonException failure) {
-			throw mismatch("The staged manifest is not valid JSON");
+			throw mismatch();
 		}
 	}
 
 	private static void verifyObject(S3AsyncClient client, String bucket, String key, ManifestObject object) {
 		Path directory = null;
 		try {
-			directory = Files.createTempDirectory("skywright-dataset-verification-");
+			directory = Files.createTempDirectory("skywright-dataset-worker-");
 			Path downloaded = directory.resolve("object");
 			client
 				.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build(),
 						AsyncResponseTransformer.toFile(downloaded))
 				.join();
 			if (Files.size(downloaded) != object.byteCount() || !digest(downloaded).equals(object.sha256())) {
-				throw mismatch("A staged payload object does not match the manifest");
+				throw mismatch();
 			}
 		}
 		catch (IOException failure) {
-			throw new DatasetPublicationException("DATASET_VERIFICATION_UNAVAILABLE",
-					"The managed Transfer Worker could not verify a Dataset object", true);
+			throw new WorkerFailure("DATASET_VERIFICATION_UNAVAILABLE", true);
 		}
 		finally {
 			if (directory != null) {
@@ -148,7 +159,7 @@ final class DatasetPublicationVerifier {
 					Files.deleteIfExists(directory);
 				}
 				catch (IOException ignored) {
-					// The temporary verifier copy is not authoritative publication state.
+					// The temporary worker copy is not authoritative publication state.
 				}
 			}
 		}
@@ -169,17 +180,16 @@ final class DatasetPublicationVerifier {
 		return result;
 	}
 
-	private static S3AsyncClient client(ResolvedTargetStorage target) {
-		S3Configuration configuration = S3Configuration.builder()
-			.pathStyleAccessEnabled(target.pathStyleAccess())
-			.chunkedEncodingEnabled("enabled".equals(target.compatibilityOptions().get("chunkedEncoding")))
-			.build();
+	private static S3AsyncClient client(DatasetPublicationWorkerJob job) {
 		return S3AsyncClient.builder()
 			.httpClientBuilder(NettyNioAsyncHttpClient.builder())
-			.endpointOverride(target.endpoint())
-			.region(target.region())
-			.credentialsProvider(target.credentials())
-			.serviceConfiguration(configuration)
+			.endpointOverride(job.endpoint())
+			.region(Region.of(job.region()))
+			.credentialsProvider(DefaultCredentialsProvider.create())
+			.serviceConfiguration(S3Configuration.builder()
+				.pathStyleAccessEnabled(job.pathStyleAccess())
+				.chunkedEncodingEnabled(job.chunkedEncoding())
+				.build())
 			.requestChecksumCalculation(RequestChecksumCalculation.WHEN_SUPPORTED)
 			.build();
 	}
@@ -205,7 +215,7 @@ final class DatasetPublicationVerifier {
 			return MessageDigest.getInstance("SHA-256");
 		}
 		catch (NoSuchAlgorithmException failure) {
-			throw new IllegalStateException("The runtime does not provide SHA-256", failure);
+			throw new IllegalStateException(failure);
 		}
 	}
 
@@ -219,11 +229,24 @@ final class DatasetPublicationVerifier {
 		return prefix.endsWith("/") ? prefix + suffix : prefix + "/" + suffix;
 	}
 
-	private static DatasetPublicationException mismatch(String detail) {
-		return new DatasetPublicationException("DATASET_REMOTE_MANIFEST_MISMATCH", detail, false);
+	private static WorkerFailure mismatch() {
+		return new WorkerFailure("DATASET_REMOTE_MANIFEST_MISMATCH", false);
 	}
 
 	private record ManifestObject(String objectKey, long byteCount, String sha256) {
+	}
+
+	private static final class WorkerFailure extends RuntimeException {
+
+		private final String code;
+
+		private final boolean retryable;
+
+		private WorkerFailure(String code, boolean retryable) {
+			this.code = code;
+			this.retryable = retryable;
+		}
+
 	}
 
 }

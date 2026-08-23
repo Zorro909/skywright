@@ -85,6 +85,9 @@ class DatasetPublicationEntity {
 	@Column(name = "completed_at")
 	Instant completedAt;
 
+	@Column(name = "verification_worker_pid", nullable = false)
+	long verificationWorkerPid;
+
 	@Version
 	@Column(name = "persistence_version", nullable = false)
 	long persistenceVersion;
@@ -118,7 +121,7 @@ class DatasetPublicationEntity {
 				this.contentFingerprint, this.objectCount, this.byteCount, this.payloadLocation, this.operationLocation,
 				this.verifiedObjectCount, this.verifiedByteCount, this.preferredDefinitionId,
 				this.preferredDefinitionChanged, this.retryable, this.failureCode, this.createdAt, this.verifiedAt,
-				this.completedAt);
+				this.completedAt, this.verificationWorkerPid);
 	}
 
 }

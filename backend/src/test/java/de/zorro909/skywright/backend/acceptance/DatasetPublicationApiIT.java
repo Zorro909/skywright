@@ -3,6 +3,8 @@ package de.zorro909.skywright.backend.acceptance;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -77,6 +79,8 @@ final class DatasetPublicationApiIT {
 				assertThat(result.path("preferredDefinitionId").asText())
 					.isEqualTo(result.path("definitionId").asText());
 				assertThat(result.path("preferredDefinitionChanged").asBoolean()).isTrue();
+				assertThat(result.path("verificationWorkerPid").asLong()).isPositive()
+					.isNotEqualTo(ProcessHandle.current().pid());
 
 				var lineage = backend.get("/api/v1/datasets/" + result.path("datasetId").asText());
 				var catalog = backend.get("/api/v1/dataset-catalog/" + result.path("definitionId").asText());
@@ -122,7 +126,8 @@ final class DatasetPublicationApiIT {
 				JsonNode failed = JSON.readTree(failedInitiation.body());
 				var failedCompletion = backend.post(
 						"/api/v1/dataset-publications/" + failed.path("publicationId").asText() + "/completion", "{}");
-				assertThat(failedCompletion.statusCode()).as(failedCompletion.body()).isEqualTo(503);
+				assertThat(failedCompletion.statusCode()).as(failedCompletion.body()).isEqualTo(202);
+				JsonNode failedResult = awaitTerminalPublication(backend, failed.path("publicationId").asText());
 				assertThat(backend.get("/api/v1/datasets/" + failed.path("datasetId").asText()).statusCode())
 					.isEqualTo(404);
 				assertThat(backend.get("/api/v1/dataset-catalog/" + failed.path("definitionId").asText()).statusCode())
@@ -130,7 +135,7 @@ final class DatasetPublicationApiIT {
 				var failedOperation = backend
 					.get("/api/v1/dataset-publications/" + failed.path("publicationId").asText());
 				assertThat(failedOperation.statusCode()).as(failedOperation.body()).isEqualTo(200);
-				assertThat(failedOperation.body()).contains("\"state\":\"failed\"",
+				assertThat(failedResult.toString()).contains("\"state\":\"failed\"",
 						"\"failureCode\":\"DATASET_VERIFICATION_UNAVAILABLE\"", "\"retryable\":true");
 			}
 		}
@@ -138,7 +143,7 @@ final class DatasetPublicationApiIT {
 
 	private Path corpus() throws Exception {
 		Path corpus = Files.createDirectory(this.temporaryDirectory.resolve("corpus"));
-		byte[] shard = "one installed-command sample\n".getBytes(StandardCharsets.UTF_8);
+		byte[] shard = mdsShard("one installed-command sample".getBytes(StandardCharsets.UTF_8));
 		Files.write(corpus.resolve("shard.00000.mds"), shard);
 		Files.writeString(corpus.resolve("index.json"),
 				"""
@@ -148,6 +153,36 @@ final class DatasetPublicationApiIT {
 					.strip(),
 				StandardCharsets.UTF_8);
 		return corpus;
+	}
+
+	private static byte[] mdsShard(byte[] value) {
+		byte[] configuration = """
+				{"column_encodings":["bytes"],"column_names":["value"],"column_sizes":[null],"compression":null,"format":"mds","hashes":[],"size_limit":1024,"version":2}
+				"""
+			.strip()
+			.getBytes(StandardCharsets.UTF_8);
+		int firstOffset = 12 + configuration.length;
+		return ByteBuffer.allocate(firstOffset + 4 + value.length)
+			.order(ByteOrder.LITTLE_ENDIAN)
+			.putInt(1)
+			.putInt(firstOffset)
+			.putInt(firstOffset + 4 + value.length)
+			.put(configuration)
+			.putInt(value.length)
+			.put(value)
+			.array();
+	}
+
+	private static JsonNode awaitTerminalPublication(BackendFixture backend, String publicationId) throws Exception {
+		for (int attempt = 0; attempt < 200; attempt++) {
+			var response = backend.get("/api/v1/dataset-publications/" + publicationId);
+			JsonNode publication = JSON.readTree(response.body());
+			if (!publication.path("state").asText().equals("verifying")) {
+				return publication;
+			}
+			Thread.sleep(50);
+		}
+		throw new AssertionError("Dataset Publication did not reach a terminal state");
 	}
 
 	private static S3AsyncClient administrator(SeaweedFsFixture storage) {

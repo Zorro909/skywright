@@ -5,7 +5,9 @@ import de.zorro909.skywright.backend.datasetcatalog.DatasetPublication;
 import de.zorro909.skywright.backend.targetstorage.TargetStorageRegistry;
 import jakarta.persistence.EntityManager;
 import java.time.Clock;
+import java.util.List;
 import java.util.UUID;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,16 +22,16 @@ class DatasetPublicationService {
 
 	private final DatasetCatalog catalog;
 
-	private final DatasetPublicationVerifier verifier;
+	private final ApplicationEventPublisher events;
 
 	private final Clock clock;
 
 	DatasetPublicationService(EntityManager entityManager, TargetStorageRegistry targetStorages, DatasetCatalog catalog,
-			DatasetPublicationVerifier verifier, Clock clock) {
+			ApplicationEventPublisher events, Clock clock) {
 		this.entityManager = entityManager;
 		this.targetStorages = targetStorages;
 		this.catalog = catalog;
-		this.verifier = verifier;
+		this.events = events;
 		this.clock = clock;
 	}
 
@@ -50,33 +52,52 @@ class DatasetPublicationService {
 		return this.publication(publicationId).view();
 	}
 
-	@Transactional(noRollbackFor = DatasetPublicationException.class)
+	@Transactional
 	DatasetPublicationView complete(UUID publicationId) {
 		DatasetPublicationEntity operation = this.publication(publicationId);
-		if (operation.state == DatasetPublicationState.COMMITTED) {
+		if (operation.state == DatasetPublicationState.COMMITTED || operation.state == DatasetPublicationState.VERIFYING
+				|| operation.state == DatasetPublicationState.FAILED && !operation.retryable) {
 			return operation.view();
 		}
 		if (!this.targetStorages.eligibleDataset(operation.targetStorageId)) {
 			throw new DatasetPublicationException("DATASET_TARGET_STORAGE_INELIGIBLE",
 					"The selected Target Storage is not eligible for Dataset publication", false);
 		}
-		VerifiedPublication verified;
-		try {
-			verified = this.verifier.verify(operation.view());
-		}
-		catch (DatasetPublicationException failure) {
-			operation.state = DatasetPublicationState.FAILED;
-			operation.failureCode = failure.errorCode();
-			operation.retryable = failure.retryable();
-			throw failure;
+		operation.state = DatasetPublicationState.VERIFYING;
+		operation.failureCode = null;
+		operation.retryable = false;
+		operation.completedAt = null;
+		operation.verificationWorkerPid = 0;
+		this.events.publishEvent(new DatasetPublicationVerificationRequested(publicationId));
+		return operation.view();
+	}
+
+	@Transactional(readOnly = true)
+	DatasetPublicationView verificationInput(UUID publicationId) {
+		DatasetPublicationEntity operation = this.publication(publicationId);
+		return operation.state == DatasetPublicationState.VERIFYING ? operation.view() : null;
+	}
+
+	@Transactional(readOnly = true)
+	List<UUID> pendingVerifications() {
+		return this.entityManager
+			.createQuery("select publicationId from DatasetPublicationEntity where state = :state", UUID.class)
+			.setParameter("state", DatasetPublicationState.VERIFYING)
+			.getResultList();
+	}
+
+	@Transactional
+	void commit(UUID publicationId, DatasetPublicationWorkerResult verified) {
+		DatasetPublicationEntity operation = this.publication(publicationId);
+		if (operation.state != DatasetPublicationState.VERIFYING) {
+			return;
 		}
 		this.catalog.publish(new DatasetPublication(operation.datasetId, operation.definitionId, operation.versionLabel,
 				operation.formatIdentity, operation.contentFingerprint, operation.manifestIdentity, operation.copyId,
 				operation.targetStorageId, operation.payloadLocation, verified.byteCount(), verified.verifiedAt(),
 				verified.manifest()));
-		DatasetLineageEntity lineage = new DatasetLineageEntity(operation.datasetId, operation.definitionId,
-				operation.createdAt);
-		this.entityManager.persist(lineage);
+		this.entityManager
+			.persist(new DatasetLineageEntity(operation.datasetId, operation.definitionId, operation.createdAt));
 		operation.state = DatasetPublicationState.COMMITTED;
 		operation.verifiedObjectCount = verified.objectCount();
 		operation.verifiedByteCount = verified.byteCount();
@@ -86,7 +107,20 @@ class DatasetPublicationService {
 		operation.failureCode = null;
 		operation.verifiedAt = verified.verifiedAt();
 		operation.completedAt = this.clock.instant();
-		return operation.view();
+		operation.verificationWorkerPid = verified.workerPid();
+	}
+
+	@Transactional
+	void fail(UUID publicationId, DatasetPublicationWorkerResult failure) {
+		DatasetPublicationEntity operation = this.publication(publicationId);
+		if (operation.state != DatasetPublicationState.VERIFYING) {
+			return;
+		}
+		operation.state = DatasetPublicationState.FAILED;
+		operation.failureCode = failure.failureCode();
+		operation.retryable = failure.retryable();
+		operation.verificationWorkerPid = failure.workerPid();
+		operation.completedAt = this.clock.instant();
 	}
 
 	@Transactional(readOnly = true)

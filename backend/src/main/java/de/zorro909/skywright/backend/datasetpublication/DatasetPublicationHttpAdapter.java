@@ -36,7 +36,7 @@ public class DatasetPublicationHttpAdapter implements DatasetPublicationsApi, Da
 	@Override
 	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> completeDatasetPublication(
 			UUID publicationId) {
-		return ResponseEntity.ok(publication(this.publications.complete(publicationId)));
+		return ResponseEntity.accepted().body(publication(this.publications.complete(publicationId)));
 	}
 
 	@Override
@@ -59,7 +59,8 @@ public class DatasetPublicationHttpAdapter implements DatasetPublicationsApi, Da
 				value.verifiedByteCount(), value.preferredDefinitionId(), value.preferredDefinitionChanged(),
 				value.retryable(), value.failureCode(), value.createdAt().atOffset(ZoneOffset.UTC),
 				value.verifiedAt() == null ? null : value.verifiedAt().atOffset(ZoneOffset.UTC),
-				value.completedAt() == null ? null : value.completedAt().atOffset(ZoneOffset.UTC));
+				value.completedAt() == null ? null : value.completedAt().atOffset(ZoneOffset.UTC),
+				value.verificationWorkerPid());
 	}
 
 	private static String wireValue(Enum<?> value) {

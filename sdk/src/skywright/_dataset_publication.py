@@ -6,7 +6,9 @@ import hashlib
 import json
 import os
 import stat
+import struct
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path, PurePosixPath
 from typing import cast
 
@@ -52,7 +54,10 @@ class InspectedCorpus:
 
 def inspect_mds_corpus(root: Path) -> InspectedCorpus:
     """Validate and fingerprint one storage-ready, single-shard MDS corpus."""
-    root = root.resolve(strict=True)
+    try:
+        root = root.resolve(strict=True)
+    except OSError as error:
+        raise _invalid("The local corpus does not exist or cannot be read") from error
     if not root.is_dir():
         raise _invalid("The local corpus must be a directory")
     index_path = root / "index.json"
@@ -80,6 +85,10 @@ def inspect_mds_corpus(root: Path) -> InspectedCorpus:
         raise _invalid("The shard format must be mds")
     if typed_shard.get("version") != 2:
         raise _invalid("The MDS shard must use version 2")
+    if typed_shard.get("compression") is not None:
+        raise _invalid(
+            "The initial publication format requires an uncompressed MDS shard"
+        )
     _validate_columns(typed_shard)
     data = _selected_data(typed_shard)
     basename = data.get("basename")
@@ -95,6 +104,7 @@ def inspect_mds_corpus(root: Path) -> InspectedCorpus:
     _require_regular(shard_path)
     if shard_path.stat(follow_symlinks=False).st_size != byte_count:
         raise _invalid("The shard byte count does not match index.json")
+    _validate_mds_binary(shard_path, typed_shard)
 
     expected = {"index.json", object_key}
     actual = _inventory(root)
@@ -161,6 +171,10 @@ def _validate_columns(shard: dict[str, object]) -> None:
         or len(typed_encodings) != len(typed_names)
         or not all(isinstance(encoding, str) for encoding in typed_encodings)
         or len(typed_sizes) != len(typed_names)
+        or not all(
+            size is None or (isinstance(size, int) and size >= 0)
+            for size in typed_sizes
+        )
     ):
         raise _invalid("The MDS decoding metadata is malformed")
     if any(
@@ -173,6 +187,82 @@ def _validate_columns(shard: dict[str, object]) -> None:
     samples = shard.get("samples")
     if not isinstance(samples, int) or samples < 0:
         raise _invalid("The MDS sample count is malformed")
+
+
+def _validate_mds_binary(path: Path, shard: dict[str, object]) -> None:
+    samples = cast(int, shard["samples"])
+    names = cast(list[object], shard["column_names"])
+    encodings = cast(list[object], shard["column_encodings"])
+    sizes = cast(list[object], shard["column_sizes"])
+    try:
+        file_size = path.stat(follow_symlinks=False).st_size
+        header_size = 4 * (samples + 2)
+        if file_size < header_size:
+            raise _invalid("The MDS shard header is truncated")
+        with path.open("rb") as stream:
+            observed_samples = struct.unpack("<I", stream.read(4))[0]
+            if observed_samples != samples:
+                raise _invalid("The MDS shard sample count does not match index.json")
+            offsets = struct.unpack(f"<{samples + 1}I", stream.read(4 * (samples + 1)))
+            if (
+                offsets[0] < header_size
+                or offsets[-1] != file_size
+                or any(right < left for left, right in pairwise(offsets))
+            ):
+                raise _invalid("The MDS shard offsets are malformed")
+            configuration_bytes = stream.read(offsets[0] - header_size)
+            configuration = cast(object, json.loads(configuration_bytes))
+            if not isinstance(configuration, dict):
+                raise _invalid("The MDS shard configuration is malformed")
+            typed_configuration = cast(dict[str, object], configuration)
+            expected_configuration = {
+                "column_encodings": encodings,
+                "column_names": names,
+                "column_sizes": sizes,
+                "compression": None,
+                "format": "mds",
+                "hashes": shard.get("hashes", []),
+                "size_limit": shard.get("size_limit"),
+                "version": 2,
+            }
+            if typed_configuration != expected_configuration:
+                raise _invalid("The MDS shard configuration does not match index.json")
+            for sample_index in range(samples):
+                start, end = offsets[sample_index], offsets[sample_index + 1]
+                stream.seek(start)
+                variable_count = sum(size is None for size in sizes)
+                size_bytes = stream.read(4 * variable_count)
+                if len(size_bytes) != 4 * variable_count:
+                    raise _invalid("An MDS sample header is truncated")
+                variable_sizes = iter(
+                    struct.unpack(f"<{variable_count}I", size_bytes)
+                    if variable_count
+                    else ()
+                )
+                value_sizes = [
+                    next(variable_sizes) if size is None else cast(int, size)
+                    for size in sizes
+                ]
+                if any(size < 0 for size in value_sizes) or (
+                    start + len(size_bytes) + sum(value_sizes) != end
+                ):
+                    raise _invalid("An MDS sample does not match its decoding metadata")
+                for encoding, value_size in zip(encodings, value_sizes, strict=True):
+                    value = stream.read(value_size)
+                    if len(value) != value_size:
+                        raise _invalid("An MDS sample value is truncated")
+                    if encoding == "str":
+                        value.decode("utf-8")
+    except DatasetPublicationError:
+        raise
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        struct.error,
+        ValueError,
+    ) as error:
+        raise _invalid("The MDS shard is not structurally decodable") from error
 
 
 def _selected_data(shard: dict[str, object]) -> dict[str, object]:

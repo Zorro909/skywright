@@ -310,6 +310,19 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         if (normalized := path.removeprefix("./"))
     ):
         applicable = applicable.union(("integration",))
+    publication_prefixes = (
+        "backend/src/main/java/de/zorro909/skywright/backend/datasetpublication/",
+        "backend/src/test/java/de/zorro909/skywright/backend/acceptance/DatasetPublication",
+        "sdk/src/skywright/_dataset_",
+        "sdk/tests/test_dataset_cli.py",
+    )
+    if any(
+        path.removeprefix("./").startswith(publication_prefixes)
+        for path in materialized_paths
+    ):
+        applicable = applicable.union(
+            ("application", "image", "integration", "java", "sdk", "security")
+        )
     return QualityPlan(
         changed_files=tuple(materialized_paths),
         categories=tuple(categories or ["complete"]),

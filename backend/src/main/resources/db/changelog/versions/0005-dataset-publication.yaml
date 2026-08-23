@@ -52,6 +52,7 @@ databaseChangeLog:
               - column: { name: created_at, type: timestamp with time zone, constraints: { nullable: false } }
               - column: { name: verified_at, type: timestamp with time zone }
               - column: { name: completed_at, type: timestamp with time zone }
+              - column: { name: verification_worker_pid, type: bigint, constraints: { nullable: false } }
               - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
       rollback:
         - dropTable: { tableName: dataset_publication }

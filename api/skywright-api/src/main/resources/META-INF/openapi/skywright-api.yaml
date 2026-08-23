@@ -444,8 +444,8 @@ paths:
       operationId: completeDatasetPublication
       summary: Independently verify staged objects and atomically publish the Dataset.
       responses:
-        '200':
-          description: Verified Dataset Publication committed.
+        '202':
+          description: Independent verification accepted or already complete.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DatasetPublication' }
@@ -617,7 +617,7 @@ components:
   schemas:
     DatasetPublicationState:
       type: string
-      enum: [awaiting-upload, committed, failed]
+      enum: [awaiting-upload, verifying, committed, failed]
     InitiateDatasetPublication:
       type: object
       additionalProperties: false
@@ -633,7 +633,7 @@ components:
     DatasetPublication:
       type: object
       additionalProperties: false
-      required: [publicationId, state, datasetId, definitionId, copyId, targetStorageId, versionLabel, formatIdentity, manifestIdentity, contentFingerprint, objectCount, byteCount, payloadLocation, operationLocation, verifiedObjectCount, verifiedByteCount, preferredDefinitionId, preferredDefinitionChanged, retryable, failureCode, createdAt, verifiedAt, completedAt]
+      required: [publicationId, state, datasetId, definitionId, copyId, targetStorageId, versionLabel, formatIdentity, manifestIdentity, contentFingerprint, objectCount, byteCount, payloadLocation, operationLocation, verifiedObjectCount, verifiedByteCount, preferredDefinitionId, preferredDefinitionChanged, retryable, failureCode, createdAt, verifiedAt, completedAt, verificationWorkerPid]
       properties:
         publicationId: { $ref: '#/components/schemas/SkywrightId' }
         state: { $ref: '#/components/schemas/DatasetPublicationState' }
@@ -661,6 +661,7 @@ components:
         createdAt: { $ref: '#/components/schemas/UtcInstant' }
         verifiedAt: { type: [string, 'null'], format: date-time }
         completedAt: { type: [string, 'null'], format: date-time }
+        verificationWorkerPid: { type: integer, format: int64, minimum: 0 }
     DatasetLineage:
       type: object
       additionalProperties: false

@@ -14,8 +14,8 @@ class DatasetPublicationConfiguration {
 	}
 
 	@Bean
-	DatasetPublicationVerifier datasetPublicationVerifier(TargetStorageResolver targetStorages, Clock clock) {
-		return new DatasetPublicationVerifier(targetStorages, clock);
+	DatasetPublicationWorkerLauncher datasetPublicationWorkerLauncher(TargetStorageResolver targetStorages) {
+		return new DatasetPublicationWorkerLauncher(targetStorages);
 	}
 
 }

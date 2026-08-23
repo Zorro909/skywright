@@ -13,6 +13,7 @@ import base64
 import hashlib
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
@@ -54,6 +55,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
     except DatasetPublicationError as error:
         print(_json(_problem(error)), file=sys.stderr)
         return _exit_code(error)
+    except OSError:
+        error = DatasetPublicationError(
+            "DATASET_LOCAL_IO_FAILURE",
+            "The local Dataset corpus could not be read",
+        )
+        print(_json(_problem(error)), file=sys.stderr)
+        return 1
     return 64
 
 
@@ -93,12 +101,45 @@ def _publish(
         raise _protocol_error()
     storage = cast(dict[str, object], storage)
     _upload(corpus, publication, storage)
-    return _request(
+    result = _request(
         control_plane,
         "POST",
         f"/api/v1/dataset-publications/{publication.get('publicationId')}/completion",
         {},
     )
+    if not isinstance(result, dict):
+        raise _protocol_error()
+    result = cast(dict[str, object], result)
+    deadline = time.monotonic() + 600
+    while result.get("state") in {"awaiting-upload", "verifying"}:
+        if time.monotonic() >= deadline:
+            raise DatasetPublicationError(
+                "DATASET_VERIFICATION_UNAVAILABLE",
+                "Dataset verification did not complete before the command timeout",
+                retryable=True,
+            )
+        time.sleep(0.1)
+        result = _request(
+            control_plane,
+            "GET",
+            f"/api/v1/dataset-publications/{publication.get('publicationId')}",
+            None,
+        )
+        if not isinstance(result, dict):
+            raise _protocol_error()
+        result = cast(dict[str, object], result)
+    if result.get("state") == "failed":
+        code = result.get("failureCode")
+        if not isinstance(code, str):
+            raise _protocol_error()
+        raise DatasetPublicationError(
+            code,
+            "Independent Dataset verification failed",
+            retryable=result.get("retryable") is True,
+        )
+    if result.get("state") != "committed":
+        raise _protocol_error()
+    return result
 
 
 def _request(base: str, method: str, path: str, body: object | None) -> object:
@@ -109,7 +150,10 @@ def _request(base: str, method: str, path: str, body: object | None) -> object:
         request.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            return cast(object, json.load(response))
+            try:
+                return cast(object, json.load(response))
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise _protocol_error() from error
     except urllib.error.HTTPError as error:
         try:
             problem = cast(object, json.loads(error.read()))

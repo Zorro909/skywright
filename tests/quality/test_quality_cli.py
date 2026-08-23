@@ -248,6 +248,21 @@ class PlanningTest(unittest.TestCase):
                 plan = self.plan(path)
                 self.assertTrue(plan["checks"]["integration"]["applicable"])
 
+    def test_publication_contract_changes_select_every_required_consumer(self) -> None:
+        required = {"application", "image", "integration", "java", "sdk", "security"}
+        for path in (
+            "backend/src/main/java/de/zorro909/skywright/backend/datasetpublication/Service.java",
+            "sdk/src/skywright/_dataset_cli.py",
+        ):
+            with self.subTest(path=path):
+                plan = self.plan(path)
+                selected = {
+                    name
+                    for name, check in plan["checks"].items()
+                    if check["applicable"]
+                }
+                self.assertTrue(required.issubset(selected))
+
     def test_mixed_backend_sdk_and_protocol_fixture_change_unions_their_fan_out(
         self,
     ) -> None:
