@@ -32,6 +32,13 @@
       <scope>provided</scope>
     </dependency>
     <dependency>
+      <groupId>de.zorro909.skywright</groupId>
+      <artifactId>skywright-graalpy-environment</artifactId>
+      <version>${project.version}</version>
+      <type>pom</type>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-webmvc</artifactId>
     </dependency>
@@ -71,6 +78,17 @@
           <artifactId>apache5-client</artifactId>
         </exclusion>
       </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.graalvm.polyglot</groupId>
+      <artifactId>python</artifactId>
+      <version>${graalpy.version}</version>
+      <type>pom</type>
+    </dependency>
+    <dependency>
+      <groupId>org.graalvm.python</groupId>
+      <artifactId>python-embedding</artifactId>
+      <version>${graalpy.version}</version>
     </dependency>
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
@@ -241,8 +259,11 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>
         <configuration>
+          <argLine>@{argLine} --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Xss16m</argLine>
           <systemPropertyVariables>
             <backend.executable>${project.build.directory}/${project.build.finalName}.jar</backend.executable>
+            <graalpy.external.directory>${graalpy.external.directory}</graalpy.external.directory>
+            <repository.root>${maven.multiModuleProjectDirectory}</repository.root>
             <postgresql.container.image>${postgresql.container.image}</postgresql.container.image>
           </systemPropertyVariables>
         </configuration>

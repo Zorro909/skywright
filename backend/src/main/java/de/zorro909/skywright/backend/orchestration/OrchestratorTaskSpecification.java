@@ -1,0 +1,37 @@
+package de.zorro909.skywright.backend.orchestration;
+
+import java.util.List;
+import java.util.Map;
+
+/** The finite SkyPilot task contract populated by Run projection in issue 55. */
+public record OrchestratorTaskSpecification(String name, String setup, String run, List<Resources> resources,
+		Map<String, String> environment) {
+
+	public OrchestratorTaskSpecification {
+		requireText(name, "name");
+		requireText(run, "run");
+		resources = List.copyOf(resources);
+		if (resources.isEmpty()) {
+			throw new IllegalArgumentException("resources must not be empty");
+		}
+		environment = Map.copyOf(environment);
+	}
+
+	private static void requireText(String value, String name) {
+		if (value == null || value.isBlank()) {
+			throw new IllegalArgumentException(name + " must not be blank");
+		}
+	}
+
+	public record Resources(String infrastructure, String cpus, String memory, String accelerators, String imageId,
+			boolean useSpot) {
+
+		public Resources {
+			requireText(infrastructure, "infrastructure");
+			requireText(cpus, "cpus");
+			requireText(memory, "memory");
+		}
+
+	}
+
+}

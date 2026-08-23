@@ -12,7 +12,8 @@ concurrency:
     ${{ github.workflow }}-${{
       github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id
     }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A canceled native build cannot save its progressive wheel cache.
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -99,11 +100,146 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
+  graalpy:
+    name: Prepare packaged GraalPy environment
+    needs: plan
+    if: >-
+      needs.plan.outputs.java == 'true' ||
+      needs.plan.outputs.integration == 'true' ||
+      needs.plan.outputs.application == 'true' ||
+      needs.plan.outputs.image == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 270
+    env:
+      PIP_CACHE_DIR: ${{ github.workspace }}/.ci-cache/graalpy-pip
+      PIP_CONSTRAINT: ${{ github.workspace }}/graalpy-environment/build-constraints.txt
+      PIP_FIND_LINKS: ${{ github.workspace }}/.ci-cache/graalpy-pip/wheelhouse
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up GraalVM Community and packaged GraalPy cache
+        id: java
+        uses: ./.github/actions/setup-java
+        with:
+          graalpy-resources: true
+      - name: Prepare progressive GraalPy pip cache directory
+        if: steps.java.outputs.graalpy-cache-hit != 'true'
+        run: mkdir --parents "$PIP_CACHE_DIR" "$PIP_FIND_LINKS"
+      - name: Restore progressive GraalPy pip cache
+        id: graalpy-pip-cache
+        if: steps.java.outputs.graalpy-cache-hit != 'true'
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ env.PIP_CACHE_DIR }}
+          key: ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml', 'graalpy-environment/build-constraints.txt', 'scripts/retag-wheel') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml', 'graalpy-environment/build-constraints.txt', 'scripts/retag-wheel') }}-
+            ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-
+      - name: Prime pandas wheel cache
+        if: steps.java.outputs.graalpy-cache-hit != 'true'
+        run: |
+          timeout \
+            --verbose \
+            --kill-after=2m \
+            150m \
+            ./mvnw \
+              --batch-mode \
+              --no-transfer-progress \
+              -Dgraalpy.environment.prebuilt=true \
+              -Dgraalpy.wheel.package=pandas==2.2.3 \
+              -Dgraalpy.wheel.id=pandas \
+              -pl graalpy-environment \
+              process-resources
+      - name: Publish pandas wheel to local wheelhouse
+        if: steps.java.outputs.graalpy-cache-hit != 'true'
+        run: |
+          pandas_wheel=$(find "$PIP_CACHE_DIR/wheels" -type f -name 'pandas-2.2.3-graalpy312-graalpy250_312_native-*.whl' -print -quit)
+          test -n "$pandas_wheel"
+          scripts/retag-wheel "$pandas_wheel" "$PIP_FIND_LINKS" linux_x86_64
+      - name: Build packaged GraalPy environment on cache miss
+        id: build-graalpy
+        if: steps.java.outputs.graalpy-cache-hit != 'true'
+        run: |
+          timeout \
+            --verbose \
+            --kill-after=2m \
+            100m \
+            ./mvnw \
+              --batch-mode \
+              --no-transfer-progress \
+              -pl graalpy-environment \
+              process-resources
+      - name: Save progressive GraalPy pip cache
+        if: >-
+          always() &&
+          steps.java.outputs.graalpy-cache-hit != 'true' &&
+          steps.graalpy-pip-cache.outcome == 'success'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ env.PIP_CACHE_DIR }}
+          key: ${{ steps.graalpy-pip-cache.outputs.cache-primary-key }}
+      - name: Smoke-test packaged GraalPy environment
+        id: smoke-graalpy
+        if: >-
+          always() &&
+          (steps.java.outputs.graalpy-cache-hit == 'true' ||
+          steps.build-graalpy.outcome == 'success')
+        run: |
+          test -f .graalpy/resources/venv/installed.txt
+          if [[ "${{ steps.java.outputs.graalpy-cache-hit }}" == "true" ]]; then
+            exit 0
+          fi
+          test -x .graalpy/resources/venv/bin/python
+          .graalpy/resources/venv/bin/python - <<'PY'
+          import aiohttp
+          import cryptography
+          import numpy
+          import os
+          import pandas
+          import psutil
+          import sky
+          import uvloop
+          import watchfiles
+
+          print("SkyPilot:", sky.__version__)
+          print("NumPy:", numpy.__version__)
+          print("Pandas:", pandas.__version__, flush=True)
+          # The embedded runtime owns orderly shutdown; this process only qualifies imports.
+          os._exit(0)
+          PY
+      - name: Save exact packaged GraalPy environment
+        if: >-
+          steps.java.outputs.graalpy-cache-hit != 'true' &&
+          steps.smoke-graalpy.outcome == 'success'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .graalpy/resources
+          key: ${{ steps.java.outputs.graalpy-cache-primary-key }}
+      - name: Archive packaged GraalPy environment
+        if: steps.smoke-graalpy.outcome == 'success'
+        run: |
+          tar --zstd \
+            --create \
+            --file="${RUNNER_TEMP}/graalpy-resources.tar.zst" \
+            --directory=.graalpy \
+            resources
+      - name: Hand GraalPy environment to dependent jobs
+        if: steps.smoke-graalpy.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: graalpy-resources
+          path: ${{ runner.temp }}/graalpy-resources.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
   java:
     name: Java and backend
-    needs: plan
+    needs: [plan, graalpy]
     if: needs.plan.outputs.java == 'true'
     runs-on: ubuntu-24.04
+    env:
+      MAVEN_ARGS: -Dgraalpy.environment.prebuilt=true
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -111,6 +247,19 @@ jobs:
           fetch-depth: 0
       - name: Set up GraalVM Community
         uses: ./.github/actions/setup-java
+      - name: Receive packaged GraalPy environment
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: graalpy-resources
+          path: ${{ runner.temp }}/graalpy-artifact
+      - name: Restore packaged GraalPy environment
+        run: |
+          mkdir --parents .graalpy
+          tar --zstd \
+            --extract \
+            --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
+            --directory=.graalpy
+          test -f .graalpy/resources/venv/installed.txt
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
@@ -136,9 +285,11 @@ jobs:
 
   integration:
     name: Real-service integration
-    needs: plan
+    needs: [plan, graalpy]
     if: needs.plan.outputs.integration == 'true'
     runs-on: ubuntu-24.04
+    env:
+      MAVEN_ARGS: -Dgraalpy.environment.prebuilt=true
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -146,6 +297,19 @@ jobs:
           fetch-depth: 0
       - name: Set up GraalVM Community
         uses: ./.github/actions/setup-java
+      - name: Receive packaged GraalPy environment
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: graalpy-resources
+          path: ${{ runner.temp }}/graalpy-artifact
+      - name: Restore packaged GraalPy environment
+        run: |
+          mkdir --parents .graalpy
+          tar --zstd \
+            --extract \
+            --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
+            --directory=.graalpy
+          test -f .graalpy/resources/venv/installed.txt
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
@@ -200,9 +364,11 @@ jobs:
 
   application:
     name: Complete application
-    needs: plan
+    needs: [plan, graalpy]
     if: needs.plan.outputs.application == 'true'
     runs-on: ubuntu-24.04
+    env:
+      MAVEN_ARGS: -Dgraalpy.environment.prebuilt=true
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -210,6 +376,19 @@ jobs:
           fetch-depth: 0
       - name: Set up GraalVM Community
         uses: ./.github/actions/setup-java
+      - name: Receive packaged GraalPy environment
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: graalpy-resources
+          path: ${{ runner.temp }}/graalpy-artifact
+      - name: Restore packaged GraalPy environment
+        run: |
+          mkdir --parents .graalpy
+          tar --zstd \
+            --extract \
+            --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
+            --directory=.graalpy
+          test -f .graalpy/resources/venv/installed.txt
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
@@ -235,9 +414,11 @@ jobs:
 
   image:
     name: Production backend image
-    needs: plan
+    needs: [plan, graalpy]
     if: needs.plan.outputs.image == 'true'
     runs-on: ubuntu-24.04
+    env:
+      MAVEN_ARGS: -Dgraalpy.environment.prebuilt=true
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -245,6 +426,19 @@ jobs:
           fetch-depth: 0
       - name: Set up GraalVM Community
         uses: ./.github/actions/setup-java
+      - name: Receive packaged GraalPy environment
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: graalpy-resources
+          path: ${{ runner.temp }}/graalpy-artifact
+      - name: Restore packaged GraalPy environment
+        run: |
+          mkdir --parents .graalpy
+          tar --zstd \
+            --extract \
+            --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
+            --directory=.graalpy
+          test -f .graalpy/resources/venv/installed.txt
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:

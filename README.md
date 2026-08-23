@@ -123,9 +123,9 @@ ownership.
 
 ## Run locally
 
-The backend has no database, SkyPilot, GraalPy, object-storage, Vault, or other feature-service
-prerequisite. It does require a non-secret deployment environment identifier. Start it directly
-with readable local logs using:
+The backend requires PostgreSQL. SkyPilot-dependent capabilities also use the packaged GraalPy
+environment and a version-paired SkyPilot API server, but losing SkyPilot does not affect backend
+liveness, readiness, or durable reads. Start the backend directly with readable local logs using:
 
 ```bash
 export SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=local

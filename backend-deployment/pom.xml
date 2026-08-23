@@ -79,6 +79,12 @@
                 <filter>@</filter>
                 <assembly>
                   <inline>
+                    <fileSets>
+                      <fileSet>
+                        <directory>${graalpy.external.directory}</directory>
+                        <outputDirectory>graalpy-resources</outputDirectory>
+                      </fileSet>
+                    </fileSets>
                     <dependencySets>
                       <dependencySet>
                         <includes>
