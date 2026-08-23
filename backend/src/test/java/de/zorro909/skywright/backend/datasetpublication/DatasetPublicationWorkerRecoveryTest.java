@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -30,7 +31,7 @@ class DatasetPublicationWorkerRecoveryTest {
 		var projections = new RecordingProjectionLifecycle(open);
 		var exited = new CompletableFuture<Void>();
 		DatasetPublicationWorkerProcessMonitor processes = ignored -> Optional.of(exited);
-		var recovery = new DatasetPublicationWorkerRecovery(projections, processes);
+		var recovery = new DatasetPublicationWorkerRecovery(projections, processes, new RecordingScheduler());
 
 		recovery.resume();
 
@@ -52,7 +53,7 @@ class DatasetPublicationWorkerRecoveryTest {
 				jobDirectory);
 		var projections = new RecordingProjectionLifecycle(open);
 		DatasetPublicationWorkerProcessMonitor processes = ignored -> Optional.empty();
-		var recovery = new DatasetPublicationWorkerRecovery(projections, processes);
+		var recovery = new DatasetPublicationWorkerRecovery(projections, processes, new RecordingScheduler());
 
 		recovery.resume();
 
@@ -115,7 +116,8 @@ class DatasetPublicationWorkerRecoveryTest {
 				null);
 		var projections = new RecordingProjectionLifecycle(open);
 		var exited = new CompletableFuture<Void>();
-		var recovery = new DatasetPublicationWorkerRecovery(projections, ignored -> Optional.of(exited));
+		var recovery = new DatasetPublicationWorkerRecovery(projections, ignored -> Optional.of(exited),
+				new RecordingScheduler());
 		var redispatched = new CompletableFuture<Void>();
 
 		recovery.resume();
@@ -128,22 +130,45 @@ class DatasetPublicationWorkerRecoveryTest {
 	}
 
 	@Test
-	void restartDoesNotRedispatchWhenProjectionReleaseFails() {
+	void restartRetriesProjectionReleaseBeforeRedispatch() {
 		UUID publicationId = UUID.randomUUID();
 		var open = new DatasetPublicationOpenCredentialProjection(UUID.randomUUID(), publicationId, 123L, Instant.EPOCH,
 				null);
 		var projections = new RecordingProjectionLifecycle(open);
 		projections.releaseFailure = new IllegalStateException("database unavailable");
 		var exited = new CompletableFuture<Void>();
-		var recovery = new DatasetPublicationWorkerRecovery(projections, ignored -> Optional.of(exited));
-		var redispatched = new CompletableFuture<Void>();
+		var scheduler = new RecordingScheduler();
+		var recovery = new DatasetPublicationWorkerRecovery(projections, ignored -> Optional.of(exited), scheduler);
+		var redispatches = new AtomicInteger();
 
 		recovery.resume();
-		recovery.whenRecovered(publicationId, () -> redispatched.complete(null));
+		recovery.whenRecovered(publicationId, redispatches::incrementAndGet);
 		exited.complete(null);
 
-		assertThat(redispatched).isNotDone();
+		assertThat(redispatches).hasValue(0);
 		assertThat(projections.released).isEmpty();
+		assertThat(scheduler.retries).hasSize(1);
+
+		projections.releaseFailure = null;
+		scheduler.runNext();
+
+		assertThat(redispatches).hasValue(1);
+		assertThat(projections.released).containsExactly(open.projectionId());
+	}
+
+	private static final class RecordingScheduler implements DatasetPublicationWorkerRecoveryScheduler {
+
+		private final List<Runnable> retries = new ArrayList<>();
+
+		@Override
+		public void retry(Runnable action, int attempt) {
+			this.retries.add(action);
+		}
+
+		private void runNext() {
+			this.retries.removeFirst().run();
+		}
+
 	}
 
 	private static final class RecordingProjectionLifecycle implements DatasetPublicationCredentialProjectionLifecycle {

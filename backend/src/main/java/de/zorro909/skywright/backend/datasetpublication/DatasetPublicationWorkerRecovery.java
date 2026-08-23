@@ -17,12 +17,15 @@ final class DatasetPublicationWorkerRecovery {
 
 	private final DatasetPublicationWorkerProcessMonitor processes;
 
+	private final DatasetPublicationWorkerRecoveryScheduler scheduler;
+
 	private final Map<UUID, CompletableFuture<Void>> recoveringPublications = new ConcurrentHashMap<>();
 
 	DatasetPublicationWorkerRecovery(DatasetPublicationCredentialProjectionLifecycle projections,
-			DatasetPublicationWorkerProcessMonitor processes) {
+			DatasetPublicationWorkerProcessMonitor processes, DatasetPublicationWorkerRecoveryScheduler scheduler) {
 		this.projections = projections;
 		this.processes = processes;
+		this.scheduler = scheduler;
 	}
 
 	@EventListener(ApplicationReadyEvent.class)
@@ -32,9 +35,11 @@ final class DatasetPublicationWorkerRecovery {
 	}
 
 	private void resume(DatasetPublicationOpenCredentialProjection projection) {
+		var recovered = new CompletableFuture<Void>();
+		this.recoveringPublications.put(projection.publicationId(), recovered);
 		this.processes.completion(projection)
-			.ifPresentOrElse(completion -> this.recoveringPublications.put(projection.publicationId(),
-					completion.thenRun(() -> complete(projection))), () -> complete(projection));
+			.ifPresentOrElse(completion -> completion.thenRun(() -> complete(projection, recovered, 0)),
+					() -> complete(projection, recovered, 0));
 	}
 
 	void whenRecovered(UUID publicationId, Runnable action) {
@@ -42,9 +47,16 @@ final class DatasetPublicationWorkerRecovery {
 			.thenRun(action);
 	}
 
-	private void complete(DatasetPublicationOpenCredentialProjection projection) {
-		this.projections.released(projection.projectionId());
-		DatasetPublicationWorkerLauncher.deleteJobFiles(projection.jobDirectory());
+	private void complete(DatasetPublicationOpenCredentialProjection projection, CompletableFuture<Void> recovered,
+			int attempt) {
+		try {
+			this.projections.released(projection.projectionId());
+			DatasetPublicationWorkerLauncher.deleteJobFiles(projection.jobDirectory());
+			recovered.complete(null);
+		}
+		catch (RuntimeException failure) {
+			this.scheduler.retry(() -> complete(projection, recovered, attempt + 1), attempt);
+		}
 	}
 
 }
