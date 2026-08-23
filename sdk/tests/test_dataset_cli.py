@@ -99,6 +99,25 @@ def test_mds_validation_rejects_unsafe_serialization_and_extra_files(
     assert raised.value.code == "DATASET_CORPUS_INVALID"
 
 
+def test_mds_validation_requires_version_and_supported_encoding(tmp_path: Path) -> None:
+    unknown = tmp_path / "unknown"
+    write_corpus(unknown, encoding="definitely-not-an-mds-encoding")
+
+    with pytest.raises(DatasetPublicationError, match="unsupported") as raised:
+        inspect_mds_corpus(unknown)
+    assert raised.value.code == "DATASET_CORPUS_INVALID"
+
+    missing_version = tmp_path / "missing-version"
+    write_corpus(missing_version)
+    index = json.loads((missing_version / "index.json").read_text())
+    del index["version"]
+    (missing_version / "index.json").write_text(json.dumps(index))
+
+    with pytest.raises(DatasetPublicationError, match="version 2") as raised:
+        inspect_mds_corpus(missing_version)
+    assert raised.value.code == "DATASET_CORPUS_INVALID"
+
+
 def test_mds_validation_rejects_symlinked_payload(tmp_path: Path) -> None:
     corpus = tmp_path / "corpus"
     write_corpus(corpus)

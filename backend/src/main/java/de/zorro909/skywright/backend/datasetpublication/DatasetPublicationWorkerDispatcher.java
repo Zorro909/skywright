@@ -71,7 +71,7 @@ final class DatasetPublicationWorkerDispatcher {
 
 	@PreDestroy
 	void close() {
-		this.executor.shutdown();
+		this.executor.shutdownNow();
 	}
 
 }

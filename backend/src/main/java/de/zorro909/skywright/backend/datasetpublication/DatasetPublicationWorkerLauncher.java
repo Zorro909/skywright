@@ -2,13 +2,18 @@ package de.zorro909.skywright.backend.datasetpublication;
 
 import de.zorro909.skywright.backend.runstore.ResolvedTargetStorage;
 import de.zorro909.skywright.backend.targetstorage.TargetStorageResolver;
+import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -18,16 +23,26 @@ final class DatasetPublicationWorkerLauncher {
 
 	private final TargetStorageResolver targetStorages;
 
-	DatasetPublicationWorkerLauncher(TargetStorageResolver targetStorages) {
+	private final DatasetPublicationCredentialProjections projections;
+
+	private final Set<Process> activeWorkers = ConcurrentHashMap.newKeySet();
+
+	DatasetPublicationWorkerLauncher(TargetStorageResolver targetStorages,
+			DatasetPublicationCredentialProjections projections) {
 		this.targetStorages = targetStorages;
+		this.projections = projections;
 	}
 
 	DatasetPublicationWorkerResult verify(DatasetPublicationView publication) {
 		ResolvedTargetStorage target = this.targetStorages.resolveDataset(publication.targetStorageId(),
 				"transfer-worker");
-		var credentials = target.credentials().resolveCredentials();
+		AwsCredentials credentials = target.credentials().resolveCredentials();
 		Path directory = null;
+		Process worker = null;
+		UUID projectionId = null;
 		try {
+			projectionId = this.projections.projected(publication.publicationId(), target.credentialBindingId(),
+					target.credentialBindingRevision());
 			directory = Files.createTempDirectory("skywright-dataset-worker-job-");
 			Path job = directory.resolve("job.json");
 			Path result = directory.resolve("result.json");
@@ -40,17 +55,11 @@ final class DatasetPublicationWorkerLauncher {
 							publication.payloadLocation(), publication.operationLocation()));
 			var process = new ProcessBuilder(command(job, result)).redirectErrorStream(true)
 				.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-			Map<String, String> environment = process.environment();
-			environment.put("AWS_ACCESS_KEY_ID", credentials.accessKeyId());
-			environment.put("AWS_SECRET_ACCESS_KEY", credentials.secretAccessKey());
-			if (credentials instanceof AwsSessionCredentials session) {
-				environment.put("AWS_SESSION_TOKEN", session.sessionToken());
-			}
-			else {
-				environment.remove("AWS_SESSION_TOKEN");
-			}
-			Process worker = process.start();
+			projectEnvironment(process.environment(), credentials);
+			worker = process.start();
+			this.activeWorkers.add(worker);
 			if (!worker.waitFor(Duration.ofMinutes(10).toMillis(), TimeUnit.MILLISECONDS)) {
+				terminate(worker);
 				return failure();
 			}
 			if (!Files.isRegularFile(result)) {
@@ -66,6 +75,13 @@ final class DatasetPublicationWorkerLauncher {
 			return failure();
 		}
 		finally {
+			if (worker != null) {
+				terminate(worker);
+				this.activeWorkers.remove(worker);
+			}
+			if (projectionId != null) {
+				this.projections.released(projectionId);
+			}
 			if (directory != null) {
 				try {
 					Files.deleteIfExists(directory.resolve("job.json"));
@@ -78,6 +94,37 @@ final class DatasetPublicationWorkerLauncher {
 				}
 			}
 		}
+	}
+
+	static void projectEnvironment(Map<String, String> environment, AwsCredentials credentials) {
+		environment.clear();
+		environment.put("AWS_ACCESS_KEY_ID", credentials.accessKeyId());
+		environment.put("AWS_SECRET_ACCESS_KEY", credentials.secretAccessKey());
+		if (credentials instanceof AwsSessionCredentials session) {
+			environment.put("AWS_SESSION_TOKEN", session.sessionToken());
+		}
+	}
+
+	private static void terminate(Process worker) {
+		if (!worker.isAlive()) {
+			return;
+		}
+		worker.destroy();
+		try {
+			if (!worker.waitFor(5, TimeUnit.SECONDS)) {
+				worker.destroyForcibly();
+				worker.waitFor(5, TimeUnit.SECONDS);
+			}
+		}
+		catch (InterruptedException exception) {
+			worker.destroyForcibly();
+			Thread.currentThread().interrupt();
+		}
+	}
+
+	@PreDestroy
+	void close() {
+		this.activeWorkers.forEach(DatasetPublicationWorkerLauncher::terminate);
 	}
 
 	private static java.util.List<String> command(Path job, Path result) {

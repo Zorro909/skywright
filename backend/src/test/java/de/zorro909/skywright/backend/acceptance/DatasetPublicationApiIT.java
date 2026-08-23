@@ -34,6 +34,8 @@ final class DatasetPublicationApiIT {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
+	private static final UUID TRANSFER_WORKER_BINDING = UUID.fromString("00000000-0000-0000-0000-000000000003");
+
 	@TempDir
 	Path temporaryDirectory;
 
@@ -81,6 +83,9 @@ final class DatasetPublicationApiIT {
 				assertThat(result.path("preferredDefinitionChanged").asBoolean()).isTrue();
 				assertThat(result.path("verificationWorkerPid").asLong()).isPositive()
 					.isNotEqualTo(ProcessHandle.current().pid());
+				assertThat(backend.countReleasedCredentialProjections(
+						UUID.fromString(result.path("publicationId").asText()), TRANSFER_WORKER_BINDING, 1))
+					.isOne();
 
 				var lineage = backend.get("/api/v1/datasets/" + result.path("datasetId").asText());
 				var catalog = backend.get("/api/v1/dataset-catalog/" + result.path("definitionId").asText());

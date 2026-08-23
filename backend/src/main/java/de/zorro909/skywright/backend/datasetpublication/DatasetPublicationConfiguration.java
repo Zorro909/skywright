@@ -14,8 +14,9 @@ class DatasetPublicationConfiguration {
 	}
 
 	@Bean
-	DatasetPublicationWorkerLauncher datasetPublicationWorkerLauncher(TargetStorageResolver targetStorages) {
-		return new DatasetPublicationWorkerLauncher(targetStorages);
+	DatasetPublicationWorkerLauncher datasetPublicationWorkerLauncher(TargetStorageResolver targetStorages,
+			DatasetPublicationCredentialProjections projections) {
+		return new DatasetPublicationWorkerLauncher(targetStorages, projections);
 	}
 
 }

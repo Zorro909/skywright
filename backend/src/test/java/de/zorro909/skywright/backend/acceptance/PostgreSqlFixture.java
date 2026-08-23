@@ -110,6 +110,24 @@ final class PostgreSqlFixture {
 			}
 		}
 
+		long countReleasedCredentialProjections(UUID publicationId, UUID bindingId, long bindingRevision)
+				throws SQLException {
+			try (var connection = DriverManager.getConnection(jdbcUrl, runtime, runtimePassword);
+					var statement = connection.prepareStatement("""
+							SELECT count(*) FROM skywright.credential_projection_record
+							WHERE publication_id = ? AND binding_id = ? AND binding_revision = ?
+							  AND consumer_role = 'transfer-worker' AND released_at IS NOT NULL
+							""")) {
+				statement.setObject(1, publicationId);
+				statement.setObject(2, bindingId);
+				statement.setLong(3, bindingRevision);
+				try (var result = statement.executeQuery()) {
+					result.next();
+					return result.getLong(1);
+				}
+			}
+		}
+
 		String migrationChecksum() throws SQLException {
 			try (var connection = DriverManager.getConnection(jdbcUrl, migrator, migratorPassword);
 					var statement = connection.prepareStatement("SELECT md5sum FROM skywright.databasechangelog");

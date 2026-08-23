@@ -15,6 +15,7 @@ from typing import cast
 FORMAT_IDENTITY = "mosaicml-streaming-mds@2"
 MANIFEST_VERSION = "skywright-dataset-manifest@1"
 _UNSAFE_ENCODINGS = frozenset({"pkl", "pickle"})
+_SUPPORTED_ENCODINGS = frozenset({"bytes", "str"})
 
 
 class DatasetPublicationError(Exception):
@@ -69,7 +70,7 @@ def inspect_mds_corpus(root: Path) -> InspectedCorpus:
     if not isinstance(index, dict):
         raise _invalid("index.json must contain an object")
     typed_index = cast(dict[str, object], index)
-    if typed_index.get("version", 2) != 2:
+    if typed_index.get("version") != 2:
         raise _invalid("index.json must use MosaicML Streaming index version 2")
     shards = typed_index.get("shards")
     if not isinstance(shards, list):
@@ -184,6 +185,8 @@ def _validate_columns(shard: dict[str, object]) -> None:
             "DATASET_CORPUS_UNSAFE_ENCODING",
             "The MDS corpus uses an unsafe executable serialization encoding",
         )
+    if any(encoding not in _SUPPORTED_ENCODINGS for encoding in typed_encodings):
+        raise _invalid("The MDS corpus uses an unsupported column encoding")
     samples = shard.get("samples")
     if not isinstance(samples, int) or samples < 0:
         raise _invalid("The MDS sample count is malformed")
