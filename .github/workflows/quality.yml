@@ -185,6 +185,10 @@ jobs:
           (steps.java.outputs.graalpy-cache-hit == 'true' ||
           steps.build-graalpy.outcome == 'success')
         run: |
+          test -f .graalpy/resources/venv/installed.txt
+          if [[ "${{ steps.java.outputs.graalpy-cache-hit }}" == "true" ]]; then
+            exit 0
+          fi
           test -x .graalpy/resources/venv/bin/python
           .graalpy/resources/venv/bin/python - <<'PY'
           import aiohttp

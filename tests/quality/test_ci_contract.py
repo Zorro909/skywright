@@ -352,6 +352,11 @@ class QualityWorkflowContractTest(unittest.TestCase):
         self.assertIn("-pl graalpy-environment", preparation)
         self.assertIn("process-resources", preparation)
         self.assertNotIn("setup-frontend", preparation)
+        self.assertIn("test -f .graalpy/resources/venv/installed.txt", preparation)
+        self.assertIn(
+            'if [[ "${{ steps.java.outputs.graalpy-cache-hit }}" == "true" ]]',
+            preparation,
+        )
         self.assertIn("import cryptography", preparation)
         self.assertIn("import sky", preparation)
         self.assertIn("tar --zstd", preparation)
