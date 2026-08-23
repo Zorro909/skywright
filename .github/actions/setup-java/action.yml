@@ -63,4 +63,4 @@ runs:
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: .graalpy/resources
-        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu24-graalpy-env-v3-${{ steps.toolchain.outputs.java_archive_sha256 }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml', 'backend-deployment/src/main/docker/Dockerfile') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu24-graalpy-env-v3-${{ steps.toolchain.outputs.java_archive_sha256 }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml', 'graalpy-environment/build-constraints.txt', 'backend-deployment/src/main/docker/Dockerfile') }}

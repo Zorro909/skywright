@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Retag a wheel platform and rebuild its integrity record."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import csv
+import hashlib
+import io
+import os
+from pathlib import Path
+import tempfile
+import zipfile
+
+
+def digest(data: bytes) -> str:
+    encoded = base64.urlsafe_b64encode(hashlib.sha256(data).digest())
+    return f"sha256={encoded.rstrip(b'=').decode()}"
+
+
+def retag_wheel(source: Path, output_directory: Path, platform: str) -> Path:
+    if source.suffix != ".whl":
+        raise ValueError(f"not a wheel: {source}")
+    name, python_tag, abi_tag, old_platform = source.stem.rsplit("-", 3)
+    destination = output_directory / (
+        f"{name}-{python_tag}-{abi_tag}-{platform}.whl"
+    )
+    output_directory.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(source) as wheel:
+        names = wheel.namelist()
+        wheel_metadata_paths = [name for name in names if name.endswith(".dist-info/WHEEL")]
+        record_paths = [name for name in names if name.endswith(".dist-info/RECORD")]
+        if len(wheel_metadata_paths) != 1 or len(record_paths) != 1:
+            raise ValueError("wheel must contain exactly one WHEEL and one RECORD file")
+        wheel_metadata_path = wheel_metadata_paths[0]
+        record_path = record_paths[0]
+
+        handle, temporary_name = tempfile.mkstemp(
+            dir=output_directory, prefix=f".{destination.name}.", suffix=".tmp"
+        )
+        os.close(handle)
+        temporary = Path(temporary_name)
+        try:
+            records: list[tuple[str, str, str]] = []
+            with zipfile.ZipFile(
+                temporary, "w", compression=zipfile.ZIP_DEFLATED
+            ) as retagged:
+                for entry in wheel.infolist():
+                    if entry.filename == record_path:
+                        continue
+                    data = wheel.read(entry)
+                    if entry.filename == wheel_metadata_path:
+                        metadata = data.decode()
+                        old_tag = f"-{old_platform}"
+                        lines = []
+                        for line in metadata.splitlines(keepends=True):
+                            if line.startswith("Tag: ") and line.rstrip().endswith(old_tag):
+                                ending = line[len(line.rstrip()) :]
+                                line = line.rstrip()[: -len(old_tag)] + f"-{platform}" + ending
+                            lines.append(line)
+                        data = "".join(lines).encode()
+                    retagged.writestr(entry, data)
+                    if not entry.is_dir():
+                        records.append((entry.filename, digest(data), str(len(data))))
+
+                record_output = io.StringIO(newline="")
+                writer = csv.writer(record_output, lineterminator="\n")
+                writer.writerows(records)
+                writer.writerow((record_path, "", ""))
+                retagged.writestr(record_path, record_output.getvalue().encode())
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    return destination
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("source", type=Path)
+    parser.add_argument("output_directory", type=Path)
+    parser.add_argument("platform")
+    arguments = parser.parse_args()
+    print(retag_wheel(arguments.source, arguments.output_directory, arguments.platform))
+
+
+if __name__ == "__main__":
+    main()

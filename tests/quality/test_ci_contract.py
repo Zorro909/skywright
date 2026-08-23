@@ -21,6 +21,7 @@ PYTHON_ACTION = (
 WORKFLOW = (REPOSITORY / ".github/workflows/quality.yml").read_text(encoding="utf-8")
 ENVIRONMENT_POM = REPOSITORY / "graalpy-environment/pom.xml"
 ENVIRONMENT_LOCK = REPOSITORY / "graalpy-environment/graalpy.lock"
+BUILD_CONSTRAINTS = REPOSITORY / "graalpy-environment/build-constraints.txt"
 sys.path.insert(0, str(REPOSITORY / "scripts"))
 try:
     QUALITY_IMPLEMENTATION = runpy.run_path(str(REPOSITORY / "scripts/quality"))
@@ -125,6 +126,7 @@ class JavaSetupContractTest(unittest.TestCase):
         self.assertIn("graalpy-env-v3", environment_cache)
         self.assertIn("graalpy-environment/graalpy.lock", environment_cache)
         self.assertIn("graalpy-environment/pom.xml", environment_cache)
+        self.assertIn("graalpy-environment/build-constraints.txt", environment_cache)
         self.assertIn("backend-deployment/src/main/docker/Dockerfile", environment_cache)
         self.assertIn(".graalpy/resources", environment_cache)
         self.assertNotIn("restore-keys:", environment_cache)
@@ -152,6 +154,9 @@ class JavaSetupContractTest(unittest.TestCase):
         lock = ENVIRONMENT_LOCK.read_text(encoding="utf-8")
         for package in expected:
             self.assertIn(f"{package}\n", lock)
+        self.assertEqual(
+            BUILD_CONSTRAINTS.read_text(encoding="utf-8"), "numpy==2.2.4\n"
+        )
 
     def test_graalpy_environment_is_a_dedicated_reactor_module(self) -> None:
         parent = ET.parse(REPOSITORY / "pom.xml")
@@ -197,6 +202,25 @@ class JavaSetupContractTest(unittest.TestCase):
                 namespaces=namespace,
             ),
             "!graalpy.environment.prebuilt",
+        )
+        self.assertEqual(
+            environment.findtext(
+                ".//m:profile[m:id='prime-graalpy-wheel-cache']"
+                "/m:activation/m:property/m:name",
+                namespaces=namespace,
+            ),
+            "graalpy.wheel.package",
+        )
+        wheel_packages = {
+            package.text
+            for package in environment.findall(
+                ".//m:profile[m:id='prime-graalpy-wheel-cache']"
+                "//m:configuration/m:packages/m:package",
+                namespace,
+            )
+        }
+        self.assertEqual(
+            wheel_packages, {"${graalpy.wheel.package}", "numpy==2.2.4"}
         )
 
 
@@ -305,8 +329,11 @@ class QualityWorkflowContractTest(unittest.TestCase):
     def test_graalpy_environment_is_built_once_before_maven_fanout(self) -> None:
         preparation = job(WORKFLOW, "graalpy")
         self.assertIn("needs: plan", preparation)
-        self.assertIn("timeout-minutes: 90", preparation)
+        self.assertIn("timeout-minutes: 270", preparation)
         self.assertIn("PIP_CACHE_DIR:", preparation)
+        self.assertIn("PIP_CONSTRAINT:", preparation)
+        self.assertIn("PIP_FIND_LINKS:", preparation)
+        self.assertIn("graalpy-environment/build-constraints.txt", preparation)
         self.assertIn("graalpy-resources: true", preparation)
         self.assertIn("steps.java.outputs.graalpy-cache-hit != 'true'", preparation)
         self.assertIn("actions/cache/restore@", preparation)
@@ -314,7 +341,13 @@ class QualityWorkflowContractTest(unittest.TestCase):
         self.assertIn("always()", preparation)
         self.assertIn("github.run_attempt", preparation)
         self.assertIn("--kill-after=2m", preparation)
-        self.assertIn("75m", preparation)
+        self.assertIn("Prime pandas wheel cache", preparation)
+        self.assertIn("Publish pandas wheel to local wheelhouse", preparation)
+        self.assertIn("scripts/retag-wheel", preparation)
+        self.assertIn("linux_x86_64", preparation)
+        self.assertIn("150m", preparation)
+        self.assertIn("-Dgraalpy.wheel.package=pandas==2.2.3", preparation)
+        self.assertIn("100m", preparation)
         self.assertIn("--no-transfer-progress", preparation)
         self.assertIn("-pl graalpy-environment", preparation)
         self.assertIn("process-resources", preparation)

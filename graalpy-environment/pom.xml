@@ -67,5 +67,37 @@
         </plugins>
       </build>
     </profile>
+    <profile>
+      <id>prime-graalpy-wheel-cache</id>
+      <activation>
+        <property>
+          <name>graalpy.wheel.package</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.graalvm.python</groupId>
+            <artifactId>graalpy-maven-plugin</artifactId>
+            <version>${graalpy.version}</version>
+            <executions>
+              <execution>
+                <goals>
+                  <goal>process-graalpy-resources</goal>
+                </goals>
+              </execution>
+            </executions>
+            <configuration>
+              <externalDirectory>${project.build.directory}/wheel-primer/${graalpy.wheel.id}</externalDirectory>
+              <graalPyLockFile>${project.build.directory}/wheel-primer/${graalpy.wheel.id}.lock</graalPyLockFile>
+              <packages>
+                <package>${graalpy.wheel.package}</package>
+                <package>numpy==2.2.4</package>
+              </packages>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
   </profiles>
 </project>

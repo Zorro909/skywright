@@ -109,9 +109,11 @@ jobs:
       needs.plan.outputs.application == 'true' ||
       needs.plan.outputs.image == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 270
     env:
       PIP_CACHE_DIR: ${{ github.workspace }}/.ci-cache/graalpy-pip
+      PIP_CONSTRAINT: ${{ github.workspace }}/graalpy-environment/build-constraints.txt
+      PIP_FIND_LINKS: ${{ github.workspace }}/.ci-cache/graalpy-pip/wheelhouse
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -122,17 +124,38 @@ jobs:
           graalpy-resources: true
       - name: Prepare progressive GraalPy pip cache directory
         if: steps.java.outputs.graalpy-cache-hit != 'true'
-        run: mkdir --parents "$PIP_CACHE_DIR"
+        run: mkdir --parents "$PIP_CACHE_DIR" "$PIP_FIND_LINKS"
       - name: Restore progressive GraalPy pip cache
         id: graalpy-pip-cache
         if: steps.java.outputs.graalpy-cache-hit != 'true'
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ env.PIP_CACHE_DIR }}
-          key: ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml', 'graalpy-environment/build-constraints.txt', 'scripts/retag-wheel') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml') }}-
+            ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml', 'graalpy-environment/build-constraints.txt', 'scripts/retag-wheel') }}-
             ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-
+      - name: Prime pandas wheel cache
+        if: steps.java.outputs.graalpy-cache-hit != 'true'
+        run: |
+          timeout \
+            --verbose \
+            --kill-after=2m \
+            150m \
+            ./mvnw \
+              --batch-mode \
+              --no-transfer-progress \
+              -Dgraalpy.environment.prebuilt=true \
+              -Dgraalpy.wheel.package=pandas==2.2.3 \
+              -Dgraalpy.wheel.id=pandas \
+              -pl graalpy-environment \
+              process-resources
+      - name: Publish pandas wheel to local wheelhouse
+        if: steps.java.outputs.graalpy-cache-hit != 'true'
+        run: |
+          pandas_wheel=$(find "$PIP_CACHE_DIR/wheels" -type f -name 'pandas-2.2.3-graalpy312-graalpy250_312_native-*.whl' -print -quit)
+          test -n "$pandas_wheel"
+          scripts/retag-wheel "$pandas_wheel" "$PIP_FIND_LINKS" linux_x86_64
       - name: Build packaged GraalPy environment on cache miss
         id: build-graalpy
         if: steps.java.outputs.graalpy-cache-hit != 'true'
@@ -140,7 +163,7 @@ jobs:
           timeout \
             --verbose \
             --kill-after=2m \
-            75m \
+            100m \
             ./mvnw \
               --batch-mode \
               --no-transfer-progress \
