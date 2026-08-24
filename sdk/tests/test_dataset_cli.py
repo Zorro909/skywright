@@ -1057,6 +1057,110 @@ def test_multipart_completion_response_loss_accepts_the_validated_object() -> No
     assert aborted == []
 
 
+def test_ignored_multipart_cancellation_is_discovered_and_reconciled() -> None:
+    from botocore.exceptions import ClientError
+
+    body = b"retry-safe multipart bytes"
+    digest = hashlib.sha256(body).hexdigest()
+    checksum = base64.b64encode(bytes.fromhex(digest)).decode()
+    open_uploads: dict[str, list[bytes]] = {}
+    aborted: list[str] = []
+    stored: bytes | None = None
+    fail_transfer = True
+    ignore_first_abort = True
+
+    class Storage:
+        def list_multipart_uploads(self, **values: object) -> dict[str, object]:
+            key = cast(str, values["Prefix"])
+            return {
+                "Uploads": [
+                    {"Key": key, "UploadId": upload_id} for upload_id in open_uploads
+                ],
+                "IsTruncated": False,
+            }
+
+        def head_object(self, **_values: object) -> dict[str, object]:
+            if stored is None:
+                raise ClientError(
+                    {
+                        "Error": {"Code": "NotFound"},
+                        "ResponseMetadata": {"HTTPStatusCode": 404},
+                    },
+                    "HeadObject",
+                )
+            return {
+                "ContentLength": len(stored),
+                "Metadata": {"skywright-sha256": digest},
+                "ChecksumSHA256": checksum,
+            }
+
+        def create_multipart_upload(self, **_values: object) -> dict[str, str]:
+            upload_id = f"allocated-{len(open_uploads) + len(aborted)}"
+            open_uploads[upload_id] = []
+            return {"UploadId": upload_id}
+
+        def upload_part(self, **values: object) -> dict[str, str]:
+            if fail_transfer:
+                raise ClientError(
+                    {
+                        "Error": {"Code": "Unavailable"},
+                        "ResponseMetadata": {"HTTPStatusCode": 503},
+                    },
+                    "UploadPart",
+                )
+            upload_id = cast(str, values["UploadId"])
+            open_uploads[upload_id].append(cast(bytes, values["Body"]))
+            return {"ETag": '"part"'}
+
+        def complete_multipart_upload(self, **values: object) -> None:
+            nonlocal stored
+            upload_id = cast(str, values["UploadId"])
+            stored = b"".join(open_uploads.pop(upload_id))
+
+        def abort_multipart_upload(self, **values: object) -> None:
+            nonlocal ignore_first_abort
+            upload_id = cast(str, values["UploadId"])
+            if ignore_first_abort:
+                ignore_first_abort = False
+                raise ClientError(
+                    {
+                        "Error": {"Code": "Unavailable"},
+                        "ResponseMetadata": {"HTTPStatusCode": 503},
+                    },
+                    "AbortMultipartUpload",
+                )
+            open_uploads.pop(upload_id)
+            aborted.append(upload_id)
+
+    storage = Storage()
+    with (
+        patch("skywright._dataset_upload._MULTIPART_THRESHOLD_BYTES", 1),
+        pytest.raises(ClientError),
+    ):
+        _put_bytes(
+            storage,
+            "dataset",
+            "publications/retry-safe.bin",
+            body,
+            f"sha256:{digest}",
+        )
+
+    assert list(open_uploads) == ["allocated-0"]
+    fail_transfer = False
+    with patch("skywright._dataset_upload._MULTIPART_THRESHOLD_BYTES", 1):
+        _put_bytes(
+            storage,
+            "dataset",
+            "publications/retry-safe.bin",
+            body,
+            f"sha256:{digest}",
+        )
+
+    assert "allocated-0" in aborted
+    assert stored == body
+    assert open_uploads == {}
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

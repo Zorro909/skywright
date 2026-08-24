@@ -13,7 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-class DatasetPublicationService {
+class DatasetPublicationService implements DatasetPublicationOperations {
 
 	private static final String FORMAT = "mosaicml-streaming-mds@2";
 
@@ -117,7 +117,8 @@ class DatasetPublicationService {
 	DatasetPublicationView failLocal(UUID publicationId, DatasetPublicationFailure failure) {
 		DatasetPublicationEntity operation = this.publication(publicationId);
 		if (operation.state == DatasetPublicationState.VERIFYING || operation.state == DatasetPublicationState.COMMITTED
-				|| operation.state == DatasetPublicationState.COMMITTING) {
+				|| operation.state == DatasetPublicationState.COMMITTING
+				|| operation.state == DatasetPublicationState.FAILED && !operation.retryable) {
 			return operation.view();
 		}
 		DatasetPublicationFailureFacts facts = safeFailure(failure.failureCode());
@@ -164,13 +165,13 @@ class DatasetPublicationService {
 	}
 
 	@Transactional(readOnly = true)
-	DatasetPublicationView verificationInput(UUID publicationId) {
+	public DatasetPublicationView verificationInput(UUID publicationId) {
 		DatasetPublicationEntity operation = this.publication(publicationId);
 		return operation.state == DatasetPublicationState.VERIFYING ? operation.view() : null;
 	}
 
 	@Transactional(readOnly = true)
-	List<UUID> pendingVerifications() {
+	public List<UUID> pendingVerifications() {
 		return this.entityManager
 			.createQuery("select publicationId from DatasetPublicationEntity where state = :state", UUID.class)
 			.setParameter("state", DatasetPublicationState.VERIFYING)
@@ -178,7 +179,7 @@ class DatasetPublicationService {
 	}
 
 	@Transactional
-	void commit(UUID publicationId, DatasetPublicationWorkerResult verified) {
+	public void commit(UUID publicationId, DatasetPublicationWorkerResult verified) {
 		DatasetPublicationEntity operation = this.publication(publicationId);
 		if (operation.state != DatasetPublicationState.VERIFYING) {
 			return;
@@ -220,7 +221,7 @@ class DatasetPublicationService {
 	}
 
 	@Transactional
-	void fail(UUID publicationId, DatasetPublicationWorkerResult failure) {
+	public void fail(UUID publicationId, DatasetPublicationWorkerResult failure) {
 		DatasetPublicationEntity operation = this.publication(publicationId);
 		if (operation.state != DatasetPublicationState.VERIFYING) {
 			return;

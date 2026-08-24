@@ -48,6 +48,18 @@ public record SeaweedFsFixture(String container, URI endpoint) implements AutoCl
 		}
 	}
 
+	public void pause() throws Exception {
+		if (new ProcessBuilder("docker", "pause", this.container).start().waitFor() != 0) {
+			throw new IllegalStateException("Could not pause SeaweedFS");
+		}
+	}
+
+	public void unpause() throws Exception {
+		if (new ProcessBuilder("docker", "unpause", this.container).start().waitFor() != 0) {
+			throw new IllegalStateException("Could not unpause SeaweedFS");
+		}
+	}
+
 	@Override
 	public void close() throws Exception {
 		try {

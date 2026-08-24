@@ -3,7 +3,14 @@ package de.zorro909.skywright.backend.acceptance;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import de.zorro909.skywright.backend.datasetpublication.DatasetPublicationCommitGateTestConfiguration;
+import com.sun.net.httpserver.HttpServer;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.InetSocketAddress;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +25,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -151,6 +160,12 @@ final class DatasetPublicationApiIT {
 				assertThat(failedClosed.path("uploadedByteCount").asLong()).isEqualTo(13);
 				assertThat(failedClosed.path("retryGuidance").asText()).doesNotContain("--resume")
 					.contains("cannot be resumed");
+				var lateFailure = backend.put("/api/v1/dataset-publications/" + publicationId + "/failure",
+						"{\"failureCode\":\"DATASET_UPLOAD_FAILED\"}");
+				JsonNode stillFailedClosed = JSON.readTree(lateFailure.body());
+				assertThat(stillFailedClosed.path("failureCode").asText()).isEqualTo("DATASET_UPLOAD_CONFLICT");
+				assertThat(stillFailedClosed.path("retryable").asBoolean()).isFalse();
+				assertThat(stillFailedClosed.path("retryGuidance").asText()).doesNotContain("--resume");
 			}
 		}
 	}
@@ -469,7 +484,37 @@ final class DatasetPublicationApiIT {
 				backend.put("/api/v1/target-storages/" + storageId + "/activation",
 						"{\"expectedRegistrationRevision\":2,\"activated\":true}");
 
-				for (int transferredObjectCount : Set.of(1, files.size())) {
+				Process interrupted = startCommand(corpus, backend.baseUri(), storageId, null);
+				var interruptedErrors = new BufferedReader(
+						new InputStreamReader(interrupted.getErrorStream(), StandardCharsets.UTF_8));
+				JsonNode identity = JSON.readTree(interruptedErrors.readLine());
+				String interruptedPublicationId = identity.path("publicationId").asText();
+				assertThat(identity.path("event").asText()).isEqualTo("dataset-publication-identity");
+				objectStorage.pause();
+				try {
+					if (!interrupted.waitFor(10, TimeUnit.SECONDS)) {
+						interrupted.destroyForcibly();
+						interrupted.waitFor();
+					}
+				}
+				finally {
+					objectStorage.unpause();
+					objectStorage.awaitReady(administrator);
+				}
+				assertThat(interrupted.exitValue()).isNotZero();
+				CommandResult recovered = runCommand(corpus, backend.baseUri(), storageId, interruptedPublicationId);
+				assertThat(recovered.exitCode()).as(recovered.stderr()).isZero();
+				assertThat(JSON.readTree(recovered.stdout()).path("publicationId").asText())
+					.isEqualTo(interruptedPublicationId);
+
+				try (var proxy = new DroppingCompletionProxy(backend.baseUri())) {
+					CommandResult reconciled = runCommand(corpus, proxy.baseUri(), storageId);
+					assertThat(reconciled.exitCode()).as(reconciled.stderr()).isZero();
+					assertThat(JSON.readTree(reconciled.stdout()).path("state").asText()).isEqualTo("committed");
+					assertThat(proxy.droppedCompletion()).isTrue();
+				}
+
+				for (int transferredObjectCount : java.util.List.of(1, files.size())) {
 					String initiation = """
 							{
 							  "targetStorageId":"%s",
@@ -507,6 +552,9 @@ final class DatasetPublicationApiIT {
 					backend.put("/api/v1/dataset-publications/" + publicationId + "/progress",
 							"{\"uploadedObjectCount\":" + transferred + ",\"uploadedByteCount\":" + transferredBytes
 									+ "}");
+					if (transferredObjectCount == 1) {
+						backend.restart();
+					}
 
 					CommandResult command = runCommand(corpus, backend.baseUri(), storageId, publicationId);
 					assertThat(command.exitCode()).as(command.stderr()).isZero();
@@ -581,24 +629,100 @@ final class DatasetPublicationApiIT {
 				java.util.List.of("uv", "run", "--project", "sdk", "--locked", "skywright-datasets", "publish",
 						corpus.toString(), "--control-plane", controlPlane.toString(), "--target-storage", storageId));
 		arguments.addAll(java.util.List.of(extra));
-
-	private static CommandResult runCommand(Path corpus, URI controlPlane, String storageId, String publicationId)
-			throws Exception {
-		return runCommand(corpus, controlPlane, storageId, "--resume", publicationId);
-	}
-		var commandBuilder = new ProcessBuilder(arguments)
-			.directory(Path.of(System.getProperty("repository.root")).toFile())
-			.redirectErrorStream(false);
-		commandBuilder.environment()
-			.putAll(Map.of("AWS_ACCESS_KEY_ID", "test-key", "AWS_SECRET_ACCESS_KEY", "test-secret", "AWS_REGION",
-					"us-east-1"));
-		Process command = commandBuilder.start();
+		Process command = startCommand(arguments);
 		String stdout = new String(command.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
 		String stderr = new String(command.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
 		return new CommandResult(command.waitFor(), stdout, stderr);
 	}
 
+	private static CommandResult runCommand(Path corpus, URI controlPlane, String storageId, String publicationId)
+			throws Exception {
+		return runCommand(corpus, controlPlane, storageId, "--resume", publicationId);
+	}
+
+	private static Process startCommand(Path corpus, URI controlPlane, String storageId, String publicationId)
+			throws Exception {
+		var arguments = new ArrayList<>(
+				java.util.List.of("uv", "run", "--project", "sdk", "--locked", "skywright-datasets", "publish",
+						corpus.toString(), "--control-plane", controlPlane.toString(), "--target-storage", storageId));
+		if (publicationId != null) {
+			arguments.add("--resume");
+			arguments.add(publicationId);
+		}
+		return startCommand(arguments);
+	}
+
+	private static Process startCommand(java.util.List<String> arguments) throws Exception {
+		var commandBuilder = new ProcessBuilder(arguments)
+			.directory(Path.of(System.getProperty("repository.root")).toFile())
+			.redirectErrorStream(false);
+		commandBuilder.environment()
+			.putAll(Map.of("AWS_ACCESS_KEY_ID", "test-key", "AWS_SECRET_ACCESS_KEY", "test-secret", "AWS_REGION",
+					"us-east-1", "AWS_MAX_ATTEMPTS", "1"));
+		return commandBuilder.start();
+	}
+
 	private record CommandResult(int exitCode, String stdout, String stderr) {
+	}
+
+	private static final class DroppingCompletionProxy implements AutoCloseable {
+
+		private final HttpServer server;
+
+		private final URI upstream;
+
+		private final HttpClient client = HttpClient.newHttpClient();
+
+		private final AtomicBoolean droppedCompletion = new AtomicBoolean();
+
+		private DroppingCompletionProxy(URI upstream) throws Exception {
+			this.upstream = upstream;
+			this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+			this.server.createContext("/", exchange -> {
+				try {
+					byte[] requestBody = exchange.getRequestBody().readAllBytes();
+					var request = HttpRequest.newBuilder(this.upstream.resolve(exchange.getRequestURI().toString()));
+					String requestContentType = exchange.getRequestHeaders().getFirst("Content-Type");
+					if (requestContentType != null) {
+						request.header("Content-Type", requestContentType);
+					}
+					request.method(exchange.getRequestMethod(), HttpRequest.BodyPublishers.ofByteArray(requestBody));
+					HttpResponse<byte[]> response = this.client.send(request.build(),
+							HttpResponse.BodyHandlers.ofByteArray());
+					if (exchange.getRequestURI().getPath().endsWith("/completion")
+							&& this.droppedCompletion.compareAndSet(false, true)) {
+						exchange.close();
+						return;
+					}
+					String contentType = response.headers().firstValue("Content-Type").orElse("application/json");
+					exchange.getResponseHeaders().set("Content-Type", contentType);
+					exchange.sendResponseHeaders(response.statusCode(), response.body().length);
+					exchange.getResponseBody().write(response.body());
+				}
+				catch (InterruptedException interrupted) {
+					Thread.currentThread().interrupt();
+					exchange.close();
+				}
+				finally {
+					exchange.close();
+				}
+			});
+			this.server.start();
+		}
+
+		private URI baseUri() {
+			return URI.create("http://127.0.0.1:" + this.server.getAddress().getPort());
+		}
+
+		private boolean droppedCompletion() {
+			return this.droppedCompletion.get();
+		}
+
+		@Override
+		public void close() {
+			this.server.stop(0);
+		}
+
 	}
 
 	private static S3AsyncClient administrator(SeaweedFsFixture storage) {

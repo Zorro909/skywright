@@ -16,7 +16,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 final class DatasetPublicationWorkerDispatcher {
 
-	private final DatasetPublicationService publications;
+	private final DatasetPublicationOperations publications;
 
 	private final DatasetPublicationVerifier verifier;
 
@@ -29,7 +29,7 @@ final class DatasetPublicationWorkerDispatcher {
 
 	private final Set<UUID> dispatched = ConcurrentHashMap.newKeySet();
 
-	DatasetPublicationWorkerDispatcher(DatasetPublicationService publications, DatasetPublicationVerifier verifier,
+	DatasetPublicationWorkerDispatcher(DatasetPublicationOperations publications, DatasetPublicationVerifier verifier,
 			DatasetPublicationWorkerRecovery recovery, DatasetPublicationWorkerRecoveryScheduler scheduler) {
 		this.publications = publications;
 		this.verifier = verifier;

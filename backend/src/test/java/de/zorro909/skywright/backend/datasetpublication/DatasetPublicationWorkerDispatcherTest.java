@@ -15,6 +15,28 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 class DatasetPublicationWorkerDispatcherTest {
 
+	@Test
+	void ambiguousDatabaseCommitResponseRetainsTheCommittedResult() throws Exception {
+		UUID publicationId = UUID.randomUUID();
+		var publications = new AmbiguousCommitService(publicationId);
+		var scheduler = new RecordingScheduler();
+		var dispatcher = new DatasetPublicationWorkerDispatcher(publications,
+				publication -> new DatasetPublicationWorkerResult(true, List.of(), 1, 1, Instant.now(), 123, null,
+						false),
+				new DatasetPublicationWorkerRecovery(null, null, null), scheduler);
+		try {
+			dispatcher.requested(new DatasetPublicationVerificationRequested(publicationId));
+
+			publications.failureReconciled.get(5, TimeUnit.SECONDS);
+			assertThat(publications.committed).isTrue();
+			assertThat(publications.commitAttempts).hasValue(1);
+			assertThat(scheduler.attempts).isEmpty();
+		}
+		finally {
+			dispatcher.close();
+		}
+	}
+
 	@ParameterizedTest
 	@ValueSource(strings = { "DATASET_CORRUPT_EVIDENCE", "DATASET_PROJECTION_UNAVAILABLE" })
 	void recordsVerifierFaultsAgainstTheSameDurablePublication(String failureCode) throws Exception {
@@ -60,7 +82,59 @@ class DatasetPublicationWorkerDispatcherTest {
 		}
 	}
 
-	private static final class DatabaseOutageService extends DatasetPublicationService {
+	private abstract static class StubPublicationOperations implements DatasetPublicationOperations {
+
+		@Override
+		public List<UUID> pendingVerifications() {
+			return List.of();
+		}
+
+		@Override
+		public void commit(UUID publicationId, DatasetPublicationWorkerResult verified) {
+			throw new AssertionError("commit was not expected");
+		}
+
+	}
+
+	private static final class AmbiguousCommitService extends StubPublicationOperations {
+
+		private final UUID publicationId;
+
+		private final AtomicInteger commitAttempts = new AtomicInteger();
+
+		private final CompletableFuture<Void> failureReconciled = new CompletableFuture<>();
+
+		private volatile boolean committed;
+
+		private AmbiguousCommitService(UUID publicationId) {
+			this.publicationId = publicationId;
+		}
+
+		@Override
+		public DatasetPublicationView verificationInput(UUID requestedPublicationId) {
+			assertThat(requestedPublicationId).isEqualTo(this.publicationId);
+			return publicationView(this.publicationId);
+		}
+
+		@Override
+		public void commit(UUID committedPublicationId, DatasetPublicationWorkerResult verified) {
+			assertThat(committedPublicationId).isEqualTo(this.publicationId);
+			assertThat(verified.verified()).isTrue();
+			this.commitAttempts.incrementAndGet();
+			this.committed = true;
+			throw new IllegalStateException("database response lost after commit");
+		}
+
+		@Override
+		public void fail(UUID failedPublicationId, DatasetPublicationWorkerResult failure) {
+			assertThat(failedPublicationId).isEqualTo(this.publicationId);
+			assertThat(this.committed).isTrue();
+			this.failureReconciled.complete(null);
+		}
+
+	}
+
+	private static final class DatabaseOutageService extends StubPublicationOperations {
 
 		private final AtomicInteger verificationInputAttempts = new AtomicInteger();
 
@@ -68,12 +142,8 @@ class DatasetPublicationWorkerDispatcherTest {
 
 		private final CompletableFuture<DatasetPublicationView> secondVerificationInput = new CompletableFuture<>();
 
-		private DatabaseOutageService() {
-			super(null, null, null, null, null);
-		}
-
 		@Override
-		DatasetPublicationView verificationInput(UUID publicationId) {
+		public DatasetPublicationView verificationInput(UUID publicationId) {
 			if (this.verificationInputAttempts.incrementAndGet() == 1) {
 				throw new IllegalStateException("database unavailable");
 			}
@@ -82,14 +152,14 @@ class DatasetPublicationWorkerDispatcherTest {
 		}
 
 		@Override
-		void fail(UUID publicationId, DatasetPublicationWorkerResult failure) {
+		public void fail(UUID publicationId, DatasetPublicationWorkerResult failure) {
 			this.failureRecordingAttempts.incrementAndGet();
 			throw new IllegalStateException("database unavailable");
 		}
 
 	}
 
-	private static final class RecordingService extends DatasetPublicationService {
+	private static final class RecordingService extends StubPublicationOperations {
 
 		private final UUID publicationId;
 
@@ -98,28 +168,31 @@ class DatasetPublicationWorkerDispatcherTest {
 		private volatile UUID requestedPublicationId;
 
 		private RecordingService(UUID publicationId) {
-			super(null, null, null, null, null);
 			this.publicationId = publicationId;
 		}
 
 		@Override
-		DatasetPublicationView verificationInput(UUID requestedPublicationId) {
+		public DatasetPublicationView verificationInput(UUID requestedPublicationId) {
 			this.requestedPublicationId = requestedPublicationId;
-			Instant now = Instant.now();
-			return new DatasetPublicationView(this.publicationId, DatasetPublicationState.VERIFYING, UUID.randomUUID(),
-					UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), 0,
-					DatasetPublicationPreferredDecision.ADVANCE_PREFERRED, "v1", "mosaicml-streaming-mds@2",
-					"sha256:" + "1".repeat(64), "sha256:" + "2".repeat(64), 1, 1, "datasets/payload",
-					"operations/publication", 1, 1, 0, 0, null, false, true, null, null, null, null, now, now, null,
-					null, 0);
+			return publicationView(this.publicationId);
 		}
 
 		@Override
-		void fail(UUID failedPublicationId, DatasetPublicationWorkerResult result) {
+		public void fail(UUID failedPublicationId, DatasetPublicationWorkerResult result) {
 			assertThat(failedPublicationId).isEqualTo(this.publicationId);
 			this.failure.complete(result);
 		}
 
+	}
+
+	private static DatasetPublicationView publicationView(UUID publicationId) {
+		Instant now = Instant.now();
+		return new DatasetPublicationView(publicationId, DatasetPublicationState.VERIFYING, UUID.randomUUID(),
+				UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), 0,
+				DatasetPublicationPreferredDecision.ADVANCE_PREFERRED, "v1", "mosaicml-streaming-mds@2",
+				"sha256:" + "1".repeat(64), "sha256:" + "2".repeat(64), 1, 1, "datasets/payload",
+				"operations/publication", 1, 1, 0, 0, null, false, true, null, null, null, null, now, now, null, null,
+				0);
 	}
 
 	private static final class RecordingScheduler implements DatasetPublicationWorkerRecoveryScheduler {
