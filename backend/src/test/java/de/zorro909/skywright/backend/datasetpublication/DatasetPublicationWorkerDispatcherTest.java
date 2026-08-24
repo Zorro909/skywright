@@ -59,6 +59,23 @@ class DatasetPublicationWorkerDispatcherTest {
 	}
 
 	@Test
+	void targetResolutionFailureIsDistinctAndFailsClosed() {
+		DatasetPublicationWorkerResult failure = DatasetPublicationWorkerLauncher
+			.targetResolutionFailure("TARGET_STORAGE_INELIGIBLE");
+
+		assertThat(failure.failureCode()).isEqualTo("DATASET_TARGET_STORAGE_INELIGIBLE");
+		assertThat(failure.retryable()).isFalse();
+		assertThat(DatasetPublicationService.failureDetail(failure))
+			.isEqualTo("The selected Dataset Target Storage is no longer eligible");
+		assertThat(DatasetPublicationService.unavailableSource(failure)).isNull();
+		assertThat(DatasetPublicationWorkerLauncher.targetResolutionFailure("TARGET_STORAGE_CREDENTIALS_UNAVAILABLE")
+			.failureCode()).isEqualTo("DATASET_PROJECTION_UNAVAILABLE");
+		DatasetPublicationWorkerResult processFailure = DatasetPublicationWorkerLauncher.failure();
+		assertThat(DatasetPublicationService.unavailableSource(processFailure))
+			.isEqualTo("Dataset Verification Worker");
+	}
+
+	@Test
 	void databaseOutageWhileRecordingFailureSchedulesRedispatchWithoutRestart() throws Exception {
 		var publications = new DatabaseOutageService();
 		var scheduler = new RecordingScheduler();
@@ -71,6 +88,9 @@ class DatasetPublicationWorkerDispatcherTest {
 			Runnable retry = scheduler.queued.get(5, TimeUnit.SECONDS);
 			assertThat(publications.verificationInputAttempts).hasValue(1);
 			assertThat(publications.failureRecordingAttempts).hasValue(1);
+			assertThat(publications.recordedFailure.failureCode()).isEqualTo("DATASET_DATABASE_UNAVAILABLE");
+			assertThat(DatasetPublicationService.unavailableSource(publications.recordedFailure))
+				.isEqualTo("Publication Database");
 
 			retry.run();
 
@@ -86,20 +106,25 @@ class DatasetPublicationWorkerDispatcherTest {
 	void backendShutdownLeavesVerificationPendingForStartupRecovery() throws Exception {
 		UUID publicationId = UUID.randomUUID();
 		var publications = new RecordingService(publicationId);
-		var verificationInterrupted = new CompletableFuture<Void>();
+		var verificationStarted = new CompletableFuture<Void>();
+		var cleanupFinished = new CompletableFuture<Void>();
 		var dispatcher = new DatasetPublicationWorkerDispatcher(publications, publication -> {
-			verificationInterrupted.complete(null);
+			verificationStarted.complete(null);
+			try {
+				new java.util.concurrent.CountDownLatch(1).await();
+			}
+			catch (InterruptedException interrupted) {
+				Thread.currentThread().interrupt();
+			}
+			cleanupFinished.complete(null);
 			return DatasetPublicationWorkerLauncher.interrupted();
 		}, new DatasetPublicationWorkerRecovery(null, null, null), new RecordingScheduler());
-		try {
-			dispatcher.requested(new DatasetPublicationVerificationRequested(publicationId));
+		dispatcher.requested(new DatasetPublicationVerificationRequested(publicationId));
 
-			verificationInterrupted.get(5, TimeUnit.SECONDS);
-			assertThat(publications.failure).isNotDone();
-		}
-		finally {
-			dispatcher.close();
-		}
+		verificationStarted.get(5, TimeUnit.SECONDS);
+		dispatcher.close();
+		assertThat(cleanupFinished).isCompleted();
+		assertThat(publications.failure).isNotDone();
 	}
 
 	private abstract static class StubPublicationOperations implements DatasetPublicationOperations {
@@ -160,6 +185,8 @@ class DatasetPublicationWorkerDispatcherTest {
 
 		private final AtomicInteger failureRecordingAttempts = new AtomicInteger();
 
+		private volatile DatasetPublicationWorkerResult recordedFailure;
+
 		private final CompletableFuture<DatasetPublicationView> secondVerificationInput = new CompletableFuture<>();
 
 		@Override
@@ -173,6 +200,7 @@ class DatasetPublicationWorkerDispatcherTest {
 
 		@Override
 		public void fail(UUID publicationId, DatasetPublicationWorkerResult failure) {
+			this.recordedFailure = failure;
 			this.failureRecordingAttempts.incrementAndGet();
 			throw new IllegalStateException("database unavailable");
 		}

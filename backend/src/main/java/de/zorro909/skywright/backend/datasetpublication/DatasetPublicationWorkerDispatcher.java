@@ -89,7 +89,7 @@ final class DatasetPublicationWorkerDispatcher {
 			}
 			try {
 				this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0,
-						0, null, 0, "DATASET_VERIFICATION_UNAVAILABLE", true));
+						0, null, 0, "DATASET_DATABASE_UNAVAILABLE", true));
 			}
 			catch (RuntimeException persistenceFailure) {
 				retryScheduled = true;
@@ -107,6 +107,12 @@ final class DatasetPublicationWorkerDispatcher {
 	void close() {
 		this.closing.set(true);
 		this.executor.shutdownNow();
+		try {
+			this.executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+		}
+		catch (InterruptedException interrupted) {
+			Thread.currentThread().interrupt();
+		}
 	}
 
 }

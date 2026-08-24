@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.datasetpublication;
 
 import de.zorro909.skywright.backend.runstore.ResolvedTargetStorage;
+import de.zorro909.skywright.backend.targetstorage.TargetStorageException;
 import de.zorro909.skywright.backend.targetstorage.TargetStorageResolver;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
@@ -42,9 +43,14 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 	@Override
 	public DatasetPublicationWorkerResult verify(DatasetPublicationView publication) {
 		ResolvedTargetStorage target;
-		AwsCredentials credentials;
 		try {
 			target = this.targetStorages.resolveDataset(publication.targetStorageId(), "transfer-worker");
+		}
+		catch (TargetStorageException failure) {
+			return targetResolutionFailure(failure.code());
+		}
+		AwsCredentials credentials;
+		try {
 			credentials = target.credentials().resolveCredentials();
 		}
 		catch (RuntimeException failure) {
@@ -55,10 +61,9 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 		UUID projectionId = null;
 		ActiveWorker activeWorker = null;
 		try {
-			projectionId = this.projections.projected(publication.publicationId(), target.credentialBindingId(),
-					target.credentialBindingRevision());
+			projectionId = project(publication, target);
 			directory = Files.createTempDirectory("skywright-dataset-worker-job-" + projectionId + "-");
-			this.projections.prepared(projectionId, directory);
+			prepare(projectionId, directory);
 			Path job = directory.resolve("job.json");
 			Path result = directory.resolve("result.json");
 			JSON.writeValue(job.toFile(), new DatasetPublicationWorkerJob(target.endpoint(), target.bucket(),
@@ -76,7 +81,7 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 			ActiveWorker trackedWorker = activeWorker;
 			worker.onExit().thenRun(() -> completeIfReady(trackedWorker));
 			Instant workerStartedAt = requireWorkerStartedAt(worker.toHandle().info().startInstant());
-			this.projections.launched(projectionId, worker.pid(), workerStartedAt);
+			launched(projectionId, worker.pid(), workerStartedAt);
 			try (var credentialStream = worker.getOutputStream()) {
 				JSON.writeValue(credentialStream, credential(credentials));
 			}
@@ -93,7 +98,7 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 			Thread.currentThread().interrupt();
 			return this.closing.get() ? interrupted() : failure();
 		}
-		catch (RuntimeException exception) {
+		catch (ProjectionUnavailable exception) {
 			return this.closing.get() ? interrupted() : projectionFailure();
 		}
 		finally {
@@ -212,9 +217,9 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 		return command;
 	}
 
-	private static DatasetPublicationWorkerResult failure() {
+	static DatasetPublicationWorkerResult failure() {
 		return new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0, null, 0,
-				"DATASET_VERIFICATION_UNAVAILABLE", true);
+				"DATASET_VERIFICATION_PROCESS_UNAVAILABLE", true);
 	}
 
 	static DatasetPublicationWorkerResult projectionFailure() {
@@ -225,6 +230,42 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 	static DatasetPublicationWorkerResult interrupted() {
 		return new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0, null, 0,
 				"DATASET_VERIFICATION_INTERRUPTED", true);
+	}
+
+	static DatasetPublicationWorkerResult targetResolutionFailure(String code) {
+		if ("TARGET_STORAGE_CREDENTIALS_UNAVAILABLE".equals(code)) {
+			return projectionFailure();
+		}
+		return new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0, null, 0,
+				"DATASET_TARGET_STORAGE_INELIGIBLE", false);
+	}
+
+	private UUID project(DatasetPublicationView publication, ResolvedTargetStorage target) {
+		try {
+			return this.projections.projected(publication.publicationId(), target.credentialBindingId(),
+					target.credentialBindingRevision());
+		}
+		catch (RuntimeException failure) {
+			throw new ProjectionUnavailable(failure);
+		}
+	}
+
+	private void prepare(UUID projectionId, Path directory) {
+		try {
+			this.projections.prepared(projectionId, directory);
+		}
+		catch (RuntimeException failure) {
+			throw new ProjectionUnavailable(failure);
+		}
+	}
+
+	private void launched(UUID projectionId, long workerPid, Instant workerStartedAt) {
+		try {
+			this.projections.launched(projectionId, workerPid, workerStartedAt);
+		}
+		catch (RuntimeException failure) {
+			throw new ProjectionUnavailable(failure);
+		}
 	}
 
 	private static final class ActiveWorker {
@@ -243,6 +284,14 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 			this.process = process;
 			this.projectionId = projectionId;
 			this.directory = directory;
+		}
+
+	}
+
+	private static final class ProjectionUnavailable extends RuntimeException {
+
+		private ProjectionUnavailable(RuntimeException cause) {
+			super(cause);
 		}
 
 	}
