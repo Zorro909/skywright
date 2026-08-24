@@ -26,12 +26,20 @@ final class DatasetPublicationWorkerLauncher {
 
 	private final DatasetPublicationCredentialProjectionLifecycle projections;
 
+	private final int verificationConcurrency;
+
 	private final Set<ActiveWorker> activeWorkers = ConcurrentHashMap.newKeySet();
 
 	DatasetPublicationWorkerLauncher(TargetStorageResolver targetStorages,
 			DatasetPublicationCredentialProjectionLifecycle projections) {
+		this(targetStorages, projections, 4);
+	}
+
+	DatasetPublicationWorkerLauncher(TargetStorageResolver targetStorages,
+			DatasetPublicationCredentialProjectionLifecycle projections, int verificationConcurrency) {
 		this.targetStorages = targetStorages;
 		this.projections = projections;
+		this.verificationConcurrency = verificationConcurrency;
 	}
 
 	DatasetPublicationWorkerResult verify(DatasetPublicationView publication) {
@@ -49,13 +57,12 @@ final class DatasetPublicationWorkerLauncher {
 			this.projections.prepared(projectionId, directory);
 			Path job = directory.resolve("job.json");
 			Path result = directory.resolve("result.json");
-			JSON.writeValue(job.toFile(),
-					new DatasetPublicationWorkerJob(target.endpoint(), target.bucket(), target.region().id(),
-							target.pathStyleAccess(),
-							"enabled".equals(target.compatibilityOptions().get("chunkedEncoding")),
-							publication.formatIdentity(), publication.manifestIdentity(),
-							publication.contentFingerprint(), publication.objectCount(), publication.byteCount(),
-							publication.payloadLocation(), publication.operationLocation()));
+			JSON.writeValue(job.toFile(), new DatasetPublicationWorkerJob(target.endpoint(), target.bucket(),
+					target.region().id(), target.pathStyleAccess(),
+					"enabled".equals(target.compatibilityOptions().get("chunkedEncoding")),
+					publication.formatIdentity(), publication.manifestIdentity(), publication.contentFingerprint(),
+					publication.objectCount(), publication.byteCount(), publication.payloadLocation(),
+					publication.operationLocation(), this.verificationConcurrency));
 			var process = new ProcessBuilder(command(job, result)).redirectErrorStream(true)
 				.redirectOutput(ProcessBuilder.Redirect.DISCARD);
 			clearEnvironment(process.environment());

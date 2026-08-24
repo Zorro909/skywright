@@ -3,12 +3,12 @@ package de.zorro909.skywright.backend.acceptance;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.URI;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -40,14 +40,25 @@ final class DatasetPublicationApiIT {
 	Path temporaryDirectory;
 
 	@Test
-	void installedCommandPublishesOneLabeledMdsCorpusAtomically() throws Exception {
+	void installedCommandPublishesTheVersionedMdsContractFixtureAtomically() throws Exception {
 		try (var objectStorage = SeaweedFsFixture.start(); var administrator = administrator(objectStorage)) {
 			objectStorage.awaitReady(administrator);
 			String bucket = "dataset-publication-" + UUID.randomUUID();
 			administrator.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).join();
-			Path corpus = this.corpus();
-			Map<String, byte[]> localBefore = Map.of("index.json", Files.readAllBytes(corpus.resolve("index.json")),
-					"shard.00000.mds", Files.readAllBytes(corpus.resolve("shard.00000.mds")));
+			JsonNode fixture = JSON.readTree(Path.of(System.getProperty("repository.root"), "tests", "fixtures",
+					"dataset-publication", "mds-v2-contract.json")
+				.toFile());
+			Path corpus = Files.createDirectory(this.temporaryDirectory.resolve("corpus"));
+			Map<String, byte[]> localBefore = new HashMap<>();
+			for (JsonNode file : fixture.path("files")) {
+				String objectKey = file.path("objectKey").asText();
+				byte[] bytes = Base64.getDecoder().decode(file.path("base64").asText());
+				Path destination = corpus.resolve(objectKey);
+				Files.createDirectories(destination.getParent());
+				Files.write(destination, bytes);
+				localBefore.put(objectKey, bytes);
+			}
+			JsonNode expected = fixture.path("expected");
 
 			try (var backend = BackendFixture.startWithTargetStorageIntegration()) {
 				var storage = backend.post("/api/v1/target-storages", registration(objectStorage.endpoint(), bucket));
@@ -57,27 +68,31 @@ final class DatasetPublicationApiIT {
 						"{\"expectedRegistrationRevision\":2,\"activated\":true}");
 				assertThat(activated.statusCode()).as(activated.body()).isEqualTo(200);
 
-				var commandBuilder = new ProcessBuilder("uv", "run", "--project", "sdk", "--locked",
-						"skywright-datasets", "publish", corpus.toString(), "--control-plane",
-						backend.baseUri().toString(), "--target-storage", storageId, "--version-label", "release-1")
-					.directory(Path.of(System.getProperty("repository.root")).toFile())
-					.redirectErrorStream(false);
-				commandBuilder.environment()
-					.putAll(Map.of("AWS_ACCESS_KEY_ID", "test-key", "AWS_SECRET_ACCESS_KEY", "test-secret",
-							"AWS_REGION", "us-east-1"));
-				Process command = commandBuilder.start();
-				String stdout = new String(command.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-				String stderr = new String(command.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
-				assertThat(command.waitFor()).as(stderr).isZero();
+				Path extra = corpus.resolve("unreferenced.bin");
+				Files.writeString(extra, "must fail before initiation", StandardCharsets.UTF_8);
+				CommandResult invalid = runCommand(corpus, backend.baseUri(), storageId);
+				assertThat(invalid.exitCode()).as(invalid.stderr()).isEqualTo(2);
+				assertThat(invalid.stderr()).contains("SKYWRIGHT_DATASET_CORPUS_FILE_UNREFERENCED");
+				var emptyCatalog = backend.get("/api/v1/dataset-catalog");
+				assertThat(emptyCatalog.statusCode()).as(emptyCatalog.body()).isEqualTo(200);
+				assertThat(JSON.readTree(emptyCatalog.body()).path("items")).isEmpty();
+				Files.delete(extra);
 
-				JsonNode result = JSON.readTree(stdout);
+				CommandResult command = runCommand(corpus, backend.baseUri(), storageId);
+				assertThat(command.exitCode()).as(command.stderr()).isZero();
+
+				JsonNode result = JSON.readTree(command.stdout());
 				assertThat(result.path("state").asText()).isEqualTo("committed");
-				assertThat(result.path("versionLabel").asText()).isEqualTo("release-1");
-				assertThat(result.path("formatIdentity").asText()).isEqualTo("mosaicml-streaming-mds@2");
-				assertThat(result.path("manifestIdentity").asText()).startsWith("sha256:");
-				assertThat(result.path("contentFingerprint").asText()).startsWith("sha256:");
-				assertThat(result.path("verifiedObjectCount").asLong()).isEqualTo(2);
-				assertThat(result.path("verifiedByteCount").asLong()).isPositive();
+				assertThat(result.path("versionLabel").asText())
+					.isEqualTo(expected.path("contentFingerprint").asText().substring(7, 23));
+				assertThat(result.path("formatIdentity").asText()).isEqualTo(expected.path("formatIdentity").asText());
+				assertThat(result.path("manifestIdentity").asText())
+					.isEqualTo(expected.path("manifestIdentity").asText());
+				assertThat(result.path("contentFingerprint").asText())
+					.isEqualTo(expected.path("contentFingerprint").asText());
+				assertThat(result.path("verifiedObjectCount").asLong())
+					.isEqualTo(expected.path("objectCount").asLong());
+				assertThat(result.path("verifiedByteCount").asLong()).isEqualTo(expected.path("byteCount").asLong());
 				assertThat(result.path("preferredDefinitionId").asText())
 					.isEqualTo(result.path("definitionId").asText());
 				assertThat(result.path("preferredDefinitionChanged").asBoolean()).isTrue();
@@ -92,8 +107,8 @@ final class DatasetPublicationApiIT {
 				assertThat(lineage.statusCode()).as(lineage.body()).isEqualTo(200);
 				assertThat(lineage.body()).contains(result.path("definitionId").asText());
 				assertThat(catalog.statusCode()).as(catalog.body()).isEqualTo(200);
-				assertThat(catalog.body()).contains("release-1", "mosaicml-streaming-mds@2", "authority",
-						result.path("payloadLocation").asText());
+				assertThat(catalog.body()).contains(result.path("versionLabel").asText(), "mosaicml-streaming-mds@2",
+						"authority", result.path("payloadLocation").asText());
 
 				Set<String> keys = administrator.listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).build())
 					.join()
@@ -103,8 +118,10 @@ final class DatasetPublicationApiIT {
 					.collect(Collectors.toSet());
 				String payload = result.path("payloadLocation").asText();
 				String operation = result.path("operationLocation").asText();
-				assertThat(keys).containsExactlyInAnyOrder(payload + "/index.json", payload + "/shard.00000.mds",
-						operation + "/manifest.json");
+				Set<String> expectedKeys = new HashSet<>();
+				localBefore.keySet().forEach(key -> expectedKeys.add(payload + "/" + key));
+				expectedKeys.add(operation + "/manifest.json");
+				assertThat(keys).containsExactlyInAnyOrderElementsOf(expectedKeys);
 				for (var entry : localBefore.entrySet()) {
 					byte[] remote = administrator
 						.getObject(
@@ -146,38 +163,6 @@ final class DatasetPublicationApiIT {
 		}
 	}
 
-	private Path corpus() throws Exception {
-		Path corpus = Files.createDirectory(this.temporaryDirectory.resolve("corpus"));
-		byte[] shard = mdsShard("one installed-command sample".getBytes(StandardCharsets.UTF_8));
-		Files.write(corpus.resolve("shard.00000.mds"), shard);
-		Files.writeString(corpus.resolve("index.json"),
-				"""
-						{"version":2,"shards":[{"column_encodings":["bytes"],"column_names":["value"],"column_sizes":[null],"compression":null,"format":"mds","hashes":[],"raw_data":{"basename":"shard.00000.mds","bytes":%d,"hashes":{}},"samples":1,"size_limit":1024,"version":2,"zip_data":null}]}
-						"""
-					.formatted(shard.length)
-					.strip(),
-				StandardCharsets.UTF_8);
-		return corpus;
-	}
-
-	private static byte[] mdsShard(byte[] value) {
-		byte[] configuration = """
-				{"column_encodings":["bytes"],"column_names":["value"],"column_sizes":[null],"compression":null,"format":"mds","hashes":[],"size_limit":1024,"version":2}
-				"""
-			.strip()
-			.getBytes(StandardCharsets.UTF_8);
-		int firstOffset = 12 + configuration.length;
-		return ByteBuffer.allocate(firstOffset + 4 + value.length)
-			.order(ByteOrder.LITTLE_ENDIAN)
-			.putInt(1)
-			.putInt(firstOffset)
-			.putInt(firstOffset + 4 + value.length)
-			.put(configuration)
-			.putInt(value.length)
-			.put(value)
-			.array();
-	}
-
 	private static JsonNode awaitTerminalPublication(BackendFixture backend, String publicationId) throws Exception {
 		for (int attempt = 0; attempt < 200; attempt++) {
 			var response = backend.get("/api/v1/dataset-publications/" + publicationId);
@@ -188,6 +173,23 @@ final class DatasetPublicationApiIT {
 			Thread.sleep(50);
 		}
 		throw new AssertionError("Dataset Publication did not reach a terminal state");
+	}
+
+	private static CommandResult runCommand(Path corpus, URI controlPlane, String storageId) throws Exception {
+		var commandBuilder = new ProcessBuilder("uv", "run", "--project", "sdk", "--locked", "skywright-datasets",
+				"publish", corpus.toString(), "--control-plane", controlPlane.toString(), "--target-storage", storageId)
+			.directory(Path.of(System.getProperty("repository.root")).toFile())
+			.redirectErrorStream(false);
+		commandBuilder.environment()
+			.putAll(Map.of("AWS_ACCESS_KEY_ID", "test-key", "AWS_SECRET_ACCESS_KEY", "test-secret", "AWS_REGION",
+					"us-east-1"));
+		Process command = commandBuilder.start();
+		String stdout = new String(command.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		String stderr = new String(command.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+		return new CommandResult(command.waitFor(), stdout, stderr);
+	}
+
+	private record CommandResult(int exitCode, String stdout, String stderr) {
 	}
 
 	private static S3AsyncClient administrator(SeaweedFsFixture storage) {

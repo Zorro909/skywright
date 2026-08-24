@@ -27,11 +27,14 @@ classifiers = [
 ]
 dependencies = [
   "boto3>=1.40,<2",
+  "brotli>=1.1,<2",
   "jsonschema[format]>=4.25,<5",
   "numpy>=2.2,<3",
   "protobuf==7.36.0",
+  "python-snappy>=0.7,<1",
   "safetensors>=0.6,<1",
   "tensorboard==2.21.0",
+  "zstandard>=0.23,<1",
 ]
 
 [project.scripts]
