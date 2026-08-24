@@ -10,8 +10,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 
 class DatasetPublicationWorkerDispatcherTest {
 
@@ -37,21 +35,23 @@ class DatasetPublicationWorkerDispatcherTest {
 		}
 	}
 
-	@ParameterizedTest
-	@ValueSource(strings = { "DATASET_CORRUPT_EVIDENCE", "DATASET_PROJECTION_UNAVAILABLE" })
-	void recordsVerifierFaultsAgainstTheSameDurablePublication(String failureCode) throws Exception {
+	@Test
+	void recordsTransientManagedProjectionLossAgainstTheSameDurablePublication() throws Exception {
 		UUID publicationId = UUID.randomUUID();
 		var publications = new RecordingService(publicationId);
 		var dispatcher = new DatasetPublicationWorkerDispatcher(publications,
-				publication -> new DatasetPublicationWorkerResult(false, List.of(), 0, 0, null, 0, failureCode, true),
+				publication -> DatasetPublicationWorkerLauncher.projectionFailure(),
 				new DatasetPublicationWorkerRecovery(null, null, null), new RecordingScheduler());
 		try {
 			dispatcher.requested(new DatasetPublicationVerificationRequested(publicationId));
 
 			DatasetPublicationWorkerResult failure = publications.failure.get(5, TimeUnit.SECONDS);
 			assertThat(publications.requestedPublicationId).isEqualTo(publicationId);
-			assertThat(failure.failureCode()).isEqualTo(failureCode);
+			assertThat(failure.failureCode()).isEqualTo("DATASET_PROJECTION_UNAVAILABLE");
 			assertThat(failure.retryable()).isTrue();
+			assertThat(DatasetPublicationService.failureDetail(failure))
+				.isEqualTo("Managed credential projection is temporarily unavailable");
+			assertThat(DatasetPublicationService.unavailableSource(failure)).isEqualTo("Managed Credential Projection");
 		}
 		finally {
 			dispatcher.close();
@@ -76,6 +76,26 @@ class DatasetPublicationWorkerDispatcherTest {
 
 			assertThat(publications.secondVerificationInput.get(5, TimeUnit.SECONDS)).isNull();
 			assertThat(publications.verificationInputAttempts).hasValue(2);
+		}
+		finally {
+			dispatcher.close();
+		}
+	}
+
+	@Test
+	void backendShutdownLeavesVerificationPendingForStartupRecovery() throws Exception {
+		UUID publicationId = UUID.randomUUID();
+		var publications = new RecordingService(publicationId);
+		var verificationInterrupted = new CompletableFuture<Void>();
+		var dispatcher = new DatasetPublicationWorkerDispatcher(publications, publication -> {
+			verificationInterrupted.complete(null);
+			return DatasetPublicationWorkerLauncher.interrupted();
+		}, new DatasetPublicationWorkerRecovery(null, null, null), new RecordingScheduler());
+		try {
+			dispatcher.requested(new DatasetPublicationVerificationRequested(publicationId));
+
+			verificationInterrupted.get(5, TimeUnit.SECONDS);
+			assertThat(publications.failure).isNotDone();
 		}
 		finally {
 			dispatcher.close();

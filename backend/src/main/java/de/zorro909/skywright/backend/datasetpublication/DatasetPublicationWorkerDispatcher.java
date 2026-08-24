@@ -7,6 +7,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -28,6 +29,8 @@ final class DatasetPublicationWorkerDispatcher {
 		.newSingleThreadExecutor(Thread.ofPlatform().name("dataset-transfer-worker-dispatcher").factory());
 
 	private final Set<UUID> dispatched = ConcurrentHashMap.newKeySet();
+
+	private final AtomicBoolean closing = new AtomicBoolean();
 
 	DatasetPublicationWorkerDispatcher(DatasetPublicationOperations publications, DatasetPublicationVerifier verifier,
 			DatasetPublicationWorkerRecovery recovery, DatasetPublicationWorkerRecoveryScheduler scheduler) {
@@ -62,6 +65,9 @@ final class DatasetPublicationWorkerDispatcher {
 				return;
 			}
 			DatasetPublicationWorkerResult result = this.verifier.verify(publication);
+			if (this.closing.get() || "DATASET_VERIFICATION_INTERRUPTED".equals(result.failureCode())) {
+				return;
+			}
 			if (result.verified()) {
 				this.publications.commit(publicationId, result);
 			}
@@ -78,6 +84,9 @@ final class DatasetPublicationWorkerDispatcher {
 					null, 0, failure.errorCode(), false));
 		}
 		catch (RuntimeException failure) {
+			if (this.closing.get()) {
+				return;
+			}
 			try {
 				this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0,
 						0, null, 0, "DATASET_VERIFICATION_UNAVAILABLE", true));
@@ -96,6 +105,7 @@ final class DatasetPublicationWorkerDispatcher {
 
 	@PreDestroy
 	void close() {
+		this.closing.set(true);
 		this.executor.shutdownNow();
 	}
 

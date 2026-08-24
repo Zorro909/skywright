@@ -484,34 +484,52 @@ final class DatasetPublicationApiIT {
 				backend.put("/api/v1/target-storages/" + storageId + "/activation",
 						"{\"expectedRegistrationRevision\":2,\"activated\":true}");
 
-				Process interrupted = startCommand(corpus, backend.baseUri(), storageId, null);
-				var interruptedErrors = new BufferedReader(
-						new InputStreamReader(interrupted.getErrorStream(), StandardCharsets.UTF_8));
-				JsonNode identity = JSON.readTree(interruptedErrors.readLine());
-				String interruptedPublicationId = identity.path("publicationId").asText();
-				assertThat(identity.path("event").asText()).isEqualTo("dataset-publication-identity");
 				objectStorage.pause();
+				boolean storagePaused = true;
+				Process interrupted = startCommand(corpus, backend.baseUri(), storageId, null);
 				try {
+					var interruptedErrors = new BufferedReader(
+							new InputStreamReader(interrupted.getErrorStream(), StandardCharsets.UTF_8));
+					JsonNode identity = JSON.readTree(interruptedErrors.readLine());
+					String interruptedPublicationId = identity.path("publicationId").asText();
+					assertThat(identity.path("event").asText()).isEqualTo("dataset-publication-identity");
 					if (!interrupted.waitFor(10, TimeUnit.SECONDS)) {
 						interrupted.destroyForcibly();
 						interrupted.waitFor();
 					}
+					assertThat(interrupted.exitValue()).isNotZero();
+					objectStorage.unpause();
+					storagePaused = false;
+					objectStorage.awaitReady(administrator);
+					CommandResult recovered = runCommand(corpus, backend.baseUri(), storageId,
+							interruptedPublicationId);
+					assertThat(recovered.exitCode()).as(recovered.stderr()).isZero();
+					assertThat(JSON.readTree(recovered.stdout()).path("publicationId").asText())
+						.isEqualTo(interruptedPublicationId);
 				}
 				finally {
-					objectStorage.unpause();
-					objectStorage.awaitReady(administrator);
+					if (storagePaused) {
+						objectStorage.unpause();
+						objectStorage.awaitReady(administrator);
+					}
 				}
-				assertThat(interrupted.exitValue()).isNotZero();
-				CommandResult recovered = runCommand(corpus, backend.baseUri(), storageId, interruptedPublicationId);
-				assertThat(recovered.exitCode()).as(recovered.stderr()).isZero();
-				assertThat(JSON.readTree(recovered.stdout()).path("publicationId").asText())
-					.isEqualTo(interruptedPublicationId);
 
 				try (var proxy = new DroppingCompletionProxy(backend.baseUri())) {
 					CommandResult reconciled = runCommand(corpus, proxy.baseUri(), storageId);
 					assertThat(reconciled.exitCode()).as(reconciled.stderr()).isZero();
 					assertThat(JSON.readTree(reconciled.stdout()).path("state").asText()).isEqualTo("committed");
 					assertThat(proxy.droppedCompletion()).isTrue();
+				}
+
+				try (var proxy = new RestartOnCommittedReadProxy(backend)) {
+					CommandResult interruptedResult = runCommand(corpus, proxy.baseUri(), storageId);
+					assertThat(interruptedResult.exitCode()).as(interruptedResult.stderr()).isNotZero();
+					String publicationId = publicationIdentity(interruptedResult.stderr());
+					assertThat(proxy.restarted()).isTrue();
+					CommandResult recoveredResult = runCommand(corpus, backend.baseUri(), storageId, publicationId);
+					assertThat(recoveredResult.exitCode()).as(recoveredResult.stderr()).isZero();
+					assertThat(JSON.readTree(recoveredResult.stdout()).path("publicationId").asText())
+						.isEqualTo(publicationId);
 				}
 
 				for (int transferredObjectCount : java.util.List.of(1, files.size())) {
@@ -555,6 +573,36 @@ final class DatasetPublicationApiIT {
 					if (transferredObjectCount == 1) {
 						backend.restart();
 					}
+					else {
+						administrator
+							.putObject(
+									PutObjectRequest.builder()
+										.bucket(bucket)
+										.key(publication.path("operationLocation").asText() + "/manifest.json")
+										.build(),
+									AsyncRequestBody.fromBytes(
+											Base64.getDecoder().decode(expected.path("manifestBase64").asText())))
+							.join();
+						objectStorage.pause();
+						var storagePausedDuringRestart = new AtomicBoolean(true);
+						try {
+							var completion = backend
+								.post("/api/v1/dataset-publications/" + publicationId + "/completion", "{}");
+							assertThat(completion.statusCode()).as(completion.body()).isEqualTo(202);
+							assertThat(JSON.readTree(completion.body()).path("state").asText()).isEqualTo("verifying");
+							backend.restart(() -> {
+								objectStorage.unpause();
+								storagePausedDuringRestart.set(false);
+								objectStorage.awaitReady(administrator);
+							});
+						}
+						finally {
+							if (storagePausedDuringRestart.get()) {
+								objectStorage.unpause();
+							}
+							objectStorage.awaitReady(administrator);
+						}
+					}
 
 					CommandResult command = runCommand(corpus, backend.baseUri(), storageId, publicationId);
 					assertThat(command.exitCode()).as(command.stderr()).isZero();
@@ -565,6 +613,54 @@ final class DatasetPublicationApiIT {
 					assertThat(result.path("definitionId")).isEqualTo(publication.path("definitionId"));
 					assertThat(result.path("payloadLocation")).isEqualTo(publication.path("payloadLocation"));
 				}
+
+				JsonNode corrupt = JSON
+					.readTree(backend
+						.post("/api/v1/dataset-publications",
+								"""
+										{
+										  "targetStorageId":"%s",
+										  "formatIdentity":"%s",
+										  "manifestIdentity":"%s",
+										  "contentFingerprint":"%s",
+										  "objectCount":%d,
+										  "byteCount":%d
+										}
+										""".formatted(storageId, expected.path("formatIdentity").asText(),
+										expected.path("manifestIdentity").asText(),
+										expected.path("contentFingerprint").asText(),
+										expected.path("objectCount").asLong(), expected.path("byteCount").asLong()))
+						.body());
+				String corruptPayload = corrupt.path("payloadLocation").asText();
+				for (var entry : files.entrySet()) {
+					byte[] content = entry.getKey().equals("index.json") ? "corrupt".getBytes(StandardCharsets.UTF_8)
+							: entry.getValue();
+					administrator
+						.putObject(PutObjectRequest.builder()
+							.bucket(bucket)
+							.key(corruptPayload + "/" + entry.getKey())
+							.build(), AsyncRequestBody.fromBytes(content))
+						.join();
+				}
+				byte[] manifest = Base64.getDecoder().decode(expected.path("manifestBase64").asText());
+				administrator
+					.putObject(PutObjectRequest.builder()
+						.bucket(bucket)
+						.key(corrupt.path("operationLocation").asText() + "/manifest.json")
+						.build(), AsyncRequestBody.fromBytes(manifest))
+					.join();
+				backend.put("/api/v1/dataset-publications/" + corrupt.path("publicationId").asText() + "/progress",
+						"{\"uploadedObjectCount\":" + files.size() + ",\"uploadedByteCount\":"
+								+ expected.path("byteCount").asLong() + "}");
+				backend.post("/api/v1/dataset-publications/" + corrupt.path("publicationId").asText() + "/completion",
+						"{}");
+				JsonNode rejected = awaitTerminalPublication(backend, corrupt.path("publicationId").asText());
+				assertThat(rejected.path("failureCode").asText()).isEqualTo("DATASET_REMOTE_MANIFEST_MISMATCH");
+				assertThat(rejected.path("retryable").asBoolean()).isFalse();
+				assertThat(backend.get("/api/v1/datasets/" + corrupt.path("datasetId").asText()).statusCode())
+					.isEqualTo(404);
+				assertThat(backend.get("/api/v1/dataset-catalog/" + corrupt.path("definitionId").asText()).statusCode())
+					.isEqualTo(404);
 			}
 		}
 	}
@@ -662,6 +758,10 @@ final class DatasetPublicationApiIT {
 		return commandBuilder.start();
 	}
 
+	private static String publicationIdentity(String stderr) throws Exception {
+		return JSON.readTree(stderr.lines().findFirst().orElseThrow()).path("publicationId").asText();
+	}
+
 	private record CommandResult(int exitCode, String stdout, String stderr) {
 	}
 
@@ -716,6 +816,70 @@ final class DatasetPublicationApiIT {
 
 		private boolean droppedCompletion() {
 			return this.droppedCompletion.get();
+		}
+
+		@Override
+		public void close() {
+			this.server.stop(0);
+		}
+
+	}
+
+	private static final class RestartOnCommittedReadProxy implements AutoCloseable {
+
+		private final HttpServer server;
+
+		private final BackendFixture backend;
+
+		private final HttpClient client = HttpClient.newHttpClient();
+
+		private final AtomicBoolean restarted = new AtomicBoolean();
+
+		private RestartOnCommittedReadProxy(BackendFixture backend) throws Exception {
+			this.backend = backend;
+			this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+			this.server.createContext("/", exchange -> {
+				try {
+					byte[] requestBody = exchange.getRequestBody().readAllBytes();
+					var request = HttpRequest
+						.newBuilder(this.backend.baseUri().resolve(exchange.getRequestURI().toString()));
+					String requestContentType = exchange.getRequestHeaders().getFirst("Content-Type");
+					if (requestContentType != null) {
+						request.header("Content-Type", requestContentType);
+					}
+					request.method(exchange.getRequestMethod(), HttpRequest.BodyPublishers.ofByteArray(requestBody));
+					HttpResponse<byte[]> response = this.client.send(request.build(),
+							HttpResponse.BodyHandlers.ofByteArray());
+					if (exchange.getRequestMethod().equals("GET")
+							&& exchange.getRequestURI().getPath().contains("/dataset-publications/")
+							&& JSON.readTree(response.body()).path("state").asText().equals("committed")
+							&& this.restarted.compareAndSet(false, true)) {
+						this.backend.restart();
+						exchange.close();
+						return;
+					}
+					String contentType = response.headers().firstValue("Content-Type").orElse("application/json");
+					exchange.getResponseHeaders().set("Content-Type", contentType);
+					exchange.sendResponseHeaders(response.statusCode(), response.body().length);
+					exchange.getResponseBody().write(response.body());
+				}
+				catch (InterruptedException interrupted) {
+					Thread.currentThread().interrupt();
+					exchange.close();
+				}
+				finally {
+					exchange.close();
+				}
+			});
+			this.server.start();
+		}
+
+		private URI baseUri() {
+			return URI.create("http://127.0.0.1:" + this.server.getAddress().getPort());
+		}
+
+		private boolean restarted() {
+			return this.restarted.get();
 		}
 
 		@Override

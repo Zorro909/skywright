@@ -113,6 +113,20 @@ final class BackendFixture implements AutoCloseable {
 		this.baseUri = baseUri(this.application);
 	}
 
+	void restart(RestartAction afterStop) throws Exception {
+		this.application.close();
+		afterStop.run();
+		this.application = run(this.builder.get(), this.database);
+		this.baseUri = baseUri(this.application);
+	}
+
+	@FunctionalInterface
+	interface RestartAction {
+
+		void run() throws Exception;
+
+	}
+
 	HttpResponse<String> get(String path) throws IOException, InterruptedException {
 		var request = HttpRequest.newBuilder(baseUri.resolve(path)).GET().build();
 		return httpClient.send(request, HttpResponse.BodyHandlers.ofString());

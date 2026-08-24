@@ -228,13 +228,27 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 		}
 		operation.state = DatasetPublicationState.FAILED;
 		operation.failureCode = failure.failureCode();
-		operation.failureDetail = failure.retryable() ? "Independent Dataset verification is temporarily unavailable"
-				: "Independent Dataset verification rejected the staged content";
-		operation.unavailableSource = failure.retryable() ? "Dataset Target Storage" : null;
+		operation.failureDetail = failureDetail(failure);
+		operation.unavailableSource = unavailableSource(failure);
 		operation.retryable = failure.retryable();
 		operation.verificationWorkerPid = failure.workerPid();
 		operation.completedAt = this.clock.instant();
 		operation.updatedAt = operation.completedAt;
+	}
+
+	static String failureDetail(DatasetPublicationWorkerResult failure) {
+		if ("DATASET_PROJECTION_UNAVAILABLE".equals(failure.failureCode())) {
+			return "Managed credential projection is temporarily unavailable";
+		}
+		return failure.retryable() ? "Independent Dataset verification is temporarily unavailable"
+				: "Independent Dataset verification rejected the staged content";
+	}
+
+	static String unavailableSource(DatasetPublicationWorkerResult failure) {
+		if ("DATASET_PROJECTION_UNAVAILABLE".equals(failure.failureCode())) {
+			return "Managed Credential Projection";
+		}
+		return failure.retryable() ? "Dataset Target Storage" : null;
 	}
 
 	@Transactional(readOnly = true)

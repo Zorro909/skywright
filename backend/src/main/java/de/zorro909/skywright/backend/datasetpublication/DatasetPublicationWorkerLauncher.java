@@ -30,6 +30,8 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 
 	private final Set<ActiveWorker> activeWorkers = ConcurrentHashMap.newKeySet();
 
+	private final AtomicBoolean closing = new AtomicBoolean();
+
 	DatasetPublicationWorkerLauncher(TargetStorageResolver targetStorages,
 			DatasetPublicationCredentialProjectionLifecycle projections, int verificationConcurrency) {
 		this.targetStorages = targetStorages;
@@ -39,9 +41,15 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 
 	@Override
 	public DatasetPublicationWorkerResult verify(DatasetPublicationView publication) {
-		ResolvedTargetStorage target = this.targetStorages.resolveDataset(publication.targetStorageId(),
-				"transfer-worker");
-		AwsCredentials credentials = target.credentials().resolveCredentials();
+		ResolvedTargetStorage target;
+		AwsCredentials credentials;
+		try {
+			target = this.targetStorages.resolveDataset(publication.targetStorageId(), "transfer-worker");
+			credentials = target.credentials().resolveCredentials();
+		}
+		catch (RuntimeException failure) {
+			return projectionFailure();
+		}
 		Path directory = null;
 		Process worker = null;
 		UUID projectionId = null;
@@ -74,16 +82,19 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 			}
 			awaitCompletion(worker);
 			if (!Files.isRegularFile(result)) {
-				return failure();
+				return this.closing.get() ? interrupted() : failure();
 			}
 			return JSON.readValue(result.toFile(), DatasetPublicationWorkerResult.class);
 		}
 		catch (IOException exception) {
-			return failure();
+			return this.closing.get() ? interrupted() : failure();
 		}
 		catch (InterruptedException exception) {
 			Thread.currentThread().interrupt();
-			return failure();
+			return this.closing.get() ? interrupted() : failure();
+		}
+		catch (RuntimeException exception) {
+			return this.closing.get() ? interrupted() : projectionFailure();
 		}
 		finally {
 			if (activeWorker != null) {
@@ -142,6 +153,7 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 
 	@PreDestroy
 	void close() {
+		this.closing.set(true);
 		this.activeWorkers.forEach(activeWorker -> {
 			terminate(activeWorker.process);
 			activeWorker.verificationFinished.set(true);
@@ -203,6 +215,16 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 	private static DatasetPublicationWorkerResult failure() {
 		return new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0, null, 0,
 				"DATASET_VERIFICATION_UNAVAILABLE", true);
+	}
+
+	static DatasetPublicationWorkerResult projectionFailure() {
+		return new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0, null, 0,
+				"DATASET_PROJECTION_UNAVAILABLE", true);
+	}
+
+	static DatasetPublicationWorkerResult interrupted() {
+		return new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0, null, 0,
+				"DATASET_VERIFICATION_INTERRUPTED", true);
 	}
 
 	private static final class ActiveWorker {
