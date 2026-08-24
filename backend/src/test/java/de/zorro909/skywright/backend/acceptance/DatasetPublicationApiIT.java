@@ -2,16 +2,19 @@ package de.zorro909.skywright.backend.acceptance;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.zorro909.skywright.backend.datasetpublication.DatasetPublicationCommitGateTestConfiguration;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -38,6 +41,27 @@ final class DatasetPublicationApiIT {
 
 	@TempDir
 	Path temporaryDirectory;
+
+	@Test
+	void existingDatasetPublicationRequiresAnExplicitPreferredDefinitionDecision() throws Exception {
+		try (var backend = BackendFixture.start()) {
+			var response = backend.post("/api/v1/dataset-publications", """
+					{
+					  "targetStorageId":"%s",
+					  "datasetId":"%s",
+					  "expectedDatasetRevision":1,
+					  "formatIdentity":"mosaicml-streaming-mds@2",
+					  "manifestIdentity":"sha256:%s",
+					  "contentFingerprint":"sha256:%s",
+					  "objectCount":1,
+					  "byteCount":1
+					}
+					""".formatted(UUID.randomUUID(), UUID.randomUUID(), "0".repeat(64), "1".repeat(64)));
+
+			assertThat(response.statusCode()).as(response.body()).isEqualTo(422);
+			assertThat(response.body()).contains("SKYWRIGHT_DATASET_PUBLICATION_INVALID");
+		}
+	}
 
 	@Test
 	void installedCommandPublishesTheVersionedMdsContractFixtureAtomically() throws Exception {
@@ -124,6 +148,137 @@ final class DatasetPublicationApiIT {
 				assertThat(catalog.body()).contains(result.path("versionLabel").asText(), "mosaicml-streaming-mds@2",
 						"authority", result.path("payloadLocation").asText());
 
+				String fingerprint = result.path("contentFingerprint").asText();
+				char differentDigit = fingerprint.charAt(23) == '0' ? '1' : '0';
+				String collidingFingerprint = fingerprint.substring(0, 23) + differentDigit + fingerprint.substring(24);
+				var collidingInitiation = backend.post("/api/v1/dataset-publications", """
+						{
+						  "targetStorageId":"%s",
+						  "datasetId":"%s",
+						  "expectedDatasetRevision":1,
+						  "preferredDefinitionDecision":"advance",
+						  "formatIdentity":"mosaicml-streaming-mds@2",
+						  "manifestIdentity":"%s",
+						  "contentFingerprint":"%s",
+						  "objectCount":1,
+						  "byteCount":1
+						}
+						""".formatted(storageId, result.path("datasetId").asText(),
+						result.path("manifestIdentity").asText(), collidingFingerprint));
+				assertThat(collidingInitiation.statusCode()).as(collidingInitiation.body()).isEqualTo(201);
+				JsonNode colliding = JSON.readTree(collidingInitiation.body());
+				assertThat(colliding.path("versionLabel").asText()).isEqualTo(collidingFingerprint.substring(7, 25));
+				assertThat(colliding.path("contentFingerprint").asText()).isEqualTo(collidingFingerprint);
+				var repeatedFingerprintInitiation = backend.post("/api/v1/dataset-publications", """
+						{
+						  "targetStorageId":"%s",
+						  "datasetId":"%s",
+						  "expectedDatasetRevision":1,
+						  "preferredDefinitionDecision":"keep",
+						  "formatIdentity":"mosaicml-streaming-mds@2",
+						  "manifestIdentity":"%s",
+						  "contentFingerprint":"%s",
+						  "objectCount":1,
+						  "byteCount":1
+						}
+						""".formatted(storageId, result.path("datasetId").asText(),
+						result.path("manifestIdentity").asText(), fingerprint));
+				assertThat(repeatedFingerprintInitiation.statusCode()).as(repeatedFingerprintInitiation.body())
+					.isEqualTo(201);
+				assertThat(JSON.readTree(repeatedFingerprintInitiation.body()).path("versionLabel").asText())
+					.isEqualTo(fingerprint.substring(7, 25));
+
+				CommandResult separateLineageCommand = runCommand(corpus, backend.baseUri(), storageId,
+						"--version-label", "same-content-new-lineage");
+				assertThat(separateLineageCommand.exitCode()).as(separateLineageCommand.stderr()).isZero();
+				JsonNode separateLineage = JSON.readTree(separateLineageCommand.stdout());
+				assertThat(separateLineage.path("datasetId")).isNotEqualTo(result.path("datasetId"));
+				assertThat(separateLineage.path("contentFingerprint")).isEqualTo(result.path("contentFingerprint"));
+
+				CommandResult advancedCommand = runCommand(corpus, backend.baseUri(), storageId, "--version-label",
+						"v2", "--dataset", result.path("datasetId").asText(), "--expected-dataset-revision", "1",
+						"--advance-preferred");
+				assertThat(advancedCommand.exitCode()).as(advancedCommand.stderr()).isZero();
+				JsonNode advanced = JSON.readTree(advancedCommand.stdout());
+				assertThat(advanced.path("datasetId")).isEqualTo(result.path("datasetId"));
+				assertThat(advanced.path("definitionId")).isNotEqualTo(result.path("definitionId"));
+				assertThat(advanced.path("preferredDefinitionId")).isEqualTo(advanced.path("definitionId"));
+				assertThat(advanced.path("preferredDefinitionChanged").asBoolean()).isTrue();
+
+				var repeatedCompletion = backend.post(
+						"/api/v1/dataset-publications/" + advanced.path("publicationId").asText() + "/completion",
+						"{}");
+				assertThat(repeatedCompletion.statusCode()).as(repeatedCompletion.body()).isEqualTo(202);
+				assertThat(JSON.readTree(repeatedCompletion.body()).path("definitionId"))
+					.isEqualTo(advanced.path("definitionId"));
+
+				CommandResult keptCommand = runCommand(corpus, backend.baseUri(), storageId, "--version-label", "v3",
+						"--dataset", result.path("datasetId").asText(), "--expected-dataset-revision", "2",
+						"--keep-preferred");
+				assertThat(keptCommand.exitCode()).as(keptCommand.stderr()).isZero();
+				JsonNode kept = JSON.readTree(keptCommand.stdout());
+				assertThat(kept.path("preferredDefinitionId")).isEqualTo(advanced.path("definitionId"));
+				assertThat(kept.path("preferredDefinitionChanged").asBoolean()).isFalse();
+
+				CommandResult duplicateLabel = runCommand(corpus, backend.baseUri(), storageId, "--version-label", "v2",
+						"--dataset", result.path("datasetId").asText(), "--expected-dataset-revision", "3",
+						"--keep-preferred");
+				assertThat(duplicateLabel.exitCode()).isEqualTo(1);
+				assertThat(duplicateLabel.stderr()).contains("DATASET_VERSION_LABEL_CONFLICT");
+
+				CommandResult staleCommand = runCommand(corpus, backend.baseUri(), storageId, "--version-label",
+						"stale", "--dataset", result.path("datasetId").asText(), "--expected-dataset-revision", "2",
+						"--advance-preferred");
+				assertThat(staleCommand.exitCode()).isEqualTo(1);
+				assertThat(staleCommand.stderr()).contains("DATASET_REVISION_STALE");
+
+				var updatedLineage = backend.get("/api/v1/datasets/" + result.path("datasetId").asText());
+				assertThat(updatedLineage.statusCode()).as(updatedLineage.body()).isEqualTo(200);
+				assertThat(updatedLineage.body()).contains("\"revision\":3", advanced.path("definitionId").asText());
+
+				try (var peer = backend.peerWithTargetStorageIntegration();
+						var requests = Executors.newVirtualThreadPerTaskExecutor()) {
+					DatasetPublicationCommitGateTestConfiguration.blockNextCommits(2);
+					var first = requests.submit(() -> runCommand(corpus, backend.baseUri(), storageId,
+							"--version-label", "competing-a", "--dataset", result.path("datasetId").asText(),
+							"--expected-dataset-revision", "3", "--advance-preferred"));
+					var second = requests.submit(() -> runCommand(corpus, peer.baseUri(), storageId, "--version-label",
+							"competing-b", "--dataset", result.path("datasetId").asText(),
+							"--expected-dataset-revision", "3", "--advance-preferred"));
+					var competing = java.util.List.of(first.get(), second.get())
+						.stream()
+						.sorted(Comparator.comparingInt(CommandResult::exitCode))
+						.toList();
+					assertThat(competing).extracting(CommandResult::exitCode).containsExactly(0, 1);
+					assertThat(competing.get(1).stderr()).contains("DATASET_REVISION_STALE");
+					JsonNode winner = JSON.readTree(competing.getFirst().stdout());
+					var competedLineage = backend.get("/api/v1/datasets/" + result.path("datasetId").asText());
+					assertThat(competedLineage.body()).contains("\"revision\":4", winner.path("definitionId").asText());
+
+					DatasetPublicationCommitGateTestConfiguration.blockNextCommits(2);
+					var advancing = requests.submit(() -> runCommand(corpus, backend.baseUri(), storageId,
+							"--version-label", "pointer-race-advance", "--dataset", result.path("datasetId").asText(),
+							"--expected-dataset-revision", "4", "--advance-preferred"));
+					var keeping = requests.submit(() -> runCommand(corpus, peer.baseUri(), storageId, "--version-label",
+							"pointer-race-keep", "--dataset", result.path("datasetId").asText(),
+							"--expected-dataset-revision", "4", "--keep-preferred"));
+					var pointerRace = java.util.List.of(advancing.get(), keeping.get())
+						.stream()
+						.sorted(Comparator.comparingInt(CommandResult::exitCode))
+						.toList();
+					assertThat(pointerRace).extracting(CommandResult::exitCode).containsExactly(0, 1);
+					assertThat(pointerRace.get(1).stderr()).contains("DATASET_REVISION_STALE");
+					assertThat(backend.get("/api/v1/datasets/" + result.path("datasetId").asText()).body())
+						.contains("\"revision\":5");
+				}
+				var versions = backend
+					.get("/api/v1/dataset-catalog?datasetId=" + result.path("datasetId").asText() + "&limit=100");
+				assertThat(versions.statusCode()).as(versions.body()).isEqualTo(200);
+				assertThat(versions.body())
+					.contains(result.path("definitionId").asText(), advanced.path("definitionId").asText(),
+							kept.path("definitionId").asText())
+					.doesNotContain("\"versionLabel\":\"stale\"");
+
 				Set<String> keys = administrator.listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).build())
 					.join()
 					.contents()
@@ -135,7 +290,7 @@ final class DatasetPublicationApiIT {
 				Set<String> expectedKeys = new HashSet<>();
 				localBefore.keySet().forEach(key -> expectedKeys.add(payload + "/" + key));
 				expectedKeys.add(operation + "/manifest.json");
-				assertThat(keys).containsExactlyInAnyOrderElementsOf(expectedKeys);
+				assertThat(keys).containsAll(expectedKeys);
 				for (var entry : localBefore.entrySet()) {
 					byte[] remote = administrator
 						.getObject(
@@ -173,6 +328,21 @@ final class DatasetPublicationApiIT {
 				assertThat(failedOperation.statusCode()).as(failedOperation.body()).isEqualTo(200);
 				assertThat(failedResult.toString()).contains("\"state\":\"failed\"",
 						"\"failureCode\":\"DATASET_VERIFICATION_UNAVAILABLE\"", "\"retryable\":true");
+
+				try (var restarted = backend.restartWithTargetStorageIntegration()) {
+					var persistedLineage = restarted.get("/api/v1/datasets/" + result.path("datasetId").asText());
+					assertThat(persistedLineage.statusCode()).as(persistedLineage.body()).isEqualTo(200);
+					assertThat(persistedLineage.body()).contains("\"revision\":5");
+					var persistedVersions = restarted
+						.get("/api/v1/dataset-catalog?datasetId=" + result.path("datasetId").asText() + "&limit=100");
+					assertThat(JSON.readTree(persistedVersions.body()).path("items")).hasSize(5);
+					var persistedRetry = restarted.post(
+							"/api/v1/dataset-publications/" + result.path("publicationId").asText() + "/completion",
+							"{}");
+					assertThat(persistedRetry.statusCode()).as(persistedRetry.body()).isEqualTo(202);
+					assertThat(JSON.readTree(persistedRetry.body()).path("definitionId"))
+						.isEqualTo(result.path("definitionId"));
+				}
 			}
 		}
 	}
@@ -231,9 +401,13 @@ final class DatasetPublicationApiIT {
 		throw new AssertionError("Dataset Publication did not reach a terminal state");
 	}
 
-	private static CommandResult runCommand(Path corpus, URI controlPlane, String storageId) throws Exception {
-		var commandBuilder = new ProcessBuilder("uv", "run", "--project", "sdk", "--locked", "skywright-datasets",
-				"publish", corpus.toString(), "--control-plane", controlPlane.toString(), "--target-storage", storageId)
+	private static CommandResult runCommand(Path corpus, URI controlPlane, String storageId, String... extra)
+			throws Exception {
+		var arguments = new java.util.ArrayList<>(
+				java.util.List.of("uv", "run", "--project", "sdk", "--locked", "skywright-datasets", "publish",
+						corpus.toString(), "--control-plane", controlPlane.toString(), "--target-storage", storageId));
+		arguments.addAll(java.util.List.of(extra));
+		var commandBuilder = new ProcessBuilder(arguments)
 			.directory(Path.of(System.getProperty("repository.root")).toFile())
 			.redirectErrorStream(false);
 		commandBuilder.environment()

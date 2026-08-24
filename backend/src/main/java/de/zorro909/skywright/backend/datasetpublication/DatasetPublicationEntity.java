@@ -34,6 +34,13 @@ class DatasetPublicationEntity {
 	@Column(name = "target_storage_id", nullable = false)
 	UUID targetStorageId;
 
+	@Column(name = "expected_dataset_revision")
+	Long expectedDatasetRevision;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "preferred_definition_decision")
+	PreferredDefinitionDecision preferredDefinitionDecision;
+
 	@Column(name = "version_label", nullable = false)
 	String versionLabel;
 
@@ -99,10 +106,12 @@ class DatasetPublicationEntity {
 		var entity = new DatasetPublicationEntity();
 		entity.publicationId = UUID.randomUUID();
 		entity.state = DatasetPublicationState.AWAITING_UPLOAD;
-		entity.datasetId = UUID.randomUUID();
+		entity.datasetId = request.datasetId() == null ? UUID.randomUUID() : request.datasetId();
 		entity.definitionId = UUID.randomUUID();
 		entity.copyId = UUID.randomUUID();
 		entity.targetStorageId = request.targetStorageId();
+		entity.expectedDatasetRevision = request.expectedDatasetRevision();
+		entity.preferredDefinitionDecision = request.preferredDefinitionDecision();
 		entity.versionLabel = request.versionLabel();
 		entity.formatIdentity = request.formatIdentity();
 		entity.manifestIdentity = request.manifestIdentity();

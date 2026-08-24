@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.acceptance;
 
 import de.zorro909.skywright.backend.SkywrightBackendApplication;
+import de.zorro909.skywright.backend.datasetpublication.DatasetPublicationCommitGateTestConfiguration;
 import de.zorro909.skywright.backend.targetstorage.TargetStorageIntegrationTestConfiguration;
 import java.io.IOException;
 import java.net.URI;
@@ -24,6 +25,8 @@ final class BackendFixture implements AutoCloseable {
 
 	private final PostgreSqlFixture.Database database;
 
+	private boolean ownsDatabase = true;
+
 	private BackendFixture(ConfigurableApplicationContext application, PostgreSqlFixture.Database database) {
 		this.application = application;
 		this.database = database;
@@ -37,7 +40,7 @@ final class BackendFixture implements AutoCloseable {
 
 	static BackendFixture startWithTargetStorageIntegration() {
 		return start(new SpringApplicationBuilder(SkywrightBackendApplication.class,
-				TargetStorageIntegrationTestConfiguration.class)
+				TargetStorageIntegrationTestConfiguration.class, DatasetPublicationCommitGateTestConfiguration.class)
 			.profiles("target-storage-integration"));
 	}
 
@@ -51,12 +54,7 @@ final class BackendFixture implements AutoCloseable {
 		try {
 			var database = PostgreSqlFixture.freshDatabase();
 			try {
-				var properties = new java.util.ArrayList<>(java.util.List.of(database.springProperties()));
-				properties.add("server.port=0");
-				properties.add("skywright.deployment.environment=test");
-				var arguments = properties.stream().map(property -> "--" + property).toArray(String[]::new);
-				var application = builder.web(WebApplicationType.SERVLET).run(arguments);
-				return new BackendFixture(application, database);
+				return start(builder, database);
 			}
 			catch (RuntimeException exception) {
 				database.close();
@@ -66,6 +64,38 @@ final class BackendFixture implements AutoCloseable {
 		catch (java.sql.SQLException exception) {
 			throw new IllegalStateException("Could not provision the test database", exception);
 		}
+	}
+
+	private static BackendFixture start(SpringApplicationBuilder builder, PostgreSqlFixture.Database database) {
+		var properties = new java.util.ArrayList<>(java.util.List.of(database.springProperties()));
+		properties.add("server.port=0");
+		properties.add("skywright.deployment.environment=test");
+		var arguments = properties.stream().map(property -> "--" + property).toArray(String[]::new);
+		var application = builder.web(WebApplicationType.SERVLET).run(arguments);
+		return new BackendFixture(application, database);
+	}
+
+	BackendFixture restartWithTargetStorageIntegration() {
+		this.application.close();
+		BackendFixture restarted = start(
+				new SpringApplicationBuilder(SkywrightBackendApplication.class,
+						TargetStorageIntegrationTestConfiguration.class,
+						DatasetPublicationCommitGateTestConfiguration.class)
+					.profiles("target-storage-integration"),
+				this.database);
+		this.ownsDatabase = false;
+		return restarted;
+	}
+
+	BackendFixture peerWithTargetStorageIntegration() {
+		BackendFixture peer = start(
+				new SpringApplicationBuilder(SkywrightBackendApplication.class,
+						TargetStorageIntegrationTestConfiguration.class,
+						DatasetPublicationCommitGateTestConfiguration.class)
+					.profiles("target-storage-integration"),
+				this.database);
+		peer.ownsDatabase = false;
+		return peer;
 	}
 
 	HttpResponse<String> get(String path) throws IOException, InterruptedException {
@@ -105,7 +135,9 @@ final class BackendFixture implements AutoCloseable {
 	@Override
 	public void close() throws Exception {
 		application.close();
-		database.close();
+		if (this.ownsDatabase) {
+			database.close();
+		}
 	}
 
 }

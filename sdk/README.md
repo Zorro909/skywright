@@ -223,6 +223,22 @@ skywright-datasets publish ./corpus \
   --concurrency 4
 ```
 
+To publish another definition into an existing Dataset, first read its current `revision` and
+`preferredDefinitionId` from `GET /api/v1/datasets/{datasetId}`. Then name that revision and choose
+whether this definition should become preferred:
+
+```bash
+skywright-datasets publish ./corpus \
+  --control-plane https://skywright.example \
+  --target-storage 00000000-0000-0000-0000-000000000001 \
+  --dataset 00000000-0000-0000-0000-000000000002 \
+  --expected-dataset-revision 3 \
+  --advance-preferred
+```
+
+Use `--keep-preferred` instead to preserve the current pointer. A stale revision fails. Read the
+Dataset again before retrying so the next advance or keep decision is based on its current state.
+
 ## Operational runtime command
 
 Installing the SDK registers one private operational bootstrap for Environment Profiles:

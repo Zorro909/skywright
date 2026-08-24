@@ -618,12 +618,24 @@ components:
     DatasetPublicationState:
       type: string
       enum: [awaiting-upload, verifying, committed, failed]
+    DatasetPreferredDefinitionDecision:
+      type: string
+      enum: [advance, keep]
     InitiateDatasetPublication:
       type: object
       additionalProperties: false
       required: [targetStorageId, formatIdentity, manifestIdentity, contentFingerprint, objectCount, byteCount]
       properties:
         targetStorageId: { $ref: '#/components/schemas/SkywrightId' }
+        datasetId:
+          oneOf:
+            - { $ref: '#/components/schemas/SkywrightId' }
+            - { type: 'null' }
+        expectedDatasetRevision: { type: [integer, 'null'], format: int64, minimum: 1 }
+        preferredDefinitionDecision:
+          oneOf:
+            - { $ref: '#/components/schemas/DatasetPreferredDefinitionDecision' }
+            - { type: 'null' }
         versionLabel: { type: [string, 'null'], minLength: 1, maxLength: 255 }
         formatIdentity: { type: string, enum: [mosaicml-streaming-mds@2] }
         manifestIdentity: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
