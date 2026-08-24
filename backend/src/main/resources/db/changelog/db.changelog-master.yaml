@@ -9,3 +9,5 @@ databaseChangeLog:
       file: db/changelog/versions/0003-training-project-registry.yaml
   - include:
       file: db/changelog/versions/0005-dataset-publication.yaml
+  - include:
+      file: db/changelog/versions/0006-resumable-dataset-publication.yaml

@@ -1,36 +1,21 @@
 """Installed source-side command for Dataset Publication."""
 
-# boto3 deliberately exposes a runtime-shaped client. Keep Unknown contained at
-# this private storage boundary while preserving strict checks elsewhere.
-# pyright: reportMissingTypeStubs=false
-# pyright: reportUnknownArgumentType=false
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
-
 from __future__ import annotations
 
 import argparse
-import base64
-import hashlib
 import json
-import os
-import stat
 import sys
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import cast
 
 from skywright._dataset_errors import DatasetPublicationError
-from skywright._dataset_publication import (
-    InspectedCorpus,
-    ManifestEntry,
-    SourceIdentity,
-    inspect_mds_corpus,
-    verify_source_inventory,
-)
+from skywright._dataset_publication import inspect_mds_corpus
+from skywright._dataset_upload import upload as _upload
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
@@ -62,6 +47,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     )
     publish.add_argument("--version-label")
     publish.add_argument("--concurrency", type=_positive_int, default=4)
+    publish.add_argument("--resume", metavar="PUBLICATION_ID")
     parsed = parser.parse_args(arguments)
     try:
         if parsed.operation == "publish":
@@ -74,6 +60,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 parsed.dataset,
                 parsed.expected_dataset_revision,
                 parsed.preferred_definition_decision,
+                parsed.resume,
             )
             print(_json(result))
             return 0
@@ -99,6 +86,7 @@ def _publish(
     dataset_id: str | None = None,
     expected_dataset_revision: int | None = None,
     preferred_definition_decision: str | None = None,
+    resume_publication_id: str | None = None,
 ) -> object:
     existing_values = (
         dataset_id,
@@ -118,7 +106,7 @@ def _publish(
             "The version label must contain between 1 and 255 characters",
         )
     corpus = inspect_mds_corpus(corpus_path, concurrency=concurrency)
-    initiation: dict[str, object] = {
+    requested: dict[str, object] = {
         "targetStorageId": target_storage_id,
         "versionLabel": version_label,
         "formatIdentity": corpus.format_identity,
@@ -128,64 +116,195 @@ def _publish(
         "byteCount": corpus.byte_count,
     }
     if dataset_id is not None:
-        initiation.update(
+        requested.update(
             {
                 "datasetId": dataset_id,
                 "expectedDatasetRevision": expected_dataset_revision,
                 "preferredDefinitionDecision": preferred_definition_decision,
             }
         )
-    publication = _request(
-        control_plane,
-        "POST",
-        "/api/v1/dataset-publications",
-        initiation,
-    )
+    if resume_publication_id is None:
+        publication = _request(
+            control_plane,
+            "POST",
+            "/api/v1/dataset-publications",
+            requested,
+        )
+    else:
+        publication = _request(
+            control_plane,
+            "POST",
+            f"/api/v1/dataset-publications/{resume_publication_id}/resume",
+            requested,
+        )
     if not isinstance(publication, dict):
         raise _protocol_error()
     publication = cast(dict[str, object], publication)
-    storage = _request(
-        control_plane,
-        "GET",
-        f"/api/v1/target-storages/{publication.get('targetStorageId')}",
-        None,
-    )
-    if not isinstance(storage, dict):
+    _validate_publication_identity(publication, requested, resume_publication_id)
+    publication_id = publication.get("publicationId")
+    if not isinstance(publication_id, str):
         raise _protocol_error()
-    storage = cast(dict[str, object], storage)
-    _upload(corpus, publication, storage, concurrency)
-    result = _request(
-        control_plane,
-        "POST",
-        f"/api/v1/dataset-publications/{publication.get('publicationId')}/completion",
-        {},
+    print(
+        _json(
+            {
+                "event": "dataset-publication-identity",
+                "publicationId": publication_id,
+            }
+        ),
+        file=sys.stderr,
+        flush=True,
     )
+    if publication.get("state") == "committed":
+        return publication
+    if (
+        publication.get("state") == "failed"
+        and publication.get("retryable") is not True
+    ):
+        raise _publication_failure(publication)
+    if publication.get("state") == "verifying":
+        result: object = publication
+    else:
+        storage = _request(
+            control_plane,
+            "GET",
+            f"/api/v1/target-storages/{publication.get('targetStorageId')}",
+            None,
+        )
+        if not isinstance(storage, dict):
+            raise _protocol_error()
+        storage = cast(dict[str, object], storage)
+        uploaded_objects = 0
+        uploaded_bytes = 0
+
+        def progress(byte_count: int) -> None:
+            nonlocal uploaded_objects, uploaded_bytes
+            uploaded_objects += 1
+            uploaded_bytes += byte_count
+            _request(
+                control_plane,
+                "PUT",
+                f"/api/v1/dataset-publications/{publication_id}/progress",
+                {
+                    "uploadedObjectCount": uploaded_objects,
+                    "uploadedByteCount": uploaded_bytes,
+                },
+            )
+
+        try:
+            _upload(corpus, publication, storage, concurrency, progress)
+        except DatasetPublicationError as error:
+            _record_failure(control_plane, publication_id, error)
+            raise
+        try:
+            result = _request(
+                control_plane,
+                "POST",
+                f"/api/v1/dataset-publications/{publication_id}/completion",
+                {},
+            )
+        except DatasetPublicationError as error:
+            if not error.retryable:
+                _record_failure(control_plane, publication_id, error)
+                raise
+            result = _request(
+                control_plane,
+                "GET",
+                f"/api/v1/dataset-publications/{publication_id}",
+                None,
+            )
+            result_state = (
+                cast(dict[str, object], result).get("state")
+                if isinstance(result, dict)
+                else None
+            )
+            if result_state in {"awaiting-upload", "uploading"}:
+                ambiguous = DatasetPublicationError(
+                    "DATASET_COMMIT_RESPONSE_AMBIGUOUS",
+                    "The completion request did not commit and can be retried",
+                    retryable=True,
+                )
+                _record_failure(control_plane, publication_id, ambiguous)
+                raise ambiguous from error
     if not isinstance(result, dict):
         raise _protocol_error()
     result = cast(dict[str, object], result)
-    while result.get("state") in {"awaiting-upload", "verifying"}:
+    while result.get("state") in {
+        "awaiting-upload",
+        "uploading",
+        "verifying",
+        "committing",
+    }:
         time.sleep(0.1)
         result = _request(
             control_plane,
             "GET",
-            f"/api/v1/dataset-publications/{publication.get('publicationId')}",
+            f"/api/v1/dataset-publications/{publication_id}",
             None,
         )
         if not isinstance(result, dict):
             raise _protocol_error()
         result = cast(dict[str, object], result)
     if result.get("state") == "failed":
-        code = result.get("failureCode")
-        if not isinstance(code, str):
-            raise _protocol_error()
-        raise DatasetPublicationError(
-            code,
-            "Independent Dataset verification failed",
-            retryable=result.get("retryable") is True,
-        )
+        raise _publication_failure(result)
     if result.get("state") != "committed":
         raise _protocol_error()
     return result
+
+
+def _publication_failure(publication: dict[str, object]) -> DatasetPublicationError:
+    code = publication.get("failureCode")
+    detail = publication.get("failureDetail")
+    if not isinstance(code, str):
+        return _protocol_error()
+    return DatasetPublicationError(
+        code,
+        detail if isinstance(detail, str) else "Dataset Publication failed",
+        retryable=publication.get("retryable") is True,
+    )
+
+
+def _record_failure(
+    control_plane: str, publication_id: str, error: DatasetPublicationError
+) -> None:
+    with suppress(DatasetPublicationError):
+        _request(
+            control_plane,
+            "PUT",
+            f"/api/v1/dataset-publications/{publication_id}/failure",
+            {"failureCode": error.code},
+        )
+
+
+def _validate_publication_identity(
+    publication: dict[str, object],
+    requested: dict[str, object],
+    resume_publication_id: str | None,
+) -> None:
+    publication_id = publication.get("publicationId")
+    if not isinstance(publication_id, str) or (
+        resume_publication_id is not None and publication_id != resume_publication_id
+    ):
+        raise _protocol_error()
+    for field in (
+        "targetStorageId",
+        "formatIdentity",
+        "manifestIdentity",
+        "contentFingerprint",
+        "objectCount",
+        "byteCount",
+    ):
+        if publication.get(field) != requested[field]:
+            raise DatasetPublicationError(
+                "DATASET_PUBLICATION_CONFLICT",
+                "The Dataset Publication does not match the requested immutable facts",
+            )
+    requested_label = requested["versionLabel"]
+    effective_label = publication.get("versionLabel")
+    if requested_label is not None and effective_label != requested_label:
+        raise DatasetPublicationError(
+            "DATASET_PUBLICATION_CONFLICT",
+            "The Dataset Publication does not match the requested immutable facts",
+        )
 
 
 def _request(base: str, method: str, path: str, body: object | None) -> object:
@@ -232,171 +351,6 @@ def _request(base: str, method: str, path: str, body: object | None) -> object:
             "CONTROL_PLANE_ADDRESS_INVALID",
             "The control-plane address is invalid",
         ) from error
-
-
-def _upload(
-    corpus: InspectedCorpus,
-    publication: dict[str, object],
-    storage: dict[str, object],
-    concurrency: int,
-) -> None:
-    import boto3
-    from botocore.exceptions import BotoCoreError, ClientError
-
-    configuration = storage.get("configuration")
-    bucket = storage.get("bucket")
-    payload_location = publication.get("payloadLocation")
-    operation_location = publication.get("operationLocation")
-    if (
-        not isinstance(configuration, dict)
-        or not isinstance(bucket, str)
-        or not isinstance(payload_location, str)
-        or not isinstance(operation_location, str)
-    ):
-        raise _protocol_error()
-    typed_configuration = cast(dict[str, object], configuration)
-    endpoint = typed_configuration.get("endpoint")
-    region = typed_configuration.get("region")
-    path_style = typed_configuration.get("pathStyleAccess")
-    if not isinstance(endpoint, str) or not isinstance(region, str):
-        raise _protocol_error()
-    from botocore.config import Config
-
-    client: Any = boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        region_name=region,
-        config=Config(
-            s3={"addressing_style": "path" if path_style is True else "virtual"}
-        ),
-    )
-    try:
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            uploads = [
-                executor.submit(
-                    _put_source,
-                    client,
-                    bucket,
-                    f"{payload_location}/{entry.object_key}",
-                    entry,
-                )
-                for entry in corpus.entries
-            ]
-            for upload in uploads:
-                upload.result()
-        verify_source_inventory(corpus)
-        _put_bytes(
-            client,
-            bucket,
-            f"{operation_location}/manifest.json",
-            corpus.manifest_bytes,
-            corpus.manifest_identity,
-        )
-    except DatasetPublicationError:
-        raise
-    except (BotoCoreError, ClientError, OSError) as error:
-        raise DatasetPublicationError(
-            "DATASET_UPLOAD_FAILED",
-            "The direct Dataset upload failed",
-            retryable=True,
-        ) from error
-
-
-def _put_source(client: Any, bucket: str, key: str, entry: ManifestEntry) -> None:
-    digest = entry.checksum_sha256.removeprefix("sha256:")
-    checksum = base64.b64encode(bytes.fromhex(digest)).decode()
-    descriptor: int | None = None
-    try:
-        descriptor = os.open(entry.source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        with os.fdopen(descriptor, "rb", closefd=True) as stream:
-            descriptor = None
-            before = SourceIdentity.from_stat(os.fstat(stream.fileno()))
-            if (
-                before != entry.source_identity
-                or not stat.S_ISREG(before.mode)
-                or _stream_digest(stream) != digest
-            ):
-                raise _source_mutated()
-            stream.seek(0)
-            _put_or_verify(
-                client, bucket, key, stream, entry.byte_count, digest, checksum
-            )
-            stream.seek(0)
-            after = SourceIdentity.from_stat(os.fstat(stream.fileno()))
-            path_after = SourceIdentity.from_stat(entry.source.lstat())
-            if (
-                after != entry.source_identity
-                or path_after != entry.source_identity
-                or _stream_digest(stream) != digest
-            ):
-                raise _source_mutated()
-    except DatasetPublicationError:
-        raise
-    except OSError as error:
-        raise _source_mutated() from error
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-
-
-def _put_bytes(client: Any, bucket: str, key: str, body: bytes, identity: str) -> None:
-    from io import BytesIO
-
-    digest = identity.removeprefix("sha256:")
-    checksum = base64.b64encode(bytes.fromhex(digest)).decode()
-    _put_or_verify(client, bucket, key, BytesIO(body), len(body), digest, checksum)
-
-
-def _put_or_verify(
-    client: Any,
-    bucket: str,
-    key: str,
-    body: BinaryIO,
-    byte_count: int,
-    digest: str,
-    checksum: str,
-) -> None:
-    from botocore.exceptions import ClientError
-
-    try:
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=body,
-            ContentLength=byte_count,
-            ChecksumSHA256=checksum,
-            IfNoneMatch="*",
-            Metadata={"skywright-sha256": digest},
-        )
-        return
-    except ClientError as error:
-        status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-        if status not in {409, 412}:
-            raise
-    head = client.head_object(Bucket=bucket, Key=key, ChecksumMode="ENABLED")
-    metadata = head.get("Metadata", {})
-    if (
-        head.get("ContentLength") != byte_count
-        or metadata.get("skywright-sha256") != digest
-    ):
-        raise DatasetPublicationError(
-            "DATASET_UPLOAD_CONFLICT",
-            "An allocated Dataset object already contains different bytes",
-        )
-
-
-def _stream_digest(stream: BinaryIO) -> str:
-    digest = hashlib.sha256()
-    while chunk := stream.read(1024 * 1024):
-        digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _source_mutated() -> DatasetPublicationError:
-    return DatasetPublicationError(
-        "DATASET_SOURCE_MUTATED",
-        "A local corpus file changed during publication",
-    )
 
 
 def _problem(error: DatasetPublicationError) -> dict[str, object]:

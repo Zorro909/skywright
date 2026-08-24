@@ -452,6 +452,65 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /dataset-publications/{publicationId}/resume:
+    parameters:
+      - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: resumeDatasetPublication
+      summary: Resume one Dataset Publication only when every immutable request fact matches.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InitiateDatasetPublication' }
+      responses:
+        '200':
+          description: Exact publication identity accepted for resume.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetPublication' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /dataset-publications/{publicationId}/progress:
+    parameters:
+      - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    put:
+      operationId: recordDatasetPublicationProgress
+      summary: Retain monotonic direct-upload progress for one Dataset Publication.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DatasetPublicationProgress' }
+      responses:
+        '200':
+          description: Durable progress retained.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetPublication' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /dataset-publications/{publicationId}/failure:
+    parameters:
+      - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    put:
+      operationId: recordDatasetPublicationFailure
+      summary: Attach one safe local or capability failure to a Dataset Publication.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DatasetPublicationFailure' }
+      responses:
+        '200':
+          description: Durable failure retained.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetPublication' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /datasets/{datasetId}:
     parameters:
       - { name: datasetId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
@@ -617,7 +676,7 @@ components:
   schemas:
     DatasetPublicationState:
       type: string
-      enum: [awaiting-upload, verifying, committed, failed]
+      enum: [awaiting-upload, uploading, verifying, committing, committed, failed]
     DatasetPreferredDefinitionDecision:
       type: string
       enum: [advance, keep]
@@ -642,10 +701,23 @@ components:
         contentFingerprint: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
         objectCount: { type: integer, format: int64, minimum: 1 }
         byteCount: { type: integer, format: int64, minimum: 0 }
+    DatasetPublicationProgress:
+      type: object
+      additionalProperties: false
+      required: [uploadedObjectCount, uploadedByteCount]
+      properties:
+        uploadedObjectCount: { type: integer, format: int64, minimum: 0 }
+        uploadedByteCount: { type: integer, format: int64, minimum: 0 }
+    DatasetPublicationFailure:
+      type: object
+      additionalProperties: false
+      required: [failureCode]
+      properties:
+        failureCode: { type: string, pattern: '^DATASET_[A-Z0-9_]+$' }
     DatasetPublication:
       type: object
       additionalProperties: false
-      required: [publicationId, state, datasetId, definitionId, copyId, targetStorageId, versionLabel, formatIdentity, manifestIdentity, contentFingerprint, objectCount, byteCount, payloadLocation, operationLocation, verifiedObjectCount, verifiedByteCount, preferredDefinitionId, preferredDefinitionChanged, retryable, failureCode, createdAt, verifiedAt, completedAt, verificationWorkerPid]
+      required: [publicationId, state, datasetId, definitionId, copyId, targetStorageId, expectedDatasetRevision, preferredDefinitionDecision, versionLabel, formatIdentity, manifestIdentity, contentFingerprint, objectCount, byteCount, payloadLocation, operationLocation, uploadedObjectCount, uploadedByteCount, verifiedObjectCount, verifiedByteCount, preferredDefinitionId, preferredDefinitionChanged, retryable, failureCode, failureDetail, unavailableSource, retryGuidance, createdAt, updatedAt, verifiedAt, completedAt, verificationWorkerPid]
       properties:
         publicationId: { $ref: '#/components/schemas/SkywrightId' }
         state: { $ref: '#/components/schemas/DatasetPublicationState' }
@@ -653,6 +725,11 @@ components:
         definitionId: { $ref: '#/components/schemas/SkywrightId' }
         copyId: { $ref: '#/components/schemas/SkywrightId' }
         targetStorageId: { $ref: '#/components/schemas/SkywrightId' }
+        expectedDatasetRevision: { type: [integer, 'null'], format: int64, minimum: 1 }
+        preferredDefinitionDecision:
+          oneOf:
+            - { $ref: '#/components/schemas/DatasetPreferredDefinitionDecision' }
+            - { type: 'null' }
         versionLabel: { type: string }
         formatIdentity: { type: string }
         manifestIdentity: { type: string }
@@ -661,6 +738,8 @@ components:
         byteCount: { type: integer, format: int64, minimum: 0 }
         payloadLocation: { type: string }
         operationLocation: { type: string }
+        uploadedObjectCount: { type: integer, format: int64, minimum: 0 }
+        uploadedByteCount: { type: integer, format: int64, minimum: 0 }
         verifiedObjectCount: { type: integer, format: int64, minimum: 0 }
         verifiedByteCount: { type: integer, format: int64, minimum: 0 }
         preferredDefinitionId:
@@ -670,7 +749,11 @@ components:
         preferredDefinitionChanged: { type: boolean }
         retryable: { type: boolean }
         failureCode: { type: [string, 'null'] }
+        failureDetail: { type: [string, 'null'] }
+        unavailableSource: { type: [string, 'null'] }
+        retryGuidance: { type: string }
         createdAt: { $ref: '#/components/schemas/UtcInstant' }
+        updatedAt: { $ref: '#/components/schemas/UtcInstant' }
         verifiedAt: { type: [string, 'null'], format: date-time }
         completedAt: { type: [string, 'null'], format: date-time }
         verificationWorkerPid: { type: integer, format: int64, minimum: 0 }

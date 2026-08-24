@@ -64,6 +64,81 @@ final class DatasetPublicationApiIT {
 	}
 
 	@Test
+	void publicationResumeRejectsChangedFactsAndRetainsSafeProgress() throws Exception {
+		try (var objectStorage = SeaweedFsFixture.start(); var administrator = administrator(objectStorage)) {
+			objectStorage.awaitReady(administrator);
+			String bucket = "dataset-publication-resume-" + UUID.randomUUID();
+			administrator.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).join();
+			try (var backend = BackendFixture.startWithTargetStorageIntegration()) {
+				var storage = backend.post("/api/v1/target-storages", registration(objectStorage.endpoint(), bucket));
+				String storageId = JSON.readTree(storage.body()).path("id").asText();
+				backend.put("/api/v1/target-storages/" + storageId + "/activation",
+						"{\"expectedRegistrationRevision\":2,\"activated\":true}");
+				String request = """
+						{
+						  "targetStorageId":"%s",
+						  "versionLabel":"resume-v1",
+						  "formatIdentity":"mosaicml-streaming-mds@2",
+						  "manifestIdentity":"sha256:%s",
+						  "contentFingerprint":"sha256:%s",
+						  "objectCount":3,
+						  "byteCount":21
+						}
+						""".formatted(storageId, "1".repeat(64), "2".repeat(64));
+				var initiatedResponse = backend.post("/api/v1/dataset-publications", request);
+				assertThat(initiatedResponse.statusCode()).as(initiatedResponse.body()).isEqualTo(201);
+				JsonNode initiated = JSON.readTree(initiatedResponse.body());
+				String publicationId = initiated.path("publicationId").asText();
+				assertThat(initiated.path("uploadedObjectCount").asLong()).isZero();
+				assertThat(initiated.path("uploadedByteCount").asLong()).isZero();
+				assertThat(initiated.path("expectedDatasetRevision").isNull()).isTrue();
+				assertThat(initiated.path("preferredDefinitionDecision").isNull()).isTrue();
+				assertThat(initiated.path("retryGuidance").asText()).contains("resume", publicationId);
+
+				var resumed = backend.post("/api/v1/dataset-publications/" + publicationId + "/resume", request);
+				assertThat(resumed.statusCode()).as(resumed.body()).isEqualTo(200);
+				assertThat(JSON.readTree(resumed.body()).path("datasetId")).isEqualTo(initiated.path("datasetId"));
+				var changed = backend.post("/api/v1/dataset-publications/" + publicationId + "/resume",
+						request.replace("resume-v1", "changed"));
+				assertThat(changed.statusCode()).as(changed.body()).isEqualTo(409);
+				assertThat(changed.body()).contains("SKYWRIGHT_DATASET_PUBLICATION_CONFLICT");
+				var changedDataset = backend.post("/api/v1/dataset-publications/" + publicationId + "/resume",
+						request.replace("\"targetStorageId\"",
+								"\"datasetId\":\"00000000-0000-0000-0000-000000000099\","
+										+ "\"expectedDatasetRevision\":1,\"preferredDefinitionDecision\":\"advance\","
+										+ "\"targetStorageId\""));
+				assertThat(changedDataset.statusCode()).as(changedDataset.body()).isEqualTo(409);
+				var changedPreference = backend
+					.post("/api/v1/dataset-publications/" + publicationId + "/resume", request.replace(
+							"\"targetStorageId\"",
+							"\"datasetId\":\"00000000-0000-0000-0000-000000000099\","
+									+ "\"expectedDatasetRevision\":1,\"preferredDefinitionDecision\":\"keep\","
+									+ "\"targetStorageId\""));
+				assertThat(changedPreference.statusCode()).as(changedPreference.body()).isEqualTo(409);
+
+				var progress = backend.put("/api/v1/dataset-publications/" + publicationId + "/progress",
+						"{\"uploadedObjectCount\":2,\"uploadedByteCount\":13}");
+				assertThat(progress.statusCode()).as(progress.body()).isEqualTo(200);
+				var failure = backend.put("/api/v1/dataset-publications/" + publicationId + "/failure", """
+						{
+						  "failureCode":"DATASET_UPLOAD_FAILED"
+						}
+						""");
+				assertThat(failure.statusCode()).as(failure.body()).isEqualTo(200);
+				JsonNode inspected = JSON.readTree(backend.get("/api/v1/dataset-publications/" + publicationId).body());
+				assertThat(inspected.path("state").asText()).isEqualTo("failed");
+				assertThat(inspected.path("uploadedObjectCount").asLong()).isEqualTo(2);
+				assertThat(inspected.path("uploadedByteCount").asLong()).isEqualTo(13);
+				assertThat(inspected.path("failureDetail").asText()).contains("temporarily unavailable")
+					.doesNotContain("Exception", "/tmp", "secret");
+				assertThat(inspected.path("unavailableSource").asText()).isEqualTo("Dataset Target Storage");
+				assertThat(inspected.path("retryGuidance").asText()).contains("--resume", publicationId);
+				assertThat(inspected.path("updatedAt").asText()).isNotBlank();
+			}
+		}
+	}
+
+	@Test
 	void installedCommandPublishesTheVersionedMdsContractFixtureAtomically() throws Exception {
 		try (var objectStorage = SeaweedFsFixture.start(); var administrator = administrator(objectStorage)) {
 			objectStorage.awaitReady(administrator);
@@ -131,6 +206,9 @@ final class DatasetPublicationApiIT {
 				assertThat(result.path("verifiedObjectCount").asLong())
 					.isEqualTo(expected.path("objectCount").asLong());
 				assertThat(result.path("verifiedByteCount").asLong()).isEqualTo(expected.path("byteCount").asLong());
+				assertThat(result.path("uploadedObjectCount").asLong())
+					.isEqualTo(expected.path("objectCount").asLong());
+				assertThat(result.path("uploadedByteCount").asLong()).isEqualTo(expected.path("byteCount").asLong());
 				assertThat(result.path("preferredDefinitionId").asText())
 					.isEqualTo(result.path("definitionId").asText());
 				assertThat(result.path("preferredDefinitionChanged").asBoolean()).isTrue();

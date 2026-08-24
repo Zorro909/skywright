@@ -21,13 +21,30 @@ public class DatasetPublicationHttpAdapter implements DatasetPublicationsApi, Da
 	@Override
 	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> initiateDatasetPublication(
 			InitiateDatasetPublication request) {
-		var decision = request.getPreferredDefinitionDecision() == null ? null
-				: PreferredDefinitionDecision.valueOf(request.getPreferredDefinitionDecision().name());
-		var initiated = this.publications.initiate(new DatasetPublicationRequest(request.getTargetStorageId(),
-				request.getDatasetId(), request.getExpectedDatasetRevision(), decision, request.getVersionLabel(),
-				request.getFormatIdentity().getValue(), request.getManifestIdentity(), request.getContentFingerprint(),
-				request.getObjectCount(), request.getByteCount()));
+		var initiated = this.publications.initiate(request(request));
 		return ResponseEntity.status(201).body(publication(initiated));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> resumeDatasetPublication(
+			UUID publicationId, InitiateDatasetPublication request) {
+		return ResponseEntity.ok(publication(this.publications.resume(publicationId, request(request))));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> recordDatasetPublicationProgress(
+			UUID publicationId,
+			de.zorro909.skywright.backend.boundary.generated.model.DatasetPublicationProgress request) {
+		return ResponseEntity.ok(publication(this.publications.progress(publicationId,
+				new DatasetPublicationProgress(request.getUploadedObjectCount(), request.getUploadedByteCount()))));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> recordDatasetPublicationFailure(
+			UUID publicationId,
+			de.zorro909.skywright.backend.boundary.generated.model.DatasetPublicationFailure request) {
+		return ResponseEntity.ok(publication(
+				this.publications.failLocal(publicationId, new DatasetPublicationFailure(request.getFailureCode()))));
 	}
 
 	@Override
@@ -56,14 +73,30 @@ public class DatasetPublicationHttpAdapter implements DatasetPublicationsApi, Da
 		return new de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication(value.publicationId(),
 				de.zorro909.skywright.backend.boundary.generated.model.DatasetPublicationState
 					.fromValue(wireValue(value.state())),
-				value.datasetId(), value.definitionId(), value.copyId(), value.targetStorageId(), value.versionLabel(),
-				value.formatIdentity(), value.manifestIdentity(), value.contentFingerprint(), value.objectCount(),
-				value.byteCount(), value.payloadLocation(), value.operationLocation(), value.verifiedObjectCount(),
+				value.datasetId(), value.definitionId(), value.copyId(), value.targetStorageId(),
+				value.expectedDatasetRevision(),
+				value.preferredDefinitionDecision() == null ? null
+						: de.zorro909.skywright.backend.boundary.generated.model.DatasetPreferredDefinitionDecision
+							.fromValue(wireValue(value.preferredDefinitionDecision())),
+				value.versionLabel(), value.formatIdentity(), value.manifestIdentity(), value.contentFingerprint(),
+				value.objectCount(), value.byteCount(), value.payloadLocation(), value.operationLocation(),
+				value.uploadedObjectCount(), value.uploadedByteCount(), value.verifiedObjectCount(),
 				value.verifiedByteCount(), value.preferredDefinitionId(), value.preferredDefinitionChanged(),
-				value.retryable(), value.failureCode(), value.createdAt().atOffset(ZoneOffset.UTC),
+				value.retryable(), value.failureCode(), value.failureDetail(), value.unavailableSource(),
+				value.retryGuidance(), value.createdAt().atOffset(ZoneOffset.UTC),
+				value.updatedAt().atOffset(ZoneOffset.UTC),
 				value.verifiedAt() == null ? null : value.verifiedAt().atOffset(ZoneOffset.UTC),
 				value.completedAt() == null ? null : value.completedAt().atOffset(ZoneOffset.UTC),
 				value.verificationWorkerPid());
+	}
+
+	private static DatasetPublicationRequest request(InitiateDatasetPublication request) {
+		var decision = request.getPreferredDefinitionDecision() == null ? null
+				: PreferredDefinitionDecision.valueOf(request.getPreferredDefinitionDecision().name());
+		return new DatasetPublicationRequest(request.getTargetStorageId(), request.getDatasetId(),
+				request.getExpectedDatasetRevision(), decision, request.getVersionLabel(),
+				request.getFormatIdentity().getValue(), request.getManifestIdentity(),
+				request.getContentFingerprint(), request.getObjectCount(), request.getByteCount());
 	}
 
 	private static String wireValue(Enum<?> value) {

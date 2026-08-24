@@ -1,3 +1,5 @@
+# pyright: reportMissingTypeStubs=false
+
 from __future__ import annotations
 
 import base64
@@ -585,6 +587,7 @@ def test_command_allows_the_version_label_to_be_omitted(tmp_path: Path) -> None:
         None,
         None,
         None,
+        None,
     )
 
 
@@ -616,6 +619,347 @@ def test_command_accepts_bounded_publication_concurrency(tmp_path: Path) -> None
         None,
         None,
         None,
+        None,
+    )
+
+
+def test_command_reports_and_explicitly_resumes_one_publication(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus)
+    inspected = inspect_mds_corpus(corpus)
+    publication_id = "00000000-0000-0000-0000-000000000010"
+    storage_id = "00000000-0000-0000-0000-000000000001"
+    publication = {
+        "publicationId": publication_id,
+        "state": "awaiting-upload",
+        "targetStorageId": storage_id,
+        "versionLabel": "v1",
+        "formatIdentity": inspected.format_identity,
+        "manifestIdentity": inspected.manifest_identity,
+        "contentFingerprint": inspected.content_fingerprint,
+        "objectCount": inspected.object_count,
+        "byteCount": inspected.byte_count,
+        "payloadLocation": "datasets/payload",
+        "operationLocation": "operations/publication",
+    }
+    requests: list[tuple[str, str]] = []
+
+    def request(_base: str, method: str, path: str, _body: object) -> object:
+        requests.append((method, path))
+        if path == f"/api/v1/dataset-publications/{publication_id}/resume":
+            return publication
+        if path == f"/api/v1/target-storages/{storage_id}":
+            return {"storage": "descriptor"}
+        if path.endswith("/completion"):
+            return {**publication, "state": "committed"}
+        raise AssertionError(path)
+
+    stdout = StringIO()
+    stderr = StringIO()
+    with (
+        patch("skywright._dataset_cli._request", side_effect=request),
+        patch("skywright._dataset_cli._upload") as upload,
+        redirect_stdout(stdout),
+        redirect_stderr(stderr),
+    ):
+        status = main(
+            [
+                "publish",
+                str(corpus),
+                "--control-plane",
+                "http://control-plane",
+                "--target-storage",
+                storage_id,
+                "--version-label",
+                "v1",
+                "--resume",
+                publication_id,
+            ]
+        )
+
+    assert status == 0
+    assert json.loads(stdout.getvalue())["publicationId"] == publication_id
+    identity = json.loads(stderr.getvalue().splitlines()[0])
+    assert identity == {
+        "event": "dataset-publication-identity",
+        "publicationId": publication_id,
+    }
+    assert requests[0] == (
+        "POST",
+        f"/api/v1/dataset-publications/{publication_id}/resume",
+    )
+    upload.assert_called_once()
+
+
+def test_command_reconciles_a_lost_completion_response_by_reading_the_operation(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus)
+    inspected = inspect_mds_corpus(corpus)
+    publication_id = "00000000-0000-0000-0000-000000000010"
+    storage_id = "00000000-0000-0000-0000-000000000001"
+    publication = {
+        "publicationId": publication_id,
+        "state": "awaiting-upload",
+        "targetStorageId": storage_id,
+        "versionLabel": "v1",
+        "formatIdentity": inspected.format_identity,
+        "manifestIdentity": inspected.manifest_identity,
+        "contentFingerprint": inspected.content_fingerprint,
+        "objectCount": inspected.object_count,
+        "byteCount": inspected.byte_count,
+        "payloadLocation": "datasets/payload",
+        "operationLocation": "operations/publication",
+    }
+    initiated = 0
+
+    def request(_base: str, method: str, path: str, _body: object) -> object:
+        nonlocal initiated
+        if method == "POST" and path == "/api/v1/dataset-publications":
+            initiated += 1
+            return publication
+        if method == "GET" and path == f"/api/v1/target-storages/{storage_id}":
+            return {"storage": "descriptor"}
+        if method == "POST" and path.endswith("/completion"):
+            raise DatasetPublicationError(
+                "CONTROL_PLANE_UNAVAILABLE",
+                "The control plane is unavailable",
+                retryable=True,
+            )
+        if method == "GET" and path == f"/api/v1/dataset-publications/{publication_id}":
+            return {**publication, "state": "committed"}
+        raise AssertionError(path)
+
+    stdout = StringIO()
+    with (
+        patch("skywright._dataset_cli._request", side_effect=request),
+        patch("skywright._dataset_cli._upload"),
+        redirect_stdout(stdout),
+    ):
+        status = main(
+            [
+                "publish",
+                str(corpus),
+                "--control-plane",
+                "http://control-plane",
+                "--target-storage",
+                storage_id,
+                "--version-label",
+                "v1",
+            ]
+        )
+
+    assert status == 0
+    assert initiated == 1
+    assert json.loads(stdout.getvalue())["publicationId"] == publication_id
+
+
+def test_command_rejects_an_existing_object_without_validated_sha256(
+    tmp_path: Path,
+) -> None:
+    from botocore.exceptions import ClientError
+
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus)
+    inspected = inspect_mds_corpus(corpus)
+    publication_id = "00000000-0000-0000-0000-000000000010"
+    storage_id = "00000000-0000-0000-0000-000000000001"
+    publication = {
+        "publicationId": publication_id,
+        "state": "awaiting-upload",
+        "targetStorageId": storage_id,
+        "versionLabel": "v1",
+        "formatIdentity": inspected.format_identity,
+        "manifestIdentity": inspected.manifest_identity,
+        "contentFingerprint": inspected.content_fingerprint,
+        "objectCount": inspected.object_count,
+        "byteCount": inspected.byte_count,
+        "payloadLocation": "datasets/payload",
+        "operationLocation": "operations/publication",
+    }
+    expected = {
+        f"datasets/payload/{entry.object_key}": (
+            entry.byte_count,
+            entry.checksum_sha256.removeprefix("sha256:"),
+        )
+        for entry in inspected.entries
+    }
+    expected["operations/publication/manifest.json"] = (
+        len(inspected.manifest_bytes),
+        inspected.manifest_identity.removeprefix("sha256:"),
+    )
+
+    def request(_base: str, method: str, path: str, _body: object) -> object:
+        if method == "POST" and path == "/api/v1/dataset-publications":
+            return publication
+        if method == "GET" and path == f"/api/v1/target-storages/{storage_id}":
+            return {
+                "bucket": "dataset",
+                "configuration": {
+                    "endpoint": "http://storage",
+                    "region": "us-east-1",
+                    "pathStyleAccess": True,
+                },
+            }
+        if method == "PUT" and path.endswith("/failure"):
+            return publication
+        raise AssertionError(path)
+
+    class Storage:
+        def put_object(self, **_values: object) -> None:
+            raise ClientError(
+                {
+                    "Error": {"Code": "PreconditionFailed"},
+                    "ResponseMetadata": {"HTTPStatusCode": 412},
+                },
+                "PutObject",
+            )
+
+        def head_object(self, **values: object) -> dict[str, object]:
+            byte_count, digest = expected[cast(str, values["Key"])]
+            return {
+                "ContentLength": byte_count,
+                "Metadata": {"skywright-sha256": digest},
+                "ChecksumSHA256": base64.b64encode(b"wrong digest evidence").decode(),
+            }
+
+        def get_object(self, **_values: object) -> dict[str, BytesIO]:
+            return {"Body": BytesIO(b"different remote bytes")}
+
+    stderr = StringIO()
+    with (
+        patch("skywright._dataset_cli._request", side_effect=request),
+        patch("boto3.client", return_value=Storage()),
+        redirect_stderr(stderr),
+    ):
+        status = main(
+            [
+                "publish",
+                str(corpus),
+                "--control-plane",
+                "http://control-plane",
+                "--target-storage",
+                storage_id,
+                "--version-label",
+                "v1",
+            ]
+        )
+
+    assert status == 1
+    assert json.loads(stderr.getvalue().splitlines()[-1])["errorCode"] == (
+        "SKYWRIGHT_DATASET_UPLOAD_CONFLICT"
+    )
+
+
+def test_command_aborts_a_known_multipart_upload_after_transfer_failure(
+    tmp_path: Path,
+) -> None:
+    from botocore.exceptions import ClientError
+
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus)
+    inspected = inspect_mds_corpus(corpus)
+    publication_id = "00000000-0000-0000-0000-000000000010"
+    storage_id = "00000000-0000-0000-0000-000000000001"
+    publication = {
+        "publicationId": publication_id,
+        "state": "awaiting-upload",
+        "targetStorageId": storage_id,
+        "versionLabel": "v1",
+        "formatIdentity": inspected.format_identity,
+        "manifestIdentity": inspected.manifest_identity,
+        "contentFingerprint": inspected.content_fingerprint,
+        "objectCount": inspected.object_count,
+        "byteCount": inspected.byte_count,
+        "payloadLocation": "datasets/payload",
+        "operationLocation": "operations/publication",
+    }
+    failures: list[object] = []
+
+    def request(_base: str, method: str, path: str, body: object) -> object:
+        if method == "POST" and path == "/api/v1/dataset-publications":
+            return publication
+        if method == "GET" and path == f"/api/v1/target-storages/{storage_id}":
+            return {
+                "bucket": "dataset",
+                "configuration": {
+                    "endpoint": "http://storage",
+                    "region": "us-east-1",
+                    "pathStyleAccess": True,
+                },
+            }
+        if method == "PUT" and path.endswith("/failure"):
+            failures.append(body)
+            return publication
+        raise AssertionError(path)
+
+    created: list[str] = []
+    aborted: list[str] = []
+
+    class Storage:
+        def list_multipart_uploads(self, **_values: object) -> dict[str, object]:
+            return {
+                "Uploads": [
+                    {
+                        "Key": "datasets/payload/index.json",
+                        "UploadId": "abandoned-upload",
+                    }
+                ],
+                "IsTruncated": False,
+            }
+
+        def head_object(self, **_values: object) -> None:
+            raise ClientError(
+                {
+                    "Error": {"Code": "NotFound"},
+                    "ResponseMetadata": {"HTTPStatusCode": 404},
+                },
+                "HeadObject",
+            )
+
+        def put_object(self, **_values: object) -> None:
+            raise ClientError({"Error": {"Code": "Unavailable"}}, "PutObject")
+
+        def create_multipart_upload(self, **_values: object) -> dict[str, str]:
+            upload_id = f"known-upload-{len(created)}"
+            created.append(upload_id)
+            return {"UploadId": upload_id}
+
+        def upload_part(self, **_values: object) -> None:
+            raise ClientError({"Error": {"Code": "Unavailable"}}, "UploadPart")
+
+        def abort_multipart_upload(self, **values: object) -> None:
+            aborted.append(cast(str, values["UploadId"]))
+
+    stderr = StringIO()
+    with (
+        patch("skywright._dataset_cli._request", side_effect=request),
+        patch("skywright._dataset_upload._MULTIPART_THRESHOLD_BYTES", 1),
+        patch("boto3.client", return_value=Storage()),
+        redirect_stderr(stderr),
+    ):
+        status = main(
+            [
+                "publish",
+                str(corpus),
+                "--control-plane",
+                "http://control-plane",
+                "--target-storage",
+                storage_id,
+                "--version-label",
+                "v1",
+            ]
+        )
+
+    assert status == 75
+    assert created
+    assert sorted(aborted) == sorted([*created, "abandoned-upload"])
+    assert failures == [{"failureCode": "DATASET_UPLOAD_FAILED"}]
+    assert json.loads(stderr.getvalue().splitlines()[-1])["errorCode"] == (
+        "SKYWRIGHT_DATASET_UPLOAD_FAILED"
     )
 
 
@@ -663,6 +1007,7 @@ def test_command_rejects_every_source_change_after_scan(
 ) -> None:
     corpus = tmp_path / "corpus"
     write_corpus(corpus)
+    inspected = inspect_mds_corpus(corpus)
     shard = corpus / "shard.00000.mds"
     original = shard.read_bytes()
     calls = 0
@@ -697,6 +1042,12 @@ def test_command_rejects_every_source_change_after_scan(
             return {
                 "publicationId": "00000000-0000-0000-0000-000000000010",
                 "targetStorageId": "00000000-0000-0000-0000-000000000001",
+                "versionLabel": inspected.content_fingerprint[7:23],
+                "formatIdentity": inspected.format_identity,
+                "manifestIdentity": inspected.manifest_identity,
+                "contentFingerprint": inspected.content_fingerprint,
+                "objectCount": inspected.object_count,
+                "byteCount": inspected.byte_count,
                 "payloadLocation": "datasets/payload",
                 "operationLocation": "operations/publication",
             }
@@ -732,7 +1083,7 @@ def test_command_rejects_every_source_change_after_scan(
         )
 
     assert status == 1
-    assert json.loads(stderr.getvalue())["errorCode"] == (
+    assert json.loads(stderr.getvalue().splitlines()[-1])["errorCode"] == (
         "SKYWRIGHT_DATASET_SOURCE_MUTATED"
     )
 

@@ -1,0 +1,24 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-167-resumable-dataset-publication
+      author: skywright
+      changes:
+        - addColumn:
+            tableName: dataset_publication
+            columns:
+              - column: { name: requested_version_label, type: varchar(255) }
+              - column: { name: uploaded_object_count, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: uploaded_byte_count, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: failure_detail, type: varchar(255) }
+              - column: { name: unavailable_source, type: varchar(128) }
+              - column: { name: updated_at, type: timestamp with time zone, defaultValueComputed: CURRENT_TIMESTAMP, constraints: { nullable: false } }
+      rollback:
+        - sql:
+            comment: Preserve the application schema for earlier raw-SQL rollbacks.
+            sql: SET search_path TO skywright
+        - dropColumn: { tableName: dataset_publication, columnName: updated_at }
+        - dropColumn: { tableName: dataset_publication, columnName: unavailable_source }
+        - dropColumn: { tableName: dataset_publication, columnName: failure_detail }
+        - dropColumn: { tableName: dataset_publication, columnName: uploaded_byte_count }
+        - dropColumn: { tableName: dataset_publication, columnName: uploaded_object_count }
+        - dropColumn: { tableName: dataset_publication, columnName: requested_version_label }
