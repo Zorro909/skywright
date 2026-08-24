@@ -43,4 +43,15 @@ class DatasetLineageEntity {
 		return new DatasetLineageView(this.datasetId, this.revision, this.preferredDefinitionId, this.createdAt);
 	}
 
+	void publish(UUID definitionId, long expectedRevision, PreferredDefinitionDecision decision) {
+		if (this.revision != expectedRevision) {
+			throw new DatasetPublicationException("DATASET_REVISION_STALE",
+					"The Dataset revision changed after the preferred-definition decision", false);
+		}
+		if (decision == PreferredDefinitionDecision.ADVANCE) {
+			this.preferredDefinitionId = definitionId;
+		}
+		this.revision++;
+	}
+
 }

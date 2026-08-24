@@ -72,6 +72,19 @@ databaseChangeLog:
         - dropTable: { tableName: dataset_publication }
         - dropTable: { tableName: dataset_lineage }
   - changeSet:
+      id: issue-166-successive-dataset-publications
+      author: skywright
+      logicalFilePath: db/changelog/versions/0005-dataset-publication.yaml
+      changes:
+        - addColumn:
+            tableName: dataset_publication
+            columns:
+              - column: { name: expected_dataset_revision, type: bigint }
+              - column: { name: preferred_definition_decision, type: varchar(16) }
+      rollback:
+        - dropColumn: { tableName: dataset_publication, columnName: preferred_definition_decision }
+        - dropColumn: { tableName: dataset_publication, columnName: expected_dataset_revision }
+  - changeSet:
       id: issue-164-dataset-publication-constraints
       author: skywright
       logicalFilePath: db/changelog/versions/0005-dataset-publication.yaml

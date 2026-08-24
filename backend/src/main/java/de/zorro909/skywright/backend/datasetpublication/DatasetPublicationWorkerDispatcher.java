@@ -1,5 +1,6 @@
 package de.zorro909.skywright.backend.datasetpublication;
 
+import de.zorro909.skywright.backend.datasetcatalog.DatasetCatalogException;
 import jakarta.annotation.PreDestroy;
 import java.util.Set;
 import java.util.UUID;
@@ -63,6 +64,14 @@ final class DatasetPublicationWorkerDispatcher {
 			else {
 				this.publications.fail(publicationId, result);
 			}
+		}
+		catch (DatasetPublicationException failure) {
+			this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0,
+					null, 0, failure.errorCode(), failure.retryable()));
+		}
+		catch (DatasetCatalogException failure) {
+			this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0,
+					null, 0, failure.errorCode(), false));
 		}
 		catch (RuntimeException failure) {
 			this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0,

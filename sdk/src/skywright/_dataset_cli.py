@@ -45,6 +45,21 @@ def main(arguments: Sequence[str] | None = None) -> int:
     publish.add_argument("corpus", type=Path)
     publish.add_argument("--control-plane", required=True)
     publish.add_argument("--target-storage", required=True)
+    publish.add_argument("--dataset")
+    publish.add_argument("--expected-dataset-revision", type=_positive_int)
+    preferred = publish.add_mutually_exclusive_group()
+    preferred.add_argument(
+        "--advance-preferred",
+        dest="preferred_definition_decision",
+        action="store_const",
+        const="advance",
+    )
+    preferred.add_argument(
+        "--keep-preferred",
+        dest="preferred_definition_decision",
+        action="store_const",
+        const="keep",
+    )
     publish.add_argument("--version-label")
     publish.add_argument("--concurrency", type=_positive_int, default=4)
     parsed = parser.parse_args(arguments)
@@ -56,6 +71,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 parsed.target_storage,
                 parsed.version_label,
                 parsed.concurrency,
+                parsed.dataset,
+                parsed.expected_dataset_revision,
+                parsed.preferred_definition_decision,
             )
             print(_json(result))
             return 0
@@ -78,7 +96,22 @@ def _publish(
     target_storage_id: str,
     version_label: str | None,
     concurrency: int,
+    dataset_id: str | None = None,
+    expected_dataset_revision: int | None = None,
+    preferred_definition_decision: str | None = None,
 ) -> object:
+    existing_values = (
+        dataset_id,
+        expected_dataset_revision,
+        preferred_definition_decision,
+    )
+    if any(value is not None for value in existing_values) and not all(
+        value is not None for value in existing_values
+    ):
+        raise DatasetPublicationError(
+            "DATASET_PREFERRED_DEFINITION_DECISION_REQUIRED",
+            "An existing Dataset requires its identity, current revision, and one explicit preferred-definition decision",
+        )
     if version_label is not None and (not version_label or len(version_label) > 255):
         raise DatasetPublicationError(
             "DATASET_VERSION_LABEL_INVALID",
@@ -91,6 +124,9 @@ def _publish(
         "/api/v1/dataset-publications",
         {
             "targetStorageId": target_storage_id,
+            "datasetId": dataset_id,
+            "expectedDatasetRevision": expected_dataset_revision,
+            "preferredDefinitionDecision": preferred_definition_decision,
             "versionLabel": version_label,
             "formatIdentity": corpus.format_identity,
             "manifestIdentity": corpus.manifest_identity,
@@ -384,6 +420,7 @@ def _exit_code(error: DatasetPublicationError) -> int:
         error.code.startswith("DATASET_CORPUS_")
         or error.code.startswith("DATASET_MDS_")
         or error.code == "DATASET_STREAMING_FORMAT_UNSUPPORTED"
+        or error.code == "DATASET_PREFERRED_DEFINITION_DECISION_REQUIRED"
         or error.code.endswith("_INVALID")
     ):
         return 2

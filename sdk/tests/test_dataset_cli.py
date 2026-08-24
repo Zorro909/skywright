@@ -582,6 +582,9 @@ def test_command_allows_the_version_label_to_be_omitted(tmp_path: Path) -> None:
         "00000000-0000-0000-0000-000000000001",
         None,
         4,
+        None,
+        None,
+        None,
     )
 
 
@@ -610,7 +613,37 @@ def test_command_accepts_bounded_publication_concurrency(tmp_path: Path) -> None
         "00000000-0000-0000-0000-000000000001",
         None,
         3,
+        None,
+        None,
+        None,
     )
+
+
+def test_command_requires_one_preferred_definition_choice_for_existing_dataset(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus)
+    stderr = StringIO()
+
+    with redirect_stderr(stderr):
+        status = main(
+            [
+                "publish",
+                str(corpus),
+                "--control-plane",
+                "http://control-plane",
+                "--target-storage",
+                "00000000-0000-0000-0000-000000000001",
+                "--dataset",
+                "00000000-0000-0000-0000-000000000002",
+                "--expected-dataset-revision",
+                "1",
+            ]
+        )
+
+    assert status == 2
+    assert "DATASET_PREFERRED_DEFINITION_DECISION_REQUIRED" in stderr.getvalue()
 
 
 @pytest.mark.parametrize(

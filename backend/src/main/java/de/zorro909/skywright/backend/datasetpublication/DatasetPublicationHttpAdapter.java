@@ -21,9 +21,12 @@ public class DatasetPublicationHttpAdapter implements DatasetPublicationsApi, Da
 	@Override
 	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> initiateDatasetPublication(
 			InitiateDatasetPublication request) {
+		var decision = request.getPreferredDefinitionDecision() == null ? null
+				: PreferredDefinitionDecision.valueOf(request.getPreferredDefinitionDecision().name());
 		var initiated = this.publications.initiate(new DatasetPublicationRequest(request.getTargetStorageId(),
-				request.getVersionLabel(), request.getFormatIdentity().getValue(), request.getManifestIdentity(),
-				request.getContentFingerprint(), request.getObjectCount(), request.getByteCount()));
+				request.getDatasetId(), request.getExpectedDatasetRevision(), decision, request.getVersionLabel(),
+				request.getFormatIdentity().getValue(), request.getManifestIdentity(), request.getContentFingerprint(),
+				request.getObjectCount(), request.getByteCount()));
 		return ResponseEntity.status(201).body(publication(initiated));
 	}
 
