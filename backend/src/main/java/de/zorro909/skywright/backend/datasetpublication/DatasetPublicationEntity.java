@@ -159,6 +159,18 @@ class DatasetPublicationEntity {
 		if (this.state == DatasetPublicationState.COMMITTED) {
 			return "The publication is committed; inspect this operation for its original result.";
 		}
+		if (this.state == DatasetPublicationState.VERIFYING || this.state == DatasetPublicationState.COMMITTING) {
+			return "Wait for managed verification and inspect this operation again.";
+		}
+		if (this.state == DatasetPublicationState.FAILED && !this.retryable) {
+			return switch (this.failureCode == null ? "" : this.failureCode) {
+				case "DATASET_SOURCE_MUTATED" ->
+					"Repair the local Dataset corpus and start a new publication; this operation cannot be resumed.";
+				case "DATASET_UPLOAD_CONFLICT" ->
+					"Reconcile the conflicting allocated object and start a new publication; this operation cannot be resumed.";
+				default -> "Inspect the failure and start a new publication; this operation cannot be resumed.";
+			};
+		}
 		return "Resume with --resume " + this.publicationId + " and the original immutable publication facts.";
 	}
 

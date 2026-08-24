@@ -18,20 +18,23 @@ final class DatasetPublicationWorkerDispatcher {
 
 	private final DatasetPublicationService publications;
 
-	private final DatasetPublicationWorkerLauncher launcher;
+	private final DatasetPublicationVerifier verifier;
 
 	private final DatasetPublicationWorkerRecovery recovery;
+
+	private final DatasetPublicationWorkerRecoveryScheduler scheduler;
 
 	private final ExecutorService executor = Executors
 		.newSingleThreadExecutor(Thread.ofPlatform().name("dataset-transfer-worker-dispatcher").factory());
 
 	private final Set<UUID> dispatched = ConcurrentHashMap.newKeySet();
 
-	DatasetPublicationWorkerDispatcher(DatasetPublicationService publications,
-			DatasetPublicationWorkerLauncher launcher, DatasetPublicationWorkerRecovery recovery) {
+	DatasetPublicationWorkerDispatcher(DatasetPublicationService publications, DatasetPublicationVerifier verifier,
+			DatasetPublicationWorkerRecovery recovery, DatasetPublicationWorkerRecoveryScheduler scheduler) {
 		this.publications = publications;
-		this.launcher = launcher;
+		this.verifier = verifier;
 		this.recovery = recovery;
+		this.scheduler = scheduler;
 	}
 
 	@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -47,17 +50,18 @@ final class DatasetPublicationWorkerDispatcher {
 
 	private void dispatch(UUID publicationId) {
 		if (this.dispatched.add(publicationId)) {
-			this.executor.submit(() -> verify(publicationId));
+			this.executor.submit(() -> verify(publicationId, 0));
 		}
 	}
 
-	private void verify(UUID publicationId) {
+	private void verify(UUID publicationId, int attempt) {
+		boolean retryScheduled = false;
 		try {
 			DatasetPublicationView publication = this.publications.verificationInput(publicationId);
 			if (publication == null) {
 				return;
 			}
-			DatasetPublicationWorkerResult result = this.launcher.verify(publication);
+			DatasetPublicationWorkerResult result = this.verifier.verify(publication);
 			if (result.verified()) {
 				this.publications.commit(publicationId, result);
 			}
@@ -74,11 +78,19 @@ final class DatasetPublicationWorkerDispatcher {
 					null, 0, failure.errorCode(), false));
 		}
 		catch (RuntimeException failure) {
-			this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0,
-					null, 0, "DATASET_VERIFICATION_UNAVAILABLE", true));
+			try {
+				this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0,
+						0, null, 0, "DATASET_VERIFICATION_UNAVAILABLE", true));
+			}
+			catch (RuntimeException persistenceFailure) {
+				retryScheduled = true;
+				this.scheduler.retry(() -> verify(publicationId, attempt + 1), attempt);
+			}
 		}
 		finally {
-			this.dispatched.remove(publicationId);
+			if (!retryScheduled) {
+				this.dispatched.remove(publicationId);
+			}
 		}
 	}
 

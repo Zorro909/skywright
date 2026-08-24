@@ -2,6 +2,7 @@ databaseChangeLog:
   - changeSet:
       id: issue-167-resumable-dataset-publication
       author: skywright
+      logicalFilePath: db/changelog/versions/0006-resumable-dataset-publication.yaml
       changes:
         - addColumn:
             tableName: dataset_publication

@@ -18,7 +18,7 @@ import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
 import tools.jackson.databind.json.JsonMapper;
 
-final class DatasetPublicationWorkerLauncher {
+final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifier {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -37,7 +37,8 @@ final class DatasetPublicationWorkerLauncher {
 		this.verificationConcurrency = verificationConcurrency;
 	}
 
-	DatasetPublicationWorkerResult verify(DatasetPublicationView publication) {
+	@Override
+	public DatasetPublicationWorkerResult verify(DatasetPublicationView publication) {
 		ResolvedTargetStorage target = this.targetStorages.resolveDataset(publication.targetStorageId(),
 				"transfer-worker");
 		AwsCredentials credentials = target.credentials().resolveCredentials();

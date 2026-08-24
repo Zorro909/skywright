@@ -22,6 +22,7 @@ import pytest
 from skywright._dataset_cli import main
 from skywright._dataset_errors import DatasetPublicationError
 from skywright._dataset_publication import inspect_mds_corpus
+from skywright._dataset_upload import _put_bytes  # pyright: ignore[reportPrivateUsage]
 
 
 def write_corpus(
@@ -988,6 +989,72 @@ def test_command_requires_one_preferred_definition_choice_for_existing_dataset(
 
     assert status == 2
     assert "DATASET_PREFERRED_DEFINITION_DECISION_REQUIRED" in stderr.getvalue()
+
+
+def test_multipart_completion_response_loss_accepts_the_validated_object() -> None:
+    from botocore.exceptions import ClientError
+
+    body = b"multipart publication bytes"
+    digest = hashlib.sha256(body).hexdigest()
+    checksum = base64.b64encode(bytes.fromhex(digest)).decode()
+    stored: bytes | None = None
+    parts: list[bytes] = []
+    aborted: list[str] = []
+
+    class Storage:
+        def list_multipart_uploads(self, **_values: object) -> dict[str, object]:
+            return {"Uploads": [], "IsTruncated": False}
+
+        def head_object(self, **_values: object) -> dict[str, object]:
+            if stored is None:
+                raise ClientError(
+                    {
+                        "Error": {"Code": "NotFound"},
+                        "ResponseMetadata": {"HTTPStatusCode": 404},
+                    },
+                    "HeadObject",
+                )
+            return {
+                "ContentLength": len(stored),
+                "Metadata": {"skywright-sha256": digest},
+                "ChecksumSHA256": checksum,
+            }
+
+        def create_multipart_upload(self, **_values: object) -> dict[str, str]:
+            return {"UploadId": "allocated-upload"}
+
+        def upload_part(self, **values: object) -> dict[str, str]:
+            parts.append(cast(bytes, values["Body"]))
+            return {
+                "ETag": f'"part-{len(parts)}"',
+                "ChecksumSHA256": cast(str, values["ChecksumSHA256"]),
+            }
+
+        def complete_multipart_upload(self, **_values: object) -> None:
+            nonlocal stored
+            stored = b"".join(parts)
+            raise ClientError(
+                {
+                    "Error": {"Code": "InternalError"},
+                    "ResponseMetadata": {"HTTPStatusCode": 500},
+                },
+                "CompleteMultipartUpload",
+            )
+
+        def abort_multipart_upload(self, **values: object) -> None:
+            aborted.append(cast(str, values["UploadId"]))
+
+    with patch("skywright._dataset_upload._MULTIPART_THRESHOLD_BYTES", 1):
+        _put_bytes(
+            Storage(),
+            "dataset",
+            "publications/payload.bin",
+            body,
+            f"sha256:{digest}",
+        )
+
+    assert stored == body
+    assert aborted == []
 
 
 @pytest.mark.parametrize(

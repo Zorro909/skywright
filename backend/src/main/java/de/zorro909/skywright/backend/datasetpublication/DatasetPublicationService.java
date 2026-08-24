@@ -98,7 +98,8 @@ class DatasetPublicationService {
 					"Dataset Publication progress exceeds its accepted bounds", false);
 		}
 		if (operation.state == DatasetPublicationState.COMMITTED || operation.state == DatasetPublicationState.VERIFYING
-				|| operation.state == DatasetPublicationState.COMMITTING) {
+				|| operation.state == DatasetPublicationState.COMMITTING
+				|| operation.state == DatasetPublicationState.FAILED && !operation.retryable) {
 			return operation.view();
 		}
 		operation.state = DatasetPublicationState.UPLOADING;
