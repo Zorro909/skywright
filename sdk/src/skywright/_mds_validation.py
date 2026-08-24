@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import BinaryIO, Protocol, cast
 
 from ._dataset_errors import DatasetPublicationError, metadata_error, publication_error
+from ._mds_decoding import validate_encoded_value
 
 CHUNK_BYTES = 1024 * 1024
 MAX_CONFIGURATION_BYTES = 1024 * 1024
@@ -460,10 +461,7 @@ def validate_binary(stream: BinaryIO, file_size: int, shard: dict[str, object]) 
                 value = stream.read(value_size)
                 if len(value) != value_size:
                     raise metadata_error("An MDS sample value is truncated")
-                if encoding == "str":
-                    value.decode("utf-8")
-                elif encoding == "json":
-                    json.loads(value)
+                validate_encoded_value(cast(str, encoding), value)
             start = end
         if start != file_size:
             raise metadata_error("The MDS shard offsets are malformed")

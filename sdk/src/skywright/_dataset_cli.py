@@ -23,12 +23,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
+from skywright._dataset_errors import DatasetPublicationError
 from skywright._dataset_publication import (
-    DatasetPublicationError,
     InspectedCorpus,
     ManifestEntry,
     SourceIdentity,
     inspect_mds_corpus,
+    verify_source_inventory,
 )
 
 
@@ -241,6 +242,7 @@ def _upload(
             ]
             for upload in uploads:
                 upload.result()
+        verify_source_inventory(corpus)
         _put_bytes(
             client,
             bucket,

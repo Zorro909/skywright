@@ -41,6 +41,7 @@ assert metadata("skywright").get_all("Requires-Dist") == [
     "brotli<2,>=1.1",
     "jsonschema[format]<5,>=4.25",
     "numpy<3,>=2.2",
+    "pillow<13,>=11",
     "protobuf==7.36.0",
     "python-snappy<1,>=0.7",
     "safetensors<1,>=0.6",
@@ -53,6 +54,7 @@ assert importlib.util.find_spec("boto3") is None
 assert importlib.util.find_spec("brotli") is None
 assert importlib.util.find_spec("jsonschema") is None
 assert importlib.util.find_spec("numpy") is None
+assert importlib.util.find_spec("PIL") is None
 assert importlib.util.find_spec("google") is None
 assert importlib.util.find_spec("safetensors") is None
 assert importlib.util.find_spec("snappy") is None

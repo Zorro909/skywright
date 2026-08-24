@@ -329,6 +329,34 @@ def test_mds_validation_requires_each_declared_descriptor_hash(tmp_path: Path) -
     assert raised.value.code == "DATASET_MDS_DECODING_METADATA_INVALID"
 
 
+def test_mds_validation_accepts_unsorted_supported_hash_names(tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus, hash_names=("sha256", "sha1"))
+
+    assert inspect_mds_corpus(corpus).object_count == 2
+
+
+@pytest.mark.parametrize(
+    ("encoding", "value"),
+    [
+        ("str_int", b"not-an-int"),
+        ("jpeg", b"not-a-jpeg"),
+        ("ndarray", b"\xff"),
+        ("list[jpeg]", struct.pack("<III", 0, 1, 100) + b"short"),
+    ],
+)
+def test_mds_validation_rejects_values_that_their_safe_encoding_cannot_decode(
+    tmp_path: Path, encoding: str, value: bytes
+) -> None:
+    corpus = tmp_path / encoding.replace("/", "-")
+    write_corpus(corpus, encoding=encoding, values=(value,))
+
+    with pytest.raises(DatasetPublicationError) as raised:
+        inspect_mds_corpus(corpus)
+
+    assert raised.value.code == "DATASET_MDS_DECODING_METADATA_INVALID"
+
+
 def test_partition_descriptor_must_be_structurally_valid(tmp_path: Path) -> None:
     corpus = tmp_path / "corpus"
     write_corpus(corpus, partition="part")
@@ -587,7 +615,15 @@ def test_command_accepts_bounded_publication_concurrency(tmp_path: Path) -> None
 
 @pytest.mark.parametrize(
     "mutation",
-    ["replacement", "equal-length", "truncation", "deletion", "symlink", "directory"],
+    [
+        "replacement",
+        "equal-length",
+        "truncation",
+        "deletion",
+        "symlink",
+        "directory",
+        "addition",
+    ],
 )
 def test_command_rejects_every_source_change_after_scan(
     tmp_path: Path, mutation: str
@@ -616,6 +652,8 @@ def test_command_rejects_every_source_change_after_scan(
                 outside.write_bytes(original)
                 shard.unlink()
                 shard.symlink_to(outside)
+            elif mutation == "addition":
+                (corpus / "new-unreferenced.bin").write_bytes(b"added after scan")
             else:
                 shard.unlink()
                 shard.mkdir()

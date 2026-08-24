@@ -65,6 +65,7 @@ class ManifestEntry:
 
 @dataclass(frozen=True)
 class InspectedCorpus:
+    root: Path
     format_identity: str
     entries: tuple[ManifestEntry, ...]
     manifest_bytes: bytes
@@ -168,6 +169,7 @@ def inspect_mds_corpus(root: Path, *, concurrency: int = 4) -> InspectedCorpus:
         sort_keys=True,
     ).encode()
     return InspectedCorpus(
+        root,
         FORMAT_IDENTITY,
         entries,
         manifest_bytes,
@@ -238,7 +240,6 @@ def _shard(value: object) -> dict[str, object]:
         hash_values is None
         or not all(isinstance(item, str) for item in hash_values)
         or len(set(cast(list[str], hash_values))) != len(hash_values)
-        or hash_values != sorted(cast(list[str], hash_values))
         or not (size_limit is None or _is_nonnegative_int(size_limit))
     ):
         raise _metadata("The MDS shard configuration metadata is malformed")
@@ -455,3 +456,20 @@ def _source_mutated() -> DatasetPublicationError:
     return _error(
         "DATASET_SOURCE_MUTATED", "A local corpus file changed during publication"
     )
+
+
+def verify_source_inventory(corpus: InspectedCorpus) -> None:
+    """Require the accepted corpus inventory and file identities to remain exact."""
+    expected = {entry.object_key: entry.source_identity for entry in corpus.entries}
+    try:
+        if _inventory(corpus.root) != set(expected):
+            raise _source_mutated()
+        for key, accepted in expected.items():
+            stream, observed = _open_regular(corpus.root / Path(*key.split("/")))
+            stream.close()
+            if observed != accepted:
+                raise _source_mutated()
+    except DatasetPublicationError as error:
+        if error.code == "DATASET_SOURCE_MUTATED":
+            raise
+        raise _source_mutated() from error
