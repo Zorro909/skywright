@@ -31,11 +31,6 @@ final class DatasetPublicationWorkerLauncher {
 	private final Set<ActiveWorker> activeWorkers = ConcurrentHashMap.newKeySet();
 
 	DatasetPublicationWorkerLauncher(TargetStorageResolver targetStorages,
-			DatasetPublicationCredentialProjectionLifecycle projections) {
-		this(targetStorages, projections, 4);
-	}
-
-	DatasetPublicationWorkerLauncher(TargetStorageResolver targetStorages,
 			DatasetPublicationCredentialProjectionLifecycle projections, int verificationConcurrency) {
 		this.targetStorages = targetStorages;
 		this.projections = projections;

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import bz2
 import gzip
+import hashlib
 import json
 import os
 import socket
@@ -17,7 +18,8 @@ from unittest.mock import patch
 import pytest
 
 from skywright._dataset_cli import main
-from skywright._dataset_publication import DatasetPublicationError, inspect_mds_corpus
+from skywright._dataset_errors import DatasetPublicationError
+from skywright._dataset_publication import inspect_mds_corpus
 
 
 def write_corpus(
@@ -27,6 +29,7 @@ def write_corpus(
     values: tuple[bytes, ...] = (b"one stable sample",),
     partition: str | None = None,
     compression: str | None = None,
+    hash_names: tuple[str, ...] = (),
 ) -> None:
     fixed_size = 8 if encoding in {"int", "int64", "uint64"} else None
     configuration: dict[str, object] = {
@@ -35,7 +38,7 @@ def write_corpus(
         "column_sizes": [fixed_size],
         "compression": compression,
         "format": "mds",
-        "hashes": [],
+        "hashes": list(hash_names),
         "size_limit": 1024,
         "version": 2,
     }
@@ -90,7 +93,9 @@ def write_corpus(
         zip_data = {
             "basename": object_basename,
             "bytes": len(object_bytes),
-            "hashes": {},
+            "hashes": {
+                name: hashlib.new(name, object_bytes).hexdigest() for name in hash_names
+            },
         }
     (shard_directory / object_basename).write_bytes(object_bytes)
     referenced_basename = (
@@ -105,7 +110,9 @@ def write_corpus(
         "raw_data": {
             "basename": raw_referenced_basename,
             "bytes": len(shard),
-            "hashes": {},
+            "hashes": {
+                name: hashlib.new(name, shard).hexdigest() for name in hash_names
+            },
         },
         "samples": len(samples),
         "size_limit": 1024,
@@ -245,6 +252,7 @@ def test_mds_validation_accepts_every_supported_compression_family(
         "part//shard.mds",
         "part\\shard.mds",
         "./shard.mds",
+        "shard\x00.mds",
     ],
 )
 def test_mds_validation_rejects_unsafe_object_key_forms(
@@ -286,6 +294,52 @@ def test_mds_validation_rejects_unsafe_and_duplicate_compressed_raw_paths(
     with pytest.raises(DatasetPublicationError) as raised:
         inspect_mds_corpus(duplicate)
     assert raised.value.code == "DATASET_CORPUS_PATH_INVALID"
+
+
+def test_mds_validation_verifies_declared_raw_and_compressed_hashes(
+    tmp_path: Path,
+) -> None:
+    valid = tmp_path / "valid"
+    write_corpus(valid, compression="gz", hash_names=("sha256",))
+    assert inspect_mds_corpus(valid).object_count == 2
+
+    for descriptor_name in ("raw_data", "zip_data"):
+        corpus = tmp_path / descriptor_name
+        write_corpus(corpus, compression="gz", hash_names=("sha256",))
+        index = json.loads((corpus / "index.json").read_text())
+        index["shards"][0][descriptor_name]["hashes"]["sha256"] = "0" * 64
+        (corpus / "index.json").write_text(json.dumps(index))
+
+        with pytest.raises(DatasetPublicationError) as raised:
+            inspect_mds_corpus(corpus)
+
+        assert raised.value.code == "DATASET_MDS_DIGEST_METADATA_MISMATCH"
+
+
+def test_mds_validation_requires_each_declared_descriptor_hash(tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus, hash_names=("sha256",))
+    index = json.loads((corpus / "index.json").read_text())
+    index["shards"][0]["raw_data"]["hashes"] = {}
+    (corpus / "index.json").write_text(json.dumps(index))
+
+    with pytest.raises(DatasetPublicationError) as raised:
+        inspect_mds_corpus(corpus)
+
+    assert raised.value.code == "DATASET_MDS_DECODING_METADATA_INVALID"
+
+
+def test_partition_descriptor_must_be_structurally_valid(tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus, partition="part")
+    partition_index = json.loads((corpus / "part" / "index.json").read_text())
+    del partition_index["shards"][0]["raw_data"]["basename"]
+    (corpus / "part" / "index.json").write_text(json.dumps(partition_index))
+
+    with pytest.raises(DatasetPublicationError) as raised:
+        inspect_mds_corpus(corpus)
+
+    assert raised.value.code == "DATASET_MDS_DECODING_METADATA_INVALID"
 
 
 def test_mds_validation_rejects_duplicate_references_and_special_files(

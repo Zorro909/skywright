@@ -68,15 +68,29 @@ final class DatasetPublicationApiIT {
 						"{\"expectedRegistrationRevision\":2,\"activated\":true}");
 				assertThat(activated.statusCode()).as(activated.body()).isEqualTo(200);
 
-				Path extra = corpus.resolve("unreferenced.bin");
-				Files.writeString(extra, "must fail before initiation", StandardCharsets.UTF_8);
-				CommandResult invalid = runCommand(corpus, backend.baseUri(), storageId);
-				assertThat(invalid.exitCode()).as(invalid.stderr()).isEqualTo(2);
-				assertThat(invalid.stderr()).contains("SKYWRIGHT_DATASET_CORPUS_FILE_UNREFERENCED");
-				var emptyCatalog = backend.get("/api/v1/dataset-catalog");
-				assertThat(emptyCatalog.statusCode()).as(emptyCatalog.body()).isEqualTo(200);
-				assertThat(JSON.readTree(emptyCatalog.body()).path("items")).isEmpty();
-				Files.delete(extra);
+				assertInvalidCorpusInvisible(backend, storageId, localBefore, "unreferenced",
+						path -> Files.writeString(path.resolve("unreferenced.bin"), "not indexed"),
+						"SKYWRIGHT_DATASET_CORPUS_FILE_UNREFERENCED");
+				assertInvalidCorpusInvisible(backend, storageId, localBefore, "version",
+						path -> replaceIndex(path, "\"version\":2", "\"version\":1"),
+						"SKYWRIGHT_DATASET_MDS_VERSION_UNSUPPORTED");
+				assertInvalidCorpusInvisible(backend, storageId, localBefore, "format",
+						path -> replaceIndex(path, "\"format\":\"mds\"", "\"format\":\"json\""),
+						"SKYWRIGHT_DATASET_STREAMING_FORMAT_UNSUPPORTED");
+				assertInvalidCorpusInvisible(backend, storageId, localBefore, "encoding",
+						path -> replaceIndex(path, "\"column_encodings\":[\"str\"]", "\"column_encodings\":[\"pkl\"]"),
+						"SKYWRIGHT_DATASET_CORPUS_UNSAFE_ENCODING");
+				assertInvalidCorpusInvisible(backend, storageId, localBefore, "path",
+						path -> replaceIndex(path, "shard.00000.mds", "../shard.00000.mds"),
+						"SKYWRIGHT_DATASET_CORPUS_PATH_INVALID");
+				assertInvalidCorpusInvisible(backend, storageId, localBefore, "metadata",
+						path -> replaceIndex(path, "\"column_sizes\":[null]", "\"column_sizes\":[]"),
+						"SKYWRIGHT_DATASET_MDS_DECODING_METADATA_INVALID");
+				assertInvalidCorpusInvisible(backend, storageId, localBefore, "sample-count",
+						path -> replaceIndex(path, "\"samples\":1", "\"samples\":2"),
+						"SKYWRIGHT_DATASET_MDS_SAMPLE_METADATA_MISMATCH");
+				assertInvalidCorpusInvisible(backend, storageId, localBefore, "missing",
+						path -> Files.delete(firstPayload(path)), "SKYWRIGHT_DATASET_CORPUS_FILE_MISSING");
 
 				CommandResult command = runCommand(corpus, backend.baseUri(), storageId);
 				assertThat(command.exitCode()).as(command.stderr()).isZero();
@@ -161,6 +175,48 @@ final class DatasetPublicationApiIT {
 						"\"failureCode\":\"DATASET_VERIFICATION_UNAVAILABLE\"", "\"retryable\":true");
 			}
 		}
+	}
+
+	private void assertInvalidCorpusInvisible(BackendFixture backend, String storageId, Map<String, byte[]> files,
+			String name, CorpusMutation mutation, String expectedCode) throws Exception {
+		Path invalid = Files.createDirectory(this.temporaryDirectory.resolve("invalid-" + name));
+		for (var entry : files.entrySet()) {
+			Path destination = invalid.resolve(entry.getKey());
+			Files.createDirectories(destination.getParent());
+			Files.write(destination, entry.getValue());
+		}
+		mutation.apply(invalid);
+		CommandResult command = runCommand(invalid, backend.baseUri(), storageId);
+		assertThat(command.exitCode()).as(command.stderr()).isEqualTo(2);
+		assertThat(command.stderr()).contains(expectedCode);
+		var catalog = backend.get("/api/v1/dataset-catalog");
+		assertThat(catalog.statusCode()).as(catalog.body()).isEqualTo(200);
+		assertThat(JSON.readTree(catalog.body()).path("items")).isEmpty();
+	}
+
+	private static void replaceIndex(Path corpus, String before, String after) throws Exception {
+		Path index = corpus.resolve("index.json");
+		String original = Files.readString(index);
+		String replaced = original.replaceFirst(java.util.regex.Pattern.quote(before),
+				java.util.regex.Matcher.quoteReplacement(after));
+		assertThat(replaced).isNotEqualTo(original);
+		Files.writeString(index, replaced);
+	}
+
+	private static Path firstPayload(Path corpus) throws Exception {
+		try (var files = Files.walk(corpus)) {
+			return files.filter(Files::isRegularFile)
+				.filter(path -> !path.getFileName().toString().equals("index.json"))
+				.findFirst()
+				.orElseThrow();
+		}
+	}
+
+	@FunctionalInterface
+	private interface CorpusMutation {
+
+		void apply(Path corpus) throws Exception;
+
 	}
 
 	private static JsonNode awaitTerminalPublication(BackendFixture backend, String publicationId) throws Exception {

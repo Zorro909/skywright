@@ -21,6 +21,9 @@ from ._mds_validation import file_descriptor as _file_descriptor
 from ._mds_validation import is_nonnegative_int as _is_nonnegative_int
 from ._mds_validation import validate_binary as _validate_mds_binary
 from ._mds_validation import validate_columns as _validate_columns
+from ._mds_validation import validate_descriptor_hashes as _validate_descriptor_hashes
+from ._mds_validation import validate_hash_names as _validate_hash_names
+from ._mds_validation import validate_stream_hashes as _validate_stream_hashes
 
 FORMAT_IDENTITY = "mosaicml-streaming-mds@2"
 MANIFEST_VERSION = "skywright-dataset-manifest@1"
@@ -239,6 +242,7 @@ def _shard(value: object) -> dict[str, object]:
         or not (size_limit is None or _is_nonnegative_int(size_limit))
     ):
         raise _metadata("The MDS shard configuration metadata is malformed")
+    _validate_hash_names(cast(list[str], hash_values))
     return shard
 
 
@@ -263,6 +267,8 @@ def _validate_shard(
         )
     raw = _file_descriptor(shard.get("raw_data"))
     raw_key = _safe_object_key(cast(str, raw["basename"]))
+    hash_names = cast(list[str], shard["hashes"])
+    _validate_descriptor_hashes(raw, hash_names)
     zipped = shard.get("zip_data")
     if compression is None:
         if zipped is not None:
@@ -270,6 +276,7 @@ def _validate_shard(
         selected = raw
     else:
         selected = _file_descriptor(zipped)
+        _validate_descriptor_hashes(selected, hash_names)
     object_key = _safe_object_key(cast(str, selected["basename"]))
     stream, identity = _open_regular(root / Path(*object_key.split("/")))
     try:
@@ -278,6 +285,7 @@ def _validate_shard(
                 "DATASET_MDS_BYTE_METADATA_MISMATCH",
                 "An MDS shard byte count does not match index.json",
             )
+        _validate_stream_hashes(stream, selected, hash_names)
         with tempfile.TemporaryFile() as decoded:
             decoded_size = _decompress(stream, decoded, compression)
             if decoded_size != raw["bytes"]:
@@ -285,6 +293,8 @@ def _validate_shard(
                     "DATASET_MDS_BYTE_METADATA_MISMATCH",
                     "An MDS raw byte count does not match the published shard",
                 )
+            if compression is not None:
+                _validate_stream_hashes(decoded, raw, hash_names)
             _validate_mds_binary(decoded, decoded_size, shard)
         if identity != SourceIdentity.from_stat(os.fstat(stream.fileno())):
             raise _source_mutated()
@@ -300,10 +310,11 @@ def _qualify_partition(partition: str, shards: list[object]) -> list[dict[str, o
         qualified = cast(dict[str, object], json.loads(json.dumps(shard)))
         for name in ("raw_data", "zip_data"):
             descriptor = qualified.get(name)
-            if isinstance(descriptor, dict):
-                descriptor["basename"] = (
-                    f"{partition}/{cast(str, descriptor['basename'])}"
-                )
+            if descriptor is None and name == "zip_data":
+                continue
+            valid = _file_descriptor(descriptor)
+            basename = _safe_object_key(cast(str, valid["basename"]))
+            valid["basename"] = f"{partition}/{basename}"
         result.append(qualified)
     return result
 
@@ -317,6 +328,7 @@ def _safe_object_key(value: str) -> str:
         not value
         or value.startswith("/")
         or "\\" in value
+        or "\x00" in value
         or any(part in {"", ".", ".."} for part in value.split("/"))
     ):
         raise _path_error("An MDS shard object path is unsafe")

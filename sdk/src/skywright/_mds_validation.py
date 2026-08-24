@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import bz2
 import gzip
+import hashlib
 import json
 import os
 import struct
-from itertools import pairwise
+from collections.abc import Callable
 from typing import BinaryIO, Protocol, cast
 
 from ._dataset_errors import DatasetPublicationError, metadata_error, publication_error
 
 CHUNK_BYTES = 1024 * 1024
+MAX_CONFIGURATION_BYTES = 1024 * 1024
 SUPPORTED_COMPRESSIONS = frozenset(
     {"br", "bz2", "gz", "snappy", "zstd"}
     | {f"br:{level}" for level in range(12)}
@@ -75,6 +77,12 @@ class _BrotliDecoder(Protocol):
     def process(self, value: bytes, /) -> bytes: ...
 
     def is_finished(self) -> bool: ...
+
+
+class _Hasher(Protocol):
+    def update(self, value: bytes, /) -> object: ...
+
+    def hexdigest(self) -> str: ...
 
 
 def validate_columns(shard: dict[str, object]) -> None:
@@ -177,6 +185,55 @@ def file_descriptor(value: object) -> dict[str, object]:
     return descriptor
 
 
+def validate_hash_names(value: list[str]) -> None:
+    import xxhash
+
+    xxhash_names: set[str] = xxhash.algorithms_available
+    available = {
+        name for name in hashlib.algorithms_available if not name.startswith("shake_")
+    } | xxhash_names
+    if any(name not in available for name in value):
+        raise metadata_error("The MDS shard declares an unsupported hash algorithm")
+
+
+def validate_descriptor_hashes(
+    descriptor: dict[str, object], hash_names: list[str]
+) -> None:
+    hashes = cast(dict[str, str], descriptor["hashes"])
+    if set(hashes) != set(hash_names):
+        raise metadata_error("The MDS shard digest metadata is malformed")
+    if any(
+        not digest or any(character not in "0123456789abcdef" for character in digest)
+        for digest in hashes.values()
+    ):
+        raise metadata_error("The MDS shard digest metadata is malformed")
+
+
+def validate_stream_hashes(
+    stream: BinaryIO, descriptor: dict[str, object], hash_names: list[str]
+) -> None:
+    expected = cast(dict[str, str], descriptor["hashes"])
+    hashers = {name: _new_hasher(name) for name in hash_names}
+    while chunk := stream.read(CHUNK_BYTES):
+        for hasher in hashers.values():
+            hasher.update(chunk)
+    stream.seek(0)
+    if any(hashers[name].hexdigest() != expected[name] for name in hash_names):
+        raise publication_error(
+            "DATASET_MDS_DIGEST_METADATA_MISMATCH",
+            "An MDS shard digest does not match index.json",
+        )
+
+
+def _new_hasher(name: str) -> _Hasher:
+    if name in hashlib.algorithms_available and not name.startswith("shake_"):
+        return cast(_Hasher, hashlib.new(name))
+    import xxhash
+
+    constructor = cast(Callable[[], _Hasher], getattr(xxhash, name))
+    return constructor()
+
+
 def decompress(source: BinaryIO, target: BinaryIO, compression: str | None) -> int:
     try:
         if compression is None:
@@ -194,34 +251,48 @@ def decompress(source: BinaryIO, target: BinaryIO, compression: str | None) -> i
 
 def _decompress_optional(source: BinaryIO, target: BinaryIO, compression: str) -> int:
     family = compression.split(":", 1)[0]
-    try:
-        if family == "br":
-            import brotli  # pyright: ignore[reportMissingTypeStubs]
-
-            decoder = cast(
-                _BrotliDecoder,
-                brotli.Decompressor(),  # pyright: ignore[reportUnknownMemberType]
-            )
-            transform = decoder.process
-        elif family == "snappy":
+    if family == "br":
+        return _decompress_brotli(source, target)
+    if family == "snappy":
+        try:
             return _decompress_snappy(source, target)
-        else:
-            import zstandard
+        except ValueError as error:
+            raise metadata_error("The compressed MDS shard is malformed") from error
+    return _decompress_zstandard(source, target)
 
-            with zstandard.ZstdDecompressor().stream_reader(
-                source, closefd=False
-            ) as reader:
-                return _copy_decoded(reader, target)
+
+def _decompress_brotli(source: BinaryIO, target: BinaryIO) -> int:
+    import brotli  # pyright: ignore[reportMissingTypeStubs]
+
+    try:
+        decoder = cast(
+            _BrotliDecoder,
+            brotli.Decompressor(),  # pyright: ignore[reportUnknownMemberType]
+        )
         total = 0
         while chunk := source.read(CHUNK_BYTES):
-            decoded = transform(chunk)
+            decoded = decoder.process(chunk)
             target.write(decoded)
             total += len(decoded)
         if not decoder.is_finished():
             raise ValueError("truncated Brotli stream")
         target.seek(0)
         return total
-    except Exception as error:
+    except brotli.error:  # pyright: ignore[reportUnknownMemberType]
+        raise metadata_error("The compressed MDS shard is malformed") from None
+    except ValueError as error:
+        raise metadata_error("The compressed MDS shard is malformed") from error
+
+
+def _decompress_zstandard(source: BinaryIO, target: BinaryIO) -> int:
+    import zstandard
+
+    try:
+        with zstandard.ZstdDecompressor().stream_reader(
+            source, closefd=False
+        ) as reader:
+            return _copy_decoded(reader, target)
+    except (zstandard.ZstdError, OSError, EOFError) as error:
         raise metadata_error("The compressed MDS shard is malformed") from error
 
 
@@ -329,17 +400,21 @@ def validate_binary(stream: BinaryIO, file_size: int, shard: dict[str, object]) 
         header_size = 4 * (samples + 2)
         if file_size < header_size:
             raise metadata_error("The MDS shard header is truncated")
-        offset_bytes = stream.read(4 * (samples + 1))
-        if len(offset_bytes) != 4 * (samples + 1):
+        first_offset_bytes = stream.read(4)
+        if len(first_offset_bytes) != 4:
             raise metadata_error("The MDS shard offsets are truncated")
-        offsets = struct.unpack(f"<{samples + 1}I", offset_bytes)
-        if (
-            offsets[0] < header_size
-            or offsets[-1] != file_size
-            or any(right < left for left, right in pairwise(offsets))
-        ):
+        first_offset = struct.unpack("<I", first_offset_bytes)[0]
+        if first_offset < header_size:
             raise metadata_error("The MDS shard offsets are malformed")
-        configuration = cast(object, json.loads(stream.read(offsets[0] - header_size)))
+        configuration_size = first_offset - header_size
+        if configuration_size > MAX_CONFIGURATION_BYTES:
+            raise metadata_error(
+                "The MDS shard configuration exceeds the 1 MiB validation limit"
+            )
+        stream.seek(header_size)
+        configuration = cast(
+            object, json.loads(_read_exact(stream, configuration_size))
+        )
         expected = {
             "column_encodings": encodings,
             "column_names": names,
@@ -354,8 +429,15 @@ def validate_binary(stream: BinaryIO, file_size: int, shard: dict[str, object]) 
             raise metadata_error(
                 "The MDS shard configuration does not match index.json"
             )
+        start = first_offset
         for sample_index in range(samples):
-            start, end = offsets[sample_index], offsets[sample_index + 1]
+            stream.seek(8 + 4 * sample_index)
+            end_bytes = stream.read(4)
+            if len(end_bytes) != 4:
+                raise metadata_error("The MDS shard offsets are truncated")
+            end = struct.unpack("<I", end_bytes)[0]
+            if end < start or end > file_size:
+                raise metadata_error("The MDS shard offsets are malformed")
             stream.seek(start)
             variable_count = sum(size is None for size in sizes)
             size_bytes = stream.read(4 * variable_count)
@@ -382,6 +464,9 @@ def validate_binary(stream: BinaryIO, file_size: int, shard: dict[str, object]) 
                     value.decode("utf-8")
                 elif encoding == "json":
                     json.loads(value)
+            start = end
+        if start != file_size:
+            raise metadata_error("The MDS shard offsets are malformed")
     except DatasetPublicationError:
         raise
     except (
@@ -391,6 +476,13 @@ def validate_binary(stream: BinaryIO, file_size: int, shard: dict[str, object]) 
         ValueError,
     ) as error:
         raise metadata_error("The MDS shard is not structurally decodable") from error
+
+
+def _read_exact(stream: BinaryIO, count: int) -> bytes:
+    value = stream.read(count)
+    if len(value) != count:
+        raise metadata_error("The MDS shard configuration is truncated")
+    return value
 
 
 def is_nonnegative_int(value: object) -> bool:

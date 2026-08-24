@@ -45,6 +45,7 @@ assert metadata("skywright").get_all("Requires-Dist") == [
     "python-snappy<1,>=0.7",
     "safetensors<1,>=0.6",
     "tensorboard==2.21.0",
+    "xxhash<4,>=3.5",
     "zstandard<1,>=0.23",
 ]
 assert files(skywright).joinpath("py.typed").is_file()
@@ -57,6 +58,7 @@ assert importlib.util.find_spec("safetensors") is None
 assert importlib.util.find_spec("snappy") is None
 assert importlib.util.find_spec("tensorboard") is None
 assert importlib.util.find_spec("torch") is None
+assert importlib.util.find_spec("xxhash") is None
 assert importlib.util.find_spec("zstandard") is None
 print(skywright.__version__)
 """
