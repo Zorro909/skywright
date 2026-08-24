@@ -95,8 +95,8 @@ public class DatasetPublicationHttpAdapter implements DatasetPublicationsApi, Da
 				: PreferredDefinitionDecision.valueOf(request.getPreferredDefinitionDecision().name());
 		return new DatasetPublicationRequest(request.getTargetStorageId(), request.getDatasetId(),
 				request.getExpectedDatasetRevision(), decision, request.getVersionLabel(),
-				request.getFormatIdentity().getValue(), request.getManifestIdentity(),
-				request.getContentFingerprint(), request.getObjectCount(), request.getByteCount());
+				request.getFormatIdentity().getValue(), request.getManifestIdentity(), request.getContentFingerprint(),
+				request.getObjectCount(), request.getByteCount());
 	}
 
 	private static String wireValue(Enum<?> value) {

@@ -265,11 +265,10 @@ class DatasetPublicationWorkerDispatcherTest {
 	private static DatasetPublicationView publicationView(UUID publicationId) {
 		Instant now = Instant.now();
 		return new DatasetPublicationView(publicationId, DatasetPublicationState.VERIFYING, UUID.randomUUID(),
-				UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), 0,
-				DatasetPublicationPreferredDecision.ADVANCE_PREFERRED, "v1", "mosaicml-streaming-mds@2",
-				"sha256:" + "1".repeat(64), "sha256:" + "2".repeat(64), 1, 1, "datasets/payload",
-				"operations/publication", 1, 1, 0, 0, null, false, true, null, null, null, null, now, now, null, null,
-				0);
+				UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), 0L, PreferredDefinitionDecision.ADVANCE, "v1",
+				"mosaicml-streaming-mds@2", "sha256:" + "1".repeat(64), "sha256:" + "2".repeat(64), 1, 1,
+				"datasets/payload", "operations/publication", 1, 1, 0, 0, null, false, true, null, null, null, null,
+				now, now, null, null, 0);
 	}
 
 	private static final class RecordingScheduler implements DatasetPublicationWorkerRecoveryScheduler {

@@ -287,17 +287,27 @@ def _validate_publication_identity(
         raise _protocol_error()
     for field in (
         "targetStorageId",
+        "expectedDatasetRevision",
+        "preferredDefinitionDecision",
         "formatIdentity",
         "manifestIdentity",
         "contentFingerprint",
         "objectCount",
         "byteCount",
     ):
-        if publication.get(field) != requested[field]:
+        if publication.get(field) != requested.get(field):
             raise DatasetPublicationError(
                 "DATASET_PUBLICATION_CONFLICT",
                 "The Dataset Publication does not match the requested immutable facts",
             )
+    if (
+        "datasetId" in requested
+        and publication.get("datasetId") != requested["datasetId"]
+    ):
+        raise DatasetPublicationError(
+            "DATASET_PUBLICATION_CONFLICT",
+            "The Dataset Publication does not match the requested immutable facts",
+        )
     requested_label = requested["versionLabel"]
     effective_label = publication.get("versionLabel")
     if requested_label is not None and effective_label != requested_label:

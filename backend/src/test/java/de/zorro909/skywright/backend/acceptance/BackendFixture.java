@@ -83,9 +83,8 @@ final class BackendFixture implements AutoCloseable {
 	BackendFixture restartWithTargetStorageIntegration() {
 		this.application.close();
 		Supplier<SpringApplicationBuilder> restartedBuilder = () -> new SpringApplicationBuilder(
-				SkywrightBackendApplication.class,
-						TargetStorageIntegrationTestConfiguration.class,
-						DatasetPublicationCommitGateTestConfiguration.class)
+				SkywrightBackendApplication.class, TargetStorageIntegrationTestConfiguration.class,
+				DatasetPublicationCommitGateTestConfiguration.class)
 			.profiles("target-storage-integration");
 		BackendFixture restarted = new BackendFixture(run(restartedBuilder.get(), this.database), this.database,
 				restartedBuilder, true);
@@ -95,9 +94,8 @@ final class BackendFixture implements AutoCloseable {
 
 	BackendFixture peerWithTargetStorageIntegration() {
 		Supplier<SpringApplicationBuilder> peerBuilder = () -> new SpringApplicationBuilder(
-				SkywrightBackendApplication.class,
-						TargetStorageIntegrationTestConfiguration.class,
-						DatasetPublicationCommitGateTestConfiguration.class)
+				SkywrightBackendApplication.class, TargetStorageIntegrationTestConfiguration.class,
+				DatasetPublicationCommitGateTestConfiguration.class)
 			.profiles("target-storage-integration");
 		return new BackendFixture(run(peerBuilder.get(), this.database), this.database, peerBuilder, false);
 	}

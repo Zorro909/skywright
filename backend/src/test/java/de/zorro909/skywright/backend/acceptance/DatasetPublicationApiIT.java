@@ -122,12 +122,11 @@ final class DatasetPublicationApiIT {
 										+ "\"expectedDatasetRevision\":1,\"preferredDefinitionDecision\":\"advance\","
 										+ "\"targetStorageId\""));
 				assertThat(changedDataset.statusCode()).as(changedDataset.body()).isEqualTo(409);
-				var changedPreference = backend
-					.post("/api/v1/dataset-publications/" + publicationId + "/resume", request.replace(
-							"\"targetStorageId\"",
-							"\"datasetId\":\"00000000-0000-0000-0000-000000000099\","
-									+ "\"expectedDatasetRevision\":1,\"preferredDefinitionDecision\":\"keep\","
-									+ "\"targetStorageId\""));
+				var changedPreference = backend.post("/api/v1/dataset-publications/" + publicationId + "/resume",
+						request.replace("\"targetStorageId\"",
+								"\"datasetId\":\"00000000-0000-0000-0000-000000000099\","
+										+ "\"expectedDatasetRevision\":1,\"preferredDefinitionDecision\":\"keep\","
+										+ "\"targetStorageId\""));
 				assertThat(changedPreference.statusCode()).as(changedPreference.body()).isEqualTo(409);
 
 				var progress = backend.put("/api/v1/dataset-publications/" + publicationId + "/progress",
@@ -261,7 +260,7 @@ final class DatasetPublicationApiIT {
 				String fingerprint = result.path("contentFingerprint").asText();
 				char differentDigit = fingerprint.charAt(23) == '0' ? '1' : '0';
 				String collidingFingerprint = fingerprint.substring(0, 23) + differentDigit + fingerprint.substring(24);
-				var collidingInitiation = backend.post("/api/v1/dataset-publications", """
+				String collidingRequest = """
 						{
 						  "targetStorageId":"%s",
 						  "datasetId":"%s",
@@ -274,11 +273,23 @@ final class DatasetPublicationApiIT {
 						  "byteCount":1
 						}
 						""".formatted(storageId, result.path("datasetId").asText(),
-						result.path("manifestIdentity").asText(), collidingFingerprint));
+						result.path("manifestIdentity").asText(), collidingFingerprint);
+				var collidingInitiation = backend.post("/api/v1/dataset-publications", collidingRequest);
 				assertThat(collidingInitiation.statusCode()).as(collidingInitiation.body()).isEqualTo(201);
 				JsonNode colliding = JSON.readTree(collidingInitiation.body());
 				assertThat(colliding.path("versionLabel").asText()).isEqualTo(collidingFingerprint.substring(7, 25));
 				assertThat(colliding.path("contentFingerprint").asText()).isEqualTo(collidingFingerprint);
+				var resumedExisting = backend.post(
+						"/api/v1/dataset-publications/" + colliding.path("publicationId").asText() + "/resume",
+						collidingRequest);
+				assertThat(resumedExisting.statusCode()).as(resumedExisting.body()).isEqualTo(200);
+				assertThat(JSON.readTree(resumedExisting.body()).path("datasetId")).isEqualTo(result.path("datasetId"));
+				var changedExistingDecision = backend.post(
+						"/api/v1/dataset-publications/" + colliding.path("publicationId").asText() + "/resume",
+						collidingRequest.replace("\"preferredDefinitionDecision\":\"advance\"",
+								"\"preferredDefinitionDecision\":\"keep\""));
+				assertThat(changedExistingDecision.statusCode()).as(changedExistingDecision.body()).isEqualTo(409);
+				assertThat(changedExistingDecision.body()).contains("SKYWRIGHT_DATASET_PUBLICATION_CONFLICT");
 				var repeatedFingerprintInitiation = backend.post("/api/v1/dataset-publications", """
 						{
 						  "targetStorageId":"%s",
