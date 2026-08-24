@@ -76,30 +76,35 @@ final class DatasetPublicationWorkerDispatcher {
 			}
 		}
 		catch (DatasetPublicationException failure) {
-			this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0,
-					null, 0, failure.errorCode(), failure.retryable()));
+			retryScheduled = recordFailure(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(),
+					0, 0, null, 0, failure.errorCode(), failure.retryable()), attempt);
 		}
 		catch (DatasetCatalogException failure) {
-			this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0,
-					null, 0, failure.errorCode(), false));
+			retryScheduled = recordFailure(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(),
+					0, 0, null, 0, failure.errorCode(), false), attempt);
 		}
 		catch (RuntimeException failure) {
 			if (this.closing.get()) {
 				return;
 			}
-			try {
-				this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0,
-						0, null, 0, "DATASET_DATABASE_UNAVAILABLE", true));
-			}
-			catch (RuntimeException persistenceFailure) {
-				retryScheduled = true;
-				this.scheduler.retry(() -> verify(publicationId, attempt + 1), attempt);
-			}
+			retryScheduled = recordFailure(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(),
+					0, 0, null, 0, "DATASET_DATABASE_UNAVAILABLE", true), attempt);
 		}
 		finally {
 			if (!retryScheduled) {
 				this.dispatched.remove(publicationId);
 			}
+		}
+	}
+
+	private boolean recordFailure(UUID publicationId, DatasetPublicationWorkerResult failure, int attempt) {
+		try {
+			this.publications.fail(publicationId, failure);
+			return false;
+		}
+		catch (RuntimeException persistenceFailure) {
+			this.scheduler.retry(() -> verify(publicationId, attempt + 1), attempt);
+			return true;
 		}
 	}
 

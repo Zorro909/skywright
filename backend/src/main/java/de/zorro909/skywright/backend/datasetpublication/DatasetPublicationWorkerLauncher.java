@@ -233,7 +233,8 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 	}
 
 	static DatasetPublicationWorkerResult targetResolutionFailure(String code) {
-		if ("TARGET_STORAGE_CREDENTIALS_UNAVAILABLE".equals(code)) {
+		if ("TARGET_STORAGE_CREDENTIALS_UNAVAILABLE".equals(code)
+				|| "TARGET_STORAGE_BINDING_UNAVAILABLE".equals(code)) {
 			return projectionFailure();
 		}
 		return new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0, null, 0,

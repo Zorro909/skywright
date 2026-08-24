@@ -2,6 +2,7 @@ package de.zorro909.skywright.backend.datasetpublication;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.zorro909.skywright.backend.datasetcatalog.DatasetCatalogException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -70,9 +71,37 @@ class DatasetPublicationWorkerDispatcherTest {
 		assertThat(DatasetPublicationService.unavailableSource(failure)).isNull();
 		assertThat(DatasetPublicationWorkerLauncher.targetResolutionFailure("TARGET_STORAGE_CREDENTIALS_UNAVAILABLE")
 			.failureCode()).isEqualTo("DATASET_PROJECTION_UNAVAILABLE");
+		assertThat(DatasetPublicationWorkerLauncher.targetResolutionFailure("TARGET_STORAGE_BINDING_UNAVAILABLE")
+			.failureCode()).isEqualTo("DATASET_PROJECTION_UNAVAILABLE");
 		DatasetPublicationWorkerResult processFailure = DatasetPublicationWorkerLauncher.failure();
 		assertThat(DatasetPublicationService.unavailableSource(processFailure))
 			.isEqualTo("Dataset Verification Worker");
+	}
+
+	@Test
+	void targetEligibilityFailureDuringCommitIsNotReportedAsDatabaseOutage() throws Exception {
+		UUID publicationId = UUID.randomUUID();
+		RecordingService publications = new RecordingService(publicationId) {
+			@Override
+			public void commit(UUID committedPublicationId, DatasetPublicationWorkerResult verified) {
+				throw new DatasetCatalogException("DATASET_TARGET_STORAGE_INELIGIBLE",
+						"Dataset Target Storage is not eligible for new work") {
+				};
+			}
+		};
+		var dispatcher = new DatasetPublicationWorkerDispatcher(publications,
+				publication -> new DatasetPublicationWorkerResult(true, List.of(), 1, 1, Instant.now(), 1, null, false),
+				new DatasetPublicationWorkerRecovery(null, null, null), new RecordingScheduler());
+		try {
+			dispatcher.requested(new DatasetPublicationVerificationRequested(publicationId));
+
+			DatasetPublicationWorkerResult failure = publications.failure.get(5, TimeUnit.SECONDS);
+			assertThat(failure.failureCode()).isEqualTo("DATASET_TARGET_STORAGE_INELIGIBLE");
+			assertThat(failure.retryable()).isFalse();
+		}
+		finally {
+			dispatcher.close();
+		}
 	}
 
 	@Test
@@ -207,7 +236,7 @@ class DatasetPublicationWorkerDispatcherTest {
 
 	}
 
-	private static final class RecordingService extends StubPublicationOperations {
+	private static class RecordingService extends StubPublicationOperations {
 
 		private final UUID publicationId;
 
