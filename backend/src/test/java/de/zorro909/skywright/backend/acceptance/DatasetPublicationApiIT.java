@@ -2,6 +2,7 @@ package de.zorro909.skywright.backend.acceptance;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.zorro909.skywright.backend.datasetpublication.DatasetPublicationCommitGateTestConfiguration;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -147,6 +148,46 @@ final class DatasetPublicationApiIT {
 				assertThat(catalog.body()).contains(result.path("versionLabel").asText(), "mosaicml-streaming-mds@2",
 						"authority", result.path("payloadLocation").asText());
 
+				String fingerprint = result.path("contentFingerprint").asText();
+				char differentDigit = fingerprint.charAt(23) == '0' ? '1' : '0';
+				String collidingFingerprint = fingerprint.substring(0, 23) + differentDigit + fingerprint.substring(24);
+				var collidingInitiation = backend.post("/api/v1/dataset-publications", """
+						{
+						  "targetStorageId":"%s",
+						  "datasetId":"%s",
+						  "expectedDatasetRevision":1,
+						  "preferredDefinitionDecision":"advance",
+						  "formatIdentity":"mosaicml-streaming-mds@2",
+						  "manifestIdentity":"%s",
+						  "contentFingerprint":"%s",
+						  "objectCount":1,
+						  "byteCount":1
+						}
+						""".formatted(storageId, result.path("datasetId").asText(),
+						result.path("manifestIdentity").asText(), collidingFingerprint));
+				assertThat(collidingInitiation.statusCode()).as(collidingInitiation.body()).isEqualTo(201);
+				JsonNode colliding = JSON.readTree(collidingInitiation.body());
+				assertThat(colliding.path("versionLabel").asText()).isEqualTo(collidingFingerprint.substring(7, 25));
+				assertThat(colliding.path("contentFingerprint").asText()).isEqualTo(collidingFingerprint);
+				var repeatedFingerprintInitiation = backend.post("/api/v1/dataset-publications", """
+						{
+						  "targetStorageId":"%s",
+						  "datasetId":"%s",
+						  "expectedDatasetRevision":1,
+						  "preferredDefinitionDecision":"keep",
+						  "formatIdentity":"mosaicml-streaming-mds@2",
+						  "manifestIdentity":"%s",
+						  "contentFingerprint":"%s",
+						  "objectCount":1,
+						  "byteCount":1
+						}
+						""".formatted(storageId, result.path("datasetId").asText(),
+						result.path("manifestIdentity").asText(), fingerprint));
+				assertThat(repeatedFingerprintInitiation.statusCode()).as(repeatedFingerprintInitiation.body())
+					.isEqualTo(201);
+				assertThat(JSON.readTree(repeatedFingerprintInitiation.body()).path("versionLabel").asText())
+					.isEqualTo(fingerprint.substring(7, 25));
+
 				CommandResult separateLineageCommand = runCommand(corpus, backend.baseUri(), storageId,
 						"--version-label", "same-content-new-lineage");
 				assertThat(separateLineageCommand.exitCode()).as(separateLineageCommand.stderr()).isZero();
@@ -195,12 +236,14 @@ final class DatasetPublicationApiIT {
 				assertThat(updatedLineage.statusCode()).as(updatedLineage.body()).isEqualTo(200);
 				assertThat(updatedLineage.body()).contains("\"revision\":3", advanced.path("definitionId").asText());
 
-				try (var requests = Executors.newVirtualThreadPerTaskExecutor()) {
+				try (var peer = backend.peerWithTargetStorageIntegration();
+						var requests = Executors.newVirtualThreadPerTaskExecutor()) {
+					DatasetPublicationCommitGateTestConfiguration.blockNextCommits(2);
 					var first = requests.submit(() -> runCommand(corpus, backend.baseUri(), storageId,
 							"--version-label", "competing-a", "--dataset", result.path("datasetId").asText(),
 							"--expected-dataset-revision", "3", "--advance-preferred"));
-					var second = requests.submit(() -> runCommand(corpus, backend.baseUri(), storageId,
-							"--version-label", "competing-b", "--dataset", result.path("datasetId").asText(),
+					var second = requests.submit(() -> runCommand(corpus, peer.baseUri(), storageId, "--version-label",
+							"competing-b", "--dataset", result.path("datasetId").asText(),
 							"--expected-dataset-revision", "3", "--advance-preferred"));
 					var competing = java.util.List.of(first.get(), second.get())
 						.stream()
@@ -212,11 +255,12 @@ final class DatasetPublicationApiIT {
 					var competedLineage = backend.get("/api/v1/datasets/" + result.path("datasetId").asText());
 					assertThat(competedLineage.body()).contains("\"revision\":4", winner.path("definitionId").asText());
 
+					DatasetPublicationCommitGateTestConfiguration.blockNextCommits(2);
 					var advancing = requests.submit(() -> runCommand(corpus, backend.baseUri(), storageId,
 							"--version-label", "pointer-race-advance", "--dataset", result.path("datasetId").asText(),
 							"--expected-dataset-revision", "4", "--advance-preferred"));
-					var keeping = requests.submit(() -> runCommand(corpus, backend.baseUri(), storageId,
-							"--version-label", "pointer-race-keep", "--dataset", result.path("datasetId").asText(),
+					var keeping = requests.submit(() -> runCommand(corpus, peer.baseUri(), storageId, "--version-label",
+							"pointer-race-keep", "--dataset", result.path("datasetId").asText(),
 							"--expected-dataset-revision", "4", "--keep-preferred"));
 					var pointerRace = java.util.List.of(advancing.get(), keeping.get())
 						.stream()

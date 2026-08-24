@@ -27,13 +27,16 @@ class DatasetPublicationService {
 
 	private final Clock clock;
 
+	private final DatasetPublicationCommitGate commitGate;
+
 	DatasetPublicationService(EntityManager entityManager, TargetStorageRegistry targetStorages, DatasetCatalog catalog,
-			ApplicationEventPublisher events, Clock clock) {
+			ApplicationEventPublisher events, Clock clock, DatasetPublicationCommitGate commitGate) {
 		this.entityManager = entityManager;
 		this.targetStorages = targetStorages;
 		this.catalog = catalog;
 		this.events = events;
 		this.clock = clock;
+		this.commitGate = commitGate;
 	}
 
 	@Transactional
@@ -109,6 +112,9 @@ class DatasetPublicationService {
 		DatasetPublicationEntity operation = this.publication(publicationId);
 		if (operation.state != DatasetPublicationState.VERIFYING) {
 			return;
+		}
+		if (operation.expectedDatasetRevision != null) {
+			this.commitGate.await(operation.datasetId);
 		}
 		DatasetLineageEntity lineage = operation.expectedDatasetRevision == null ? null : this.entityManager
 			.find(DatasetLineageEntity.class, operation.datasetId, LockModeType.PESSIMISTIC_WRITE);
@@ -192,14 +198,7 @@ class DatasetPublicationService {
 		}
 		for (int length = 16; length <= fingerprint.length(); length += 2) {
 			String candidate = fingerprint.substring(0, length);
-			Long conflicts = this.entityManager.createQuery(
-					"select count(catalog) from DatasetCatalogEntity catalog where catalog.datasetId = :datasetId and catalog.versionLabel = :versionLabel and catalog.contentFingerprint <> :contentFingerprint",
-					Long.class)
-				.setParameter("datasetId", request.datasetId())
-				.setParameter("versionLabel", candidate)
-				.setParameter("contentFingerprint", request.contentFingerprint())
-				.getSingleResult();
-			if (conflicts == 0) {
+			if (!this.catalog.hasVersionLabel(request.datasetId(), candidate)) {
 				return candidate;
 			}
 		}

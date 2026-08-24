@@ -15,6 +15,12 @@ class DatasetPublicationConfiguration {
 	}
 
 	@Bean
+	DatasetPublicationCommitGate datasetPublicationCommitGate() {
+		return datasetId -> {
+		};
+	}
+
+	@Bean
 	DatasetPublicationWorkerLauncher datasetPublicationWorkerLauncher(TargetStorageResolver targetStorages,
 			DatasetPublicationCredentialProjectionLifecycle projections,
 			@Value("${skywright.dataset-publication.verification-concurrency:4}") int verificationConcurrency) {

@@ -671,6 +671,10 @@ def test_command_rejects_every_source_change_after_scan(
         nonlocal calls
         calls += 1
         if calls == 1:
+            initiation = cast(dict[str, object], _args[3])
+            assert "datasetId" not in initiation
+            assert "expectedDatasetRevision" not in initiation
+            assert "preferredDefinitionDecision" not in initiation
             if mutation == "replacement":
                 shard.unlink()
                 shard.write_bytes(original)

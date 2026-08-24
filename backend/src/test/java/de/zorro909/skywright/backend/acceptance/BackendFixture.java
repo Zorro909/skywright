@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.acceptance;
 
 import de.zorro909.skywright.backend.SkywrightBackendApplication;
+import de.zorro909.skywright.backend.datasetpublication.DatasetPublicationCommitGateTestConfiguration;
 import de.zorro909.skywright.backend.targetstorage.TargetStorageIntegrationTestConfiguration;
 import java.io.IOException;
 import java.net.URI;
@@ -39,7 +40,7 @@ final class BackendFixture implements AutoCloseable {
 
 	static BackendFixture startWithTargetStorageIntegration() {
 		return start(new SpringApplicationBuilder(SkywrightBackendApplication.class,
-				TargetStorageIntegrationTestConfiguration.class)
+				TargetStorageIntegrationTestConfiguration.class, DatasetPublicationCommitGateTestConfiguration.class)
 			.profiles("target-storage-integration"));
 	}
 
@@ -78,11 +79,23 @@ final class BackendFixture implements AutoCloseable {
 		this.application.close();
 		BackendFixture restarted = start(
 				new SpringApplicationBuilder(SkywrightBackendApplication.class,
-						TargetStorageIntegrationTestConfiguration.class)
+						TargetStorageIntegrationTestConfiguration.class,
+						DatasetPublicationCommitGateTestConfiguration.class)
 					.profiles("target-storage-integration"),
 				this.database);
 		this.ownsDatabase = false;
 		return restarted;
+	}
+
+	BackendFixture peerWithTargetStorageIntegration() {
+		BackendFixture peer = start(
+				new SpringApplicationBuilder(SkywrightBackendApplication.class,
+						TargetStorageIntegrationTestConfiguration.class,
+						DatasetPublicationCommitGateTestConfiguration.class)
+					.profiles("target-storage-integration"),
+				this.database);
+		peer.ownsDatabase = false;
+		return peer;
 	}
 
 	HttpResponse<String> get(String path) throws IOException, InterruptedException {

@@ -118,22 +118,28 @@ def _publish(
             "The version label must contain between 1 and 255 characters",
         )
     corpus = inspect_mds_corpus(corpus_path, concurrency=concurrency)
+    initiation: dict[str, object] = {
+        "targetStorageId": target_storage_id,
+        "versionLabel": version_label,
+        "formatIdentity": corpus.format_identity,
+        "manifestIdentity": corpus.manifest_identity,
+        "contentFingerprint": corpus.content_fingerprint,
+        "objectCount": corpus.object_count,
+        "byteCount": corpus.byte_count,
+    }
+    if dataset_id is not None:
+        initiation.update(
+            {
+                "datasetId": dataset_id,
+                "expectedDatasetRevision": expected_dataset_revision,
+                "preferredDefinitionDecision": preferred_definition_decision,
+            }
+        )
     publication = _request(
         control_plane,
         "POST",
         "/api/v1/dataset-publications",
-        {
-            "targetStorageId": target_storage_id,
-            "datasetId": dataset_id,
-            "expectedDatasetRevision": expected_dataset_revision,
-            "preferredDefinitionDecision": preferred_definition_decision,
-            "versionLabel": version_label,
-            "formatIdentity": corpus.format_identity,
-            "manifestIdentity": corpus.manifest_identity,
-            "contentFingerprint": corpus.content_fingerprint,
-            "objectCount": corpus.object_count,
-            "byteCount": corpus.byte_count,
-        },
+        initiation,
     )
     if not isinstance(publication, dict):
         raise _protocol_error()

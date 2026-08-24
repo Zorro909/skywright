@@ -62,6 +62,10 @@ public class DatasetCatalog {
 		return created.view();
 	}
 
+	public boolean hasVersionLabel(UUID datasetId, String versionLabel) {
+		return this.repository.findByDatasetAndVersionLabel(datasetId, versionLabel).isPresent();
+	}
+
 	public DatasetLeaseView acquireLease(UUID definitionId, UUID copyId, long generation, long expectedRevision,
 			UUID runRecordId) {
 		DatasetCatalogAggregate catalog = this.catalog(definitionId);

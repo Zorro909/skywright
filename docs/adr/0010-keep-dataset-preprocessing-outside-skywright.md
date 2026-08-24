@@ -9,7 +9,7 @@ Skywright does not execute or orchestrate dataset preprocessing in its first ver
 ## Publication contract
 
 - The caller either names an existing Dataset or omits that reference so Skywright creates a new Dataset identity. Skywright never infers semantic lineage.
-- The caller may supply a human version label; the content fingerprint is always mandatory. Publishing the same Dataset identity, label, and fingerprint again is idempotent, while reusing a label for different content is rejected.
+- The caller may supply a human version label; the content fingerprint is always mandatory. Retrying completion of the same Dataset Publication is idempotent and preserves its Definition and Copy identities. A separate publication always receives new identities and cannot reuse an existing label, even for the same fingerprint.
 - The verified remote Storage Location becomes the Dataset Definition's authority. The local source remains untouched and is not registered as a Dataset Replica.
 - Nothing becomes visible as a Dataset until every staged byte and the complete manifest have been verified and the catalog commit succeeds. Failed publication leaves no Dataset Definition.
 - A new Dataset's first definition becomes preferred. Publication into an existing Dataset must explicitly choose whether to advance its mutable preferred-definition pointer.
