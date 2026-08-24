@@ -38,20 +38,30 @@ import skywright
 assert version("skywright") == skywright.__version__
 assert metadata("skywright").get_all("Requires-Dist") == [
     "boto3<2,>=1.40",
+    "brotli<2,>=1.1",
     "jsonschema[format]<5,>=4.25",
     "numpy<3,>=2.2",
+    "pillow<13,>=11",
     "protobuf==7.36.0",
+    "python-snappy<1,>=0.7",
     "safetensors<1,>=0.6",
     "tensorboard==2.21.0",
+    "xxhash<4,>=3.5",
+    "zstandard<1,>=0.23",
 ]
 assert files(skywright).joinpath("py.typed").is_file()
 assert importlib.util.find_spec("boto3") is None
+assert importlib.util.find_spec("brotli") is None
 assert importlib.util.find_spec("jsonschema") is None
 assert importlib.util.find_spec("numpy") is None
+assert importlib.util.find_spec("PIL") is None
 assert importlib.util.find_spec("google") is None
 assert importlib.util.find_spec("safetensors") is None
+assert importlib.util.find_spec("snappy") is None
 assert importlib.util.find_spec("tensorboard") is None
 assert importlib.util.find_spec("torch") is None
+assert importlib.util.find_spec("xxhash") is None
+assert importlib.util.find_spec("zstandard") is None
 print(skywright.__version__)
 """
     completed = subprocess.run(

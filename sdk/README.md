@@ -208,6 +208,21 @@ durable. The production Run Store recorder writes accepted observations to attem
 TensorBoard event segments and maintains the Run's current Progress Record. The SDK does not
 implement MosaicML Streaming transport.
 
+## Publish a Dataset
+
+The installed `skywright-datasets publish` command qualifies a complete MosaicML Streaming MDS v2
+corpus before it contacts the control plane. Qualification streams shard offsets and payloads with
+bounded memory and rejects a shard configuration region larger than 1 MiB; this is an explicit
+metadata limit, not corpus truncation. Use `--concurrency` to bound simultaneous file validation and
+transfer work.
+
+```bash
+skywright-datasets publish ./corpus \
+  --control-plane https://skywright.example \
+  --target-storage 00000000-0000-0000-0000-000000000001 \
+  --concurrency 4
+```
+
 ## Operational runtime command
 
 Installing the SDK registers one private operational bootstrap for Environment Profiles:

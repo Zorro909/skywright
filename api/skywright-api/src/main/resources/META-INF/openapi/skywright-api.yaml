@@ -621,10 +621,10 @@ components:
     InitiateDatasetPublication:
       type: object
       additionalProperties: false
-      required: [targetStorageId, versionLabel, formatIdentity, manifestIdentity, contentFingerprint, objectCount, byteCount]
+      required: [targetStorageId, formatIdentity, manifestIdentity, contentFingerprint, objectCount, byteCount]
       properties:
         targetStorageId: { $ref: '#/components/schemas/SkywrightId' }
-        versionLabel: { type: string, minLength: 1, maxLength: 255 }
+        versionLabel: { type: [string, 'null'], minLength: 1, maxLength: 255 }
         formatIdentity: { type: string, enum: [mosaicml-streaming-mds@2] }
         manifestIdentity: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
         contentFingerprint: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }

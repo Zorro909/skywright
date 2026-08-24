@@ -42,7 +42,12 @@ class DatasetPublicationService {
 			throw new DatasetPublicationException("DATASET_TARGET_STORAGE_INELIGIBLE",
 					"The selected Target Storage is not eligible for Dataset publication", false);
 		}
-		DatasetPublicationEntity publication = DatasetPublicationEntity.initiate(request, this.clock.instant());
+		String versionLabel = request.versionLabel() == null
+				? request.contentFingerprint().substring("sha256:".length(), "sha256:".length() + 16)
+				: request.versionLabel();
+		DatasetPublicationEntity publication = DatasetPublicationEntity.initiate(new DatasetPublicationRequest(
+				request.targetStorageId(), versionLabel, request.formatIdentity(), request.manifestIdentity(),
+				request.contentFingerprint(), request.objectCount(), request.byteCount()), this.clock.instant());
 		this.entityManager.persist(publication);
 		return publication.view();
 	}
@@ -142,10 +147,11 @@ class DatasetPublicationService {
 	}
 
 	private static void validate(DatasetPublicationRequest request) {
-		if (request.targetStorageId() == null || request.versionLabel() == null || request.versionLabel().isBlank()
-				|| request.versionLabel().length() > 255 || !FORMAT.equals(request.formatIdentity())
-				|| !digest(request.manifestIdentity()) || !digest(request.contentFingerprint())
-				|| request.objectCount() < 1 || request.byteCount() < 0) {
+		if (request.targetStorageId() == null
+				|| request.versionLabel() != null
+						&& (request.versionLabel().isBlank() || request.versionLabel().length() > 255)
+				|| !FORMAT.equals(request.formatIdentity()) || !digest(request.manifestIdentity())
+				|| !digest(request.contentFingerprint()) || request.objectCount() < 1 || request.byteCount() < 0) {
 			throw new DatasetPublicationException("DATASET_PUBLICATION_INVALID",
 					"The Dataset Publication request is invalid", false);
 		}

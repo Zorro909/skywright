@@ -6,26 +6,52 @@ import hashlib
 import json
 import os
 import stat
-import struct
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from itertools import pairwise
-from pathlib import Path, PurePosixPath
-from typing import cast
+from pathlib import Path
+from typing import BinaryIO, cast
+
+from ._dataset_errors import DatasetPublicationError
+from ._dataset_errors import metadata_error as _metadata
+from ._dataset_errors import publication_error as _error
+from ._mds_validation import SUPPORTED_COMPRESSIONS as _COMPRESSIONS
+from ._mds_validation import decompress as _decompress
+from ._mds_validation import file_descriptor as _file_descriptor
+from ._mds_validation import is_nonnegative_int as _is_nonnegative_int
+from ._mds_validation import validate_binary as _validate_mds_binary
+from ._mds_validation import validate_columns as _validate_columns
+from ._mds_validation import validate_descriptor_hashes as _validate_descriptor_hashes
+from ._mds_validation import validate_hash_names as _validate_hash_names
+from ._mds_validation import validate_stream_hashes as _validate_stream_hashes
 
 FORMAT_IDENTITY = "mosaicml-streaming-mds@2"
 MANIFEST_VERSION = "skywright-dataset-manifest@1"
-_UNSAFE_ENCODINGS = frozenset({"pkl", "pickle"})
-_SUPPORTED_ENCODINGS = frozenset({"bytes", "str"})
+_CONTENT_VERSION = "skywright-dataset-content@1"
+_CHUNK_BYTES = 1024 * 1024
 
 
-class DatasetPublicationError(Exception):
-    """A safe, stable publication failure for command output."""
+@dataclass(frozen=True)
+class SourceIdentity:
+    device: int
+    inode: int
+    mode: int
+    byte_count: int
+    modified_ns: int
+    changed_ns: int
+    links: int
 
-    def __init__(self, code: str, detail: str, *, retryable: bool = False) -> None:
-        super().__init__(detail)
-        self.code = code
-        self.detail = detail
-        self.retryable = retryable
+    @classmethod
+    def from_stat(cls, value: os.stat_result) -> SourceIdentity:
+        return cls(
+            value.st_dev,
+            value.st_ino,
+            value.st_mode,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_ctime_ns,
+            value.st_nlink,
+        )
 
 
 @dataclass(frozen=True)
@@ -34,10 +60,12 @@ class ManifestEntry:
     byte_count: int
     checksum_sha256: str
     source: Path
+    source_identity: SourceIdentity
 
 
 @dataclass(frozen=True)
 class InspectedCorpus:
+    root: Path
     format_identity: str
     entries: tuple[ManifestEntry, ...]
     manifest_bytes: bytes
@@ -53,70 +81,350 @@ class InspectedCorpus:
         return sum(entry.byte_count for entry in self.entries)
 
 
-def inspect_mds_corpus(root: Path) -> InspectedCorpus:
-    """Validate and fingerprint one storage-ready, single-shard MDS corpus."""
-    try:
-        root = root.resolve(strict=True)
-    except OSError as error:
-        raise _invalid("The local corpus does not exist or cannot be read") from error
-    if not root.is_dir():
-        raise _invalid("The local corpus must be a directory")
-    index_path = root / "index.json"
-    _require_regular(index_path)
-    try:
-        index = cast(object, json.loads(index_path.read_bytes()))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise _invalid("index.json must contain valid UTF-8 JSON") from error
-    if not isinstance(index, dict):
-        raise _invalid("index.json must contain an object")
-    typed_index = cast(dict[str, object], index)
-    if typed_index.get("version") != 2:
-        raise _invalid("index.json must use MosaicML Streaming index version 2")
-    shards = typed_index.get("shards")
-    if not isinstance(shards, list):
-        raise _invalid("The initial publication format requires exactly one MDS shard")
-    typed_shards = cast(list[object], shards)
-    if len(typed_shards) != 1:
-        raise _invalid("The initial publication format requires exactly one MDS shard")
-    shard = typed_shards[0]
-    if not isinstance(shard, dict):
-        raise _invalid("The shard format must be mds")
-    typed_shard = cast(dict[str, object], shard)
-    if typed_shard.get("format") != "mds":
-        raise _invalid("The shard format must be mds")
-    if typed_shard.get("version") != 2:
-        raise _invalid("The MDS shard must use version 2")
-    if typed_shard.get("compression") is not None:
-        raise _invalid(
-            "The initial publication format requires an uncompressed MDS shard"
+def inspect_mds_corpus(root: Path, *, concurrency: int = 4) -> InspectedCorpus:
+    """Validate and fingerprint one storage-ready Streaming MDS v2 corpus."""
+    root = _corpus_root(root)
+    inventory = _inventory(root)
+    root_index, root_identity = _read_index(root / "index.json")
+    if root_index.get("version") != 2:
+        raise _error(
+            "DATASET_MDS_VERSION_UNSUPPORTED",
+            "index.json must use MosaicML Streaming index version 2",
         )
-    _validate_columns(typed_shard)
-    data = _selected_data(typed_shard)
-    basename = data.get("basename")
-    byte_count = data.get("bytes")
-    if (
-        not isinstance(basename, str)
-        or not isinstance(byte_count, int)
-        or byte_count < 0
-    ):
-        raise _invalid("The shard data descriptor is malformed")
-    object_key = _safe_object_key(basename)
-    shard_path = root / Path(*PurePosixPath(object_key).parts)
-    _require_regular(shard_path)
-    if shard_path.stat(follow_symlinks=False).st_size != byte_count:
-        raise _invalid("The shard byte count does not match index.json")
-    _validate_mds_binary(shard_path, typed_shard)
+    shards_value = root_index.get("shards")
+    if not isinstance(shards_value, list):
+        raise _metadata("index.json must contain a shards array")
+    expected = {"index.json"}
+    declared_paths = {"index.json"}
+    identities = {"index.json": root_identity}
+    partitions: dict[str, list[dict[str, object]]] = {}
+    shard_values = cast(list[object], shards_value)
 
-    expected = {"index.json", object_key}
-    actual = _inventory(root)
-    extras = actual - expected
-    missing = expected - actual
-    if extras or missing:
-        raise _invalid("The corpus contains missing or unreferenced files")
+    def inspect(
+        value: object,
+    ) -> tuple[dict[str, object], str, SourceIdentity, frozenset[str]]:
+        return _inspect_shard(root, value)
 
-    entries = tuple(
-        _entry(root, key) for key in sorted(expected, key=lambda value: value.encode())
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        validated = executor.map(inspect, shard_values)
+        inspected_shards = list(validated)
+    for shard, object_key, identity, shard_paths in inspected_shards:
+        if declared_paths & shard_paths:
+            raise _path_error("The MDS index references a duplicate object path")
+        declared_paths.update(shard_paths)
+        expected.add(object_key)
+        identities[object_key] = identity
+        parent = object_key.rpartition("/")[0]
+        if parent:
+            partitions.setdefault(parent, []).append(shard)
+
+    for partition, merged_shards in partitions.items():
+        key = f"{partition}/index.json"
+        if key not in inventory:
+            continue
+        partition_index, identity = _read_index(root / Path(key))
+        if partition_index.get("version") != 2:
+            raise _error(
+                "DATASET_MDS_VERSION_UNSUPPORTED",
+                "A partition index must use MosaicML Streaming index version 2",
+            )
+        local_shards = partition_index.get("shards")
+        if (
+            not isinstance(local_shards, list)
+            or _qualify_partition(partition, cast(list[object], local_shards))
+            != merged_shards
+        ):
+            raise _metadata(
+                "A merged partition index does not match the root MDS index"
+            )
+        expected.add(key)
+        identities[key] = identity
+
+    if expected - inventory:
+        raise _error(
+            "DATASET_CORPUS_FILE_MISSING",
+            "The MDS index references a missing corpus file",
+        )
+    if inventory - expected:
+        raise _error(
+            "DATASET_CORPUS_FILE_UNREFERENCED",
+            "The corpus contains an unreferenced payload file",
+        )
+    keys = sorted(expected, key=lambda item: item.encode("utf-8"))
+
+    def entry(key: str) -> ManifestEntry:
+        return _entry(root, key, identities[key])
+
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        entries = tuple(executor.map(entry, keys))
+    manifest_bytes = _manifest_bytes(entries)
+    manifest_identity = _digest(manifest_bytes)
+    fingerprint = json.dumps(
+        {
+            "format": FORMAT_IDENTITY,
+            "manifest": manifest_identity,
+            "version": _CONTENT_VERSION,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return InspectedCorpus(
+        root,
+        FORMAT_IDENTITY,
+        entries,
+        manifest_bytes,
+        manifest_identity,
+        _digest(fingerprint),
     )
+
+
+def _corpus_root(root: Path) -> Path:
+    try:
+        value = root.lstat()
+        resolved = root.resolve(strict=True)
+    except OSError as error:
+        raise _error(
+            "DATASET_CORPUS_FILE_MISSING",
+            "The local corpus does not exist or cannot be read",
+        ) from error
+    if stat.S_ISLNK(value.st_mode) or not stat.S_ISDIR(value.st_mode):
+        raise _error(
+            "DATASET_CORPUS_FILE_TYPE_INVALID",
+            "The local corpus root must be a directory, not a link or special file",
+        )
+    return resolved
+
+
+def _read_index(path: Path) -> tuple[dict[str, object], SourceIdentity]:
+    stream, before = _open_regular(path)
+    try:
+        data = stream.read()
+        after = SourceIdentity.from_stat(os.fstat(stream.fileno()))
+    except OSError as error:
+        raise _error(
+            "DATASET_CORPUS_FILE_MISSING", "A corpus index could not be read"
+        ) from error
+    finally:
+        stream.close()
+    if before != after:
+        raise _source_mutated()
+    try:
+        value = cast(object, json.loads(data))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise _metadata("A corpus index must contain valid UTF-8 JSON") from error
+    if not isinstance(value, dict):
+        raise _metadata("A corpus index must contain a JSON object")
+    return cast(dict[str, object], value), before
+
+
+def _shard(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise _metadata("Every MDS shard descriptor must be an object")
+    shard = cast(dict[str, object], value)
+    if shard.get("format") != "mds":
+        raise _error(
+            "DATASET_STREAMING_FORMAT_UNSUPPORTED",
+            "Publication supports only MosaicML Streaming MDS shards",
+        )
+    if shard.get("version") != 2:
+        raise _error(
+            "DATASET_MDS_VERSION_UNSUPPORTED", "Every MDS shard must use version 2"
+        )
+    _validate_columns(shard)
+    if not _is_nonnegative_int(shard.get("samples")):
+        raise _metadata("The MDS sample count is malformed")
+    hashes = shard.get("hashes")
+    size_limit = shard.get("size_limit")
+    hash_values = cast(list[object], hashes) if isinstance(hashes, list) else None
+    if (
+        hash_values is None
+        or not all(isinstance(item, str) for item in hash_values)
+        or len(set(cast(list[str], hash_values))) != len(hash_values)
+        or not (size_limit is None or _is_nonnegative_int(size_limit))
+    ):
+        raise _metadata("The MDS shard configuration metadata is malformed")
+    _validate_hash_names(cast(list[str], hash_values))
+    return shard
+
+
+def _inspect_shard(
+    root: Path, value: object
+) -> tuple[dict[str, object], str, SourceIdentity, frozenset[str]]:
+    shard = _shard(value)
+    object_key, identity, declared_paths = _validate_shard(root, shard)
+    return shard, object_key, identity, declared_paths
+
+
+def _validate_shard(
+    root: Path, shard: dict[str, object]
+) -> tuple[str, SourceIdentity, frozenset[str]]:
+    compression = shard.get("compression")
+    if compression is not None and (
+        not isinstance(compression, str) or compression not in _COMPRESSIONS
+    ):
+        raise _error(
+            "DATASET_MDS_COMPRESSION_UNSUPPORTED",
+            "The MDS shard uses an unsupported compression",
+        )
+    raw = _file_descriptor(shard.get("raw_data"))
+    raw_key = _safe_object_key(cast(str, raw["basename"]))
+    hash_names = cast(list[str], shard["hashes"])
+    _validate_descriptor_hashes(raw, hash_names)
+    zipped = shard.get("zip_data")
+    if compression is None:
+        if zipped is not None:
+            raise _metadata("An uncompressed MDS shard must not declare zip_data")
+        selected = raw
+    else:
+        selected = _file_descriptor(zipped)
+        _validate_descriptor_hashes(selected, hash_names)
+    object_key = _safe_object_key(cast(str, selected["basename"]))
+    stream, identity = _open_regular(root / Path(*object_key.split("/")))
+    try:
+        if identity.byte_count != selected["bytes"]:
+            raise _error(
+                "DATASET_MDS_BYTE_METADATA_MISMATCH",
+                "An MDS shard byte count does not match index.json",
+            )
+        _validate_stream_hashes(stream, selected, hash_names)
+        with tempfile.TemporaryFile() as decoded:
+            decoded_size = _decompress(stream, decoded, compression)
+            if decoded_size != raw["bytes"]:
+                raise _error(
+                    "DATASET_MDS_BYTE_METADATA_MISMATCH",
+                    "An MDS raw byte count does not match the published shard",
+                )
+            if compression is not None:
+                _validate_stream_hashes(decoded, raw, hash_names)
+            _validate_mds_binary(decoded, decoded_size, shard)
+        if identity != SourceIdentity.from_stat(os.fstat(stream.fileno())):
+            raise _source_mutated()
+    finally:
+        stream.close()
+    return object_key, identity, frozenset({raw_key, object_key})
+
+
+def _qualify_partition(partition: str, shards: list[object]) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    for value in shards:
+        shard = _shard(value)
+        qualified = cast(dict[str, object], json.loads(json.dumps(shard)))
+        for name in ("raw_data", "zip_data"):
+            descriptor = qualified.get(name)
+            if descriptor is None and name == "zip_data":
+                continue
+            valid = _file_descriptor(descriptor)
+            basename = _safe_object_key(cast(str, valid["basename"]))
+            valid["basename"] = f"{partition}/{basename}"
+        result.append(qualified)
+    return result
+
+
+def _safe_object_key(value: str) -> str:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise _path_error("A corpus object path is not valid UTF-8") from error
+    if (
+        not value
+        or value.startswith("/")
+        or "\\" in value
+        or "\x00" in value
+        or any(part in {"", ".", ".."} for part in value.split("/"))
+    ):
+        raise _path_error("An MDS shard object path is unsafe")
+    return value
+
+
+def _inventory(root: Path) -> set[str]:
+    result: set[str] = set()
+    for directory, names, files in os.walk(root, followlinks=False):
+        parent = Path(directory)
+        for name in names:
+            try:
+                value = (parent / name).lstat()
+            except OSError as error:
+                raise _source_mutated() from error
+            if stat.S_ISLNK(value.st_mode) or not stat.S_ISDIR(value.st_mode):
+                raise _error(
+                    "DATASET_CORPUS_FILE_TYPE_INVALID",
+                    "The corpus may contain only regular files and directories",
+                )
+        for name in files:
+            path = parent / name
+            try:
+                value = path.lstat()
+            except OSError as error:
+                raise _source_mutated() from error
+            if stat.S_ISLNK(value.st_mode) or not stat.S_ISREG(value.st_mode):
+                raise _error(
+                    "DATASET_CORPUS_FILE_TYPE_INVALID",
+                    "The corpus may contain only regular files",
+                )
+            stream, _ = _open_regular(path)
+            stream.close()
+            relative = path.relative_to(root).as_posix()
+            _safe_object_key(relative)
+            if relative in result:
+                raise _path_error("The corpus contains duplicate object paths")
+            result.add(relative)
+    return result
+
+
+def _open_regular(path: Path) -> tuple[BinaryIO, SourceIdentity]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        before = path.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise _error(
+                "DATASET_CORPUS_FILE_TYPE_INVALID",
+                "The corpus may contain only regular files",
+            )
+        descriptor = os.open(path, flags)
+    except DatasetPublicationError:
+        raise
+    except FileNotFoundError as error:
+        raise _error(
+            "DATASET_CORPUS_FILE_MISSING", "The corpus contains a missing file"
+        ) from error
+    except OSError as error:
+        raise _error(
+            "DATASET_CORPUS_FILE_TYPE_INVALID",
+            "The corpus may contain only regular files",
+        ) from error
+    value = os.fstat(descriptor)
+    if not stat.S_ISREG(value.st_mode):
+        os.close(descriptor)
+        raise _error(
+            "DATASET_CORPUS_FILE_TYPE_INVALID",
+            "The corpus may contain only regular files",
+        )
+    return os.fdopen(descriptor, "rb", closefd=True), SourceIdentity.from_stat(value)
+
+
+def _entry(root: Path, key: str, accepted: SourceIdentity) -> ManifestEntry:
+    source = root / Path(*key.split("/"))
+    stream, before = _open_regular(source)
+    if before != accepted:
+        stream.close()
+        raise _source_mutated()
+    digest = hashlib.sha256()
+    count = 0
+    try:
+        while chunk := stream.read(_CHUNK_BYTES):
+            digest.update(chunk)
+            count += len(chunk)
+        after = SourceIdentity.from_stat(os.fstat(stream.fileno()))
+    except OSError as error:
+        raise _source_mutated() from error
+    finally:
+        stream.close()
+    if before != after or count != before.byte_count:
+        raise _source_mutated()
+    return ManifestEntry(key, count, f"sha256:{digest.hexdigest()}", source, before)
+
+
+def _manifest_bytes(entries: tuple[ManifestEntry, ...]) -> bytes:
     manifest = {
         "byteCount": sum(entry.byte_count for entry in entries),
         "format": FORMAT_IDENTITY,
@@ -131,212 +439,37 @@ def inspect_mds_corpus(root: Path) -> InspectedCorpus:
         ],
         "version": MANIFEST_VERSION,
     }
-    manifest_bytes = json.dumps(
+    return json.dumps(
         manifest, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode()
-    manifest_identity = _digest(manifest_bytes)
-    fingerprint_document = json.dumps(
-        {
-            "format": FORMAT_IDENTITY,
-            "manifest": manifest_identity,
-            "version": "skywright-dataset-content@1",
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
-    return InspectedCorpus(
-        FORMAT_IDENTITY,
-        entries,
-        manifest_bytes,
-        manifest_identity,
-        _digest(fingerprint_document),
-    )
-
-
-def _validate_columns(shard: dict[str, object]) -> None:
-    names = shard.get("column_names")
-    encodings = shard.get("column_encodings")
-    sizes = shard.get("column_sizes")
-    if (
-        not isinstance(names, list)
-        or not isinstance(encodings, list)
-        or not isinstance(sizes, list)
-    ):
-        raise _invalid("The MDS decoding metadata is malformed")
-    typed_names = cast(list[object], names)
-    typed_encodings = cast(list[object], encodings)
-    typed_sizes = cast(list[object], sizes)
-    if (
-        not typed_names
-        or not all(isinstance(name, str) and name for name in typed_names)
-        or len(typed_encodings) != len(typed_names)
-        or not all(isinstance(encoding, str) for encoding in typed_encodings)
-        or len(typed_sizes) != len(typed_names)
-        or not all(
-            size is None or (isinstance(size, int) and size >= 0)
-            for size in typed_sizes
-        )
-    ):
-        raise _invalid("The MDS decoding metadata is malformed")
-    if any(
-        cast(str, encoding).lower() in _UNSAFE_ENCODINGS for encoding in typed_encodings
-    ):
-        raise DatasetPublicationError(
-            "DATASET_CORPUS_UNSAFE_ENCODING",
-            "The MDS corpus uses an unsafe executable serialization encoding",
-        )
-    if any(encoding not in _SUPPORTED_ENCODINGS for encoding in typed_encodings):
-        raise _invalid("The MDS corpus uses an unsupported column encoding")
-    samples = shard.get("samples")
-    if not isinstance(samples, int) or samples < 0:
-        raise _invalid("The MDS sample count is malformed")
-
-
-def _validate_mds_binary(path: Path, shard: dict[str, object]) -> None:
-    samples = cast(int, shard["samples"])
-    names = cast(list[object], shard["column_names"])
-    encodings = cast(list[object], shard["column_encodings"])
-    sizes = cast(list[object], shard["column_sizes"])
-    try:
-        file_size = path.stat(follow_symlinks=False).st_size
-        header_size = 4 * (samples + 2)
-        if file_size < header_size:
-            raise _invalid("The MDS shard header is truncated")
-        with path.open("rb") as stream:
-            observed_samples = struct.unpack("<I", stream.read(4))[0]
-            if observed_samples != samples:
-                raise _invalid("The MDS shard sample count does not match index.json")
-            offsets = struct.unpack(f"<{samples + 1}I", stream.read(4 * (samples + 1)))
-            if (
-                offsets[0] < header_size
-                or offsets[-1] != file_size
-                or any(right < left for left, right in pairwise(offsets))
-            ):
-                raise _invalid("The MDS shard offsets are malformed")
-            configuration_bytes = stream.read(offsets[0] - header_size)
-            configuration = cast(object, json.loads(configuration_bytes))
-            if not isinstance(configuration, dict):
-                raise _invalid("The MDS shard configuration is malformed")
-            typed_configuration = cast(dict[str, object], configuration)
-            expected_configuration = {
-                "column_encodings": encodings,
-                "column_names": names,
-                "column_sizes": sizes,
-                "compression": None,
-                "format": "mds",
-                "hashes": shard.get("hashes", []),
-                "size_limit": shard.get("size_limit"),
-                "version": 2,
-            }
-            if typed_configuration != expected_configuration:
-                raise _invalid("The MDS shard configuration does not match index.json")
-            for sample_index in range(samples):
-                start, end = offsets[sample_index], offsets[sample_index + 1]
-                stream.seek(start)
-                variable_count = sum(size is None for size in sizes)
-                size_bytes = stream.read(4 * variable_count)
-                if len(size_bytes) != 4 * variable_count:
-                    raise _invalid("An MDS sample header is truncated")
-                variable_sizes = iter(
-                    struct.unpack(f"<{variable_count}I", size_bytes)
-                    if variable_count
-                    else ()
-                )
-                value_sizes = [
-                    next(variable_sizes) if size is None else cast(int, size)
-                    for size in sizes
-                ]
-                if any(size < 0 for size in value_sizes) or (
-                    start + len(size_bytes) + sum(value_sizes) != end
-                ):
-                    raise _invalid("An MDS sample does not match its decoding metadata")
-                for encoding, value_size in zip(encodings, value_sizes, strict=True):
-                    value = stream.read(value_size)
-                    if len(value) != value_size:
-                        raise _invalid("An MDS sample value is truncated")
-                    if encoding == "str":
-                        value.decode("utf-8")
-    except DatasetPublicationError:
-        raise
-    except (
-        OSError,
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-        struct.error,
-        ValueError,
-    ) as error:
-        raise _invalid("The MDS shard is not structurally decodable") from error
-
-
-def _selected_data(shard: dict[str, object]) -> dict[str, object]:
-    compression = shard.get("compression")
-    selected = (
-        shard.get("zip_data") if compression is not None else shard.get("raw_data")
-    )
-    if not isinstance(selected, dict):
-        raise _invalid("The MDS shard does not describe its published data object")
-    return cast(dict[str, object], selected)
-
-
-def _safe_object_key(value: str) -> str:
-    path = PurePosixPath(value)
-    if (
-        not value
-        or "\\" in value
-        or path.is_absolute()
-        or any(part in {"", ".", ".."} for part in path.parts)
-        or path.as_posix() != value
-    ):
-        raise _invalid("The shard object path is unsafe")
-    return value
-
-
-def _inventory(root: Path) -> set[str]:
-    result: set[str] = set()
-    for directory, names, files in os.walk(root, followlinks=False):
-        parent = Path(directory)
-        for name in names:
-            path = parent / name
-            if path.is_symlink():
-                raise _invalid(
-                    "The corpus may contain only regular files and directories"
-                )
-        for name in files:
-            path = parent / name
-            _require_regular(path)
-            relative = path.relative_to(root).as_posix()
-            if relative in result:
-                raise _invalid("The corpus contains duplicate object paths")
-            result.add(relative)
-    return result
-
-
-def _require_regular(path: Path) -> None:
-    try:
-        mode = path.stat(follow_symlinks=False).st_mode
-    except OSError as error:
-        raise _invalid("The corpus contains a missing file") from error
-    if not stat.S_ISREG(mode):
-        raise _invalid("The corpus may contain only regular files")
-
-
-def _entry(root: Path, key: str) -> ManifestEntry:
-    source = root / Path(*PurePosixPath(key).parts)
-    digest = hashlib.sha256()
-    byte_count = 0
-    try:
-        with source.open("rb") as stream:
-            while chunk := stream.read(1024 * 1024):
-                digest.update(chunk)
-                byte_count += len(chunk)
-    except OSError as error:
-        raise _invalid("The corpus could not be read") from error
-    return ManifestEntry(key, byte_count, f"sha256:{digest.hexdigest()}", source)
 
 
 def _digest(value: bytes) -> str:
     return f"sha256:{hashlib.sha256(value).hexdigest()}"
 
 
-def _invalid(detail: str) -> DatasetPublicationError:
-    return DatasetPublicationError("DATASET_CORPUS_INVALID", detail)
+def _path_error(detail: str) -> DatasetPublicationError:
+    return _error("DATASET_CORPUS_PATH_INVALID", detail)
+
+
+def _source_mutated() -> DatasetPublicationError:
+    return _error(
+        "DATASET_SOURCE_MUTATED", "A local corpus file changed during publication"
+    )
+
+
+def verify_source_inventory(corpus: InspectedCorpus) -> None:
+    """Require the accepted corpus inventory and file identities to remain exact."""
+    expected = {entry.object_key: entry.source_identity for entry in corpus.entries}
+    try:
+        if _inventory(corpus.root) != set(expected):
+            raise _source_mutated()
+        for key, accepted in expected.items():
+            stream, observed = _open_regular(corpus.root / Path(*key.split("/")))
+            stream.close()
+            if observed != accepted:
+                raise _source_mutated()
+    except DatasetPublicationError as error:
+        if error.code == "DATASET_SOURCE_MUTATED":
+            raise
+        raise _source_mutated() from error

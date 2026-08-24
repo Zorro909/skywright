@@ -12,19 +12,24 @@ import argparse
 import base64
 import hashlib
 import json
+import os
+import stat
 import sys
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
+from skywright._dataset_errors import DatasetPublicationError
 from skywright._dataset_publication import (
-    DatasetPublicationError,
     InspectedCorpus,
     ManifestEntry,
+    SourceIdentity,
     inspect_mds_corpus,
+    verify_source_inventory,
 )
 
 
@@ -40,7 +45,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     publish.add_argument("corpus", type=Path)
     publish.add_argument("--control-plane", required=True)
     publish.add_argument("--target-storage", required=True)
-    publish.add_argument("--version-label", required=True)
+    publish.add_argument("--version-label")
+    publish.add_argument("--concurrency", type=_positive_int, default=4)
     parsed = parser.parse_args(arguments)
     try:
         if parsed.operation == "publish":
@@ -49,6 +55,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 parsed.control_plane,
                 parsed.target_storage,
                 parsed.version_label,
+                parsed.concurrency,
             )
             print(_json(result))
             return 0
@@ -66,14 +73,18 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
 
 def _publish(
-    corpus_path: Path, control_plane: str, target_storage_id: str, version_label: str
+    corpus_path: Path,
+    control_plane: str,
+    target_storage_id: str,
+    version_label: str | None,
+    concurrency: int,
 ) -> object:
-    if not version_label or len(version_label) > 255:
+    if version_label is not None and (not version_label or len(version_label) > 255):
         raise DatasetPublicationError(
             "DATASET_VERSION_LABEL_INVALID",
             "The version label must contain between 1 and 255 characters",
         )
-    corpus = inspect_mds_corpus(corpus_path)
+    corpus = inspect_mds_corpus(corpus_path, concurrency=concurrency)
     publication = _request(
         control_plane,
         "POST",
@@ -100,7 +111,7 @@ def _publish(
     if not isinstance(storage, dict):
         raise _protocol_error()
     storage = cast(dict[str, object], storage)
-    _upload(corpus, publication, storage)
+    _upload(corpus, publication, storage, concurrency)
     result = _request(
         control_plane,
         "POST",
@@ -185,6 +196,7 @@ def _upload(
     corpus: InspectedCorpus,
     publication: dict[str, object],
     storage: dict[str, object],
+    concurrency: int,
 ) -> None:
     import boto3
     from botocore.exceptions import BotoCoreError, ClientError
@@ -217,8 +229,20 @@ def _upload(
         ),
     )
     try:
-        for entry in corpus.entries:
-            _put_source(client, bucket, f"{payload_location}/{entry.object_key}", entry)
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            uploads = [
+                executor.submit(
+                    _put_source,
+                    client,
+                    bucket,
+                    f"{payload_location}/{entry.object_key}",
+                    entry,
+                )
+                for entry in corpus.entries
+            ]
+            for upload in uploads:
+                upload.result()
+        verify_source_inventory(corpus)
         _put_bytes(
             client,
             bucket,
@@ -237,28 +261,40 @@ def _upload(
 
 
 def _put_source(client: Any, bucket: str, key: str, entry: ManifestEntry) -> None:
-    before = entry.source.stat(follow_symlinks=False)
     digest = entry.checksum_sha256.removeprefix("sha256:")
     checksum = base64.b64encode(bytes.fromhex(digest)).decode()
-    with entry.source.open("rb") as stream:
-        _put_or_verify(client, bucket, key, stream, entry.byte_count, digest, checksum)
-    after = entry.source.stat(follow_symlinks=False)
-    if (
-        before.st_dev,
-        before.st_ino,
-        before.st_size,
-        before.st_mtime_ns,
-    ) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
-        raise DatasetPublicationError(
-            "DATASET_SOURCE_MUTATED",
-            "A local corpus file changed during publication",
-        )
-    observed = _file_digest(entry.source)
-    if observed != digest:
-        raise DatasetPublicationError(
-            "DATASET_SOURCE_MUTATED",
-            "A local corpus file changed during publication",
-        )
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(entry.source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb", closefd=True) as stream:
+            descriptor = None
+            before = SourceIdentity.from_stat(os.fstat(stream.fileno()))
+            if (
+                before != entry.source_identity
+                or not stat.S_ISREG(before.mode)
+                or _stream_digest(stream) != digest
+            ):
+                raise _source_mutated()
+            stream.seek(0)
+            _put_or_verify(
+                client, bucket, key, stream, entry.byte_count, digest, checksum
+            )
+            stream.seek(0)
+            after = SourceIdentity.from_stat(os.fstat(stream.fileno()))
+            path_after = SourceIdentity.from_stat(entry.source.lstat())
+            if (
+                after != entry.source_identity
+                or path_after != entry.source_identity
+                or _stream_digest(stream) != digest
+            ):
+                raise _source_mutated()
+    except DatasetPublicationError:
+        raise
+    except OSError as error:
+        raise _source_mutated() from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _put_bytes(client: Any, bucket: str, key: str, body: bytes, identity: str) -> None:
@@ -307,12 +343,18 @@ def _put_or_verify(
         )
 
 
-def _file_digest(path: Path) -> str:
+def _stream_digest(stream: BinaryIO) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(1024 * 1024):
-            digest.update(chunk)
+    while chunk := stream.read(1024 * 1024):
+        digest.update(chunk)
     return digest.hexdigest()
+
+
+def _source_mutated() -> DatasetPublicationError:
+    return DatasetPublicationError(
+        "DATASET_SOURCE_MUTATED",
+        "A local corpus file changed during publication",
+    )
 
 
 def _problem(error: DatasetPublicationError) -> dict[str, object]:
@@ -338,7 +380,12 @@ def _protocol_error() -> DatasetPublicationError:
 
 
 def _exit_code(error: DatasetPublicationError) -> int:
-    if error.code == "DATASET_CORPUS_INVALID" or error.code.endswith("_INVALID"):
+    if (
+        error.code.startswith("DATASET_CORPUS_")
+        or error.code.startswith("DATASET_MDS_")
+        or error.code == "DATASET_STREAMING_FORMAT_UNSUPPORTED"
+        or error.code.endswith("_INVALID")
+    ):
         return 2
     if error.retryable:
         return 75
@@ -347,3 +394,10 @@ def _exit_code(error: DatasetPublicationError) -> int:
 
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed

@@ -15,6 +15,9 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
@@ -64,6 +67,9 @@ public final class DatasetPublicationWorkerMain {
 	private static DatasetPublicationWorkerResult verify(DatasetPublicationWorkerJob job,
 			DatasetPublicationWorkerCredential credential) {
 		try (S3AsyncClient client = client(job, credential)) {
+			if (job.verificationConcurrency() < 1) {
+				throw mismatch();
+			}
 			byte[] manifestBytes = client
 				.getObject(GetObjectRequest.builder()
 					.bucket(job.bucket())
@@ -82,12 +88,16 @@ public final class DatasetPublicationWorkerMain {
 			List<ManifestObject> objects = parseManifest(manifestBytes, job);
 			Set<String> expectedKeys = new HashSet<>();
 			List<DatasetManifestEntry> entries = new ArrayList<>();
-			for (ManifestObject object : objects) {
-				String remoteKey = key(job.payloadLocation(), object.objectKey());
-				expectedKeys.add(remoteKey);
-				verifyObject(client, job.bucket(), remoteKey, object);
-				entries.add(new DatasetManifestEntry(object.objectKey(), object.byteCount(),
-						Base64.getEncoder().encodeToString(HexFormat.of().parseHex(object.sha256().substring(7)))));
+			try (var executor = Executors.newFixedThreadPool(job.verificationConcurrency())) {
+				List<Future<DatasetManifestEntry>> verifications = new ArrayList<>();
+				for (ManifestObject object : objects) {
+					String remoteKey = key(job.payloadLocation(), object.objectKey());
+					expectedKeys.add(remoteKey);
+					verifications.add(executor.submit(() -> verifyObject(client, job.bucket(), remoteKey, object)));
+				}
+				for (Future<DatasetManifestEntry> verification : verifications) {
+					entries.add(verification.get());
+				}
 			}
 			if (!remoteKeys(client, job.bucket(), job.payloadLocation() + "/").equals(expectedKeys)) {
 				throw mismatch();
@@ -98,6 +108,16 @@ public final class DatasetPublicationWorkerMain {
 		}
 		catch (WorkerFailure failure) {
 			throw failure;
+		}
+		catch (InterruptedException failure) {
+			Thread.currentThread().interrupt();
+			throw new WorkerFailure("DATASET_VERIFICATION_UNAVAILABLE", true);
+		}
+		catch (ExecutionException failure) {
+			if (failure.getCause() instanceof WorkerFailure workerFailure) {
+				throw workerFailure;
+			}
+			throw new WorkerFailure("DATASET_VERIFICATION_UNAVAILABLE", true);
 		}
 		catch (RuntimeException failure) {
 			throw new WorkerFailure("DATASET_VERIFICATION_UNAVAILABLE", true);
@@ -141,7 +161,8 @@ public final class DatasetPublicationWorkerMain {
 		}
 	}
 
-	private static void verifyObject(S3AsyncClient client, String bucket, String key, ManifestObject object) {
+	private static DatasetManifestEntry verifyObject(S3AsyncClient client, String bucket, String key,
+			ManifestObject object) {
 		Path directory = null;
 		try {
 			directory = Files.createTempDirectory("skywright-dataset-worker-");
@@ -153,6 +174,8 @@ public final class DatasetPublicationWorkerMain {
 			if (Files.size(downloaded) != object.byteCount() || !digest(downloaded).equals(object.sha256())) {
 				throw mismatch();
 			}
+			return new DatasetManifestEntry(object.objectKey(), object.byteCount(),
+					Base64.getEncoder().encodeToString(HexFormat.of().parseHex(object.sha256().substring(7))));
 		}
 		catch (IOException failure) {
 			throw new WorkerFailure("DATASET_VERIFICATION_UNAVAILABLE", true);
