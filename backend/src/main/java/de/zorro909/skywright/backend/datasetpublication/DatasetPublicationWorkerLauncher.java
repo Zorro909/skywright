@@ -27,6 +27,8 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 
 	private final DatasetPublicationCredentialProjectionLifecycle projections;
 
+	private final DatasetPublicationCleanupGate cleanupGate;
+
 	private final int verificationConcurrency;
 
 	private final Set<ActiveWorker> activeWorkers = ConcurrentHashMap.newKeySet();
@@ -34,14 +36,33 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 	private final AtomicBoolean closing = new AtomicBoolean();
 
 	DatasetPublicationWorkerLauncher(TargetStorageResolver targetStorages,
-			DatasetPublicationCredentialProjectionLifecycle projections, int verificationConcurrency) {
+			DatasetPublicationCredentialProjectionLifecycle projections, DatasetPublicationCleanupGate cleanupGate,
+			int verificationConcurrency) {
 		this.targetStorages = targetStorages;
 		this.projections = projections;
+		this.cleanupGate = cleanupGate;
 		this.verificationConcurrency = verificationConcurrency;
 	}
 
 	@Override
 	public DatasetPublicationWorkerResult verify(DatasetPublicationView publication) {
+		return execute(publication, DatasetPublicationWorkerAction.VERIFY);
+	}
+
+	@Override
+	public DatasetPublicationWorkerResult cleanup(DatasetPublicationView publication, boolean operationOnly) {
+		try {
+			this.cleanupGate.await(publication, operationOnly);
+		}
+		catch (RuntimeException failure) {
+			return cleanupFailure();
+		}
+		return execute(publication,
+				operationOnly ? DatasetPublicationWorkerAction.CLEAN_OPERATION : DatasetPublicationWorkerAction.ABORT);
+	}
+
+	private DatasetPublicationWorkerResult execute(DatasetPublicationView publication,
+			DatasetPublicationWorkerAction action) {
 		ResolvedTargetStorage target;
 		try {
 			target = this.targetStorages.resolveDataset(publication.targetStorageId(), "transfer-worker");
@@ -66,7 +87,7 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 			prepare(projectionId, directory);
 			Path job = directory.resolve("job.json");
 			Path result = directory.resolve("result.json");
-			JSON.writeValue(job.toFile(), new DatasetPublicationWorkerJob(target.endpoint(), target.bucket(),
+			JSON.writeValue(job.toFile(), new DatasetPublicationWorkerJob(action, target.endpoint(), target.bucket(),
 					target.region().id(), target.pathStyleAccess(),
 					"enabled".equals(target.compatibilityOptions().get("chunkedEncoding")),
 					publication.formatIdentity(), publication.manifestIdentity(), publication.contentFingerprint(),
@@ -230,6 +251,11 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 	static DatasetPublicationWorkerResult interrupted() {
 		return new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0, null, 0,
 				"DATASET_VERIFICATION_INTERRUPTED", true);
+	}
+
+	static DatasetPublicationWorkerResult cleanupFailure() {
+		return new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0, null, 0,
+				"DATASET_CLEANUP_UNAVAILABLE", true);
 	}
 
 	static DatasetPublicationWorkerResult targetResolutionFailure(String code) {

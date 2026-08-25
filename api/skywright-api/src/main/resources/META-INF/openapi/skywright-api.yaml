@@ -452,6 +452,34 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /dataset-publications/{publicationId}/abort:
+    parameters:
+      - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: abortDatasetPublication
+      summary: Fence and remove every uncommitted object for one Dataset Publication.
+      responses:
+        '202':
+          description: Abort accepted, already in progress, or already completed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetPublication' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /dataset-publications/{publicationId}/cleanup:
+    parameters:
+      - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: retryDatasetPublicationCleanup
+      summary: Retry verified cleanup without changing publication identity or catalog authority.
+      responses:
+        '202':
+          description: Cleanup accepted, already in progress, or already complete.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetPublication' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /dataset-publications/{publicationId}/resume:
     parameters:
       - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
@@ -676,7 +704,7 @@ components:
   schemas:
     DatasetPublicationState:
       type: string
-      enum: [awaiting-upload, uploading, verifying, committing, committed, failed]
+      enum: [awaiting-upload, uploading, verifying, committing, aborting, aborted, published-cleanup-pending, committed, failed, failed-cleanup]
     DatasetPreferredDefinitionDecision:
       type: string
       enum: [advance, keep]

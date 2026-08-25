@@ -60,6 +60,18 @@ public class DatasetPublicationHttpAdapter implements DatasetPublicationsApi, Da
 	}
 
 	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> abortDatasetPublication(
+			UUID publicationId) {
+		return ResponseEntity.accepted().body(publication(this.publications.abort(publicationId)));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> retryDatasetPublicationCleanup(
+			UUID publicationId) {
+		return ResponseEntity.accepted().body(publication(this.publications.retryCleanup(publicationId)));
+	}
+
+	@Override
 	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetLineage> getDataset(
 			UUID datasetId) {
 		DatasetLineageView value = this.publications.dataset(datasetId);

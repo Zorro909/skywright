@@ -592,6 +592,29 @@ def test_command_allows_the_version_label_to_be_omitted(tmp_path: Path) -> None:
     )
 
 
+def test_command_aborts_one_publication_without_reading_the_local_corpus() -> None:
+    publication_id = "00000000-0000-0000-0000-000000000010"
+    result = {"publicationId": publication_id, "state": "aborted"}
+    stdout = StringIO()
+
+    with (
+        patch("skywright._dataset_cli._abort", return_value=result) as abort,
+        redirect_stdout(stdout),
+    ):
+        status = main(
+            [
+                "abort",
+                publication_id,
+                "--control-plane",
+                "http://control-plane",
+            ]
+        )
+
+    assert status == 0
+    assert json.loads(stdout.getvalue()) == result
+    abort.assert_called_once_with("http://control-plane", publication_id)
+
+
 def test_command_accepts_bounded_publication_concurrency(tmp_path: Path) -> None:
     corpus = tmp_path / "corpus"
     write_corpus(corpus)
@@ -692,6 +715,122 @@ def test_command_reports_and_explicitly_resumes_one_publication(
         f"/api/v1/dataset-publications/{publication_id}/resume",
     )
     upload.assert_called_once()
+
+
+def test_publish_fences_transfer_when_abort_becomes_visible(tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus)
+    inspected = inspect_mds_corpus(corpus)
+    publication_id = "00000000-0000-0000-0000-000000000010"
+    storage_id = "00000000-0000-0000-0000-000000000001"
+    publication = {
+        "publicationId": publication_id,
+        "state": "uploading",
+        "targetStorageId": storage_id,
+        "versionLabel": "v1",
+        "formatIdentity": inspected.format_identity,
+        "manifestIdentity": inspected.manifest_identity,
+        "contentFingerprint": inspected.content_fingerprint,
+        "objectCount": inspected.object_count,
+        "byteCount": inspected.byte_count,
+        "payloadLocation": "datasets/payload",
+        "operationLocation": "operations/publication",
+    }
+
+    def request(_base: str, method: str, path: str, _body: object) -> object:
+        if method == "POST" and path == "/api/v1/dataset-publications":
+            return publication
+        if method == "GET" and path == f"/api/v1/target-storages/{storage_id}":
+            return {"storage": "descriptor"}
+        if method == "GET" and path.endswith(publication_id):
+            return {**publication, "state": "aborting"}
+        if method == "PUT" and path.endswith("/failure"):
+            return {**publication, "state": "aborting"}
+        raise AssertionError((method, path))
+
+    def upload(*arguments: object) -> None:
+        active = cast(Callable[[], None], arguments[-1])
+        active()
+
+    stderr = StringIO()
+    with (
+        patch("skywright._dataset_cli._request", side_effect=request),
+        patch("skywright._dataset_cli._upload", side_effect=upload),
+        redirect_stderr(stderr),
+    ):
+        status = main(
+            [
+                "publish",
+                str(corpus),
+                "--control-plane",
+                "http://control-plane",
+                "--target-storage",
+                storage_id,
+                "--version-label",
+                "v1",
+            ]
+        )
+
+    assert status == 1
+    assert json.loads(stderr.getvalue().splitlines()[-1])["errorCode"] == (
+        "SKYWRIGHT_DATASET_PUBLICATION_ABORTED"
+    )
+
+
+def test_resume_returns_durable_publication_when_only_cleanup_failed(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus)
+    inspected = inspect_mds_corpus(corpus)
+    publication_id = "00000000-0000-0000-0000-000000000010"
+    storage_id = "00000000-0000-0000-0000-000000000001"
+    publication = {
+        "publicationId": publication_id,
+        "state": "failed-cleanup",
+        "targetStorageId": storage_id,
+        "versionLabel": "v1",
+        "formatIdentity": inspected.format_identity,
+        "manifestIdentity": inspected.manifest_identity,
+        "contentFingerprint": inspected.content_fingerprint,
+        "objectCount": inspected.object_count,
+        "byteCount": inspected.byte_count,
+        "payloadLocation": "datasets/payload",
+        "operationLocation": "operations/publication",
+        "preferredDefinitionId": "00000000-0000-0000-0000-000000000020",
+        "failureCode": "DATASET_CLEANUP_UNAVAILABLE",
+        "retryable": True,
+    }
+
+    def request(_base: str, method: str, path: str, _body: object) -> object:
+        if method == "POST" and path.endswith(f"/{publication_id}/resume"):
+            return publication
+        raise AssertionError((method, path))
+
+    stdout = StringIO()
+    with (
+        patch("skywright._dataset_cli._request", side_effect=request),
+        patch("skywright._dataset_cli._upload") as upload,
+        redirect_stdout(stdout),
+    ):
+        status = main(
+            [
+                "publish",
+                str(corpus),
+                "--control-plane",
+                "http://control-plane",
+                "--target-storage",
+                storage_id,
+                "--version-label",
+                "v1",
+                "--resume",
+                publication_id,
+            ]
+        )
+
+    assert status == 0
+    assert json.loads(stdout.getvalue())["state"] == "failed-cleanup"
+    upload.assert_not_called()
 
 
 def test_command_reconciles_a_lost_completion_response_by_reading_the_operation(
@@ -805,6 +944,8 @@ def test_command_rejects_an_existing_object_without_validated_sha256(
                     "pathStyleAccess": True,
                 },
             }
+        if method == "GET" and path.endswith(publication_id):
+            return publication
         if method == "PUT" and path.endswith("/failure"):
             return publication
         raise AssertionError(path)
@@ -892,6 +1033,8 @@ def test_command_aborts_a_known_multipart_upload_after_transfer_failure(
                     "pathStyleAccess": True,
                 },
             }
+        if method == "GET" and path.endswith(publication_id):
+            return publication
         if method == "PUT" and path.endswith("/failure"):
             failures.append(body)
             return publication
@@ -1212,6 +1355,7 @@ def test_command_rejects_every_source_change_after_scan(
                 shard.mkdir()
             return {
                 "publicationId": "00000000-0000-0000-0000-000000000010",
+                "state": "awaiting-upload",
                 "targetStorageId": "00000000-0000-0000-0000-000000000001",
                 "versionLabel": inspected.content_fingerprint[7:23],
                 "formatIdentity": inspected.format_identity,
@@ -1221,6 +1365,13 @@ def test_command_rejects_every_source_change_after_scan(
                 "byteCount": inspected.byte_count,
                 "payloadLocation": "datasets/payload",
                 "operationLocation": "operations/publication",
+            }
+        if _args[1] == "GET" and str(_args[2]).startswith(
+            "/api/v1/dataset-publications/"
+        ):
+            return {
+                "publicationId": "00000000-0000-0000-0000-000000000010",
+                "state": "uploading",
             }
         return {
             "bucket": "dataset",
