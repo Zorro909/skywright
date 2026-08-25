@@ -9,6 +9,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
@@ -17,44 +18,48 @@ import org.springframework.context.ConfigurableApplicationContext;
 
 final class BackendFixture implements AutoCloseable {
 
-	private final ConfigurableApplicationContext application;
+	private ConfigurableApplicationContext application;
 
 	private final HttpClient httpClient = HttpClient.newHttpClient();
 
-	private final URI baseUri;
+	private URI baseUri;
 
 	private final PostgreSqlFixture.Database database;
 
-	private boolean ownsDatabase = true;
+	private final Supplier<SpringApplicationBuilder> builder;
 
-	private BackendFixture(ConfigurableApplicationContext application, PostgreSqlFixture.Database database) {
+	private boolean ownsDatabase;
+
+	private BackendFixture(ConfigurableApplicationContext application, PostgreSqlFixture.Database database,
+			Supplier<SpringApplicationBuilder> builder, boolean ownsDatabase) {
 		this.application = application;
 		this.database = database;
-		var server = (WebServerApplicationContext) application;
-		this.baseUri = URI.create("http://127.0.0.1:" + server.getWebServer().getPort());
+		this.builder = builder;
+		this.ownsDatabase = ownsDatabase;
+		this.baseUri = baseUri(application);
 	}
 
 	static BackendFixture start() {
-		return start(new SpringApplicationBuilder(SkywrightBackendApplication.class));
+		return start(() -> new SpringApplicationBuilder(SkywrightBackendApplication.class));
 	}
 
 	static BackendFixture startWithTargetStorageIntegration() {
-		return start(new SpringApplicationBuilder(SkywrightBackendApplication.class,
+		return start(() -> new SpringApplicationBuilder(SkywrightBackendApplication.class,
 				TargetStorageIntegrationTestConfiguration.class, DatasetPublicationCommitGateTestConfiguration.class)
 			.profiles("target-storage-integration"));
 	}
 
 	static BackendFixture start(BuildProperties buildProperties) {
-		var builder = new SpringApplicationBuilder(SkywrightBackendApplication.class).initializers(
-				application -> application.getBeanFactory().registerSingleton("buildProperties", buildProperties));
-		return start(builder);
+		return start(() -> new SpringApplicationBuilder(SkywrightBackendApplication.class).initializers(
+				application -> application.getBeanFactory().registerSingleton("buildProperties", buildProperties)));
 	}
 
-	private static BackendFixture start(SpringApplicationBuilder builder) {
+	private static BackendFixture start(Supplier<SpringApplicationBuilder> builder) {
 		try {
 			var database = PostgreSqlFixture.freshDatabase();
 			try {
-				return start(builder, database);
+				var application = run(builder.get(), database);
+				return new BackendFixture(application, database, builder, true);
 			}
 			catch (RuntimeException exception) {
 				database.close();
@@ -66,36 +71,58 @@ final class BackendFixture implements AutoCloseable {
 		}
 	}
 
-	private static BackendFixture start(SpringApplicationBuilder builder, PostgreSqlFixture.Database database) {
+	private static ConfigurableApplicationContext run(SpringApplicationBuilder builder,
+			PostgreSqlFixture.Database database) {
 		var properties = new java.util.ArrayList<>(java.util.List.of(database.springProperties()));
 		properties.add("server.port=0");
 		properties.add("skywright.deployment.environment=test");
 		var arguments = properties.stream().map(property -> "--" + property).toArray(String[]::new);
-		var application = builder.web(WebApplicationType.SERVLET).run(arguments);
-		return new BackendFixture(application, database);
+		return builder.web(WebApplicationType.SERVLET).run(arguments);
 	}
 
 	BackendFixture restartWithTargetStorageIntegration() {
 		this.application.close();
-		BackendFixture restarted = start(
-				new SpringApplicationBuilder(SkywrightBackendApplication.class,
-						TargetStorageIntegrationTestConfiguration.class,
-						DatasetPublicationCommitGateTestConfiguration.class)
-					.profiles("target-storage-integration"),
-				this.database);
+		Supplier<SpringApplicationBuilder> restartedBuilder = () -> new SpringApplicationBuilder(
+				SkywrightBackendApplication.class, TargetStorageIntegrationTestConfiguration.class,
+				DatasetPublicationCommitGateTestConfiguration.class)
+			.profiles("target-storage-integration");
+		BackendFixture restarted = new BackendFixture(run(restartedBuilder.get(), this.database), this.database,
+				restartedBuilder, true);
 		this.ownsDatabase = false;
 		return restarted;
 	}
 
 	BackendFixture peerWithTargetStorageIntegration() {
-		BackendFixture peer = start(
-				new SpringApplicationBuilder(SkywrightBackendApplication.class,
-						TargetStorageIntegrationTestConfiguration.class,
-						DatasetPublicationCommitGateTestConfiguration.class)
-					.profiles("target-storage-integration"),
-				this.database);
-		peer.ownsDatabase = false;
-		return peer;
+		Supplier<SpringApplicationBuilder> peerBuilder = () -> new SpringApplicationBuilder(
+				SkywrightBackendApplication.class, TargetStorageIntegrationTestConfiguration.class,
+				DatasetPublicationCommitGateTestConfiguration.class)
+			.profiles("target-storage-integration");
+		return new BackendFixture(run(peerBuilder.get(), this.database), this.database, peerBuilder, false);
+	}
+
+	private static URI baseUri(ConfigurableApplicationContext application) {
+		var server = (WebServerApplicationContext) application;
+		return URI.create("http://127.0.0.1:" + server.getWebServer().getPort());
+	}
+
+	void restart() {
+		this.application.close();
+		this.application = run(this.builder.get(), this.database);
+		this.baseUri = baseUri(this.application);
+	}
+
+	void restart(RestartAction afterStop) throws Exception {
+		this.application.close();
+		afterStop.run();
+		this.application = run(this.builder.get(), this.database);
+		this.baseUri = baseUri(this.application);
+	}
+
+	@FunctionalInterface
+	interface RestartAction {
+
+		void run() throws Exception;
+
 	}
 
 	HttpResponse<String> get(String path) throws IOException, InterruptedException {
@@ -134,9 +161,9 @@ final class BackendFixture implements AutoCloseable {
 
 	@Override
 	public void close() throws Exception {
-		application.close();
+		this.application.close();
 		if (this.ownsDatabase) {
-			database.close();
+			this.database.close();
 		}
 	}
 

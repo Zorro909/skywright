@@ -13,7 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-class DatasetPublicationService {
+class DatasetPublicationService implements DatasetPublicationOperations {
 
 	private static final String FORMAT = "mosaicml-streaming-mds@2";
 
@@ -64,8 +64,76 @@ class DatasetPublicationService {
 					request.expectedDatasetRevision(), request.preferredDefinitionDecision(), versionLabel,
 					request.formatIdentity(), request.manifestIdentity(), request.contentFingerprint(),
 					request.objectCount(), request.byteCount()), this.clock.instant());
+		publication.requestedVersionLabel = request.versionLabel();
 		this.entityManager.persist(publication);
 		return publication.view();
+	}
+
+	@Transactional(readOnly = true)
+	DatasetPublicationView resume(UUID publicationId, DatasetPublicationRequest request) {
+		validate(request);
+		DatasetPublicationEntity operation = this.publication(publicationId);
+		UUID requestedDatasetId = operation.expectedDatasetRevision == null ? null : operation.datasetId;
+		if (!java.util.Objects.equals(requestedDatasetId, request.datasetId())
+				|| !java.util.Objects.equals(operation.expectedDatasetRevision, request.expectedDatasetRevision())
+				|| operation.preferredDefinitionDecision != request.preferredDefinitionDecision()
+				|| !java.util.Objects.equals(operation.requestedVersionLabel, request.versionLabel())
+				|| !operation.targetStorageId.equals(request.targetStorageId())
+				|| !operation.formatIdentity.equals(request.formatIdentity())
+				|| !operation.manifestIdentity.equals(request.manifestIdentity())
+				|| !operation.contentFingerprint.equals(request.contentFingerprint())
+				|| operation.objectCount != request.objectCount() || operation.byteCount != request.byteCount()) {
+			throw new DatasetPublicationException("DATASET_PUBLICATION_CONFLICT",
+					"The resumed Dataset Publication changes immutable facts", false);
+		}
+		return operation.view();
+	}
+
+	@Transactional
+	DatasetPublicationView progress(UUID publicationId, DatasetPublicationProgress progress) {
+		DatasetPublicationEntity operation = this.publication(publicationId);
+		if (progress.uploadedObjectCount() > operation.objectCount
+				|| progress.uploadedByteCount() > operation.byteCount) {
+			throw new DatasetPublicationException("DATASET_PUBLICATION_PROGRESS_INVALID",
+					"Dataset Publication progress exceeds its accepted bounds", false);
+		}
+		if (operation.state == DatasetPublicationState.COMMITTED || operation.state == DatasetPublicationState.VERIFYING
+				|| operation.state == DatasetPublicationState.COMMITTING
+				|| operation.state == DatasetPublicationState.FAILED && !operation.retryable) {
+			return operation.view();
+		}
+		operation.state = DatasetPublicationState.UPLOADING;
+		operation.uploadedObjectCount = Math.max(operation.uploadedObjectCount, progress.uploadedObjectCount());
+		operation.uploadedByteCount = Math.max(operation.uploadedByteCount, progress.uploadedByteCount());
+		operation.failureCode = null;
+		operation.failureDetail = null;
+		operation.unavailableSource = null;
+		operation.retryable = false;
+		operation.updatedAt = this.clock.instant();
+		return operation.view();
+	}
+
+	@Transactional
+	DatasetPublicationView failLocal(UUID publicationId, DatasetPublicationFailure failure) {
+		DatasetPublicationEntity operation = this.publication(publicationId);
+		if (operation.state == DatasetPublicationState.VERIFYING || operation.state == DatasetPublicationState.COMMITTED
+				|| operation.state == DatasetPublicationState.COMMITTING
+				|| operation.state == DatasetPublicationState.FAILED && !operation.retryable) {
+			return operation.view();
+		}
+		DatasetPublicationFailureFacts facts = safeFailure(failure.failureCode());
+		if (facts == null) {
+			throw new DatasetPublicationException("DATASET_PUBLICATION_FAILURE_INVALID",
+					"Dataset Publication failure detail is invalid", false);
+		}
+		operation.state = DatasetPublicationState.FAILED;
+		operation.failureCode = failure.failureCode();
+		operation.failureDetail = facts.detail();
+		operation.unavailableSource = facts.unavailableSource();
+		operation.retryable = facts.retryable();
+		operation.updatedAt = this.clock.instant();
+		operation.completedAt = null;
+		return operation.view();
 	}
 
 	@Transactional(readOnly = true)
@@ -86,21 +154,24 @@ class DatasetPublicationService {
 		}
 		operation.state = DatasetPublicationState.VERIFYING;
 		operation.failureCode = null;
+		operation.failureDetail = null;
+		operation.unavailableSource = null;
 		operation.retryable = false;
 		operation.completedAt = null;
 		operation.verificationWorkerPid = 0;
+		operation.updatedAt = this.clock.instant();
 		this.events.publishEvent(new DatasetPublicationVerificationRequested(publicationId));
 		return operation.view();
 	}
 
 	@Transactional(readOnly = true)
-	DatasetPublicationView verificationInput(UUID publicationId) {
+	public DatasetPublicationView verificationInput(UUID publicationId) {
 		DatasetPublicationEntity operation = this.publication(publicationId);
 		return operation.state == DatasetPublicationState.VERIFYING ? operation.view() : null;
 	}
 
 	@Transactional(readOnly = true)
-	List<UUID> pendingVerifications() {
+	public List<UUID> pendingVerifications() {
 		return this.entityManager
 			.createQuery("select publicationId from DatasetPublicationEntity where state = :state", UUID.class)
 			.setParameter("state", DatasetPublicationState.VERIFYING)
@@ -108,11 +179,12 @@ class DatasetPublicationService {
 	}
 
 	@Transactional
-	void commit(UUID publicationId, DatasetPublicationWorkerResult verified) {
+	public void commit(UUID publicationId, DatasetPublicationWorkerResult verified) {
 		DatasetPublicationEntity operation = this.publication(publicationId);
 		if (operation.state != DatasetPublicationState.VERIFYING) {
 			return;
 		}
+		operation.state = DatasetPublicationState.COMMITTING;
 		if (operation.expectedDatasetRevision != null) {
 			this.commitGate.await(operation.datasetId);
 		}
@@ -140,22 +212,58 @@ class DatasetPublicationService {
 		operation.preferredDefinitionChanged = operation.preferredDefinitionId.equals(operation.definitionId);
 		operation.retryable = false;
 		operation.failureCode = null;
+		operation.failureDetail = null;
+		operation.unavailableSource = null;
 		operation.verifiedAt = verified.verifiedAt();
 		operation.completedAt = this.clock.instant();
+		operation.updatedAt = operation.completedAt;
 		operation.verificationWorkerPid = verified.workerPid();
 	}
 
 	@Transactional
-	void fail(UUID publicationId, DatasetPublicationWorkerResult failure) {
+	public void fail(UUID publicationId, DatasetPublicationWorkerResult failure) {
 		DatasetPublicationEntity operation = this.publication(publicationId);
 		if (operation.state != DatasetPublicationState.VERIFYING) {
 			return;
 		}
 		operation.state = DatasetPublicationState.FAILED;
 		operation.failureCode = failure.failureCode();
+		operation.failureDetail = failureDetail(failure);
+		operation.unavailableSource = unavailableSource(failure);
 		operation.retryable = failure.retryable();
 		operation.verificationWorkerPid = failure.workerPid();
 		operation.completedAt = this.clock.instant();
+		operation.updatedAt = operation.completedAt;
+	}
+
+	static String failureDetail(DatasetPublicationWorkerResult failure) {
+		if ("DATASET_PROJECTION_UNAVAILABLE".equals(failure.failureCode())) {
+			return "Managed credential projection is temporarily unavailable";
+		}
+		if ("DATASET_TARGET_STORAGE_INELIGIBLE".equals(failure.failureCode())) {
+			return "The selected Dataset Target Storage is no longer eligible";
+		}
+		if ("DATASET_VERIFICATION_PROCESS_UNAVAILABLE".equals(failure.failureCode())) {
+			return "The independent Dataset verification worker is temporarily unavailable";
+		}
+		if ("DATASET_DATABASE_UNAVAILABLE".equals(failure.failureCode())) {
+			return "The Dataset Publication database is temporarily unavailable";
+		}
+		return failure.retryable() ? "Independent Dataset verification is temporarily unavailable"
+				: "Independent Dataset verification rejected the staged content";
+	}
+
+	static String unavailableSource(DatasetPublicationWorkerResult failure) {
+		if ("DATASET_PROJECTION_UNAVAILABLE".equals(failure.failureCode())) {
+			return "Managed Credential Projection";
+		}
+		if ("DATASET_VERIFICATION_PROCESS_UNAVAILABLE".equals(failure.failureCode())) {
+			return "Dataset Verification Worker";
+		}
+		if ("DATASET_DATABASE_UNAVAILABLE".equals(failure.failureCode())) {
+			return "Publication Database";
+		}
+		return failure.retryable() ? "Dataset Target Storage" : null;
 	}
 
 	@Transactional(readOnly = true)
@@ -204,6 +312,25 @@ class DatasetPublicationService {
 		}
 		throw new DatasetPublicationException("DATASET_FINGERPRINT_CONFLICT",
 				"The Dataset already contains a conflicting full content fingerprint", false);
+	}
+
+	private static DatasetPublicationFailureFacts safeFailure(String code) {
+		return switch (code == null ? "" : code) {
+			case "DATASET_UPLOAD_FAILED" -> new DatasetPublicationFailureFacts(
+					"Direct Dataset upload is temporarily unavailable", "Dataset Target Storage", true);
+			case "DATASET_LOCAL_CREDENTIAL_UNAVAILABLE" -> new DatasetPublicationFailureFacts(
+					"Local object-storage credentials are unavailable", "Local credential provider", true);
+			case "DATASET_SOURCE_MUTATED" -> new DatasetPublicationFailureFacts(
+					"The local Dataset corpus changed after its identity was accepted", null, false);
+			case "DATASET_UPLOAD_CONFLICT" -> new DatasetPublicationFailureFacts(
+					"An allocated Dataset object conflicts with the accepted manifest", null, false);
+			case "DATASET_COMMIT_RESPONSE_AMBIGUOUS" -> new DatasetPublicationFailureFacts(
+					"The completion request did not commit and can be retried", "Control plane", true);
+			default -> null;
+		};
+	}
+
+	private record DatasetPublicationFailureFacts(String detail, String unavailableSource, boolean retryable) {
 	}
 
 	private static boolean digest(String value) {

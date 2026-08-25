@@ -41,6 +41,9 @@ class DatasetPublicationEntity {
 	@Column(name = "preferred_definition_decision")
 	PreferredDefinitionDecision preferredDefinitionDecision;
 
+	@Column(name = "requested_version_label")
+	String requestedVersionLabel;
+
 	@Column(name = "version_label", nullable = false)
 	String versionLabel;
 
@@ -65,6 +68,12 @@ class DatasetPublicationEntity {
 	@Column(name = "operation_location", nullable = false)
 	String operationLocation;
 
+	@Column(name = "uploaded_object_count", nullable = false)
+	long uploadedObjectCount;
+
+	@Column(name = "uploaded_byte_count", nullable = false)
+	long uploadedByteCount;
+
 	@Column(name = "verified_object_count", nullable = false)
 	long verifiedObjectCount;
 
@@ -83,8 +92,17 @@ class DatasetPublicationEntity {
 	@Column(name = "failure_code")
 	String failureCode;
 
+	@Column(name = "failure_detail")
+	String failureDetail;
+
+	@Column(name = "unavailable_source")
+	String unavailableSource;
+
 	@Column(name = "created_at", nullable = false)
 	Instant createdAt;
+
+	@Column(name = "updated_at", nullable = false)
+	Instant updatedAt;
 
 	@Column(name = "verified_at")
 	Instant verifiedAt;
@@ -112,6 +130,7 @@ class DatasetPublicationEntity {
 		entity.targetStorageId = request.targetStorageId();
 		entity.expectedDatasetRevision = request.expectedDatasetRevision();
 		entity.preferredDefinitionDecision = request.preferredDefinitionDecision();
+		entity.requestedVersionLabel = request.versionLabel();
 		entity.versionLabel = request.versionLabel();
 		entity.formatIdentity = request.formatIdentity();
 		entity.manifestIdentity = request.manifestIdentity();
@@ -121,16 +140,38 @@ class DatasetPublicationEntity {
 		entity.payloadLocation = "datasets/" + entity.datasetId + "/" + entity.definitionId;
 		entity.operationLocation = "operations/dataset-publications/" + entity.publicationId;
 		entity.createdAt = now;
+		entity.updatedAt = now;
 		return entity;
 	}
 
 	DatasetPublicationView view() {
 		return new DatasetPublicationView(this.publicationId, this.state, this.datasetId, this.definitionId,
-				this.copyId, this.targetStorageId, this.versionLabel, this.formatIdentity, this.manifestIdentity,
-				this.contentFingerprint, this.objectCount, this.byteCount, this.payloadLocation, this.operationLocation,
-				this.verifiedObjectCount, this.verifiedByteCount, this.preferredDefinitionId,
-				this.preferredDefinitionChanged, this.retryable, this.failureCode, this.createdAt, this.verifiedAt,
-				this.completedAt, this.verificationWorkerPid);
+				this.copyId, this.targetStorageId, this.expectedDatasetRevision, this.preferredDefinitionDecision,
+				this.versionLabel, this.formatIdentity, this.manifestIdentity, this.contentFingerprint,
+				this.objectCount, this.byteCount, this.payloadLocation, this.operationLocation,
+				this.uploadedObjectCount, this.uploadedByteCount, this.verifiedObjectCount, this.verifiedByteCount,
+				this.preferredDefinitionId, this.preferredDefinitionChanged, this.retryable, this.failureCode,
+				this.failureDetail, this.unavailableSource, retryGuidance(), this.createdAt, this.updatedAt,
+				this.verifiedAt, this.completedAt, this.verificationWorkerPid);
+	}
+
+	private String retryGuidance() {
+		if (this.state == DatasetPublicationState.COMMITTED) {
+			return "The publication is committed; inspect this operation for its original result.";
+		}
+		if (this.state == DatasetPublicationState.VERIFYING || this.state == DatasetPublicationState.COMMITTING) {
+			return "Wait for managed verification and inspect this operation again.";
+		}
+		if (this.state == DatasetPublicationState.FAILED && !this.retryable) {
+			return switch (this.failureCode == null ? "" : this.failureCode) {
+				case "DATASET_SOURCE_MUTATED" ->
+					"Repair the local Dataset corpus and start a new publication; this operation cannot be resumed.";
+				case "DATASET_UPLOAD_CONFLICT" ->
+					"Reconcile the conflicting allocated object and start a new publication; this operation cannot be resumed.";
+				default -> "Inspect the failure and start a new publication; this operation cannot be resumed.";
+			};
+		}
+		return "Resume with --resume " + this.publicationId + " and the original immutable publication facts.";
 	}
 
 }

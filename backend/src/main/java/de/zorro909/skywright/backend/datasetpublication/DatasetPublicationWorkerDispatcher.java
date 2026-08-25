@@ -7,6 +7,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -16,22 +17,27 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 final class DatasetPublicationWorkerDispatcher {
 
-	private final DatasetPublicationService publications;
+	private final DatasetPublicationOperations publications;
 
-	private final DatasetPublicationWorkerLauncher launcher;
+	private final DatasetPublicationVerifier verifier;
 
 	private final DatasetPublicationWorkerRecovery recovery;
+
+	private final DatasetPublicationWorkerRecoveryScheduler scheduler;
 
 	private final ExecutorService executor = Executors
 		.newSingleThreadExecutor(Thread.ofPlatform().name("dataset-transfer-worker-dispatcher").factory());
 
 	private final Set<UUID> dispatched = ConcurrentHashMap.newKeySet();
 
-	DatasetPublicationWorkerDispatcher(DatasetPublicationService publications,
-			DatasetPublicationWorkerLauncher launcher, DatasetPublicationWorkerRecovery recovery) {
+	private final AtomicBoolean closing = new AtomicBoolean();
+
+	DatasetPublicationWorkerDispatcher(DatasetPublicationOperations publications, DatasetPublicationVerifier verifier,
+			DatasetPublicationWorkerRecovery recovery, DatasetPublicationWorkerRecoveryScheduler scheduler) {
 		this.publications = publications;
-		this.launcher = launcher;
+		this.verifier = verifier;
 		this.recovery = recovery;
+		this.scheduler = scheduler;
 	}
 
 	@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -47,17 +53,21 @@ final class DatasetPublicationWorkerDispatcher {
 
 	private void dispatch(UUID publicationId) {
 		if (this.dispatched.add(publicationId)) {
-			this.executor.submit(() -> verify(publicationId));
+			this.executor.submit(() -> verify(publicationId, 0));
 		}
 	}
 
-	private void verify(UUID publicationId) {
+	private void verify(UUID publicationId, int attempt) {
+		boolean retryScheduled = false;
 		try {
 			DatasetPublicationView publication = this.publications.verificationInput(publicationId);
 			if (publication == null) {
 				return;
 			}
-			DatasetPublicationWorkerResult result = this.launcher.verify(publication);
+			DatasetPublicationWorkerResult result = this.verifier.verify(publication);
+			if (this.closing.get() || "DATASET_VERIFICATION_INTERRUPTED".equals(result.failureCode())) {
+				return;
+			}
 			if (result.verified()) {
 				this.publications.commit(publicationId, result);
 			}
@@ -66,25 +76,48 @@ final class DatasetPublicationWorkerDispatcher {
 			}
 		}
 		catch (DatasetPublicationException failure) {
-			this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0,
-					null, 0, failure.errorCode(), failure.retryable()));
+			retryScheduled = recordFailure(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(),
+					0, 0, null, 0, failure.errorCode(), failure.retryable()), attempt);
 		}
 		catch (DatasetCatalogException failure) {
-			this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0,
-					null, 0, failure.errorCode(), false));
+			retryScheduled = recordFailure(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(),
+					0, 0, null, 0, failure.errorCode(), false), attempt);
 		}
 		catch (RuntimeException failure) {
-			this.publications.fail(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0,
-					null, 0, "DATASET_VERIFICATION_UNAVAILABLE", true));
+			if (this.closing.get()) {
+				return;
+			}
+			retryScheduled = recordFailure(publicationId, new DatasetPublicationWorkerResult(false, java.util.List.of(),
+					0, 0, null, 0, "DATASET_DATABASE_UNAVAILABLE", true), attempt);
 		}
 		finally {
-			this.dispatched.remove(publicationId);
+			if (!retryScheduled) {
+				this.dispatched.remove(publicationId);
+			}
+		}
+	}
+
+	private boolean recordFailure(UUID publicationId, DatasetPublicationWorkerResult failure, int attempt) {
+		try {
+			this.publications.fail(publicationId, failure);
+			return false;
+		}
+		catch (RuntimeException persistenceFailure) {
+			this.scheduler.retry(() -> verify(publicationId, attempt + 1), attempt);
+			return true;
 		}
 	}
 
 	@PreDestroy
 	void close() {
+		this.closing.set(true);
 		this.executor.shutdownNow();
+		try {
+			this.executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+		}
+		catch (InterruptedException interrupted) {
+			Thread.currentThread().interrupt();
+		}
 	}
 
 }

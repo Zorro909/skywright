@@ -3,24 +3,37 @@ package de.zorro909.skywright.backend.acceptance;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import de.zorro909.skywright.backend.datasetpublication.DatasetPublicationCommitGateTestConfiguration;
+import com.sun.net.httpserver.HttpServer;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.InetSocketAddress;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
 import software.amazon.awssdk.regions.Region;
@@ -29,6 +42,7 @@ import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -60,6 +74,98 @@ final class DatasetPublicationApiIT {
 
 			assertThat(response.statusCode()).as(response.body()).isEqualTo(422);
 			assertThat(response.body()).contains("SKYWRIGHT_DATASET_PUBLICATION_INVALID");
+		}
+	}
+
+	@Test
+	void publicationResumeRejectsChangedFactsAndRetainsSafeProgress() throws Exception {
+		try (var objectStorage = SeaweedFsFixture.start(); var administrator = administrator(objectStorage)) {
+			objectStorage.awaitReady(administrator);
+			String bucket = "dataset-publication-resume-" + UUID.randomUUID();
+			administrator.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).join();
+			try (var backend = BackendFixture.startWithTargetStorageIntegration()) {
+				var storage = backend.post("/api/v1/target-storages", registration(objectStorage.endpoint(), bucket));
+				String storageId = JSON.readTree(storage.body()).path("id").asText();
+				backend.put("/api/v1/target-storages/" + storageId + "/activation",
+						"{\"expectedRegistrationRevision\":2,\"activated\":true}");
+				String request = """
+						{
+						  "targetStorageId":"%s",
+						  "versionLabel":"resume-v1",
+						  "formatIdentity":"mosaicml-streaming-mds@2",
+						  "manifestIdentity":"sha256:%s",
+						  "contentFingerprint":"sha256:%s",
+						  "objectCount":3,
+						  "byteCount":21
+						}
+						""".formatted(storageId, "1".repeat(64), "2".repeat(64));
+				var initiatedResponse = backend.post("/api/v1/dataset-publications", request);
+				assertThat(initiatedResponse.statusCode()).as(initiatedResponse.body()).isEqualTo(201);
+				JsonNode initiated = JSON.readTree(initiatedResponse.body());
+				String publicationId = initiated.path("publicationId").asText();
+				assertThat(initiated.path("uploadedObjectCount").asLong()).isZero();
+				assertThat(initiated.path("uploadedByteCount").asLong()).isZero();
+				assertThat(initiated.path("expectedDatasetRevision").isNull()).isTrue();
+				assertThat(initiated.path("preferredDefinitionDecision").isNull()).isTrue();
+				assertThat(initiated.path("retryGuidance").asText()).contains("resume", publicationId);
+
+				var resumed = backend.post("/api/v1/dataset-publications/" + publicationId + "/resume", request);
+				assertThat(resumed.statusCode()).as(resumed.body()).isEqualTo(200);
+				assertThat(JSON.readTree(resumed.body()).path("datasetId")).isEqualTo(initiated.path("datasetId"));
+				var changed = backend.post("/api/v1/dataset-publications/" + publicationId + "/resume",
+						request.replace("resume-v1", "changed"));
+				assertThat(changed.statusCode()).as(changed.body()).isEqualTo(409);
+				assertThat(changed.body()).contains("SKYWRIGHT_DATASET_PUBLICATION_CONFLICT");
+				var changedDataset = backend.post("/api/v1/dataset-publications/" + publicationId + "/resume",
+						request.replace("\"targetStorageId\"",
+								"\"datasetId\":\"00000000-0000-0000-0000-000000000099\","
+										+ "\"expectedDatasetRevision\":1,\"preferredDefinitionDecision\":\"advance\","
+										+ "\"targetStorageId\""));
+				assertThat(changedDataset.statusCode()).as(changedDataset.body()).isEqualTo(409);
+				var changedPreference = backend.post("/api/v1/dataset-publications/" + publicationId + "/resume",
+						request.replace("\"targetStorageId\"",
+								"\"datasetId\":\"00000000-0000-0000-0000-000000000099\","
+										+ "\"expectedDatasetRevision\":1,\"preferredDefinitionDecision\":\"keep\","
+										+ "\"targetStorageId\""));
+				assertThat(changedPreference.statusCode()).as(changedPreference.body()).isEqualTo(409);
+
+				var progress = backend.put("/api/v1/dataset-publications/" + publicationId + "/progress",
+						"{\"uploadedObjectCount\":2,\"uploadedByteCount\":13}");
+				assertThat(progress.statusCode()).as(progress.body()).isEqualTo(200);
+				var failure = backend.put("/api/v1/dataset-publications/" + publicationId + "/failure", """
+						{
+						  "failureCode":"DATASET_UPLOAD_FAILED"
+						}
+						""");
+				assertThat(failure.statusCode()).as(failure.body()).isEqualTo(200);
+				JsonNode inspected = JSON.readTree(backend.get("/api/v1/dataset-publications/" + publicationId).body());
+				assertThat(inspected.path("state").asText()).isEqualTo("failed");
+				assertThat(inspected.path("uploadedObjectCount").asLong()).isEqualTo(2);
+				assertThat(inspected.path("uploadedByteCount").asLong()).isEqualTo(13);
+				assertThat(inspected.path("failureDetail").asText()).contains("temporarily unavailable")
+					.doesNotContain("Exception", "/tmp", "secret");
+				assertThat(inspected.path("unavailableSource").asText()).isEqualTo("Dataset Target Storage");
+				assertThat(inspected.path("retryGuidance").asText()).contains("--resume", publicationId);
+				assertThat(inspected.path("updatedAt").asText()).isNotBlank();
+
+				backend.put("/api/v1/dataset-publications/" + publicationId + "/failure",
+						"{\"failureCode\":\"DATASET_UPLOAD_CONFLICT\"}");
+				var lateProgress = backend.put("/api/v1/dataset-publications/" + publicationId + "/progress",
+						"{\"uploadedObjectCount\":3,\"uploadedByteCount\":21}");
+				JsonNode failedClosed = JSON.readTree(lateProgress.body());
+				assertThat(failedClosed.path("state").asText()).isEqualTo("failed");
+				assertThat(failedClosed.path("retryable").asBoolean()).isFalse();
+				assertThat(failedClosed.path("uploadedObjectCount").asLong()).isEqualTo(2);
+				assertThat(failedClosed.path("uploadedByteCount").asLong()).isEqualTo(13);
+				assertThat(failedClosed.path("retryGuidance").asText()).doesNotContain("--resume")
+					.contains("cannot be resumed");
+				var lateFailure = backend.put("/api/v1/dataset-publications/" + publicationId + "/failure",
+						"{\"failureCode\":\"DATASET_UPLOAD_FAILED\"}");
+				JsonNode stillFailedClosed = JSON.readTree(lateFailure.body());
+				assertThat(stillFailedClosed.path("failureCode").asText()).isEqualTo("DATASET_UPLOAD_CONFLICT");
+				assertThat(stillFailedClosed.path("retryable").asBoolean()).isFalse();
+				assertThat(stillFailedClosed.path("retryGuidance").asText()).doesNotContain("--resume");
+			}
 		}
 	}
 
@@ -131,6 +237,9 @@ final class DatasetPublicationApiIT {
 				assertThat(result.path("verifiedObjectCount").asLong())
 					.isEqualTo(expected.path("objectCount").asLong());
 				assertThat(result.path("verifiedByteCount").asLong()).isEqualTo(expected.path("byteCount").asLong());
+				assertThat(result.path("uploadedObjectCount").asLong())
+					.isEqualTo(expected.path("objectCount").asLong());
+				assertThat(result.path("uploadedByteCount").asLong()).isEqualTo(expected.path("byteCount").asLong());
 				assertThat(result.path("preferredDefinitionId").asText())
 					.isEqualTo(result.path("definitionId").asText());
 				assertThat(result.path("preferredDefinitionChanged").asBoolean()).isTrue();
@@ -151,7 +260,7 @@ final class DatasetPublicationApiIT {
 				String fingerprint = result.path("contentFingerprint").asText();
 				char differentDigit = fingerprint.charAt(23) == '0' ? '1' : '0';
 				String collidingFingerprint = fingerprint.substring(0, 23) + differentDigit + fingerprint.substring(24);
-				var collidingInitiation = backend.post("/api/v1/dataset-publications", """
+				String collidingRequest = """
 						{
 						  "targetStorageId":"%s",
 						  "datasetId":"%s",
@@ -164,11 +273,23 @@ final class DatasetPublicationApiIT {
 						  "byteCount":1
 						}
 						""".formatted(storageId, result.path("datasetId").asText(),
-						result.path("manifestIdentity").asText(), collidingFingerprint));
+						result.path("manifestIdentity").asText(), collidingFingerprint);
+				var collidingInitiation = backend.post("/api/v1/dataset-publications", collidingRequest);
 				assertThat(collidingInitiation.statusCode()).as(collidingInitiation.body()).isEqualTo(201);
 				JsonNode colliding = JSON.readTree(collidingInitiation.body());
 				assertThat(colliding.path("versionLabel").asText()).isEqualTo(collidingFingerprint.substring(7, 25));
 				assertThat(colliding.path("contentFingerprint").asText()).isEqualTo(collidingFingerprint);
+				var resumedExisting = backend.post(
+						"/api/v1/dataset-publications/" + colliding.path("publicationId").asText() + "/resume",
+						collidingRequest);
+				assertThat(resumedExisting.statusCode()).as(resumedExisting.body()).isEqualTo(200);
+				assertThat(JSON.readTree(resumedExisting.body()).path("datasetId")).isEqualTo(result.path("datasetId"));
+				var changedExistingDecision = backend.post(
+						"/api/v1/dataset-publications/" + colliding.path("publicationId").asText() + "/resume",
+						collidingRequest.replace("\"preferredDefinitionDecision\":\"advance\"",
+								"\"preferredDefinitionDecision\":\"keep\""));
+				assertThat(changedExistingDecision.statusCode()).as(changedExistingDecision.body()).isEqualTo(409);
+				assertThat(changedExistingDecision.body()).contains("SKYWRIGHT_DATASET_PUBLICATION_CONFLICT");
 				var repeatedFingerprintInitiation = backend.post("/api/v1/dataset-publications", """
 						{
 						  "targetStorageId":"%s",
@@ -347,6 +468,214 @@ final class DatasetPublicationApiIT {
 		}
 	}
 
+	@Test
+	void installedCommandResumesPartiallyAndFullyTransferredPublications() throws Exception {
+		try (var objectStorage = SeaweedFsFixture.start(); var administrator = administrator(objectStorage)) {
+			objectStorage.awaitReady(administrator);
+			String bucket = "publication-resume-" + UUID.randomUUID();
+			administrator.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).join();
+			JsonNode fixture = JSON.readTree(Path.of(System.getProperty("repository.root"), "tests", "fixtures",
+					"dataset-publication", "mds-v2-contract.json")
+				.toFile());
+			Path corpus = Files.createDirectory(this.temporaryDirectory.resolve("resumed-corpus"));
+			Map<String, byte[]> files = new HashMap<>();
+			for (JsonNode file : fixture.path("files")) {
+				String objectKey = file.path("objectKey").asText();
+				byte[] bytes = Base64.getDecoder().decode(file.path("base64").asText());
+				Path destination = corpus.resolve(objectKey);
+				Files.createDirectories(destination.getParent());
+				Files.write(destination, bytes);
+				files.put(objectKey, bytes);
+			}
+			JsonNode expected = fixture.path("expected");
+
+			try (var backend = BackendFixture.startWithTargetStorageIntegration()) {
+				var storage = backend.post("/api/v1/target-storages", registration(objectStorage.endpoint(), bucket));
+				String storageId = JSON.readTree(storage.body()).path("id").asText();
+				backend.put("/api/v1/target-storages/" + storageId + "/activation",
+						"{\"expectedRegistrationRevision\":2,\"activated\":true}");
+
+				objectStorage.pause();
+				boolean storagePaused = true;
+				Process interrupted = startCommand(corpus, backend.baseUri(), storageId, null);
+				try {
+					var interruptedErrors = new BufferedReader(
+							new InputStreamReader(interrupted.getErrorStream(), StandardCharsets.UTF_8));
+					JsonNode identity = JSON.readTree(interruptedErrors.readLine());
+					String interruptedPublicationId = identity.path("publicationId").asText();
+					assertThat(identity.path("event").asText()).isEqualTo("dataset-publication-identity");
+					if (!interrupted.waitFor(10, TimeUnit.SECONDS)) {
+						interrupted.destroyForcibly();
+						interrupted.waitFor();
+					}
+					assertThat(interrupted.exitValue()).isNotZero();
+					objectStorage.unpause();
+					storagePaused = false;
+					objectStorage.awaitReady(administrator);
+					CommandResult recovered = runCommand(corpus, backend.baseUri(), storageId,
+							interruptedPublicationId);
+					assertThat(recovered.exitCode()).as(recovered.stderr()).isZero();
+					assertThat(JSON.readTree(recovered.stdout()).path("publicationId").asText())
+						.isEqualTo(interruptedPublicationId);
+				}
+				finally {
+					if (storagePaused) {
+						objectStorage.unpause();
+						objectStorage.awaitReady(administrator);
+					}
+				}
+
+				try (var proxy = new DroppingCompletionProxy(backend.baseUri())) {
+					CommandResult reconciled = runCommand(corpus, proxy.baseUri(), storageId);
+					assertThat(reconciled.exitCode()).as(reconciled.stderr()).isZero();
+					assertThat(JSON.readTree(reconciled.stdout()).path("state").asText()).isEqualTo("committed");
+					assertThat(proxy.droppedCompletion()).isTrue();
+				}
+
+				try (var proxy = new RestartOnCommittedReadProxy(backend)) {
+					CommandResult interruptedResult = runCommand(corpus, proxy.baseUri(), storageId);
+					assertThat(interruptedResult.exitCode()).as(interruptedResult.stderr()).isNotZero();
+					String publicationId = publicationIdentity(interruptedResult.stderr());
+					assertThat(proxy.restarted()).isTrue();
+					CommandResult recoveredResult = runCommand(corpus, backend.baseUri(), storageId, publicationId);
+					assertThat(recoveredResult.exitCode()).as(recoveredResult.stderr()).isZero();
+					assertThat(JSON.readTree(recoveredResult.stdout()).path("publicationId").asText())
+						.isEqualTo(publicationId);
+				}
+
+				for (int transferredObjectCount : java.util.List.of(1, files.size())) {
+					String initiation = """
+							{
+							  "targetStorageId":"%s",
+							  "formatIdentity":"%s",
+							  "manifestIdentity":"%s",
+							  "contentFingerprint":"%s",
+							  "objectCount":%d,
+							  "byteCount":%d
+							}
+							""".formatted(storageId, expected.path("formatIdentity").asText(),
+							expected.path("manifestIdentity").asText(), expected.path("contentFingerprint").asText(),
+							expected.path("objectCount").asLong(), expected.path("byteCount").asLong());
+					JsonNode publication = JSON
+						.readTree(backend.post("/api/v1/dataset-publications", initiation).body());
+					String publicationId = publication.path("publicationId").asText();
+					String payloadLocation = publication.path("payloadLocation").asText();
+					long transferredBytes = 0;
+					int transferred = 0;
+					for (var entry : files.entrySet()) {
+						if (transferred == transferredObjectCount) {
+							break;
+						}
+						byte[] digest = MessageDigest.getInstance("SHA-256").digest(entry.getValue());
+						administrator
+							.putObject(PutObjectRequest.builder()
+								.bucket(bucket)
+								.key(payloadLocation + "/" + entry.getKey())
+								.checksumSHA256(Base64.getEncoder().encodeToString(digest))
+								.metadata(Map.of("skywright-sha256", HexFormat.of().formatHex(digest)))
+								.build(), AsyncRequestBody.fromBytes(entry.getValue()))
+							.join();
+						transferredBytes += entry.getValue().length;
+						transferred++;
+					}
+					backend.put("/api/v1/dataset-publications/" + publicationId + "/progress",
+							"{\"uploadedObjectCount\":" + transferred + ",\"uploadedByteCount\":" + transferredBytes
+									+ "}");
+					if (transferredObjectCount == 1) {
+						backend.restart();
+					}
+					else {
+						administrator
+							.putObject(
+									PutObjectRequest.builder()
+										.bucket(bucket)
+										.key(publication.path("operationLocation").asText() + "/manifest.json")
+										.build(),
+									AsyncRequestBody.fromBytes(
+											Base64.getDecoder().decode(expected.path("manifestBase64").asText())))
+							.join();
+						objectStorage.pause();
+						var storagePausedDuringRestart = new AtomicBoolean(true);
+						try {
+							var completion = backend
+								.post("/api/v1/dataset-publications/" + publicationId + "/completion", "{}");
+							assertThat(completion.statusCode()).as(completion.body()).isEqualTo(202);
+							assertThat(JSON.readTree(completion.body()).path("state").asText()).isEqualTo("verifying");
+							backend.restart(() -> {
+								objectStorage.unpause();
+								storagePausedDuringRestart.set(false);
+								objectStorage.awaitReady(administrator);
+							});
+						}
+						finally {
+							if (storagePausedDuringRestart.get()) {
+								objectStorage.unpause();
+							}
+							objectStorage.awaitReady(administrator);
+						}
+					}
+
+					CommandResult command = runCommand(corpus, backend.baseUri(), storageId, publicationId);
+					assertThat(command.exitCode()).as(command.stderr()).isZero();
+					JsonNode result = JSON.readTree(command.stdout());
+					assertThat(result.path("state").asText()).isEqualTo("committed");
+					assertThat(result.path("publicationId").asText()).isEqualTo(publicationId);
+					assertThat(result.path("datasetId")).isEqualTo(publication.path("datasetId"));
+					assertThat(result.path("definitionId")).isEqualTo(publication.path("definitionId"));
+					assertThat(result.path("payloadLocation")).isEqualTo(publication.path("payloadLocation"));
+				}
+
+				JsonNode corrupt = JSON
+					.readTree(backend
+						.post("/api/v1/dataset-publications",
+								"""
+										{
+										  "targetStorageId":"%s",
+										  "formatIdentity":"%s",
+										  "manifestIdentity":"%s",
+										  "contentFingerprint":"%s",
+										  "objectCount":%d,
+										  "byteCount":%d
+										}
+										""".formatted(storageId, expected.path("formatIdentity").asText(),
+										expected.path("manifestIdentity").asText(),
+										expected.path("contentFingerprint").asText(),
+										expected.path("objectCount").asLong(), expected.path("byteCount").asLong()))
+						.body());
+				String corruptPayload = corrupt.path("payloadLocation").asText();
+				for (var entry : files.entrySet()) {
+					byte[] content = entry.getKey().equals("index.json") ? "corrupt".getBytes(StandardCharsets.UTF_8)
+							: entry.getValue();
+					administrator
+						.putObject(PutObjectRequest.builder()
+							.bucket(bucket)
+							.key(corruptPayload + "/" + entry.getKey())
+							.build(), AsyncRequestBody.fromBytes(content))
+						.join();
+				}
+				byte[] manifest = Base64.getDecoder().decode(expected.path("manifestBase64").asText());
+				administrator
+					.putObject(PutObjectRequest.builder()
+						.bucket(bucket)
+						.key(corrupt.path("operationLocation").asText() + "/manifest.json")
+						.build(), AsyncRequestBody.fromBytes(manifest))
+					.join();
+				backend.put("/api/v1/dataset-publications/" + corrupt.path("publicationId").asText() + "/progress",
+						"{\"uploadedObjectCount\":" + files.size() + ",\"uploadedByteCount\":"
+								+ expected.path("byteCount").asLong() + "}");
+				backend.post("/api/v1/dataset-publications/" + corrupt.path("publicationId").asText() + "/completion",
+						"{}");
+				JsonNode rejected = awaitTerminalPublication(backend, corrupt.path("publicationId").asText());
+				assertThat(rejected.path("failureCode").asText()).isEqualTo("DATASET_REMOTE_MANIFEST_MISMATCH");
+				assertThat(rejected.path("retryable").asBoolean()).isFalse();
+				assertThat(backend.get("/api/v1/datasets/" + corrupt.path("datasetId").asText()).statusCode())
+					.isEqualTo(404);
+				assertThat(backend.get("/api/v1/dataset-catalog/" + corrupt.path("definitionId").asText()).statusCode())
+					.isEqualTo(404);
+			}
+		}
+	}
+
 	private void assertInvalidCorpusInvisible(BackendFixture backend, String storageId, Map<String, byte[]> files,
 			String name, CorpusMutation mutation, String expectedCode) throws Exception {
 		Path invalid = Files.createDirectory(this.temporaryDirectory.resolve("invalid-" + name));
@@ -407,19 +736,168 @@ final class DatasetPublicationApiIT {
 				java.util.List.of("uv", "run", "--project", "sdk", "--locked", "skywright-datasets", "publish",
 						corpus.toString(), "--control-plane", controlPlane.toString(), "--target-storage", storageId));
 		arguments.addAll(java.util.List.of(extra));
-		var commandBuilder = new ProcessBuilder(arguments)
-			.directory(Path.of(System.getProperty("repository.root")).toFile())
-			.redirectErrorStream(false);
-		commandBuilder.environment()
-			.putAll(Map.of("AWS_ACCESS_KEY_ID", "test-key", "AWS_SECRET_ACCESS_KEY", "test-secret", "AWS_REGION",
-					"us-east-1"));
-		Process command = commandBuilder.start();
+		Process command = startCommand(arguments);
 		String stdout = new String(command.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
 		String stderr = new String(command.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
 		return new CommandResult(command.waitFor(), stdout, stderr);
 	}
 
+	private static CommandResult runCommand(Path corpus, URI controlPlane, String storageId, String publicationId)
+			throws Exception {
+		return runCommand(corpus, controlPlane, storageId, "--resume", publicationId);
+	}
+
+	private static Process startCommand(Path corpus, URI controlPlane, String storageId, String publicationId)
+			throws Exception {
+		var arguments = new ArrayList<>(
+				java.util.List.of("uv", "run", "--project", "sdk", "--locked", "skywright-datasets", "publish",
+						corpus.toString(), "--control-plane", controlPlane.toString(), "--target-storage", storageId));
+		if (publicationId != null) {
+			arguments.add("--resume");
+			arguments.add(publicationId);
+		}
+		return startCommand(arguments);
+	}
+
+	private static Process startCommand(java.util.List<String> arguments) throws Exception {
+		var commandBuilder = new ProcessBuilder(arguments)
+			.directory(Path.of(System.getProperty("repository.root")).toFile())
+			.redirectErrorStream(false);
+		commandBuilder.environment()
+			.putAll(Map.of("AWS_ACCESS_KEY_ID", "test-key", "AWS_SECRET_ACCESS_KEY", "test-secret", "AWS_REGION",
+					"us-east-1", "AWS_MAX_ATTEMPTS", "1"));
+		return commandBuilder.start();
+	}
+
+	private static String publicationIdentity(String stderr) throws Exception {
+		return JSON.readTree(stderr.lines().findFirst().orElseThrow()).path("publicationId").asText();
+	}
+
 	private record CommandResult(int exitCode, String stdout, String stderr) {
+	}
+
+	private static final class DroppingCompletionProxy implements AutoCloseable {
+
+		private final HttpServer server;
+
+		private final URI upstream;
+
+		private final HttpClient client = HttpClient.newHttpClient();
+
+		private final AtomicBoolean droppedCompletion = new AtomicBoolean();
+
+		private DroppingCompletionProxy(URI upstream) throws Exception {
+			this.upstream = upstream;
+			this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+			this.server.createContext("/", exchange -> {
+				try {
+					byte[] requestBody = exchange.getRequestBody().readAllBytes();
+					var request = HttpRequest.newBuilder(this.upstream.resolve(exchange.getRequestURI().toString()));
+					String requestContentType = exchange.getRequestHeaders().getFirst("Content-Type");
+					if (requestContentType != null) {
+						request.header("Content-Type", requestContentType);
+					}
+					request.method(exchange.getRequestMethod(), HttpRequest.BodyPublishers.ofByteArray(requestBody));
+					HttpResponse<byte[]> response = this.client.send(request.build(),
+							HttpResponse.BodyHandlers.ofByteArray());
+					if (exchange.getRequestURI().getPath().endsWith("/completion")
+							&& this.droppedCompletion.compareAndSet(false, true)) {
+						exchange.close();
+						return;
+					}
+					String contentType = response.headers().firstValue("Content-Type").orElse("application/json");
+					exchange.getResponseHeaders().set("Content-Type", contentType);
+					exchange.sendResponseHeaders(response.statusCode(), response.body().length);
+					exchange.getResponseBody().write(response.body());
+				}
+				catch (InterruptedException interrupted) {
+					Thread.currentThread().interrupt();
+					exchange.close();
+				}
+				finally {
+					exchange.close();
+				}
+			});
+			this.server.start();
+		}
+
+		private URI baseUri() {
+			return URI.create("http://127.0.0.1:" + this.server.getAddress().getPort());
+		}
+
+		private boolean droppedCompletion() {
+			return this.droppedCompletion.get();
+		}
+
+		@Override
+		public void close() {
+			this.server.stop(0);
+		}
+
+	}
+
+	private static final class RestartOnCommittedReadProxy implements AutoCloseable {
+
+		private final HttpServer server;
+
+		private final BackendFixture backend;
+
+		private final HttpClient client = HttpClient.newHttpClient();
+
+		private final AtomicBoolean restarted = new AtomicBoolean();
+
+		private RestartOnCommittedReadProxy(BackendFixture backend) throws Exception {
+			this.backend = backend;
+			this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+			this.server.createContext("/", exchange -> {
+				try {
+					byte[] requestBody = exchange.getRequestBody().readAllBytes();
+					var request = HttpRequest
+						.newBuilder(this.backend.baseUri().resolve(exchange.getRequestURI().toString()));
+					String requestContentType = exchange.getRequestHeaders().getFirst("Content-Type");
+					if (requestContentType != null) {
+						request.header("Content-Type", requestContentType);
+					}
+					request.method(exchange.getRequestMethod(), HttpRequest.BodyPublishers.ofByteArray(requestBody));
+					HttpResponse<byte[]> response = this.client.send(request.build(),
+							HttpResponse.BodyHandlers.ofByteArray());
+					if (exchange.getRequestMethod().equals("GET")
+							&& exchange.getRequestURI().getPath().contains("/dataset-publications/")
+							&& JSON.readTree(response.body()).path("state").asText().equals("committed")
+							&& this.restarted.compareAndSet(false, true)) {
+						this.backend.restart();
+						exchange.close();
+						return;
+					}
+					String contentType = response.headers().firstValue("Content-Type").orElse("application/json");
+					exchange.getResponseHeaders().set("Content-Type", contentType);
+					exchange.sendResponseHeaders(response.statusCode(), response.body().length);
+					exchange.getResponseBody().write(response.body());
+				}
+				catch (InterruptedException interrupted) {
+					Thread.currentThread().interrupt();
+					exchange.close();
+				}
+				finally {
+					exchange.close();
+				}
+			});
+			this.server.start();
+		}
+
+		private URI baseUri() {
+			return URI.create("http://127.0.0.1:" + this.server.getAddress().getPort());
+		}
+
+		private boolean restarted() {
+			return this.restarted.get();
+		}
+
+		@Override
+		public void close() {
+			this.server.stop(0);
+		}
+
 	}
 
 	private static S3AsyncClient administrator(SeaweedFsFixture storage) {

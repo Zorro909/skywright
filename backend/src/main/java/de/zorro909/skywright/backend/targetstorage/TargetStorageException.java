@@ -1,6 +1,6 @@
 package de.zorro909.skywright.backend.targetstorage;
 
-class TargetStorageException extends RuntimeException {
+public class TargetStorageException extends RuntimeException {
 
 	private final String code;
 
@@ -9,7 +9,7 @@ class TargetStorageException extends RuntimeException {
 		this.code = code;
 	}
 
-	String code() {
+	public String code() {
 		return this.code;
 	}
 
