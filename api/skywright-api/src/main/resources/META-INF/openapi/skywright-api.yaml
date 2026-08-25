@@ -452,6 +452,33 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /dataset-publications/{publicationId}/transfer-start:
+    parameters:
+      - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: startDatasetPublicationTransfer
+      summary: Register direct transfer activity before any allocated object write begins.
+      responses:
+        '200':
+          description: Transfer activity registered or fenced by the returned publication state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetPublication' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /dataset-publications/{publicationId}/transfer-stop:
+    parameters:
+      - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: stopDatasetPublicationTransfer
+      summary: Acknowledge that all direct transfer requests have quiesced.
+      responses:
+        '200':
+          description: Transfer quiescence retained and deferred cleanup requested when needed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetPublication' }
+        '404': { $ref: '#/components/responses/Problem' }
   /dataset-publications/{publicationId}/abort:
     parameters:
       - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }

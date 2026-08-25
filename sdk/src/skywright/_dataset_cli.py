@@ -15,6 +15,7 @@ from typing import cast
 
 from skywright._dataset_errors import DatasetPublicationError
 from skywright._dataset_publication import inspect_mds_corpus
+from skywright._dataset_transfer import ensure_active, start, stop
 from skywright._dataset_upload import upload as _upload
 
 
@@ -234,40 +235,21 @@ def _publish(
             )
 
         def ensure_upload_active() -> None:
-            current = _request(
-                control_plane,
-                "GET",
-                f"/api/v1/dataset-publications/{publication_id}",
-                None,
-            )
-            if not isinstance(current, dict):
-                raise _protocol_error()
-            typed_current = cast(dict[str, object], current)
-            state = typed_current.get("state")
-            if state in {"awaiting-upload", "uploading"}:
-                return
-            if state in {"aborting", "aborted"} or (
-                state == "failed-cleanup"
-                and typed_current.get("preferredDefinitionId") is None
-            ):
-                raise DatasetPublicationError(
-                    "DATASET_PUBLICATION_ABORTED",
-                    "The Dataset Publication was aborted while transfer was active",
-                )
-            raise DatasetPublicationError(
-                "DATASET_PUBLICATION_FENCED",
-                "The Dataset Publication no longer accepts transfer work",
-            )
+            ensure_active(_request, control_plane, publication_id)
 
         try:
-            _upload(
-                corpus,
-                publication,
-                storage,
-                concurrency,
-                progress,
-                ensure_upload_active,
-            )
+            start(_request, control_plane, publication_id)
+            try:
+                _upload(
+                    corpus,
+                    publication,
+                    storage,
+                    concurrency,
+                    progress,
+                    ensure_upload_active,
+                )
+            finally:
+                stop(_request, control_plane, publication_id)
         except DatasetPublicationError as error:
             _record_failure(control_plane, publication_id, error)
             raise

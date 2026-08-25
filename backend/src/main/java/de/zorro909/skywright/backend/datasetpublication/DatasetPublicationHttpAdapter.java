@@ -60,6 +60,18 @@ public class DatasetPublicationHttpAdapter implements DatasetPublicationsApi, Da
 	}
 
 	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> startDatasetPublicationTransfer(
+			UUID publicationId) {
+		return ResponseEntity.ok(publication(this.publications.startTransfer(publicationId)));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> stopDatasetPublicationTransfer(
+			UUID publicationId) {
+		return ResponseEntity.ok(publication(this.publications.stopTransfer(publicationId)));
+	}
+
+	@Override
 	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> abortDatasetPublication(
 			UUID publicationId) {
 		return ResponseEntity.accepted().body(publication(this.publications.abort(publicationId)));

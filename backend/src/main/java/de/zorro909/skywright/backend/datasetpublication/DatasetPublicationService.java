@@ -119,7 +119,13 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 
 	@Transactional
 	DatasetPublicationView failLocal(UUID publicationId, DatasetPublicationFailure failure) {
-		DatasetPublicationEntity operation = this.publication(publicationId);
+		DatasetPublicationEntity operation = this.publicationForUpdate(publicationId);
+		if (operation.state == DatasetPublicationState.ABORTING) {
+			operation.transferActive = false;
+			operation.updatedAt = this.clock.instant();
+			this.events.publishEvent(new DatasetPublicationCleanupRequested(publicationId));
+			return operation.view();
+		}
 		if (operation.state == DatasetPublicationState.VERIFYING || operation.state == DatasetPublicationState.COMMITTED
 				|| operation.state == DatasetPublicationState.COMMITTING
 				|| operation.state == DatasetPublicationState.ABORTING
@@ -139,6 +145,7 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 		operation.failureDetail = facts.detail();
 		operation.unavailableSource = facts.unavailableSource();
 		operation.retryable = facts.retryable();
+		operation.transferActive = false;
 		operation.updatedAt = this.clock.instant();
 		operation.completedAt = null;
 		return operation.view();
@@ -147,6 +154,34 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 	@Transactional(readOnly = true)
 	DatasetPublicationView get(UUID publicationId) {
 		return this.publication(publicationId).view();
+	}
+
+	@Transactional
+	DatasetPublicationView startTransfer(UUID publicationId) {
+		DatasetPublicationEntity operation = this.publicationForUpdate(publicationId);
+		if (operation.state != DatasetPublicationState.AWAITING_UPLOAD
+				&& operation.state != DatasetPublicationState.UPLOADING
+				&& (operation.state != DatasetPublicationState.FAILED || !operation.retryable)) {
+			return operation.view();
+		}
+		operation.state = DatasetPublicationState.UPLOADING;
+		operation.transferActive = true;
+		operation.updatedAt = this.clock.instant();
+		return operation.view();
+	}
+
+	@Transactional
+	DatasetPublicationView stopTransfer(UUID publicationId) {
+		DatasetPublicationEntity operation = this.publicationForUpdate(publicationId);
+		if (!operation.transferActive) {
+			return operation.view();
+		}
+		operation.transferActive = false;
+		operation.updatedAt = this.clock.instant();
+		if (operation.state == DatasetPublicationState.ABORTING) {
+			this.events.publishEvent(new DatasetPublicationCleanupRequested(publicationId));
+		}
+		return operation.view();
 	}
 
 	@Transactional
@@ -170,7 +205,9 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 		operation.unavailableSource = null;
 		operation.completedAt = null;
 		operation.updatedAt = this.clock.instant();
-		this.events.publishEvent(new DatasetPublicationCleanupRequested(publicationId));
+		if (!operation.transferActive) {
+			this.events.publishEvent(new DatasetPublicationCleanupRequested(publicationId));
+		}
 		return operation.view();
 	}
 
@@ -201,7 +238,10 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 
 	@Transactional
 	DatasetPublicationView complete(UUID publicationId) {
-		DatasetPublicationEntity operation = this.publication(publicationId);
+		DatasetPublicationEntity operation = this.publicationForUpdate(publicationId);
+		if (operation.transferActive) {
+			return operation.view();
+		}
 		if (operation.state == DatasetPublicationState.COMMITTED || operation.state == DatasetPublicationState.VERIFYING
 				|| operation.state == DatasetPublicationState.PUBLISHED_CLEANUP_PENDING
 				|| operation.state == DatasetPublicationState.ABORTING
@@ -243,14 +283,15 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 	@Transactional(readOnly = true)
 	public DatasetPublicationView cleanupInput(UUID publicationId) {
 		DatasetPublicationEntity operation = this.publication(publicationId);
-		return operation.state == DatasetPublicationState.ABORTING
-				|| operation.state == DatasetPublicationState.PUBLISHED_CLEANUP_PENDING ? operation.view() : null;
+		return !operation.transferActive && (operation.state == DatasetPublicationState.ABORTING
+				|| operation.state == DatasetPublicationState.PUBLISHED_CLEANUP_PENDING) ? operation.view() : null;
 	}
 
 	@Transactional(readOnly = true)
 	public List<UUID> pendingCleanups() {
-		return this.entityManager
-			.createQuery("select publicationId from DatasetPublicationEntity where state in :states", UUID.class)
+		return this.entityManager.createQuery(
+				"select publicationId from DatasetPublicationEntity where transferActive = false and state in :states",
+				UUID.class)
 			.setParameter("states",
 					List.of(DatasetPublicationState.ABORTING, DatasetPublicationState.PUBLISHED_CLEANUP_PENDING))
 			.getResultList();
@@ -302,6 +343,9 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 	@Transactional
 	public void cleanupSucceeded(UUID publicationId, DatasetPublicationWorkerResult result) {
 		DatasetPublicationEntity operation = this.publicationForUpdate(publicationId);
+		if (operation.transferActive) {
+			return;
+		}
 		if (operation.state == DatasetPublicationState.ABORTING) {
 			operation.state = DatasetPublicationState.ABORTED;
 			operation.completedAt = this.clock.instant();

@@ -1,0 +1,12 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-168-dataset-publication-transfer-lifecycle
+      author: skywright
+      logicalFilePath: db/changelog/versions/0007-dataset-publication-transfer.yaml
+      changes:
+        - addColumn:
+            tableName: dataset_publication
+            columns:
+              - column: { name: transfer_active, type: boolean, defaultValueBoolean: false, constraints: { nullable: false } }
+      rollback:
+        - dropColumn: { tableName: dataset_publication, columnName: transfer_active }

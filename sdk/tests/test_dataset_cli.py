@@ -676,6 +676,10 @@ def test_command_reports_and_explicitly_resumes_one_publication(
             return publication
         if path == f"/api/v1/target-storages/{storage_id}":
             return {"storage": "descriptor"}
+        if path.endswith("/transfer-start"):
+            return {**publication, "state": "uploading"}
+        if path.endswith("/transfer-stop"):
+            return publication
         if path.endswith("/completion"):
             return {**publication, "state": "committed"}
         raise AssertionError(path)
@@ -736,12 +740,19 @@ def test_publish_fences_transfer_when_abort_becomes_visible(tmp_path: Path) -> N
         "payloadLocation": "datasets/payload",
         "operationLocation": "operations/publication",
     }
+    transfer_lifecycle: list[str] = []
 
     def request(_base: str, method: str, path: str, _body: object) -> object:
         if method == "POST" and path == "/api/v1/dataset-publications":
             return publication
         if method == "GET" and path == f"/api/v1/target-storages/{storage_id}":
             return {"storage": "descriptor"}
+        if method == "POST" and path.endswith("/transfer-start"):
+            transfer_lifecycle.append("start")
+            return publication
+        if method == "POST" and path.endswith("/transfer-stop"):
+            transfer_lifecycle.append("stop")
+            return {**publication, "state": "aborting"}
         if method == "GET" and path.endswith(publication_id):
             return {**publication, "state": "aborting"}
         if method == "PUT" and path.endswith("/failure"):
@@ -775,6 +786,7 @@ def test_publish_fences_transfer_when_abort_becomes_visible(tmp_path: Path) -> N
     assert json.loads(stderr.getvalue().splitlines()[-1])["errorCode"] == (
         "SKYWRIGHT_DATASET_PUBLICATION_ABORTED"
     )
+    assert transfer_lifecycle == ["start", "stop"]
 
 
 def test_resume_returns_durable_publication_when_only_cleanup_failed(
@@ -863,6 +875,10 @@ def test_command_reconciles_a_lost_completion_response_by_reading_the_operation(
             return publication
         if method == "GET" and path == f"/api/v1/target-storages/{storage_id}":
             return {"storage": "descriptor"}
+        if method == "POST" and path.endswith("/transfer-start"):
+            return {**publication, "state": "uploading"}
+        if method == "POST" and path.endswith("/transfer-stop"):
+            return publication
         if method == "POST" and path.endswith("/completion"):
             raise DatasetPublicationError(
                 "CONTROL_PLANE_UNAVAILABLE",
@@ -944,6 +960,10 @@ def test_command_rejects_an_existing_object_without_validated_sha256(
                     "pathStyleAccess": True,
                 },
             }
+        if method == "POST" and path.endswith("/transfer-start"):
+            return {**publication, "state": "uploading"}
+        if method == "POST" and path.endswith("/transfer-stop"):
+            return publication
         if method == "GET" and path.endswith(publication_id):
             return publication
         if method == "PUT" and path.endswith("/failure"):
@@ -1033,6 +1053,10 @@ def test_command_aborts_a_known_multipart_upload_after_transfer_failure(
                     "pathStyleAccess": True,
                 },
             }
+        if method == "POST" and path.endswith("/transfer-start"):
+            return {**publication, "state": "uploading"}
+        if method == "POST" and path.endswith("/transfer-stop"):
+            return publication
         if method == "GET" and path.endswith(publication_id):
             return publication
         if method == "PUT" and path.endswith("/failure"):
@@ -1328,6 +1352,18 @@ def test_command_rejects_every_source_change_after_scan(
 
     def request(*_args: object) -> object:
         nonlocal calls
+        method = _args[1]
+        path = str(_args[2])
+        if method == "POST" and path.endswith("/transfer-start"):
+            return {
+                "publicationId": "00000000-0000-0000-0000-000000000010",
+                "state": "uploading",
+            }
+        if method == "POST" and path.endswith("/transfer-stop"):
+            return {
+                "publicationId": "00000000-0000-0000-0000-000000000010",
+                "state": "uploading",
+            }
         calls += 1
         if calls == 1:
             initiation = cast(dict[str, object], _args[3])

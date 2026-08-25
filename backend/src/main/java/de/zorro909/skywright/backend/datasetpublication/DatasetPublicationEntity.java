@@ -74,6 +74,9 @@ class DatasetPublicationEntity {
 	@Column(name = "uploaded_byte_count", nullable = false)
 	long uploadedByteCount;
 
+	@Column(name = "transfer_active", nullable = false)
+	boolean transferActive;
+
 	@Column(name = "verified_object_count", nullable = false)
 	long verifiedObjectCount;
 

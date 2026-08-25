@@ -115,6 +115,56 @@ final class DatasetPublicationApiIT {
 	}
 
 	@Test
+	void abortWaitsForAnActiveTransferBeforeReportingVerifiedAbsence() throws Exception {
+		try (var objectStorage = SeaweedFsFixture.start(); var administrator = administrator(objectStorage)) {
+			objectStorage.awaitReady(administrator);
+			String bucket = "active-transfer-" + UUID.randomUUID();
+			administrator.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).join();
+			try (var backend = BackendFixture.startWithTargetStorageIntegration()) {
+				var storage = backend.post("/api/v1/target-storages", registration(objectStorage.endpoint(), bucket));
+				String storageId = JSON.readTree(storage.body()).path("id").asText();
+				backend.put("/api/v1/target-storages/" + storageId + "/activation",
+						"{\"expectedRegistrationRevision\":2,\"activated\":true}");
+				JsonNode publication = JSON.readTree(backend.post("/api/v1/dataset-publications", """
+						{
+						  "targetStorageId":"%s",
+						  "formatIdentity":"mosaicml-streaming-mds@2",
+						  "manifestIdentity":"sha256:%s",
+						  "contentFingerprint":"sha256:%s",
+						  "objectCount":1,
+						  "byteCount":1
+						}
+						""".formatted(storageId, "4".repeat(64), "5".repeat(64))).body());
+				String publicationId = publication.path("publicationId").asText();
+				String lateObject = publication.path("payloadLocation").asText() + "/late-object";
+
+				var started = backend.post("/api/v1/dataset-publications/" + publicationId + "/transfer-start", "{}");
+				assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
+				assertThat(JSON
+					.readTree(
+							backend.post("/api/v1/dataset-publications/" + publicationId + "/completion", "{}").body())
+					.path("state")
+					.asText()).isEqualTo("uploading");
+				backend.post("/api/v1/dataset-publications/" + publicationId + "/abort", "{}");
+				backend.restart();
+				administrator
+					.putObject(PutObjectRequest.builder().bucket(bucket).key(lateObject).build(),
+							AsyncRequestBody.fromString("x"))
+					.join();
+
+				assertThat(JSON.readTree(backend.get("/api/v1/dataset-publications/" + publicationId).body())
+					.path("state")
+					.asText()).isEqualTo("aborting");
+				var stopped = backend.post("/api/v1/dataset-publications/" + publicationId + "/transfer-stop", "{}");
+				assertThat(stopped.statusCode()).as(stopped.body()).isEqualTo(200);
+				assertThat(awaitPublicationState(backend, publicationId, "aborted").path("state").asText())
+					.isEqualTo("aborted");
+				assertThat(remoteKeys(administrator, bucket, publication.path("payloadLocation").asText())).isEmpty();
+			}
+		}
+	}
+
+	@Test
 	void abortDeletesOnlyAllocatedPrefixesIncludingIncompleteMultipartUploads() throws Exception {
 		try (var objectStorage = SeaweedFsFixture.start(); var administrator = administrator(objectStorage)) {
 			objectStorage.awaitReady(administrator);
