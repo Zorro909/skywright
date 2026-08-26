@@ -132,6 +132,38 @@ class DatasetPublicationWorkerDispatcherTest {
 	}
 
 	@Test
+	void cleanupRetryCommittedDuringWorkerTeardownIsRedispatched() throws Exception {
+		UUID publicationId = UUID.randomUUID();
+		var publications = new CleanupRedriveService(publicationId);
+		var cleanupAttempts = new AtomicInteger();
+		DatasetPublicationVerifier verifier = new DatasetPublicationVerifier() {
+			@Override
+			public DatasetPublicationWorkerResult verify(DatasetPublicationView publication) {
+				throw new AssertionError("verification was not expected");
+			}
+
+			@Override
+			public DatasetPublicationWorkerResult cleanup(DatasetPublicationView publication, boolean operationOnly) {
+				boolean succeeded = cleanupAttempts.incrementAndGet() == 2;
+				return new DatasetPublicationWorkerResult(succeeded, List.of(), 0, 0, Instant.now(), 1,
+						succeeded ? null : "DATASET_CLEANUP_UNAVAILABLE", !succeeded);
+			}
+		};
+		var dispatcher = new DatasetPublicationWorkerDispatcher(publications, verifier,
+				new DatasetPublicationWorkerRecovery(null, null, null), new RecordingScheduler());
+		publications.dispatcher = dispatcher;
+		try {
+			dispatcher.requested(new DatasetPublicationCleanupRequested(publicationId));
+
+			publications.succeeded.get(5, TimeUnit.SECONDS);
+			assertThat(cleanupAttempts).hasValue(2);
+		}
+		finally {
+			dispatcher.close();
+		}
+	}
+
+	@Test
 	void backendShutdownLeavesVerificationPendingForStartupRecovery() throws Exception {
 		UUID publicationId = UUID.randomUUID();
 		var publications = new RecordingService(publicationId);
@@ -159,6 +191,11 @@ class DatasetPublicationWorkerDispatcherTest {
 	private abstract static class StubPublicationOperations implements DatasetPublicationOperations {
 
 		@Override
+		public DatasetPublicationView verificationInput(UUID publicationId) {
+			throw new AssertionError("verification input was not expected");
+		}
+
+		@Override
 		public List<UUID> pendingVerifications() {
 			return List.of();
 		}
@@ -166,6 +203,11 @@ class DatasetPublicationWorkerDispatcherTest {
 		@Override
 		public void commit(UUID publicationId, DatasetPublicationWorkerResult verified) {
 			throw new AssertionError("commit was not expected");
+		}
+
+		@Override
+		public void fail(UUID publicationId, DatasetPublicationWorkerResult failure) {
+			throw new AssertionError("failure recording was not expected");
 		}
 
 	}
@@ -262,13 +304,49 @@ class DatasetPublicationWorkerDispatcherTest {
 
 	}
 
+	private static final class CleanupRedriveService extends StubPublicationOperations {
+
+		private final UUID publicationId;
+
+		private final CompletableFuture<Void> succeeded = new CompletableFuture<>();
+
+		private DatasetPublicationWorkerDispatcher dispatcher;
+
+		private CleanupRedriveService(UUID publicationId) {
+			this.publicationId = publicationId;
+		}
+
+		@Override
+		public DatasetPublicationView cleanupInput(UUID requestedPublicationId) {
+			assertThat(requestedPublicationId).isEqualTo(this.publicationId);
+			return publicationView(this.publicationId, DatasetPublicationState.ABORTING);
+		}
+
+		@Override
+		public void cleanupFailed(UUID failedPublicationId, DatasetPublicationWorkerResult failure) {
+			assertThat(failedPublicationId).isEqualTo(this.publicationId);
+			this.dispatcher.requested(new DatasetPublicationCleanupRequested(this.publicationId));
+		}
+
+		@Override
+		public void cleanupSucceeded(UUID succeededPublicationId, DatasetPublicationWorkerResult result) {
+			assertThat(succeededPublicationId).isEqualTo(this.publicationId);
+			this.succeeded.complete(null);
+		}
+
+	}
+
 	private static DatasetPublicationView publicationView(UUID publicationId) {
+		return publicationView(publicationId, DatasetPublicationState.VERIFYING);
+	}
+
+	private static DatasetPublicationView publicationView(UUID publicationId, DatasetPublicationState state) {
 		Instant now = Instant.now();
-		return new DatasetPublicationView(publicationId, DatasetPublicationState.VERIFYING, UUID.randomUUID(),
-				UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), 0L, PreferredDefinitionDecision.ADVANCE, "v1",
-				"mosaicml-streaming-mds@2", "sha256:" + "1".repeat(64), "sha256:" + "2".repeat(64), 1, 1,
-				"datasets/payload", "operations/publication", 1, 1, 0, 0, null, false, true, null, null, null, null,
-				now, now, null, null, 0);
+		return new DatasetPublicationView(publicationId, state, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+				UUID.randomUUID(), 0L, PreferredDefinitionDecision.ADVANCE, "v1", "mosaicml-streaming-mds@2",
+				"sha256:" + "1".repeat(64), "sha256:" + "2".repeat(64), 1, 1, "datasets/payload",
+				"operations/publication", 1, 1, 0, 0, null, false, true, null, null, null, null, now, now, null, null,
+				0);
 	}
 
 	private static final class RecordingScheduler implements DatasetPublicationWorkerRecoveryScheduler {

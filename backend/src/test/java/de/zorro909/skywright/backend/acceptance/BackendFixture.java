@@ -49,6 +49,13 @@ final class BackendFixture implements AutoCloseable {
 			.profiles("target-storage-integration"));
 	}
 
+	static BackendFixture startWithTargetStorageIntegration(String transferLeaseDuration) {
+		return start(() -> new SpringApplicationBuilder(SkywrightBackendApplication.class,
+				TargetStorageIntegrationTestConfiguration.class, DatasetPublicationCommitGateTestConfiguration.class)
+			.profiles("target-storage-integration")
+			.properties("skywright.dataset-publication.transfer-lease-duration=" + transferLeaseDuration));
+	}
+
 	static BackendFixture start(BuildProperties buildProperties) {
 		return start(() -> new SpringApplicationBuilder(SkywrightBackendApplication.class).initializers(
 				application -> application.getBeanFactory().registerSingleton("buildProperties", buildProperties)));

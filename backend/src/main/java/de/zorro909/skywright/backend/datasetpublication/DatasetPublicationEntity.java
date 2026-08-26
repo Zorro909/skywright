@@ -74,8 +74,11 @@ class DatasetPublicationEntity {
 	@Column(name = "uploaded_byte_count", nullable = false)
 	long uploadedByteCount;
 
-	@Column(name = "transfer_active", nullable = false)
-	boolean transferActive;
+	@Column(name = "active_transfer_id")
+	UUID activeTransferId;
+
+	@Column(name = "active_transfer_expires_at")
+	Instant activeTransferExpiresAt;
 
 	@Column(name = "verified_object_count", nullable = false)
 	long verifiedObjectCount;

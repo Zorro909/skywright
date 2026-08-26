@@ -7,6 +7,8 @@ databaseChangeLog:
         - addColumn:
             tableName: dataset_publication
             columns:
-              - column: { name: transfer_active, type: boolean, defaultValueBoolean: false, constraints: { nullable: false } }
+              - column: { name: active_transfer_id, type: uuid }
+              - column: { name: active_transfer_expires_at, type: timestamptz }
       rollback:
-        - dropColumn: { tableName: dataset_publication, columnName: transfer_active }
+        - dropColumn: { tableName: dataset_publication, columnName: active_transfer_expires_at }
+        - dropColumn: { tableName: dataset_publication, columnName: active_transfer_id }

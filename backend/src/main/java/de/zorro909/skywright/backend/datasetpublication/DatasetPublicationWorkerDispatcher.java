@@ -32,6 +32,8 @@ final class DatasetPublicationWorkerDispatcher {
 
 	private final Set<UUID> dispatchedCleanups = ConcurrentHashMap.newKeySet();
 
+	private final Set<UUID> requestedCleanupRedrives = ConcurrentHashMap.newKeySet();
+
 	private final AtomicBoolean closing = new AtomicBoolean();
 
 	DatasetPublicationWorkerDispatcher(DatasetPublicationOperations publications, DatasetPublicationVerifier verifier,
@@ -67,10 +69,12 @@ final class DatasetPublicationWorkerDispatcher {
 		}
 	}
 
-	private void dispatchCleanup(UUID publicationId) {
-		if (this.dispatchedCleanups.add(publicationId)) {
-			this.executor.submit(() -> cleanup(publicationId, 0));
+	private synchronized void dispatchCleanup(UUID publicationId) {
+		if (!this.dispatchedCleanups.add(publicationId)) {
+			this.requestedCleanupRedrives.add(publicationId);
+			return;
 		}
+		this.executor.submit(() -> cleanup(publicationId, 0));
 	}
 
 	private void verify(UUID publicationId, int attempt) {
@@ -118,6 +122,10 @@ final class DatasetPublicationWorkerDispatcher {
 		try {
 			DatasetPublicationView publication = this.publications.cleanupInput(publicationId);
 			if (publication == null) {
+				if (this.publications.cleanupDeferred(publicationId)) {
+					this.scheduler.retry(() -> cleanup(publicationId, attempt + 1), attempt);
+					retryScheduled = true;
+				}
 				return;
 			}
 			boolean operationOnly = publication.state() == DatasetPublicationState.PUBLISHED_CLEANUP_PENDING;
@@ -138,8 +146,15 @@ final class DatasetPublicationWorkerDispatcher {
 		}
 		finally {
 			if (!retryScheduled) {
-				this.dispatchedCleanups.remove(publicationId);
+				finishCleanup(publicationId);
 			}
+		}
+	}
+
+	private synchronized void finishCleanup(UUID publicationId) {
+		this.dispatchedCleanups.remove(publicationId);
+		if (this.requestedCleanupRedrives.remove(publicationId) && !this.closing.get()) {
+			dispatchCleanup(publicationId);
 		}
 	}
 

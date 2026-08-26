@@ -741,17 +741,20 @@ def test_publish_fences_transfer_when_abort_becomes_visible(tmp_path: Path) -> N
         "operationLocation": "operations/publication",
     }
     transfer_lifecycle: list[str] = []
+    transfer_ids: list[object] = []
 
-    def request(_base: str, method: str, path: str, _body: object) -> object:
+    def request(_base: str, method: str, path: str, body: object) -> object:
         if method == "POST" and path == "/api/v1/dataset-publications":
             return publication
         if method == "GET" and path == f"/api/v1/target-storages/{storage_id}":
             return {"storage": "descriptor"}
         if method == "POST" and path.endswith("/transfer-start"):
             transfer_lifecycle.append("start")
+            transfer_ids.append(cast(dict[str, object], body).get("transferId"))
             return publication
         if method == "POST" and path.endswith("/transfer-stop"):
             transfer_lifecycle.append("stop")
+            transfer_ids.append(cast(dict[str, object], body).get("transferId"))
             return {**publication, "state": "aborting"}
         if method == "GET" and path.endswith(publication_id):
             return {**publication, "state": "aborting"}
@@ -787,6 +790,8 @@ def test_publish_fences_transfer_when_abort_becomes_visible(tmp_path: Path) -> N
         "SKYWRIGHT_DATASET_PUBLICATION_ABORTED"
     )
     assert transfer_lifecycle == ["start", "stop"]
+    assert transfer_ids[0] == transfer_ids[1]
+    assert isinstance(transfer_ids[0], str)
 
 
 def test_resume_returns_durable_publication_when_only_cleanup_failed(

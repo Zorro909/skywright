@@ -458,6 +458,11 @@ paths:
     post:
       operationId: startDatasetPublicationTransfer
       summary: Register direct transfer activity before any allocated object write begins.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DatasetPublicationTransferLease' }
       responses:
         '200':
           description: Transfer activity registered or fenced by the returned publication state.
@@ -472,6 +477,11 @@ paths:
     post:
       operationId: stopDatasetPublicationTransfer
       summary: Acknowledge that all direct transfer requests have quiesced.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DatasetPublicationTransferLease' }
       responses:
         '200':
           description: Transfer quiescence retained and deferred cleanup requested when needed.
@@ -769,6 +779,12 @@ components:
       required: [failureCode]
       properties:
         failureCode: { type: string, pattern: '^DATASET_[A-Z0-9_]+$' }
+    DatasetPublicationTransferLease:
+      type: object
+      additionalProperties: false
+      required: [transferId]
+      properties:
+        transferId: { $ref: '#/components/schemas/SkywrightId' }
     DatasetPublication:
       type: object
       additionalProperties: false

@@ -17,6 +17,10 @@ interface DatasetPublicationOperations {
 		return List.of();
 	}
 
+	default boolean cleanupDeferred(UUID publicationId) {
+		return false;
+	}
+
 	void commit(UUID publicationId, DatasetPublicationWorkerResult verified);
 
 	void fail(UUID publicationId, DatasetPublicationWorkerResult failure);

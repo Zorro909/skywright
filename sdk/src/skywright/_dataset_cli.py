@@ -15,7 +15,7 @@ from typing import cast
 
 from skywright._dataset_errors import DatasetPublicationError
 from skywright._dataset_publication import inspect_mds_corpus
-from skywright._dataset_transfer import ensure_active, start, stop
+from skywright._dataset_transfer import TransferLease
 from skywright._dataset_upload import upload as _upload
 
 
@@ -234,22 +234,16 @@ def _publish(
                 },
             )
 
-        def ensure_upload_active() -> None:
-            ensure_active(_request, control_plane, publication_id)
-
         try:
-            start(_request, control_plane, publication_id)
-            try:
+            with TransferLease(_request, control_plane, publication_id) as transfer:
                 _upload(
                     corpus,
                     publication,
                     storage,
                     concurrency,
                     progress,
-                    ensure_upload_active,
+                    transfer.ensure_active,
                 )
-            finally:
-                stop(_request, control_plane, publication_id)
         except DatasetPublicationError as error:
             _record_failure(control_plane, publication_id, error)
             raise
