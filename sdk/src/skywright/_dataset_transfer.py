@@ -18,7 +18,9 @@ _HEARTBEAT_SECONDS = 30
 class TransferLease:
     """Identified renewable registration for one direct upload process."""
 
-    def __init__(self, request: Request, control_plane: str, publication_id: str) -> None:
+    def __init__(
+        self, request: Request, control_plane: str, publication_id: str
+    ) -> None:
         self._request = request
         self._control_plane = control_plane
         self._publication_id = publication_id
