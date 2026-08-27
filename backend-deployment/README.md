@@ -56,6 +56,7 @@ docker run --rm \
   --read-only \
   --tmpfs /tmp:rw,exec,nosuid,size=128m \
   --env SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=production \
+  --env SKYWRIGHT_DEPLOYMENT_REPORTING_CURRENCY=EUR \
   --env SKYWRIGHT_DATABASE_MIGRATION_URL='jdbc:postgresql://<database-host>:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
   --env SKYWRIGHT_DATABASE_MIGRATION_USERNAME=skywright_migrator \
   --env SKYWRIGHT_DATABASE_MIGRATION_PASSWORD='<migration-password>' \
@@ -90,6 +91,7 @@ docker run --rm \
   --read-only \
   --tmpfs /tmp:rw,exec,nosuid,size=128m \
   --env SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=local \
+  --env SKYWRIGHT_DEPLOYMENT_REPORTING_CURRENCY=EUR \
   --env SKYWRIGHT_DATABASE_MIGRATION_URL='jdbc:postgresql://<database-host>:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
   --env SKYWRIGHT_DATABASE_MIGRATION_USERNAME=skywright_migrator \
   --env SKYWRIGHT_DATABASE_MIGRATION_PASSWORD='<migration-password>' \

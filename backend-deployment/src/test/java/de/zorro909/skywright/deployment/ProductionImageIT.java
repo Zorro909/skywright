@@ -284,6 +284,7 @@ final class ProductionImageIT {
 				+ ":5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true";
 		return new ArrayList<>(List.of("run", "--detach", "--name", container, "--network", network, "--env",
 				"SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=" + deploymentEnvironment, "--env",
+				"SKYWRIGHT_DEPLOYMENT_REPORTING_CURRENCY=EUR", "--env",
 				"SKYWRIGHT_DATABASE_MIGRATION_URL=" + databaseUrl, "--env",
 				"SKYWRIGHT_DATABASE_MIGRATION_USERNAME=skywright_migrator", "--env",
 				"SKYWRIGHT_DATABASE_MIGRATION_PASSWORD=" + migrationPassword, "--env",

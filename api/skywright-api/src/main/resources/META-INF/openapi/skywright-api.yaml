@@ -17,6 +17,125 @@ servers:
   - url: /api/v1
     description: Version 1 product API
 paths:
+  /price-sources:
+    get:
+      operationId: listPriceSources
+      summary: List Price Source registrations.
+      responses:
+        '200':
+          description: Current non-secret registrations.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/PriceSource' } }
+    post:
+      operationId: createPriceSource
+      summary: Register a Price Source and its first immutable candidate revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePriceSource' }
+      responses:
+        '201':
+          description: Registration created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceSource' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /price-sources/{sourceId}:
+    parameters:
+      - { name: sourceId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      operationId: getPriceSource
+      summary: Inspect one Price Source and its revision history.
+      responses:
+        '200':
+          description: Current registration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceSource' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /price-sources/{sourceId}/revisions:
+    parameters:
+      - { name: sourceId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: stagePriceSourceRevision
+      summary: Create an immutable candidate revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StagePriceSourceRevision' }
+      responses:
+        '200':
+          description: Candidate revision staged.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceSource' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /price-sources/{sourceId}/assessment:
+    parameters:
+      - { name: sourceId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: assessPriceSource
+      summary: Assess the candidate revision's structure and declared capabilities.
+      responses:
+        '200':
+          description: Assessment recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceSource' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /price-sources/{sourceId}/promotion:
+    parameters:
+      - { name: sourceId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    put:
+      operationId: promotePriceSource
+      summary: Atomically promote a successfully assessed candidate revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromotePriceSource' }
+      responses:
+        '200':
+          description: Candidate promoted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceSource' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /price-source-bindings/{bindingKey}:
+    parameters:
+      - { name: bindingKey, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 255 } }
+    put:
+      operationId: bindPriceSource
+      summary: Bind a target resource family or currency pair to one active source revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BindPriceSource' }
+      responses:
+        '200':
+          description: Binding replaced.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceSourceBinding' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /price-source-bindings:
+    get:
+      operationId: listPriceSourceBindings
+      summary: List explicit Price Source bindings.
+      responses:
+        '200':
+          description: Current bindings.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/PriceSourceBinding' } }
   /system-information:
     get:
       operationId: getSystemInformation
@@ -758,6 +877,97 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
 components:
   schemas:
+    PriceSourceKind:
+      type: string
+      enum: [operator-schedule, provider-api, skypilot-catalog]
+    PriceSourceConfiguration:
+      type: object
+      description: Non-secret, source-specific configuration. Operator schedules require a non-empty rates array; external sources require an endpoint.
+      additionalProperties: true
+    PriceSourceRevisionState:
+      type: string
+      enum: [active, candidate, historical]
+    PriceSourceRevision:
+      type: object
+      additionalProperties: false
+      required: [revision, state, configuration]
+      properties:
+        revision: { type: integer, format: int64, minimum: 1 }
+        state: { $ref: '#/components/schemas/PriceSourceRevisionState' }
+        configuration: { $ref: '#/components/schemas/PriceSourceConfiguration' }
+    PriceSourceAssessment:
+      type: object
+      additionalProperties: false
+      required: [id, revision, successful, capabilityResults, observedFrom, observedUntil]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        revision: { type: integer, format: int64, minimum: 1 }
+        successful: { type: boolean }
+        capabilityResults:
+          type: array
+          items: { type: string }
+        observedFrom: { $ref: '#/components/schemas/UtcInstant' }
+        observedUntil: { $ref: '#/components/schemas/UtcInstant' }
+    PriceSource:
+      type: object
+      additionalProperties: false
+      required: [id, name, kind, registrationRevision, activeRevision, candidateRevision, credentialBindingId, revisions, assessments]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        name: { type: string, minLength: 1, maxLength: 255 }
+        kind: { $ref: '#/components/schemas/PriceSourceKind' }
+        registrationRevision: { type: integer, format: int64, minimum: 1 }
+        activeRevision: { type: [integer, 'null'], format: int64, minimum: 1 }
+        candidateRevision: { type: [integer, 'null'], format: int64, minimum: 1 }
+        credentialBindingId: { type: [string, 'null'], format: uuid }
+        revisions:
+          type: array
+          items: { $ref: '#/components/schemas/PriceSourceRevision' }
+        assessments:
+          type: array
+          items: { $ref: '#/components/schemas/PriceSourceAssessment' }
+    CreatePriceSource:
+      type: object
+      additionalProperties: false
+      required: [name, kind, configuration]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        kind: { $ref: '#/components/schemas/PriceSourceKind' }
+        credentialBindingId: { type: [string, 'null'], format: uuid }
+        configuration: { $ref: '#/components/schemas/PriceSourceConfiguration' }
+    StagePriceSourceRevision:
+      type: object
+      additionalProperties: false
+      required: [expectedRegistrationRevision, configuration]
+      properties:
+        expectedRegistrationRevision: { type: integer, format: int64, minimum: 1 }
+        configuration: { $ref: '#/components/schemas/PriceSourceConfiguration' }
+    PromotePriceSource:
+      type: object
+      additionalProperties: false
+      required: [expectedRegistrationRevision, revision]
+      properties:
+        expectedRegistrationRevision: { type: integer, format: int64, minimum: 1 }
+        revision: { type: integer, format: int64, minimum: 1 }
+    BindPriceSource:
+      type: object
+      additionalProperties: false
+      required: [sourceId, sourceRevision, maximumObservationAge]
+      properties:
+        sourceId: { $ref: '#/components/schemas/SkywrightId' }
+        sourceRevision: { type: integer, format: int64, minimum: 1 }
+        maximumObservationAge: { $ref: '#/components/schemas/Duration' }
+        expectedBindingRevision: { type: [integer, 'null'], format: int64, minimum: 1 }
+    PriceSourceBinding:
+      type: object
+      additionalProperties: false
+      required: [bindingKey, bindingRevision, sourceId, sourceRevision, maximumObservationAge]
+      properties:
+        bindingKey: { type: string }
+        bindingRevision: { type: integer, format: int64, minimum: 1 }
+        sourceId: { $ref: '#/components/schemas/SkywrightId' }
+        sourceRevision: { type: integer, format: int64, minimum: 1 }
+        maximumObservationAge: { $ref: '#/components/schemas/Duration' }
     DatasetPublicationState:
       type: string
       enum: [awaiting-upload, uploading, verifying, committing, aborting, aborted, published-cleanup-pending, committed, failed, failed-cleanup]

@@ -126,11 +126,12 @@ final class TrainingProjectApiIT {
 
 	private static String[] arguments(PostgreSqlFixture.Database database, int port) {
 		var databaseArguments = database.backendArguments();
-		var arguments = new String[databaseArguments.size() + 2];
+		var arguments = new String[databaseArguments.size() + 3];
 		arguments[0] = "--server.port=" + port;
 		arguments[1] = "--skywright.deployment.environment=test";
+		arguments[2] = "--skywright.deployment.reporting-currency=EUR";
 		for (var index = 0; index < databaseArguments.size(); index++) {
-			arguments[index + 2] = databaseArguments.get(index);
+			arguments[index + 3] = databaseArguments.get(index);
 		}
 		return arguments;
 	}

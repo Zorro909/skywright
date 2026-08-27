@@ -1,10 +1,15 @@
 package de.zorro909.skywright.backend.rundefinition;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Currency;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
 
@@ -42,6 +47,8 @@ public final class RunDefinitionResolver {
 
 	private final ReportingCurrencyReader reportingCurrency;
 
+	private final Clock clock;
+
 	public RunDefinitionResolver(TrainingProjectVersions projectVersions, DatasetDefinitionReader datasets,
 			TargetEligibilityReader targetEligibility, RunDefinitionStorageReader targetStorages,
 			ReportingCurrencyReader reportingCurrency) {
@@ -50,6 +57,18 @@ public final class RunDefinitionResolver {
 		this.targetEligibility = targetEligibility;
 		this.targetStorages = targetStorages;
 		this.reportingCurrency = reportingCurrency;
+		this.clock = Clock.systemUTC();
+	}
+
+	RunDefinitionResolver(TrainingProjectVersions projectVersions, DatasetDefinitionReader datasets,
+			TargetEligibilityReader targetEligibility, RunDefinitionStorageReader targetStorages,
+			ReportingCurrencyReader reportingCurrency, Clock clock) {
+		this.projectVersions = projectVersions;
+		this.datasets = datasets;
+		this.targetEligibility = targetEligibility;
+		this.targetStorages = targetStorages;
+		this.reportingCurrency = reportingCurrency;
+		this.clock = clock;
 	}
 
 	public RunDefinitionResolution resolve(RunSubmission submission, CheckpointSeedFacts checkpointSeed) {
@@ -61,7 +80,9 @@ public final class RunDefinitionResolver {
 		boolean datasetReferenceValid = assessDataset(submission.datasetDefinition(), failures);
 		ResolvedTarget target = resolveTarget(submission.targetRequest(), version, failures);
 		RunDefinitionStorageSelection storage = resolveStorage(submission, failures);
-		String currency = resolveCurrency(submission.costCeiling(), failures);
+		String currency = resolveCurrency(failures);
+		Instant quoteTime = this.clock.instant();
+		assessPrices(target, currency, quoteTime, failures);
 		assessCheckpoint(submission, checkpointSeed, version, configuration, datasetReferenceValid, failures);
 
 		List<RunDefinitionFailure> ordered = failures.stream().distinct().sorted().toList();
@@ -69,8 +90,8 @@ public final class RunDefinitionResolver {
 			return new RunDefinitionResolution(null, ordered);
 		}
 		try {
-			return new RunDefinitionResolution(build(submission, version, configuration, target, storage, currency),
-					List.of());
+			return new RunDefinitionResolution(
+					build(submission, version, configuration, target, storage, currency, quoteTime), List.of());
 		}
 		catch (RunDefinitionValidationException error) {
 			return new RunDefinitionResolution(null, error.failures().stream().distinct().sorted().toList());
@@ -216,7 +237,7 @@ public final class RunDefinitionResolver {
 		List<String> models = compatible.stream().map(EligibleTarget::gpuModel).distinct().toList();
 		String gpuModel = request.gpuModel() != null ? request.gpuModel()
 				: models.size() == 1 ? models.getFirst() : null;
-		return new ResolvedTarget(request, purchaseMode(request.targetClass()), gpuModel);
+		return new ResolvedTarget(request, purchaseMode(request.targetClass()), gpuModel, compatible);
 	}
 
 	private RunDefinitionStorageSelection resolveStorage(RunSubmission submission,
@@ -239,13 +260,12 @@ public final class RunDefinitionResolver {
 		}
 	}
 
-	private String resolveCurrency(BigDecimal ceiling, List<RunDefinitionFailure> failures) {
-		if (ceiling == null || ceiling.signum() <= 0) {
-			return null;
-		}
+	private String resolveCurrency(List<RunDefinitionFailure> failures) {
 		try {
 			String currency = this.reportingCurrency.reportingCurrency();
-			if (currency == null || !CURRENCY.matcher(currency).matches()) {
+			if (currency == null || !CURRENCY.matcher(currency).matches()
+					|| !Currency.getAvailableCurrencies().contains(Currency.getInstance(currency))
+					|| Currency.getInstance(currency).getDefaultFractionDigits() < 0) {
 				failures.add(failure("REPORTING_CURRENCY_INVALID", "reporting-currency", "/costCeiling/currency",
 						"pattern"));
 				return null;
@@ -257,6 +277,59 @@ public final class RunDefinitionResolver {
 					"available"));
 			return null;
 		}
+	}
+
+	private static void assessPrices(ResolvedTarget target, String reportingCurrency, Instant quoteTime,
+			List<RunDefinitionFailure> failures) {
+		if (target == null || reportingCurrency == null) {
+			return;
+		}
+		for (EligibleTarget candidate : target.candidates()) {
+			EligibleTargetPrice price = candidate.price();
+			if (price == null) {
+				failures.add(failure("PRICE_MISSING", "price-source", "/costQuote/candidates", "required"));
+				continue;
+			}
+			if (price.nativeHourlyRate() == null || price.nativeHourlyRate().signum() < 0
+					|| price.minimumQuantity() == null || price.minimumQuantity().signum() <= 0
+					|| price.billingQuantum() == null || price.billingQuantum().signum() <= 0
+					|| price.nativeCurrency() == null || !CURRENCY.matcher(price.nativeCurrency()).matches()) {
+				failures.add(failure("PRICE_RATE_INVALID", "price-source", "/costQuote/candidates", "minimum"));
+			}
+			if (price.sourceId() == null || price.sourceRevision() < 1 || !validSourceKind(price.sourceKind())
+					|| price.effectiveFrom() == null || price.observedFrom() == null || price.observedUntil() == null) {
+				failures.add(failure("PRICE_PROVENANCE_INVALID", "price-source", "/costQuote/candidates/source",
+						"required"));
+			}
+			if (price.effectiveFrom() != null && (price.effectiveFrom().isAfter(quoteTime)
+					|| price.effectiveUntil() != null && !quoteTime.isBefore(price.effectiveUntil()))) {
+				failures.add(failure("PRICE_NOT_EFFECTIVE", "price-source", "/costQuote/candidates/effectiveInterval",
+						"contains"));
+			}
+			if (price.effectiveFrom() != null && price.effectiveUntil() != null
+					&& !price.effectiveFrom().isBefore(price.effectiveUntil())) {
+				failures.add(failure("PRICE_EFFECTIVE_INTERVAL_INVALID", "price-source",
+						"/costQuote/candidates/effectiveInterval", "interval"));
+			}
+			if (price.conversionRate() == null || price.conversionRate().signum() <= 0
+					|| price.conversionSourceId() == null || price.conversionSourceRevision() < 1
+					|| !validSourceKind(price.conversionSourceKind()) || price.conversionObservedAt() == null) {
+				failures.add(failure("CURRENCY_CONVERSION_MISSING", "price-source", "/costQuote/candidates/conversion",
+						"required"));
+			}
+			if (price.maximumObservationAge() == null || price.maximumObservationAge().isNegative()
+					|| price.maximumObservationAge().isZero() || price.observedUntil() == null
+					|| price.observedUntil().plus(price.maximumObservationAge()).isBefore(quoteTime)
+					|| price.conversionObservedAt() == null
+					|| price.conversionObservedAt().plus(price.maximumObservationAge()).isBefore(quoteTime)) {
+				failures.add(failure("PRICE_OBSERVATION_STALE", "price-source", "/costQuote/candidates",
+						"maximumObservationAge"));
+			}
+		}
+	}
+
+	private static boolean validSourceKind(String value) {
+		return value != null && Set.of("operator-schedule", "provider-api", "skypilot-catalog").contains(value);
 	}
 
 	private static void assessCheckpoint(RunSubmission submission, CheckpointSeedFacts seed,
@@ -298,7 +371,7 @@ public final class RunDefinitionResolver {
 	}
 
 	private static RunDefinition build(RunSubmission submission, TrainingProjectVersion version, JsonNode configuration,
-			ResolvedTarget target, RunDefinitionStorageSelection storage, String currency) {
+			ResolvedTarget target, RunDefinitionStorageSelection storage, String currency, Instant quoteTime) {
 		ObjectNode root = JSON.createObjectNode();
 		root.put("schemaVersion", 1);
 		root.set("trainingProjectVersion", projectVersion(version));
@@ -306,9 +379,91 @@ public final class RunDefinitionResolver {
 		root.set("datasetDefinition", dataset(submission.datasetDefinition()));
 		root.set("targetRequest", target(target));
 		root.set("storage", storage(storage));
+		root.set("costQuote", costQuote(target, currency, quoteTime));
 		root.set("executionPolicy", executionPolicy(submission, currency));
 		root.put("orderingReset", submission.orderingReset());
 		return RunDefinition.from(root);
+	}
+
+	private static ObjectNode costQuote(ResolvedTarget target, String currency, Instant quoteTime) {
+		ObjectNode result = JSON.createObjectNode();
+		result.put("quoteTime", quoteTime.toString());
+		result.putObject("reportingCurrency")
+			.put("code", currency)
+			.put("minorUnit", Currency.getInstance(currency).getDefaultFractionDigits());
+		var candidates = result.putArray("candidates");
+		List<BigDecimal> hourlyRates = new ArrayList<>();
+		List<BigDecimal> dailyRates = new ArrayList<>();
+		List<BigDecimal> weeklyRates = new ArrayList<>();
+		for (EligibleTarget eligible : target.candidates()) {
+			EligibleTargetPrice price = eligible.price();
+			BigDecimal hourly = quotedCost(price, target.request().gpuCount(), 1);
+			BigDecimal daily = quotedCost(price, target.request().gpuCount(), 24);
+			BigDecimal weekly = quotedCost(price, target.request().gpuCount(), 168);
+			hourlyRates.add(hourly);
+			dailyRates.add(daily);
+			weeklyRates.add(weekly);
+			ObjectNode candidate = candidates.addObject()
+				.put("target", eligible.target())
+				.put("gpuModel", eligible.gpuModel())
+				.put("gpuCount", target.request().gpuCount())
+				.put("purchaseMode", target.purchaseMode())
+				.put("reportingHourlyRate", hourly);
+			candidate.putObject("nativeRate")
+				.put("amount", price.nativeHourlyRate())
+				.put("currency", price.nativeCurrency())
+				.put("unit", "gpu-hour")
+				.putObject("billingRules")
+				.put("minimumQuantity", price.minimumQuantity())
+				.put("billingQuantum", price.billingQuantum());
+			provenance(candidate.putObject("source"), price.sourceId(), price.sourceRevision(), price.sourceKind());
+			interval(candidate.putObject("effectiveInterval"), price.effectiveFrom(), price.effectiveUntil());
+			interval(candidate.putObject("observationInterval"), price.observedFrom(), price.observedUntil());
+			ObjectNode conversion = candidate.putObject("conversion")
+				.put("rate", price.conversionRate())
+				.put("observedAt", price.conversionObservedAt().toString())
+				.put("maximumObservationAge", price.maximumObservationAge().toString());
+			provenance(conversion.putObject("source"), price.conversionSourceId(), price.conversionSourceRevision(),
+					price.conversionSourceKind());
+		}
+		range(result.putObject("hourly"), minimum(hourlyRates), maximum(hourlyRates));
+		range(result.putObject("daily"), minimum(dailyRates), maximum(dailyRates));
+		range(result.putObject("weekly"), minimum(weeklyRates), maximum(weeklyRates));
+		return result;
+	}
+
+	private static BigDecimal quotedCost(EligibleTargetPrice price, int gpuCount, int hours) {
+		BigDecimal requestedQuantity = BigDecimal.valueOf(gpuCount).multiply(BigDecimal.valueOf(hours));
+		BigDecimal minimumQuantity = requestedQuantity.max(price.minimumQuantity());
+		BigDecimal billableQuantity = minimumQuantity.divide(price.billingQuantum(), 0, RoundingMode.CEILING)
+			.multiply(price.billingQuantum());
+		return price.nativeHourlyRate().multiply(billableQuantity).multiply(price.conversionRate());
+	}
+
+	private static BigDecimal minimum(List<BigDecimal> values) {
+		return values.stream().min(BigDecimal::compareTo).orElseThrow();
+	}
+
+	private static BigDecimal maximum(List<BigDecimal> values) {
+		return values.stream().max(BigDecimal::compareTo).orElseThrow();
+	}
+
+	private static void provenance(ObjectNode result, java.util.UUID id, long revision, String kind) {
+		result.put("sourceId", id.toString()).put("revision", revision).put("kind", kind);
+	}
+
+	private static void interval(ObjectNode result, Instant from, Instant until) {
+		result.put("from", from.toString());
+		if (until == null) {
+			result.putNull("until");
+		}
+		else {
+			result.put("until", until.toString());
+		}
+	}
+
+	private static void range(ObjectNode result, BigDecimal minimum, BigDecimal maximum) {
+		result.put("minimum", minimum).put("maximum", maximum);
 	}
 
 	private static ObjectNode projectVersion(TrainingProjectVersion version) {
@@ -422,7 +577,8 @@ public final class RunDefinitionResolver {
 				&& (request.targetClass() != TargetClass.LOCAL_MULTI_GPU || request.gpuCount() >= 2);
 	}
 
-	private record ResolvedTarget(TargetRequest request, String purchaseMode, String gpuModel) {
+	private record ResolvedTarget(TargetRequest request, String purchaseMode, String gpuModel,
+			List<EligibleTarget> candidates) {
 	}
 
 }

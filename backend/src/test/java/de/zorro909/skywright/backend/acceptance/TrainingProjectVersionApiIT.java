@@ -107,6 +107,7 @@ final class TrainingProjectVersionApiIT {
 		var arguments = new ArrayList<>(database.backendArguments());
 		arguments.add("--server.port=0");
 		arguments.add("--skywright.deployment.environment=test");
+		arguments.add("--skywright.deployment.reporting-currency=EUR");
 		arguments.add("--spring.profiles.active=training-project-integration");
 		return new SpringApplicationBuilder(SkywrightBackendApplication.class,
 				TrainingProjectIntegrationTestConfiguration.class)

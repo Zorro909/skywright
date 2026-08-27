@@ -83,6 +83,7 @@ final class BackendFixture implements AutoCloseable {
 		var properties = new java.util.ArrayList<>(java.util.List.of(database.springProperties()));
 		properties.add("server.port=0");
 		properties.add("skywright.deployment.environment=test");
+		properties.add("skywright.deployment.reporting-currency=EUR");
 		var arguments = properties.stream().map(property -> "--" + property).toArray(String[]::new);
 		return builder.web(WebApplicationType.SERVLET).run(arguments);
 	}

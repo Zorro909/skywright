@@ -22,7 +22,7 @@ final class DatabaseStartupIT {
 			try (var backend = BackendProcess.start(arguments(database, port))) {
 				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
 
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(24);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(28);
 				assertThat(database.countTables("public")).isZero();
 			}
 		}
@@ -43,7 +43,7 @@ final class DatabaseStartupIT {
 					throw new AssertionError(failure.getMessage() + "\n" + backend.output(), failure);
 				}
 
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(24);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(28);
 			}
 		}
 	}
@@ -65,7 +65,7 @@ final class DatabaseStartupIT {
 			var upgradedPort = BackendProcess.availablePort();
 			try (var backend = BackendProcess.start(arguments(database, upgradedPort))) {
 				BackendProcess.awaitReadiness(upgradedPort, Duration.ofSeconds(30));
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(24);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(28);
 			}
 		}
 	}
@@ -88,7 +88,8 @@ final class DatabaseStartupIT {
 
 	@Test
 	void missingDatabaseConfigurationStopsStartup() throws Exception {
-		try (var backend = BackendProcess.start("--server.port=0", "--skywright.deployment.environment=test")) {
+		try (var backend = BackendProcess.start("--server.port=0", "--skywright.deployment.environment=test",
+				"--skywright.deployment.reporting-currency=EUR")) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
 
 			assertThat(exitCode).isNotZero();
@@ -102,9 +103,10 @@ final class DatabaseStartupIT {
 		var unavailablePort = BackendProcess.availablePort();
 		var jdbcUrl = "jdbc:postgresql://127.0.0.1:" + unavailablePort + "/skywright";
 		try (var backend = BackendProcess.start("--server.port=0", "--skywright.deployment.environment=test",
-				"--spring.datasource.url=" + jdbcUrl, "--spring.datasource.username=runtime",
-				"--spring.datasource.password=runtime", "--spring.liquibase.url=" + jdbcUrl,
-				"--spring.liquibase.user=migrator", "--spring.liquibase.password=migrator")) {
+				"--skywright.deployment.reporting-currency=EUR", "--spring.datasource.url=" + jdbcUrl,
+				"--spring.datasource.username=runtime", "--spring.datasource.password=runtime",
+				"--spring.liquibase.url=" + jdbcUrl, "--spring.liquibase.user=migrator",
+				"--spring.liquibase.password=migrator")) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
 
 			assertThat(exitCode).isNotZero();
@@ -224,11 +226,12 @@ final class DatabaseStartupIT {
 
 	private String[] arguments(PostgreSqlFixture.Database database, int port) {
 		var databaseArguments = database.backendArguments();
-		var arguments = new String[databaseArguments.size() + 2];
+		var arguments = new String[databaseArguments.size() + 3];
 		arguments[0] = "--server.port=" + port;
 		arguments[1] = "--skywright.deployment.environment=test";
+		arguments[2] = "--skywright.deployment.reporting-currency=EUR";
 		for (var index = 0; index < databaseArguments.size(); index++) {
-			arguments[index + 2] = databaseArguments.get(index);
+			arguments[index + 3] = databaseArguments.get(index);
 		}
 		return arguments;
 	}
