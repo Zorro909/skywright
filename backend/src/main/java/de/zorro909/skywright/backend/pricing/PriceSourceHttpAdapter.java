@@ -4,6 +4,8 @@ import de.zorro909.skywright.backend.boundary.generated.api.PriceSourceBindingsA
 import de.zorro909.skywright.backend.boundary.generated.api.PriceSourcesApi;
 import de.zorro909.skywright.backend.boundary.generated.model.BindPriceSource;
 import de.zorro909.skywright.backend.boundary.generated.model.CreatePriceSource;
+import de.zorro909.skywright.backend.boundary.generated.model.CreateGpuPriceScheduleEntry;
+import de.zorro909.skywright.backend.boundary.generated.model.GpuPriceScheduleEntry;
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSource;
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSourceAssessment;
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSourceKind;
@@ -11,6 +13,7 @@ import de.zorro909.skywright.backend.boundary.generated.model.PriceSourceRevisio
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSourceRevisionState;
 import de.zorro909.skywright.backend.boundary.generated.model.PromotePriceSource;
 import de.zorro909.skywright.backend.boundary.generated.model.StagePriceSourceRevision;
+import de.zorro909.skywright.backend.boundary.generated.model.UpdateGpuPriceScheduleEntry;
 import java.time.Duration;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -23,8 +26,41 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 
 	private final PriceSourceRegistry registry;
 
-	PriceSourceHttpAdapter(PriceSourceRegistry registry) {
+	private final GpuPriceSchedule gpuPriceSchedule;
+
+	PriceSourceHttpAdapter(PriceSourceRegistry registry, GpuPriceSchedule gpuPriceSchedule) {
 		this.registry = registry;
+		this.gpuPriceSchedule = gpuPriceSchedule;
+	}
+
+	@Override
+	public ResponseEntity<GpuPriceScheduleEntry> createGpuPriceScheduleEntry(UUID sourceId,
+			CreateGpuPriceScheduleEntry request) {
+		return ResponseEntity.status(201).body(entry(this.gpuPriceSchedule.create(sourceId, input(request))));
+	}
+
+	@Override
+	public ResponseEntity<GpuPriceScheduleEntry> getGpuPriceScheduleEntry(UUID sourceId, UUID entryId) {
+		return ResponseEntity.ok(entry(this.gpuPriceSchedule.get(sourceId, entryId)));
+	}
+
+	@Override
+	public ResponseEntity<List<GpuPriceScheduleEntry>> listGpuPriceScheduleEntries(UUID sourceId) {
+		return ResponseEntity
+			.ok(this.gpuPriceSchedule.list(sourceId).stream().map(PriceSourceHttpAdapter::entry).toList());
+	}
+
+	@Override
+	public ResponseEntity<GpuPriceScheduleEntry> updateGpuPriceScheduleEntry(UUID sourceId, UUID entryId,
+			UpdateGpuPriceScheduleEntry request) {
+		return ResponseEntity
+			.ok(entry(this.gpuPriceSchedule.update(sourceId, entryId, request.getExpectedRevision(), input(request))));
+	}
+
+	@Override
+	public ResponseEntity<Void> deleteGpuPriceScheduleEntry(Long expectedRevision, UUID sourceId, UUID entryId) {
+		this.gpuPriceSchedule.delete(sourceId, entryId, expectedRevision);
+		return ResponseEntity.noContent().build();
 	}
 
 	@Override
@@ -117,6 +153,41 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 		catch (RuntimeException error) {
 			throw new PriceSourceValidationException("PRICE_SOURCE_FRESHNESS_INVALID",
 					"Maximum observation age must be an ISO 8601 duration");
+		}
+	}
+
+	private static GpuPriceScheduleEntry entry(GpuPriceScheduleEntryView value) {
+		return new GpuPriceScheduleEntry(value.id(), value.revision(), value.sourceRevision(), value.offeringId(),
+				value.nativeCurrency(), GpuPriceScheduleEntry.NativeUnitEnum.fromValue(value.nativeUnit()),
+				value.value(), value.minimumQuantity(), value.billingQuantum(), value.provenance(),
+				value.observedAt().atOffset(ZoneOffset.UTC), value.effectiveFrom().atOffset(ZoneOffset.UTC),
+				value.effectiveUntil().atOffset(ZoneOffset.UTC));
+	}
+
+	private static GpuPriceScheduleEntryInput input(CreateGpuPriceScheduleEntry request) {
+		requireUtc(request.getObservedAt().getOffset(), request.getEffectiveFrom().getOffset(),
+				request.getEffectiveUntil().getOffset());
+		return new GpuPriceScheduleEntryInput(request.getSourceRevision(), request.getOfferingId(),
+				request.getNativeCurrency(), request.getNativeUnit().getValue(), request.getValue(),
+				request.getMinimumQuantity(), request.getBillingQuantum(), request.getProvenance(),
+				request.getObservedAt().toInstant(), request.getEffectiveFrom().toInstant(),
+				request.getEffectiveUntil().toInstant());
+	}
+
+	private static GpuPriceScheduleEntryInput input(UpdateGpuPriceScheduleEntry request) {
+		requireUtc(request.getObservedAt().getOffset(), request.getEffectiveFrom().getOffset(),
+				request.getEffectiveUntil().getOffset());
+		return new GpuPriceScheduleEntryInput(request.getSourceRevision(), request.getOfferingId(),
+				request.getNativeCurrency(), request.getNativeUnit().getValue(), request.getValue(),
+				request.getMinimumQuantity(), request.getBillingQuantum(), request.getProvenance(),
+				request.getObservedAt().toInstant(), request.getEffectiveFrom().toInstant(),
+				request.getEffectiveUntil().toInstant());
+	}
+
+	private static void requireUtc(ZoneOffset... offsets) {
+		if (java.util.Arrays.stream(offsets).anyMatch(offset -> !ZoneOffset.UTC.equals(offset))) {
+			throw new PriceSourceValidationException("GPU_PRICE_SCHEDULE_INSTANT_INVALID",
+					"Schedule instants must use the UTC offset");
 		}
 	}
 

@@ -23,7 +23,7 @@ final class PriceSourceNotFoundException extends PriceSourceException {
 
 }
 
-final class PriceSourceConflictException extends PriceSourceException {
+class PriceSourceConflictException extends PriceSourceException {
 
 	PriceSourceConflictException(String code, String message) {
 		super(code, message);
@@ -35,6 +35,30 @@ final class PriceSourceValidationException extends PriceSourceException {
 
 	PriceSourceValidationException(String code, String message) {
 		super(code, message);
+	}
+
+}
+
+final class GpuPriceScheduleEntryNotFoundException extends PriceSourceException {
+
+	GpuPriceScheduleEntryNotFoundException() {
+		super("GPU_PRICE_SCHEDULE_ENTRY_NOT_FOUND", "The GPU price schedule entry does not exist");
+	}
+
+}
+
+final class GpuPriceScheduleOverlapException extends PriceSourceConflictException {
+
+	GpuPriceScheduleOverlapException() {
+		super("GPU_PRICE_SCHEDULE_OVERLAP", "GPU price schedule entries for one offering must not overlap");
+	}
+
+}
+
+final class GpuPriceScheduleRevisionConflictException extends PriceSourceConflictException {
+
+	GpuPriceScheduleRevisionConflictException() {
+		super("GPU_PRICE_SCHEDULE_REVISION_CONFLICT", "The GPU price schedule entry changed; reload it and retry");
 	}
 
 }

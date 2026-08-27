@@ -17,3 +17,5 @@ databaseChangeLog:
       file: db/changelog/versions/0008-price-source-registry.yaml
   - include:
       file: db/changelog/versions/0009-eligible-gpu-offering-catalogue.yaml
+  - include:
+      file: db/changelog/versions/0010-gpu-price-schedule.yaml
