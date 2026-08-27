@@ -1,0 +1,14 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-168-dataset-publication-transfer-lifecycle
+      author: skywright
+      logicalFilePath: db/changelog/versions/0007-dataset-publication-transfer.yaml
+      changes:
+        - addColumn:
+            tableName: dataset_publication
+            columns:
+              - column: { name: active_transfer_id, type: uuid }
+              - column: { name: active_transfer_expires_at, type: timestamptz }
+      rollback:
+        - dropColumn: { tableName: dataset_publication, columnName: active_transfer_expires_at }
+        - dropColumn: { tableName: dataset_publication, columnName: active_transfer_id }

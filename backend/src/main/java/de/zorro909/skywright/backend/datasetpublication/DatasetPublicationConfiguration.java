@@ -21,10 +21,16 @@ class DatasetPublicationConfiguration {
 	}
 
 	@Bean
+	DatasetPublicationCleanupGate datasetPublicationCleanupGate() {
+		return (publication, operationOnly) -> {
+		};
+	}
+
+	@Bean
 	DatasetPublicationWorkerLauncher datasetPublicationWorkerLauncher(TargetStorageResolver targetStorages,
-			DatasetPublicationCredentialProjectionLifecycle projections,
+			DatasetPublicationCredentialProjectionLifecycle projections, DatasetPublicationCleanupGate cleanupGate,
 			@Value("${skywright.dataset-publication.verification-concurrency:4}") int verificationConcurrency) {
-		return new DatasetPublicationWorkerLauncher(targetStorages, projections, verificationConcurrency);
+		return new DatasetPublicationWorkerLauncher(targetStorages, projections, cleanupGate, verificationConcurrency);
 	}
 
 }

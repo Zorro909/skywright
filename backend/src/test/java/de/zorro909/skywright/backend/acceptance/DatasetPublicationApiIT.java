@@ -40,7 +40,9 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.ListMultipartUploadsRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import tools.jackson.databind.JsonNode;
@@ -55,6 +57,205 @@ final class DatasetPublicationApiIT {
 
 	@TempDir
 	Path temporaryDirectory;
+
+	@Test
+	void publicationCanBeAbortedBeforeUploadAndReportsVerifiedAbsence() throws Exception {
+		try (var objectStorage = SeaweedFsFixture.start(); var administrator = administrator(objectStorage)) {
+			objectStorage.awaitReady(administrator);
+			String bucket = "dataset-publication-abort-" + UUID.randomUUID();
+			administrator.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).join();
+			try (var backend = BackendFixture.startWithTargetStorageIntegration()) {
+				var storage = backend.post("/api/v1/target-storages", registration(objectStorage.endpoint(), bucket));
+				String storageId = JSON.readTree(storage.body()).path("id").asText();
+				backend.put("/api/v1/target-storages/" + storageId + "/activation",
+						"{\"expectedRegistrationRevision\":2,\"activated\":true}");
+				JsonNode publication = JSON.readTree(backend.post("/api/v1/dataset-publications", """
+						{
+						  "targetStorageId":"%s",
+						  "formatIdentity":"mosaicml-streaming-mds@2",
+						  "manifestIdentity":"sha256:%s",
+						  "contentFingerprint":"sha256:%s",
+						  "objectCount":1,
+						  "byteCount":1
+						}
+						""".formatted(storageId, "0".repeat(64), "1".repeat(64))).body());
+
+				var accepted = backend.post(
+						"/api/v1/dataset-publications/" + publication.path("publicationId").asText() + "/abort", "{}");
+				assertThat(accepted.statusCode()).as(accepted.body()).isEqualTo(202);
+				assertThat(JSON.readTree(accepted.body()).path("state").asText()).isIn("aborting", "aborted");
+
+				JsonNode aborted = awaitPublicationState(backend, publication.path("publicationId").asText(),
+						"aborted");
+				assertThat(aborted.path("publicationId")).isEqualTo(publication.path("publicationId"));
+				assertThat(aborted.path("completedAt").asText()).isNotBlank();
+				assertThat(aborted.path("retryable").asBoolean()).isFalse();
+
+				JsonNode failedVerification = JSON.readTree(backend.post("/api/v1/dataset-publications", """
+						{
+						  "targetStorageId":"%s",
+						  "formatIdentity":"mosaicml-streaming-mds@2",
+						  "manifestIdentity":"sha256:%s",
+						  "contentFingerprint":"sha256:%s",
+						  "objectCount":1,
+						  "byteCount":1
+						}
+						""".formatted(storageId, "2".repeat(64), "3".repeat(64))).body());
+				String failedPublicationId = failedVerification.path("publicationId").asText();
+				backend.post("/api/v1/dataset-publications/" + failedPublicationId + "/completion", "{}");
+				assertThat(awaitTerminalPublication(backend, failedPublicationId).path("state").asText())
+					.isEqualTo("failed");
+				var abortFailed = backend.post("/api/v1/dataset-publications/" + failedPublicationId + "/abort", "{}");
+				assertThat(abortFailed.statusCode()).as(abortFailed.body()).isEqualTo(202);
+				assertThat(
+						awaitPublicationState(backend, failedPublicationId, "aborted").path("publicationId").asText())
+					.isEqualTo(failedPublicationId);
+			}
+		}
+	}
+
+	@Test
+	void abortRecoversAnAbandonedIdentifiedTransferBeforeReportingVerifiedAbsence() throws Exception {
+		try (var objectStorage = SeaweedFsFixture.start(); var administrator = administrator(objectStorage)) {
+			objectStorage.awaitReady(administrator);
+			String bucket = "active-transfer-" + UUID.randomUUID();
+			administrator.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).join();
+			try (var backend = BackendFixture.startWithTargetStorageIntegration("3s")) {
+				var storage = backend.post("/api/v1/target-storages", registration(objectStorage.endpoint(), bucket));
+				String storageId = JSON.readTree(storage.body()).path("id").asText();
+				backend.put("/api/v1/target-storages/" + storageId + "/activation",
+						"{\"expectedRegistrationRevision\":2,\"activated\":true}");
+				JsonNode publication = JSON.readTree(backend.post("/api/v1/dataset-publications", """
+						{
+						  "targetStorageId":"%s",
+						  "formatIdentity":"mosaicml-streaming-mds@2",
+						  "manifestIdentity":"sha256:%s",
+						  "contentFingerprint":"sha256:%s",
+						  "objectCount":1,
+						  "byteCount":1
+						}
+						""".formatted(storageId, "4".repeat(64), "5".repeat(64))).body());
+				String publicationId = publication.path("publicationId").asText();
+				String lateObject = publication.path("payloadLocation").asText() + "/late-object";
+				String transferId = UUID.randomUUID().toString();
+
+				var started = backend.post("/api/v1/dataset-publications/" + publicationId + "/transfer-start",
+						"{\"transferId\":\"" + transferId + "\"}");
+				assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
+				var concurrent = backend.post("/api/v1/dataset-publications/" + publicationId + "/transfer-start",
+						"{\"transferId\":\"" + UUID.randomUUID() + "\"}");
+				assertThat(concurrent.statusCode()).as(concurrent.body()).isEqualTo(409);
+				assertThat(JSON
+					.readTree(
+							backend.post("/api/v1/dataset-publications/" + publicationId + "/completion", "{}").body())
+					.path("state")
+					.asText()).isEqualTo("uploading");
+				backend.post("/api/v1/dataset-publications/" + publicationId + "/abort", "{}");
+				backend.restart();
+				administrator
+					.putObject(PutObjectRequest.builder().bucket(bucket).key(lateObject).build(),
+							AsyncRequestBody.fromString("x"))
+					.join();
+
+				assertThat(JSON.readTree(backend.get("/api/v1/dataset-publications/" + publicationId).body())
+					.path("state")
+					.asText()).isEqualTo("aborting");
+				assertThat(awaitPublicationState(backend, publicationId, "aborted").path("state").asText())
+					.isEqualTo("aborted");
+				assertThat(remoteKeys(administrator, bucket, publication.path("payloadLocation").asText())).isEmpty();
+			}
+		}
+	}
+
+	@Test
+	void abortDeletesOnlyAllocatedPrefixesIncludingIncompleteMultipartUploads() throws Exception {
+		try (var objectStorage = SeaweedFsFixture.start(); var administrator = administrator(objectStorage)) {
+			objectStorage.awaitReady(administrator);
+			String bucket = "publication-cleanup-" + UUID.randomUUID();
+			administrator.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).join();
+			try (var backend = BackendFixture.startWithTargetStorageIntegration()) {
+				var storage = backend.post("/api/v1/target-storages", registration(objectStorage.endpoint(), bucket));
+				String storageId = JSON.readTree(storage.body()).path("id").asText();
+				backend.put("/api/v1/target-storages/" + storageId + "/activation",
+						"{\"expectedRegistrationRevision\":2,\"activated\":true}");
+				JsonNode publication = JSON.readTree(backend.post("/api/v1/dataset-publications", """
+						{
+						  "targetStorageId":"%s",
+						  "formatIdentity":"mosaicml-streaming-mds@2",
+						  "manifestIdentity":"sha256:%s",
+						  "contentFingerprint":"sha256:%s",
+						  "objectCount":1,
+						  "byteCount":1
+						}
+						""".formatted(storageId, "0".repeat(64), "1".repeat(64))).body());
+				String publicationId = publication.path("publicationId").asText();
+				String payload = publication.path("payloadLocation").asText();
+				String operation = publication.path("operationLocation").asText();
+				String payloadSibling = payload + "-sibling/keep";
+				String operationSibling = operation + "-sibling/keep";
+				for (String key : java.util.List.of(payload + "/object", operation + "/manifest.json", payloadSibling,
+						operationSibling)) {
+					administrator
+						.putObject(PutObjectRequest.builder().bucket(bucket).key(key).build(),
+								AsyncRequestBody.fromString("x"))
+						.join();
+				}
+				for (String key : java.util.List.of(payload + "/unfinished", operation + "/unfinished",
+						payload + "-sibling/unfinished")) {
+					administrator
+						.createMultipartUpload(CreateMultipartUploadRequest.builder().bucket(bucket).key(key).build())
+						.join();
+				}
+				backend.put("/api/v1/dataset-publications/" + publicationId + "/progress",
+						"{\"uploadedObjectCount\":1,\"uploadedByteCount\":1}");
+
+				objectStorage.pause();
+				boolean storagePaused = true;
+				CommandResult abort;
+				try {
+					var accepted = backend.post("/api/v1/dataset-publications/" + publicationId + "/abort", "{}");
+					assertThat(accepted.statusCode()).as(accepted.body()).isEqualTo(202);
+					JsonNode failedCleanup = awaitPublicationState(backend, publicationId, "failed-cleanup");
+					assertThat(failedCleanup.path("retryable").asBoolean()).isTrue();
+					assertThat(failedCleanup.path("failureCode").asText()).isEqualTo("DATASET_CLEANUP_UNAVAILABLE");
+					assertThat(failedCleanup.path("failureDetail").asText()).doesNotContain("Exception", "secret",
+							objectStorage.endpoint().toString());
+
+					backend.restart();
+					assertThat(JSON.readTree(backend.get("/api/v1/dataset-publications/" + publicationId).body())
+						.path("state")
+						.asText()).isEqualTo("failed-cleanup");
+					objectStorage.unpause();
+					storagePaused = false;
+					objectStorage.awaitReady(administrator);
+					abort = runAbortCommand(backend.baseUri(), publicationId);
+				}
+				finally {
+					if (storagePaused) {
+						objectStorage.unpause();
+						objectStorage.awaitReady(administrator);
+					}
+				}
+				assertThat(abort.exitCode()).as(abort.stderr()).isZero();
+				JsonNode aborted = JSON.readTree(abort.stdout());
+				assertThat(aborted.path("state").asText()).isEqualTo("aborted");
+				assertThat(aborted.path("retryGuidance").asText()).contains("every allocated object");
+				assertThat(remoteKeys(administrator, bucket, payload + "/")).isEmpty();
+				assertThat(remoteKeys(administrator, bucket, operation + "/")).isEmpty();
+				assertThat(multipartKeys(administrator, bucket, payload + "/")).isEmpty();
+				assertThat(multipartKeys(administrator, bucket, operation + "/")).isEmpty();
+				assertThat(remoteKeys(administrator, bucket, payload + "-sibling/")).containsExactly(payloadSibling);
+				assertThat(remoteKeys(administrator, bucket, operation + "-sibling/"))
+					.containsExactly(operationSibling);
+				assertThat(multipartKeys(administrator, bucket, payload + "-sibling/"))
+					.containsExactly(payload + "-sibling/unfinished");
+
+				var repeated = backend.post("/api/v1/dataset-publications/" + publicationId + "/abort", "{}");
+				assertThat(repeated.statusCode()).as(repeated.body()).isEqualTo(202);
+				assertThat(JSON.readTree(repeated.body()).path("state").asText()).isEqualTo("aborted");
+			}
+		}
+	}
 
 	@Test
 	void existingDatasetPublicationRequiresAnExplicitPreferredDefinitionDecision() throws Exception {
@@ -222,11 +423,25 @@ final class DatasetPublicationApiIT {
 				assertInvalidCorpusInvisible(backend, storageId, localBefore, "missing",
 						path -> Files.delete(firstPayload(path)), "SKYWRIGHT_DATASET_CORPUS_FILE_MISSING");
 
+				DatasetPublicationCommitGateTestConfiguration.failNextCleanup();
 				CommandResult command = runCommand(corpus, backend.baseUri(), storageId);
 				assertThat(command.exitCode()).as(command.stderr()).isZero();
 
-				JsonNode result = JSON.readTree(command.stdout());
-				assertThat(result.path("state").asText()).isEqualTo("committed");
+				JsonNode failedCleanup = JSON.readTree(command.stdout());
+				assertThat(failedCleanup.path("state").asText()).isEqualTo("failed-cleanup");
+				assertThat(failedCleanup.path("failureDetail").asText()).doesNotContain("Exception", "secret", "/tmp");
+				assertThat(backend.get("/api/v1/datasets/" + failedCleanup.path("datasetId").asText()).statusCode())
+					.isEqualTo(200);
+				assertThat(backend.get("/api/v1/dataset-catalog/" + failedCleanup.path("definitionId").asText())
+					.statusCode()).isEqualTo(200);
+				assertThat(remoteKeys(administrator, bucket, failedCleanup.path("payloadLocation").asText() + "/"))
+					.hasSize(expected.path("objectCount").asInt());
+				var cleanupRetry = backend.post(
+						"/api/v1/dataset-publications/" + failedCleanup.path("publicationId").asText() + "/cleanup",
+						"{}");
+				assertThat(cleanupRetry.statusCode()).as(cleanupRetry.body()).isEqualTo(202);
+				JsonNode result = awaitPublicationState(backend, failedCleanup.path("publicationId").asText(),
+						"committed");
 				assertThat(result.path("versionLabel").asText())
 					.isEqualTo(expected.path("contentFingerprint").asText().substring(7, 23));
 				assertThat(result.path("formatIdentity").asText()).isEqualTo(expected.path("formatIdentity").asText());
@@ -247,7 +462,14 @@ final class DatasetPublicationApiIT {
 					.isNotEqualTo(ProcessHandle.current().pid());
 				assertThat(backend.countReleasedCredentialProjections(
 						UUID.fromString(result.path("publicationId").asText()), TRANSFER_WORKER_BINDING, 1))
-					.isOne();
+					.isEqualTo(2);
+				assertThat(remoteKeys(administrator, bucket, result.path("operationLocation").asText() + "/"))
+					.isEmpty();
+				assertThat(remoteKeys(administrator, bucket, result.path("payloadLocation").asText() + "/"))
+					.hasSize(expected.path("objectCount").asInt());
+				var abortCommitted = backend
+					.post("/api/v1/dataset-publications/" + result.path("publicationId").asText() + "/abort", "{}");
+				assertThat(abortCommitted.statusCode()).as(abortCommitted.body()).isEqualTo(409);
 
 				var lineage = backend.get("/api/v1/datasets/" + result.path("datasetId").asText());
 				var catalog = backend.get("/api/v1/dataset-catalog/" + result.path("definitionId").asText());
@@ -400,6 +622,29 @@ final class DatasetPublicationApiIT {
 							kept.path("definitionId").asText())
 					.doesNotContain("\"versionLabel\":\"stale\"");
 
+				DatasetPublicationCommitGateTestConfiguration.blockNextCommit();
+				var boundaryArguments = new ArrayList<>(java.util.List.of("uv", "run", "--project", "sdk", "--locked",
+						"skywright-datasets", "publish", corpus.toString(), "--control-plane",
+						backend.baseUri().toString(), "--target-storage", storageId, "--version-label",
+						"commit-boundary", "--dataset", result.path("datasetId").asText(),
+						"--expected-dataset-revision", "5", "--keep-preferred"));
+				Process boundaryCommand = startCommand(boundaryArguments);
+				var boundaryErrors = new BufferedReader(
+						new InputStreamReader(boundaryCommand.getErrorStream(), StandardCharsets.UTF_8));
+				JsonNode boundaryIdentity = JSON.readTree(boundaryErrors.readLine());
+				DatasetPublicationCommitGateTestConfiguration.awaitNextCommitStarted();
+				try (var boundaryRequests = Executors.newVirtualThreadPerTaskExecutor()) {
+					var cancellation = boundaryRequests.submit(() -> backend.post("/api/v1/dataset-publications/"
+							+ boundaryIdentity.path("publicationId").asText() + "/abort", "{}"));
+					DatasetPublicationCommitGateTestConfiguration.releaseNextCommit();
+					assertThat(cancellation.get().statusCode()).isEqualTo(409);
+				}
+				String boundaryOutput = new String(boundaryCommand.getInputStream().readAllBytes(),
+						StandardCharsets.UTF_8);
+				String boundaryErrorTail = boundaryErrors.lines().collect(Collectors.joining("\n"));
+				assertThat(boundaryCommand.waitFor()).as(boundaryErrorTail).isZero();
+				assertThat(JSON.readTree(boundaryOutput).path("state").asText()).isEqualTo("committed");
+
 				Set<String> keys = administrator.listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).build())
 					.join()
 					.contents()
@@ -407,10 +652,8 @@ final class DatasetPublicationApiIT {
 					.map(value -> value.key())
 					.collect(Collectors.toSet());
 				String payload = result.path("payloadLocation").asText();
-				String operation = result.path("operationLocation").asText();
 				Set<String> expectedKeys = new HashSet<>();
 				localBefore.keySet().forEach(key -> expectedKeys.add(payload + "/" + key));
-				expectedKeys.add(operation + "/manifest.json");
 				assertThat(keys).containsAll(expectedKeys);
 				for (var entry : localBefore.entrySet()) {
 					byte[] remote = administrator
@@ -453,10 +696,10 @@ final class DatasetPublicationApiIT {
 				try (var restarted = backend.restartWithTargetStorageIntegration()) {
 					var persistedLineage = restarted.get("/api/v1/datasets/" + result.path("datasetId").asText());
 					assertThat(persistedLineage.statusCode()).as(persistedLineage.body()).isEqualTo(200);
-					assertThat(persistedLineage.body()).contains("\"revision\":5");
+					assertThat(persistedLineage.body()).contains("\"revision\":6");
 					var persistedVersions = restarted
 						.get("/api/v1/dataset-catalog?datasetId=" + result.path("datasetId").asText() + "&limit=100");
-					assertThat(JSON.readTree(persistedVersions.body()).path("items")).hasSize(5);
+					assertThat(JSON.readTree(persistedVersions.body()).path("items")).hasSize(6);
 					var persistedRetry = restarted.post(
 							"/api/v1/dataset-publications/" + result.path("publicationId").asText() + "/completion",
 							"{}");
@@ -730,6 +973,36 @@ final class DatasetPublicationApiIT {
 		throw new AssertionError("Dataset Publication did not reach a terminal state");
 	}
 
+	private static JsonNode awaitPublicationState(BackendFixture backend, String publicationId, String expectedState)
+			throws Exception {
+		for (int attempt = 0; attempt < 200; attempt++) {
+			JsonNode publication = JSON.readTree(backend.get("/api/v1/dataset-publications/" + publicationId).body());
+			if (publication.path("state").asText().equals(expectedState)) {
+				return publication;
+			}
+			Thread.sleep(50);
+		}
+		throw new AssertionError("Dataset Publication did not reach state " + expectedState);
+	}
+
+	private static Set<String> remoteKeys(S3AsyncClient client, String bucket, String prefix) {
+		return client.listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).prefix(prefix).build())
+			.join()
+			.contents()
+			.stream()
+			.map(object -> object.key())
+			.collect(Collectors.toSet());
+	}
+
+	private static Set<String> multipartKeys(S3AsyncClient client, String bucket, String prefix) {
+		return client.listMultipartUploads(ListMultipartUploadsRequest.builder().bucket(bucket).prefix(prefix).build())
+			.join()
+			.uploads()
+			.stream()
+			.map(upload -> upload.key())
+			.collect(Collectors.toSet());
+	}
+
 	private static CommandResult runCommand(Path corpus, URI controlPlane, String storageId, String... extra)
 			throws Exception {
 		var arguments = new java.util.ArrayList<>(
@@ -737,6 +1010,14 @@ final class DatasetPublicationApiIT {
 						corpus.toString(), "--control-plane", controlPlane.toString(), "--target-storage", storageId));
 		arguments.addAll(java.util.List.of(extra));
 		Process command = startCommand(arguments);
+		String stdout = new String(command.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		String stderr = new String(command.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+		return new CommandResult(command.waitFor(), stdout, stderr);
+	}
+
+	private static CommandResult runAbortCommand(URI controlPlane, String publicationId) throws Exception {
+		Process command = startCommand(java.util.List.of("uv", "run", "--project", "sdk", "--locked",
+				"skywright-datasets", "abort", publicationId, "--control-plane", controlPlane.toString()));
 		String stdout = new String(command.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
 		String stderr = new String(command.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
 		return new CommandResult(command.waitFor(), stdout, stderr);

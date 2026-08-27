@@ -74,6 +74,12 @@ class DatasetPublicationEntity {
 	@Column(name = "uploaded_byte_count", nullable = false)
 	long uploadedByteCount;
 
+	@Column(name = "active_transfer_id")
+	UUID activeTransferId;
+
+	@Column(name = "active_transfer_expires_at")
+	Instant activeTransferExpiresAt;
+
 	@Column(name = "verified_object_count", nullable = false)
 	long verifiedObjectCount;
 
@@ -158,6 +164,18 @@ class DatasetPublicationEntity {
 	private String retryGuidance() {
 		if (this.state == DatasetPublicationState.COMMITTED) {
 			return "The publication is committed; inspect this operation for its original result.";
+		}
+		if (this.state == DatasetPublicationState.ABORTED) {
+			return "The publication is aborted and every allocated object and multipart upload is absent.";
+		}
+		if (this.state == DatasetPublicationState.ABORTING) {
+			return "Wait for verified publication cleanup and inspect this operation again.";
+		}
+		if (this.state == DatasetPublicationState.PUBLISHED_CLEANUP_PENDING) {
+			return "The publication is durable; wait for operation-only cleanup or inspect this operation again.";
+		}
+		if (this.state == DatasetPublicationState.FAILED_CLEANUP) {
+			return "Retry cleanup for this same publication identity.";
 		}
 		if (this.state == DatasetPublicationState.VERIFYING || this.state == DatasetPublicationState.COMMITTING) {
 			return "Wait for managed verification and inspect this operation again.";

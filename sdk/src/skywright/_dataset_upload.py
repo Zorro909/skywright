@@ -35,6 +35,7 @@ def upload(
     storage: dict[str, object],
     concurrency: int,
     progress: Callable[[int], None],
+    active: Callable[[], None],
 ) -> None:
     """Transfer and validate one publication through its allocated locations."""
     import boto3
@@ -73,6 +74,7 @@ def upload(
                 s3={"addressing_style": "path" if path_style is True else "virtual"}
             ),
         )
+        active()
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             uploads = [
                 executor.submit(
@@ -81,18 +83,21 @@ def upload(
                     bucket,
                     f"{payload_location}/{entry.object_key}",
                     entry,
+                    active,
                 )
                 for entry in corpus.entries
             ]
             for transfer in uploads:
                 progress(transfer.result())
         verify_source_inventory(corpus)
+        active()
         _put_bytes(
             client,
             bucket,
             f"{operation_location}/manifest.json",
             corpus.manifest_bytes,
             corpus.manifest_identity,
+            active,
         )
     except DatasetPublicationError:
         raise
@@ -110,7 +115,13 @@ def upload(
         ) from error
 
 
-def _put_source(client: Any, bucket: str, key: str, entry: ManifestEntry) -> int:
+def _put_source(
+    client: Any,
+    bucket: str,
+    key: str,
+    entry: ManifestEntry,
+    active: Callable[[], None],
+) -> int:
     digest = entry.checksum_sha256.removeprefix("sha256:")
     checksum = base64.b64encode(bytes.fromhex(digest)).decode()
     descriptor: int | None = None
@@ -126,8 +137,16 @@ def _put_source(client: Any, bucket: str, key: str, entry: ManifestEntry) -> int
             ):
                 raise _source_mutated()
             stream.seek(0)
+            active()
             _put_or_verify(
-                client, bucket, key, stream, entry.byte_count, digest, checksum
+                client,
+                bucket,
+                key,
+                stream,
+                entry.byte_count,
+                digest,
+                checksum,
+                active,
             )
             stream.seek(0)
             after = SourceIdentity.from_stat(os.fstat(stream.fileno()))
@@ -148,12 +167,22 @@ def _put_source(client: Any, bucket: str, key: str, entry: ManifestEntry) -> int
             os.close(descriptor)
 
 
-def _put_bytes(client: Any, bucket: str, key: str, body: bytes, identity: str) -> None:
+def _put_bytes(
+    client: Any,
+    bucket: str,
+    key: str,
+    body: bytes,
+    identity: str,
+    active: Callable[[], None] = lambda: None,
+) -> None:
     from io import BytesIO
 
     digest = identity.removeprefix("sha256:")
     checksum = base64.b64encode(bytes.fromhex(digest)).decode()
-    _put_or_verify(client, bucket, key, BytesIO(body), len(body), digest, checksum)
+    active()
+    _put_or_verify(
+        client, bucket, key, BytesIO(body), len(body), digest, checksum, active
+    )
 
 
 def _put_or_verify(
@@ -164,12 +193,13 @@ def _put_or_verify(
     byte_count: int,
     digest: str,
     checksum: str,
+    active: Callable[[], None],
 ) -> None:
     from botocore.exceptions import ClientError
 
     if byte_count >= _MULTIPART_THRESHOLD_BYTES:
         _put_multipart_or_verify(
-            client, bucket, key, body, byte_count, digest, checksum
+            client, bucket, key, body, byte_count, digest, checksum, active
         )
         return
     try:
@@ -182,6 +212,7 @@ def _put_or_verify(
             IfNoneMatch="*",
             Metadata={"skywright-sha256": digest},
         )
+        active()
         return
     except ClientError as error:
         status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
@@ -208,10 +239,12 @@ def _put_multipart_or_verify(
     byte_count: int,
     digest: str,
     checksum: str,
+    active: Callable[[], None],
 ) -> None:
     from botocore.exceptions import BotoCoreError, ClientError
 
     _abort_stale_multipart_uploads(client, bucket, key)
+    active()
     if _matches_existing(client, bucket, key, byte_count, digest, checksum):
         return
     created = client.create_multipart_upload(
@@ -232,6 +265,7 @@ def _put_multipart_or_verify(
     try:
         part_number = 1
         while chunk := body.read(_MULTIPART_PART_BYTES):
+            active()
             part_checksum = base64.b64encode(hashlib.sha256(chunk).digest()).decode()
             transferred = client.upload_part(
                 Bucket=bucket,
@@ -251,6 +285,7 @@ def _put_multipart_or_verify(
             parts.append(part)
             part_number += 1
         try:
+            active()
             client.complete_multipart_upload(
                 Bucket=bucket,
                 Key=key,
@@ -268,6 +303,7 @@ def _put_multipart_or_verify(
                 "DATASET_UPLOAD_CONFLICT",
                 "The completed Dataset object lacks validated SHA-256 evidence",
             )
+        active()
         completed = True
     finally:
         if not completed:

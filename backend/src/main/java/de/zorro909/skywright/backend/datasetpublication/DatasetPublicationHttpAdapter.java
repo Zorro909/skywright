@@ -60,6 +60,32 @@ public class DatasetPublicationHttpAdapter implements DatasetPublicationsApi, Da
 	}
 
 	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> startDatasetPublicationTransfer(
+			UUID publicationId,
+			de.zorro909.skywright.backend.boundary.generated.model.DatasetPublicationTransferLease request) {
+		return ResponseEntity.ok(publication(this.publications.startTransfer(publicationId, request.getTransferId())));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> stopDatasetPublicationTransfer(
+			UUID publicationId,
+			de.zorro909.skywright.backend.boundary.generated.model.DatasetPublicationTransferLease request) {
+		return ResponseEntity.ok(publication(this.publications.stopTransfer(publicationId, request.getTransferId())));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> abortDatasetPublication(
+			UUID publicationId) {
+		return ResponseEntity.accepted().body(publication(this.publications.abort(publicationId)));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> retryDatasetPublicationCleanup(
+			UUID publicationId) {
+		return ResponseEntity.accepted().body(publication(this.publications.retryCleanup(publicationId)));
+	}
+
+	@Override
 	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetLineage> getDataset(
 			UUID datasetId) {
 		DatasetLineageView value = this.publications.dataset(datasetId);

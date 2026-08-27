@@ -9,8 +9,28 @@ interface DatasetPublicationOperations {
 
 	List<UUID> pendingVerifications();
 
+	default DatasetPublicationView cleanupInput(UUID publicationId) {
+		return null;
+	}
+
+	default List<UUID> pendingCleanups() {
+		return List.of();
+	}
+
+	default boolean cleanupDeferred(UUID publicationId) {
+		return false;
+	}
+
 	void commit(UUID publicationId, DatasetPublicationWorkerResult verified);
 
 	void fail(UUID publicationId, DatasetPublicationWorkerResult failure);
+
+	default void cleanupSucceeded(UUID publicationId, DatasetPublicationWorkerResult result) {
+		throw new UnsupportedOperationException();
+	}
+
+	default void cleanupFailed(UUID publicationId, DatasetPublicationWorkerResult failure) {
+		throw new UnsupportedOperationException();
+	}
 
 }

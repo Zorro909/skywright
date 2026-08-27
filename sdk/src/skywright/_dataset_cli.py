@@ -15,6 +15,7 @@ from typing import cast
 
 from skywright._dataset_errors import DatasetPublicationError
 from skywright._dataset_publication import inspect_mds_corpus
+from skywright._dataset_transfer import TransferLease
 from skywright._dataset_upload import upload as _upload
 
 
@@ -48,6 +49,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
     publish.add_argument("--version-label")
     publish.add_argument("--concurrency", type=_positive_int, default=4)
     publish.add_argument("--resume", metavar="PUBLICATION_ID")
+    abort = commands.add_parser(
+        "abort", help="Abort one uncommitted Dataset Publication and verify cleanup"
+    )
+    abort.add_argument("publication_id", metavar="PUBLICATION_ID")
+    abort.add_argument("--control-plane", required=True)
     parsed = parser.parse_args(arguments)
     try:
         if parsed.operation == "publish":
@@ -64,6 +70,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
             )
             print(_json(result))
             return 0
+        if parsed.operation == "abort":
+            print(_json(_abort(parsed.control_plane, parsed.publication_id)))
+            return 0
     except DatasetPublicationError as error:
         print(_json(_problem(error)), file=sys.stderr)
         return _exit_code(error)
@@ -75,6 +84,33 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(_json(_problem(error)), file=sys.stderr)
         return 1
     return 64
+
+
+def _abort(control_plane: str, publication_id: str) -> object:
+    result = _request(
+        control_plane,
+        "POST",
+        f"/api/v1/dataset-publications/{publication_id}/abort",
+        {},
+    )
+    while True:
+        if not isinstance(result, dict):
+            raise _protocol_error()
+        typed_result = cast(dict[str, object], result)
+        if typed_result.get("state") != "aborting":
+            break
+        time.sleep(0.1)
+        result = _request(
+            control_plane,
+            "GET",
+            f"/api/v1/dataset-publications/{publication_id}",
+            None,
+        )
+    if typed_result.get("state") == "failed-cleanup":
+        raise _publication_failure(typed_result)
+    if typed_result.get("state") != "aborted":
+        raise _protocol_error()
+    return typed_result
 
 
 def _publish(
@@ -156,12 +192,20 @@ def _publish(
     )
     if publication.get("state") == "committed":
         return publication
+    if publication.get("state") == "failed-cleanup":
+        if publication.get("preferredDefinitionId") is not None:
+            return publication
+        raise _publication_failure(publication)
     if (
         publication.get("state") == "failed"
         and publication.get("retryable") is not True
     ):
         raise _publication_failure(publication)
-    if publication.get("state") == "verifying":
+    if publication.get("state") in {
+        "verifying",
+        "committing",
+        "published-cleanup-pending",
+    }:
         result: object = publication
     else:
         storage = _request(
@@ -191,7 +235,15 @@ def _publish(
             )
 
         try:
-            _upload(corpus, publication, storage, concurrency, progress)
+            with TransferLease(_request, control_plane, publication_id) as transfer:
+                _upload(
+                    corpus,
+                    publication,
+                    storage,
+                    concurrency,
+                    progress,
+                    transfer.ensure_active,
+                )
         except DatasetPublicationError as error:
             _record_failure(control_plane, publication_id, error)
             raise
@@ -233,6 +285,7 @@ def _publish(
         "uploading",
         "verifying",
         "committing",
+        "published-cleanup-pending",
     }:
         time.sleep(0.1)
         result = _request(
@@ -244,7 +297,12 @@ def _publish(
         if not isinstance(result, dict):
             raise _protocol_error()
         result = cast(dict[str, object], result)
-    if result.get("state") == "failed":
+    if (
+        result.get("state") == "failed-cleanup"
+        and result.get("preferredDefinitionId") is not None
+    ):
+        return result
+    if result.get("state") in {"failed", "failed-cleanup"}:
         raise _publication_failure(result)
     if result.get("state") != "committed":
         raise _protocol_error()
