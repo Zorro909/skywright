@@ -151,6 +151,78 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SystemInformation'
+  /eligible-gpu-offerings:
+    get:
+      operationId: listEligibleGpuOfferings
+      summary: List the configured Eligible GPU Offering catalogue.
+      responses:
+        '200':
+          description: Current configured offerings. Catalogue membership is not a live-capacity claim.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EligibleGpuOffering' }
+    post:
+      operationId: createEligibleGpuOffering
+      summary: Add an Eligible GPU Offering to the operator catalogue.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEligibleGpuOffering' }
+      responses:
+        '201':
+          description: Offering created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EligibleGpuOffering' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /eligible-gpu-offerings/{offeringId}:
+    parameters:
+      - name: offeringId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SkywrightId' }
+    get:
+      operationId: getEligibleGpuOffering
+      summary: Read one configured Eligible GPU Offering.
+      responses:
+        '200':
+          description: Current offering.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EligibleGpuOffering' }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      operationId: updateEligibleGpuOffering
+      summary: Replace an Eligible GPU Offering using its expected revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateEligibleGpuOffering' }
+      responses:
+        '200':
+          description: Offering updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EligibleGpuOffering' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: deleteEligibleGpuOffering
+      summary: Remove an Eligible GPU Offering using its expected revision.
+      parameters:
+        - name: expectedRevision
+          in: query
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '204': { description: Offering removed. }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /target-storages:
     get:
       operationId: listTargetStorages
@@ -1253,6 +1325,60 @@ components:
     TargetClass:
       type: string
       enum: [local-single-gpu, local-multi-gpu, cloud-on-demand, cloud-spot]
+    GpuOfferingPurchaseMode:
+      type: string
+      enum: [local, on-demand, spot]
+    TargetSupportTier:
+      type: string
+      enum: [first-class, compatible, deferred]
+    EligibleGpuOffering:
+      type: object
+      additionalProperties: false
+      required: [id, revision, targetClass, target, providerOfferingId, region, instanceType, gpuModel, gpuCount, gpuMemoryBytes, purchaseMode, supportTier]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        revision: { type: integer, format: int64, minimum: 1 }
+        targetClass: { $ref: '#/components/schemas/TargetClass' }
+        target: { type: string, minLength: 1, maxLength: 255 }
+        providerOfferingId: { type: string, minLength: 1, maxLength: 255 }
+        region: { type: string, minLength: 1, maxLength: 255 }
+        instanceType: { type: string, minLength: 1, maxLength: 255 }
+        gpuModel: { type: string, minLength: 1, maxLength: 255 }
+        gpuCount: { type: integer, format: int32, minimum: 1 }
+        gpuMemoryBytes: { type: integer, format: int64, minimum: 1 }
+        purchaseMode: { $ref: '#/components/schemas/GpuOfferingPurchaseMode' }
+        supportTier: { $ref: '#/components/schemas/TargetSupportTier' }
+    CreateEligibleGpuOffering:
+      type: object
+      additionalProperties: false
+      required: [targetClass, target, providerOfferingId, region, instanceType, gpuModel, gpuCount, gpuMemoryBytes, purchaseMode, supportTier]
+      properties:
+        targetClass: { $ref: '#/components/schemas/TargetClass' }
+        target: { type: string, minLength: 1, maxLength: 255 }
+        providerOfferingId: { type: string, minLength: 1, maxLength: 255 }
+        region: { type: string, minLength: 1, maxLength: 255 }
+        instanceType: { type: string, minLength: 1, maxLength: 255 }
+        gpuModel: { type: string, minLength: 1, maxLength: 255 }
+        gpuCount: { type: integer, format: int32, minimum: 1 }
+        gpuMemoryBytes: { type: integer, format: int64, minimum: 1 }
+        purchaseMode: { $ref: '#/components/schemas/GpuOfferingPurchaseMode' }
+        supportTier: { $ref: '#/components/schemas/TargetSupportTier' }
+    UpdateEligibleGpuOffering:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, targetClass, target, providerOfferingId, region, instanceType, gpuModel, gpuCount, gpuMemoryBytes, purchaseMode, supportTier]
+      properties:
+        expectedRevision: { type: integer, format: int64, minimum: 1 }
+        targetClass: { $ref: '#/components/schemas/TargetClass' }
+        target: { type: string, minLength: 1, maxLength: 255 }
+        providerOfferingId: { type: string, minLength: 1, maxLength: 255 }
+        region: { type: string, minLength: 1, maxLength: 255 }
+        instanceType: { type: string, minLength: 1, maxLength: 255 }
+        gpuModel: { type: string, minLength: 1, maxLength: 255 }
+        gpuCount: { type: integer, format: int32, minimum: 1 }
+        gpuMemoryBytes: { type: integer, format: int64, minimum: 1 }
+        purchaseMode: { $ref: '#/components/schemas/GpuOfferingPurchaseMode' }
+        supportTier: { $ref: '#/components/schemas/TargetSupportTier' }
     TargetStorageRole:
       type: string
       enum: [training-process, backend, transfer-worker, metric-view]

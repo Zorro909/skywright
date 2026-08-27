@@ -154,6 +154,11 @@ final class BackendFixture implements AutoCloseable {
 		return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 	}
 
+	HttpResponse<String> delete(String path) throws IOException, InterruptedException {
+		var request = HttpRequest.newBuilder(baseUri.resolve(path)).DELETE().build();
+		return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+	}
+
 	<T> T bean(Class<T> type) {
 		return this.application.getBean(type);
 	}
