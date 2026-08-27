@@ -18,6 +18,8 @@ from contextlib import suppress
 from typing import Any, BinaryIO, cast
 
 from skywright._dataset_errors import DatasetPublicationError
+from skywright._dataset_errors import protocol_error as _protocol_error
+from skywright._dataset_errors import source_mutated_error as _source_mutated
 from skywright._dataset_publication import (
     InspectedCorpus,
     ManifestEntry,
@@ -399,17 +401,3 @@ def _stream_digest(stream: BinaryIO) -> str:
     while chunk := stream.read(1024 * 1024):
         digest.update(chunk)
     return digest.hexdigest()
-
-
-def _source_mutated() -> DatasetPublicationError:
-    return DatasetPublicationError(
-        "DATASET_SOURCE_MUTATED",
-        "A local corpus file changed during publication",
-    )
-
-
-def _protocol_error() -> DatasetPublicationError:
-    return DatasetPublicationError(
-        "CONTROL_PLANE_PROTOCOL_FAILURE",
-        "The control plane returned an invalid Dataset Publication response",
-    )

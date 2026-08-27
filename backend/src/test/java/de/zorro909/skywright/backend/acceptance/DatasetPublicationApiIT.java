@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.acceptance;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import de.zorro909.skywright.backend.datasetpublication.DatasetPublicationCommitGateTestConfiguration;
 import com.sun.net.httpserver.HttpServer;
@@ -39,12 +40,14 @@ import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.model.AccessDeniedException;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListMultipartUploadsRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -54,6 +57,8 @@ final class DatasetPublicationApiIT {
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	private static final UUID TRANSFER_WORKER_BINDING = UUID.fromString("00000000-0000-0000-0000-000000000003");
+
+	private static volatile Path installedDatasetCommand;
 
 	@TempDir
 	Path temporaryDirectory;
@@ -376,6 +381,30 @@ final class DatasetPublicationApiIT {
 			objectStorage.awaitReady(administrator);
 			String bucket = "dataset-publication-" + UUID.randomUUID();
 			administrator.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).join();
+			try (var workstation = roleClient(objectStorage, SeaweedFsFixture.WORKSTATION_ACCESS_KEY,
+					SeaweedFsFixture.WORKSTATION_SECRET_KEY);
+					var worker = roleClient(objectStorage, SeaweedFsFixture.WORKER_ACCESS_KEY,
+							SeaweedFsFixture.WORKER_SECRET_KEY);
+					var crossedSecrets = roleClient(objectStorage, SeaweedFsFixture.WORKSTATION_ACCESS_KEY,
+							SeaweedFsFixture.WORKER_SECRET_KEY)) {
+				assertThat(SeaweedFsFixture.WORKSTATION_ACCESS_KEY).isNotEqualTo(SeaweedFsFixture.WORKER_ACCESS_KEY);
+				assertThat(workstation.listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).build())
+					.join()
+					.contents()).isEmpty();
+				assertThat(
+						worker.listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).build()).join().contents())
+					.isEmpty();
+				assertThatThrownBy(() -> workstation
+					.createBucket(CreateBucketRequest.builder().bucket("forbidden-workstation-bucket").build())
+					.join()).hasRootCauseInstanceOf(AccessDeniedException.class);
+				assertThatThrownBy(() -> worker
+					.createBucket(CreateBucketRequest.builder().bucket("forbidden-worker-bucket").build())
+					.join()).hasRootCauseInstanceOf(AccessDeniedException.class);
+				assertThatThrownBy(
+						() -> crossedSecrets.listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).build())
+							.join())
+					.hasRootCauseInstanceOf(S3Exception.class);
+			}
 			JsonNode fixture = JSON.readTree(Path.of(System.getProperty("repository.root"), "tests", "fixtures",
 					"dataset-publication", "mds-v2-contract.json")
 				.toFile());
@@ -426,6 +455,8 @@ final class DatasetPublicationApiIT {
 				DatasetPublicationCommitGateTestConfiguration.failNextCleanup();
 				CommandResult command = runCommand(corpus, backend.baseUri(), storageId);
 				assertThat(command.exitCode()).as(command.stderr()).isZero();
+				assertThat(command.stdout() + command.stderr()).doesNotContain(SeaweedFsFixture.WORKSTATION_SECRET_KEY,
+						SeaweedFsFixture.WORKER_SECRET_KEY);
 
 				JsonNode failedCleanup = JSON.readTree(command.stdout());
 				assertThat(failedCleanup.path("state").asText()).isEqualTo("failed-cleanup");
@@ -566,13 +597,13 @@ final class DatasetPublicationApiIT {
 				CommandResult duplicateLabel = runCommand(corpus, backend.baseUri(), storageId, "--version-label", "v2",
 						"--dataset", result.path("datasetId").asText(), "--expected-dataset-revision", "3",
 						"--keep-preferred");
-				assertThat(duplicateLabel.exitCode()).isEqualTo(1);
+				assertThat(duplicateLabel.exitCode()).isEqualTo(3);
 				assertThat(duplicateLabel.stderr()).contains("DATASET_VERSION_LABEL_CONFLICT");
 
 				CommandResult staleCommand = runCommand(corpus, backend.baseUri(), storageId, "--version-label",
 						"stale", "--dataset", result.path("datasetId").asText(), "--expected-dataset-revision", "2",
 						"--advance-preferred");
-				assertThat(staleCommand.exitCode()).isEqualTo(1);
+				assertThat(staleCommand.exitCode()).isEqualTo(3);
 				assertThat(staleCommand.stderr()).contains("DATASET_REVISION_STALE");
 
 				var updatedLineage = backend.get("/api/v1/datasets/" + result.path("datasetId").asText());
@@ -592,27 +623,54 @@ final class DatasetPublicationApiIT {
 						.stream()
 						.sorted(Comparator.comparingInt(CommandResult::exitCode))
 						.toList();
-					assertThat(competing).extracting(CommandResult::exitCode).containsExactly(0, 1);
+					assertThat(competing).extracting(CommandResult::exitCode).containsExactly(0, 3);
 					assertThat(competing.get(1).stderr()).contains("DATASET_REVISION_STALE");
 					JsonNode winner = JSON.readTree(competing.getFirst().stdout());
+					String stalePublicationId = publicationIdentity(competing.get(1).stderr());
+					JsonNode stalePublication = JSON
+						.readTree(backend.get("/api/v1/dataset-publications/" + stalePublicationId).body());
+					String staleVersion = stalePublication.path("versionLabel").asText();
+					JsonNode originalIdentities = stalePublication.deepCopy();
 					var competedLineage = backend.get("/api/v1/datasets/" + result.path("datasetId").asText());
 					assertThat(competedLineage.body()).contains("\"revision\":4", winner.path("definitionId").asText());
+					CommandResult recoveredStale = runCommand(corpus, backend.baseUri(), storageId, "--resume",
+							stalePublicationId, "--version-label", staleVersion, "--dataset",
+							result.path("datasetId").asText(), "--expected-dataset-revision", "4", "--keep-preferred");
+					assertThat(recoveredStale.exitCode()).as(recoveredStale.stderr()).isZero();
+					JsonNode recovered = JSON.readTree(recoveredStale.stdout());
+					assertThat(recovered.path("publicationId")).isEqualTo(originalIdentities.path("publicationId"));
+					assertThat(recovered.path("datasetId")).isEqualTo(originalIdentities.path("datasetId"));
+					assertThat(recovered.path("definitionId")).isEqualTo(originalIdentities.path("definitionId"));
+					assertThat(recovered.path("copyId")).isEqualTo(originalIdentities.path("copyId"));
+					assertThat(recovered.path("payloadLocation")).isEqualTo(originalIdentities.path("payloadLocation"));
 
 					DatasetPublicationCommitGateTestConfiguration.blockNextCommits(2);
 					var advancing = requests.submit(() -> runCommand(corpus, backend.baseUri(), storageId,
 							"--version-label", "pointer-race-advance", "--dataset", result.path("datasetId").asText(),
-							"--expected-dataset-revision", "4", "--advance-preferred"));
+							"--expected-dataset-revision", "5", "--advance-preferred"));
 					var keeping = requests.submit(() -> runCommand(corpus, peer.baseUri(), storageId, "--version-label",
 							"pointer-race-keep", "--dataset", result.path("datasetId").asText(),
-							"--expected-dataset-revision", "4", "--keep-preferred"));
+							"--expected-dataset-revision", "5", "--keep-preferred"));
 					var pointerRace = java.util.List.of(advancing.get(), keeping.get())
 						.stream()
 						.sorted(Comparator.comparingInt(CommandResult::exitCode))
 						.toList();
-					assertThat(pointerRace).extracting(CommandResult::exitCode).containsExactly(0, 1);
+					assertThat(pointerRace).extracting(CommandResult::exitCode).containsExactly(0, 3);
 					assertThat(pointerRace.get(1).stderr()).contains("DATASET_REVISION_STALE");
 					assertThat(backend.get("/api/v1/datasets/" + result.path("datasetId").asText()).body())
-						.contains("\"revision\":5");
+						.contains("\"revision\":6");
+					String secondStaleId = publicationIdentity(pointerRace.get(1).stderr());
+					JsonNode secondStale = JSON
+						.readTree(backend.get("/api/v1/dataset-publications/" + secondStaleId).body());
+					var staleRenewal = backend.post(
+							"/api/v1/dataset-publications/" + secondStaleId + "/preferred-definition-decision",
+							"{\"expectedDatasetRevision\":5,\"preferredDefinitionDecision\":\"keep\"}");
+					assertThat(staleRenewal.statusCode()).as(staleRenewal.body()).isEqualTo(409);
+					assertThat(staleRenewal.body()).contains("SKYWRIGHT_DATASET_REVISION_STALE");
+					CommandResult secondRecovery = runCommand(corpus, backend.baseUri(), storageId, "--resume",
+							secondStaleId, "--version-label", secondStale.path("versionLabel").asText(), "--dataset",
+							result.path("datasetId").asText(), "--expected-dataset-revision", "6", "--keep-preferred");
+					assertThat(secondRecovery.exitCode()).as(secondRecovery.stderr()).isZero();
 				}
 				var versions = backend
 					.get("/api/v1/dataset-catalog?datasetId=" + result.path("datasetId").asText() + "&limit=100");
@@ -623,11 +681,10 @@ final class DatasetPublicationApiIT {
 					.doesNotContain("\"versionLabel\":\"stale\"");
 
 				DatasetPublicationCommitGateTestConfiguration.blockNextCommit();
-				var boundaryArguments = new ArrayList<>(java.util.List.of("uv", "run", "--project", "sdk", "--locked",
-						"skywright-datasets", "publish", corpus.toString(), "--control-plane",
-						backend.baseUri().toString(), "--target-storage", storageId, "--version-label",
-						"commit-boundary", "--dataset", result.path("datasetId").asText(),
-						"--expected-dataset-revision", "5", "--keep-preferred"));
+				var boundaryArguments = new ArrayList<>(java.util.List.of(installedDatasetCommand().toString(),
+						"publish", corpus.toString(), "--control-plane", backend.baseUri().toString(),
+						"--target-storage", storageId, "--version-label", "commit-boundary", "--dataset",
+						result.path("datasetId").asText(), "--expected-dataset-revision", "7", "--keep-preferred"));
 				Process boundaryCommand = startCommand(boundaryArguments);
 				var boundaryErrors = new BufferedReader(
 						new InputStreamReader(boundaryCommand.getErrorStream(), StandardCharsets.UTF_8));
@@ -696,10 +753,10 @@ final class DatasetPublicationApiIT {
 				try (var restarted = backend.restartWithTargetStorageIntegration()) {
 					var persistedLineage = restarted.get("/api/v1/datasets/" + result.path("datasetId").asText());
 					assertThat(persistedLineage.statusCode()).as(persistedLineage.body()).isEqualTo(200);
-					assertThat(persistedLineage.body()).contains("\"revision\":6");
+					assertThat(persistedLineage.body()).contains("\"revision\":8");
 					var persistedVersions = restarted
 						.get("/api/v1/dataset-catalog?datasetId=" + result.path("datasetId").asText() + "&limit=100");
-					assertThat(JSON.readTree(persistedVersions.body()).path("items")).hasSize(6);
+					assertThat(JSON.readTree(persistedVersions.body()).path("items")).hasSize(8);
 					var persistedRetry = restarted.post(
 							"/api/v1/dataset-publications/" + result.path("publicationId").asText() + "/completion",
 							"{}");
@@ -731,8 +788,12 @@ final class DatasetPublicationApiIT {
 				files.put(objectKey, bytes);
 			}
 			JsonNode expected = fixture.path("expected");
+			CommandResult unavailable = runCommand(corpus,
+					URI.create("http://127.0.0.1:" + BackendProcess.availablePort()), UUID.randomUUID().toString());
+			assertThat(unavailable.exitCode()).as(unavailable.stderr()).isEqualTo(69);
+			assertThat(unavailable.stderr()).contains("SKYWRIGHT_CONTROL_PLANE_UNAVAILABLE");
 
-			try (var backend = BackendFixture.startWithTargetStorageIntegration()) {
+			try (var backend = BackendFixture.startWithTargetStorageIntegration("3s")) {
 				var storage = backend.post("/api/v1/target-storages", registration(objectStorage.endpoint(), bucket));
 				String storageId = JSON.readTree(storage.body()).path("id").asText();
 				backend.put("/api/v1/target-storages/" + storageId + "/activation",
@@ -755,6 +816,7 @@ final class DatasetPublicationApiIT {
 					objectStorage.unpause();
 					storagePaused = false;
 					objectStorage.awaitReady(administrator);
+					Thread.sleep(3_100);
 					CommandResult recovered = runCommand(corpus, backend.baseUri(), storageId,
 							interruptedPublicationId);
 					assertThat(recovered.exitCode()).as(recovered.stderr()).isZero();
@@ -1005,9 +1067,8 @@ final class DatasetPublicationApiIT {
 
 	private static CommandResult runCommand(Path corpus, URI controlPlane, String storageId, String... extra)
 			throws Exception {
-		var arguments = new java.util.ArrayList<>(
-				java.util.List.of("uv", "run", "--project", "sdk", "--locked", "skywright-datasets", "publish",
-						corpus.toString(), "--control-plane", controlPlane.toString(), "--target-storage", storageId));
+		var arguments = new java.util.ArrayList<>(java.util.List.of(installedDatasetCommand().toString(), "publish",
+				corpus.toString(), "--control-plane", controlPlane.toString(), "--target-storage", storageId));
 		arguments.addAll(java.util.List.of(extra));
 		Process command = startCommand(arguments);
 		String stdout = new String(command.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -1016,8 +1077,8 @@ final class DatasetPublicationApiIT {
 	}
 
 	private static CommandResult runAbortCommand(URI controlPlane, String publicationId) throws Exception {
-		Process command = startCommand(java.util.List.of("uv", "run", "--project", "sdk", "--locked",
-				"skywright-datasets", "abort", publicationId, "--control-plane", controlPlane.toString()));
+		Process command = startCommand(java.util.List.of(installedDatasetCommand().toString(), "abort", publicationId,
+				"--control-plane", controlPlane.toString()));
 		String stdout = new String(command.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
 		String stderr = new String(command.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
 		return new CommandResult(command.waitFor(), stdout, stderr);
@@ -1030,9 +1091,8 @@ final class DatasetPublicationApiIT {
 
 	private static Process startCommand(Path corpus, URI controlPlane, String storageId, String publicationId)
 			throws Exception {
-		var arguments = new ArrayList<>(
-				java.util.List.of("uv", "run", "--project", "sdk", "--locked", "skywright-datasets", "publish",
-						corpus.toString(), "--control-plane", controlPlane.toString(), "--target-storage", storageId));
+		var arguments = new ArrayList<>(java.util.List.of(installedDatasetCommand().toString(), "publish",
+				corpus.toString(), "--control-plane", controlPlane.toString(), "--target-storage", storageId));
 		if (publicationId != null) {
 			arguments.add("--resume");
 			arguments.add(publicationId);
@@ -1045,9 +1105,45 @@ final class DatasetPublicationApiIT {
 			.directory(Path.of(System.getProperty("repository.root")).toFile())
 			.redirectErrorStream(false);
 		commandBuilder.environment()
-			.putAll(Map.of("AWS_ACCESS_KEY_ID", "test-key", "AWS_SECRET_ACCESS_KEY", "test-secret", "AWS_REGION",
-					"us-east-1", "AWS_MAX_ATTEMPTS", "1"));
+			.putAll(Map.of("AWS_ACCESS_KEY_ID", SeaweedFsFixture.WORKSTATION_ACCESS_KEY, "AWS_SECRET_ACCESS_KEY",
+					SeaweedFsFixture.WORKSTATION_SECRET_KEY, "AWS_REGION", "us-east-1", "AWS_MAX_ATTEMPTS", "1"));
 		return commandBuilder.start();
+	}
+
+	private static synchronized Path installedDatasetCommand() throws Exception {
+		if (installedDatasetCommand != null && Files.isExecutable(installedDatasetCommand)) {
+			return installedDatasetCommand;
+		}
+		Path repository = Path.of(System.getProperty("repository.root"));
+		Path installation = repository.resolve("backend/target/dataset-command-install");
+		Path distributions = repository.resolve("backend/target/dataset-command-distributions");
+		Files.createDirectories(distributions);
+		Process build = new ProcessBuilder("uv", "build", "--wheel", "--out-dir", distributions.toString(), "sdk")
+			.directory(repository.toFile())
+			.redirectErrorStream(true)
+			.start();
+		String buildOutput = new String(build.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		assertThat(build.waitFor()).as(buildOutput).isZero();
+		Path wheel;
+		try (var artifacts = Files.list(distributions)) {
+			wheel = artifacts.filter(path -> path.getFileName().toString().endsWith(".whl")).findFirst().orElseThrow();
+		}
+		Process environment = new ProcessBuilder("uv", "venv", "--clear", installation.toString())
+			.directory(repository.toFile())
+			.redirectErrorStream(true)
+			.start();
+		String environmentOutput = new String(environment.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		assertThat(environment.waitFor()).as(environmentOutput).isZero();
+		Process install = new ProcessBuilder("uv", "pip", "install", "--python",
+				installation.resolve("bin/python").toString(), wheel.toString())
+			.directory(repository.toFile())
+			.redirectErrorStream(true)
+			.start();
+		String installOutput = new String(install.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		assertThat(install.waitFor()).as(installOutput).isZero();
+		installedDatasetCommand = installation.resolve("bin/skywright-datasets");
+		assertThat(installedDatasetCommand).isExecutable();
+		return installedDatasetCommand;
 	}
 
 	private static String publicationIdentity(String stderr) throws Exception {
@@ -1188,6 +1284,16 @@ final class DatasetPublicationApiIT {
 			.region(Region.US_EAST_1)
 			.credentialsProvider(
 					StaticCredentialsProvider.create(AwsBasicCredentials.create("test-key", "test-secret")))
+			.serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
+			.build();
+	}
+
+	private static S3AsyncClient roleClient(SeaweedFsFixture storage, String accessKey, String secretKey) {
+		return S3AsyncClient.builder()
+			.httpClientBuilder(NettyNioAsyncHttpClient.builder())
+			.endpointOverride(storage.endpoint())
+			.region(Region.US_EAST_1)
+			.credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)))
 			.serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
 			.build();
 	}

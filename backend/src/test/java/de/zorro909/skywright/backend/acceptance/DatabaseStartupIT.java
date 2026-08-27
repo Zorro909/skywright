@@ -141,6 +141,25 @@ final class DatabaseStartupIT {
 	}
 
 	@Test
+	void runtimeRoleCannotDeleteImmutableDatasetPublicationRows() throws Exception {
+		try (var database = PostgreSqlFixture.freshDatabase()) {
+			var port = BackendProcess.availablePort();
+			try (var backend = BackendProcess.start(arguments(database, port))) {
+				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
+
+				for (String table : java.util.List.of("dataset_catalog", "dataset_copy_identity",
+						"dataset_generation_identity", "dataset_lineage", "dataset_publication")) {
+					assertThatThrownBy(
+							() -> database.executeAsRuntime("DELETE FROM skywright." + table + " WHERE false"))
+						.as(table)
+						.isInstanceOf(SQLException.class)
+						.hasMessageContaining("permission denied");
+				}
+			}
+		}
+	}
+
+	@Test
 	void changedAppliedChangesetStopsStartup() throws Exception {
 		try (var database = PostgreSqlFixture.freshDatabase()) {
 			var firstPort = BackendProcess.availablePort();

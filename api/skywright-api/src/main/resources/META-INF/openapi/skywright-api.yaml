@@ -536,6 +536,25 @@ paths:
               schema: { $ref: '#/components/schemas/DatasetPublication' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /dataset-publications/{publicationId}/preferred-definition-decision:
+    parameters:
+      - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: renewDatasetPublicationPreferredDefinitionDecision
+      summary: Renew a stale preferred-definition decision without replacing publication identities.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenewDatasetPreferredDefinitionDecision' }
+      responses:
+        '202':
+          description: Current Dataset revision accepted and verification resumed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetPublication' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /dataset-publications/{publicationId}/progress:
     parameters:
       - { name: publicationId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
@@ -766,6 +785,13 @@ components:
         contentFingerprint: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
         objectCount: { type: integer, format: int64, minimum: 1 }
         byteCount: { type: integer, format: int64, minimum: 0 }
+    RenewDatasetPreferredDefinitionDecision:
+      type: object
+      additionalProperties: false
+      required: [expectedDatasetRevision, preferredDefinitionDecision]
+      properties:
+        expectedDatasetRevision: { type: integer, format: int64, minimum: 1 }
+        preferredDefinitionDecision: { $ref: '#/components/schemas/DatasetPreferredDefinitionDecision' }
     DatasetPublicationProgress:
       type: object
       additionalProperties: false
