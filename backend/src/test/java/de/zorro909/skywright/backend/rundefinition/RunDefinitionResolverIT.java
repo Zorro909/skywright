@@ -8,6 +8,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -67,6 +68,13 @@ class RunDefinitionResolverIT {
 		assertThat(definition.at("/executionPolicy/runtimeCeiling").asText()).isEqualTo("PT1H");
 		assertThat(definition.at("/executionPolicy/costCeiling/amount").decimalValue()).isEqualByComparingTo("12.3400");
 		assertThat(definition.at("/executionPolicy/costCeiling/currency").asText()).isEqualTo("EUR");
+		assertThat(definition.at("/costQuote/reportingCurrency/minorUnit").asInt()).isEqualTo(2);
+		assertThat(definition.at("/costQuote/candidates/0/nativeRate/amount").decimalValue())
+			.isEqualByComparingTo("2.5000");
+		assertThat(definition.at("/costQuote/candidates/0/source/revision").asLong()).isEqualTo(3);
+		assertThat(definition.at("/costQuote/hourly/minimum").decimalValue()).isEqualByComparingTo("5.0000");
+		assertThat(definition.at("/costQuote/daily/minimum").decimalValue()).isEqualByComparingTo("120.0000");
+		assertThat(definition.at("/costQuote/weekly/minimum").decimalValue()).isEqualByComparingTo("840.0000");
 		assertThat(definition.toString()).doesNotContain("credential", "runId", "checkpointReference", "metricCatalog",
 				"lifecycle", "orchestrator", "instanceType", "storageLocation", "datasetCopy");
 	}
@@ -245,15 +253,15 @@ class RunDefinitionResolverIT {
 	void exactTargetPinsNeverFallBackAndImageMapsMustCoverEligibleBackends() {
 		RunDefinitionResolver pinnedResolver = resolver(eligibleVersionRegistry(),
 				DatasetDefinitionAssessment.accepted(),
-				new TargetEligibilityAssessment(List.of(new EligibleTarget("another-target", TargetClass.CLOUD_SPOT,
-						"cuda", "H100", 8, 80L * 1024 * 1024 * 1024)), List.of()),
+				new TargetEligibilityAssessment(List.of(eligibleTarget("another-target", TargetClass.CLOUD_SPOT, "cuda",
+						"H100", 8, 80L * 1024 * 1024 * 1024)), List.of()),
 				storage(), "EUR");
 		RunSubmission pinned = withTarget(submission(TargetClass.CLOUD_SPOT),
 				new TargetRequest(TargetClass.CLOUD_SPOT, 1, null, "pinned-target", null, null));
 		RunDefinitionResolver incompatibleResolver = resolver(eligibleVersionRegistry(),
 				DatasetDefinitionAssessment.accepted(),
-				new TargetEligibilityAssessment(List
-					.of(new EligibleTarget("tpu-target", TargetClass.CLOUD_SPOT, "tpu", "TPU", 8, Long.MAX_VALUE)),
+				new TargetEligibilityAssessment(
+						List.of(eligibleTarget("tpu-target", TargetClass.CLOUD_SPOT, "tpu", "TPU", 8, Long.MAX_VALUE)),
 						List.of()),
 				storage(), "EUR");
 
@@ -267,8 +275,9 @@ class RunDefinitionResolverIT {
 
 	@Test
 	void derivesUniqueModelEvidenceAndDefersAmbiguousAcceleratorChoices() {
-		TargetEligibilityAssessment oneCandidate = new TargetEligibilityAssessment(List.of(new EligibleTarget(
-				"pinned-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8, 80L * 1024 * 1024 * 1024)), List.of());
+		TargetEligibilityAssessment oneCandidate = new TargetEligibilityAssessment(List
+			.of(eligibleTarget("pinned-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8, 80L * 1024 * 1024 * 1024)),
+				List.of());
 		RunDefinitionResolver resolved = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
 				oneCandidate, storage(), "EUR");
 		RunSubmission omittedModel = withTarget(submission(TargetClass.CLOUD_SPOT),
@@ -390,12 +399,23 @@ class RunDefinitionResolverIT {
 	private static TargetEligibilityAssessment targets() {
 		List<EligibleTarget> targets = new ArrayList<>();
 		for (TargetClass targetClass : TargetClass.values()) {
-			targets.add(new EligibleTarget("target-" + targetClass, targetClass, "cuda", "H100", 8,
-					80L * 1024 * 1024 * 1024));
-			targets.add(new EligibleTarget("rocm-" + targetClass, targetClass, "rocm", "MI300X", 8,
-					192L * 1024 * 1024 * 1024));
+			targets
+				.add(eligibleTarget("target-" + targetClass, targetClass, "cuda", "H100", 8, 80L * 1024 * 1024 * 1024));
+			targets.add(
+					eligibleTarget("rocm-" + targetClass, targetClass, "rocm", "MI300X", 8, 192L * 1024 * 1024 * 1024));
 		}
 		return new TargetEligibilityAssessment(targets, List.of());
+	}
+
+	private static EligibleTarget eligibleTarget(String target, TargetClass targetClass, String acceleratorBackend,
+			String gpuModel, int maximumGpuCount, long gpuMemoryBytes) {
+		Instant observed = Instant.now();
+		UUID source = UUID.fromString("00000000-0000-0000-0000-000000000100");
+		return new EligibleTarget(target, targetClass, acceleratorBackend, gpuModel, maximumGpuCount, gpuMemoryBytes,
+				new EligibleTargetPrice(new BigDecimal("2.5000"), "EUR", BigDecimal.ONE,
+						new BigDecimal("0.0002777777777777778"), source, 3, "operator-schedule",
+						Instant.parse("2025-01-01T00:00:00Z"), null, observed.minusSeconds(1), observed, BigDecimal.ONE,
+						source, 3, "operator-schedule", observed, Duration.ofHours(24)));
 	}
 
 	private static RunDefinitionStorageSelection storage() {

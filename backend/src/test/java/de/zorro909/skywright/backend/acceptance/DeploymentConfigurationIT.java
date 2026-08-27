@@ -26,7 +26,7 @@ final class DeploymentConfigurationIT {
 				Map.of("SKYWRIGHT_DEPLOYMENT_ENVIRONMENT", "invalid_environment!"),
 				List.of("-Dskywright.deployment.environment=invalid_system!"),
 				"--spring.config.additional-location=" + configurationFile.toUri(), "--server.port=" + port,
-				"--skywright.deployment.environment=acceptance")) {
+				"--skywright.deployment.environment=acceptance", "--skywright.deployment.reporting-currency=EUR")) {
 			BackendProcess.awaitReadiness(port, Duration.ofSeconds(20));
 
 			assertThat(backend.isAlive()).isTrue();
@@ -41,18 +41,42 @@ final class DeploymentConfigurationIT {
 
 			assertThat(metadata).isNotNull();
 			assertThat(new String(executable.getInputStream(metadata).readAllBytes(), StandardCharsets.UTF_8))
-				.contains("skywright.deployment.environment");
+				.contains("skywright.deployment.environment", "skywright.deployment.reporting-currency");
 		}
 	}
 
 	@Test
 	void unrelatedConfigurationFailuresUseTheirOwnDiagnostics() throws Exception {
 		try (var backend = BackendProcess.startWithDatabase("--skywright.deployment.environment=test",
-				"--server.port=not-a-port")) {
+				"--skywright.deployment.reporting-currency=EUR", "--server.port=not-a-port")) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
 
 			assertThat(exitCode).isNotZero();
 			assertThat(backend.output()).contains("server.port").doesNotContain("Skywright deployment setting");
+		}
+	}
+
+	@Test
+	void missingReportingCurrencyStopsStartup() throws Exception {
+		try (var backend = BackendProcess.startWithDatabase("--server.port=0",
+				"--skywright.deployment.environment=test")) {
+			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
+
+			assertThat(exitCode).isNotZero();
+			assertThat(backend.output()).contains("skywright.deployment.reportingCurrency")
+				.doesNotContain("Started SkywrightBackendApplication");
+		}
+	}
+
+	@Test
+	void invalidReportingCurrencyStopsStartup() throws Exception {
+		try (var backend = BackendProcess.startWithDatabase("--server.port=0",
+				"--skywright.deployment.environment=test", "--skywright.deployment.reporting-currency=ZZZ")) {
+			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
+
+			assertThat(exitCode).isNotZero();
+			assertThat(backend.output()).contains("skywright.deployment.reporting-currency")
+				.doesNotContain("Started SkywrightBackendApplication");
 		}
 	}
 
@@ -71,7 +95,8 @@ final class DeploymentConfigurationIT {
 	void invalidDeploymentConfigurationIsDiagnosedWithoutEchoingItsValue() throws Exception {
 		var sensitiveValue = "production-private-token!";
 		try (var backend = BackendProcess.startWithDatabase("--debug", "--server.port=0",
-				"--skywright.deployment.environment=" + sensitiveValue)) {
+				"--skywright.deployment.environment=" + sensitiveValue,
+				"--skywright.deployment.reporting-currency=EUR")) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
 
 			assertThat(exitCode).isNotZero();
@@ -86,7 +111,8 @@ final class DeploymentConfigurationIT {
 	void unknownDeploymentConfigurationIsRejectedWithoutEchoingItsValue() throws Exception {
 		var sensitiveValue = "unknown-private-token";
 		try (var backend = BackendProcess.startWithDatabase("--server.port=0",
-				"--skywright.deployment.environment=test", "--skywright.deployment.unexpected=" + sensitiveValue)) {
+				"--skywright.deployment.environment=test", "--skywright.deployment.reporting-currency=EUR",
+				"--skywright.deployment.unexpected=" + sensitiveValue)) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
 
 			assertThat(exitCode).isNotZero();

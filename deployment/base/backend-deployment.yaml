@@ -33,6 +33,8 @@ spec:
           env:
             - name: SKYWRIGHT_DEPLOYMENT_ENVIRONMENT
               value: production
+            - name: SKYWRIGHT_DEPLOYMENT_REPORTING_CURRENCY
+              value: EUR
             - name: SKYWRIGHT_DATABASE_MIGRATION_URL
               valueFrom:
                 secretKeyRef:

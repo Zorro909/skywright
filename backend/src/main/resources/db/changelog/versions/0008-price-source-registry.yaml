@@ -1,0 +1,58 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-174-price-source-registry
+      author: skywright
+      logicalFilePath: db/changelog/versions/0008-price-source-registry.yaml
+      changes:
+        - createTable:
+            tableName: price_source
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: name, type: varchar(255), constraints: { nullable: false, unique: true, uniqueConstraintName: uq_price_source_name } }
+              - column: { name: kind, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: registration_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: active_revision, type: bigint }
+              - column: { name: candidate_revision, type: bigint }
+              - column: { name: credential_binding_id, type: uuid }
+              - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+        - createTable:
+            tableName: price_source_revision
+            columns:
+              - column: { name: price_source_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: revision_position, type: integer, constraints: { nullable: false } }
+              - column: { name: configuration_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: configuration_json, type: varchar(100000), constraints: { nullable: false } }
+        - createTable:
+            tableName: price_source_assessment
+            columns:
+              - column: { name: price_source_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: assessment_position, type: integer, constraints: { nullable: false } }
+              - column: { name: assessment_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: configuration_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: successful, type: boolean, constraints: { nullable: false } }
+              - column: { name: capability_results, type: varchar(4096), constraints: { nullable: false } }
+              - column: { name: observed_from, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: observed_until, type: timestamp with time zone, constraints: { nullable: false } }
+        - createTable:
+            tableName: price_source_binding
+            columns:
+              - column: { name: binding_key, type: varchar(255), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: binding_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: price_source_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: source_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: maximum_observation_age, type: varchar(64), constraints: { nullable: false } }
+              - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+        - addPrimaryKey: { tableName: price_source_revision, columnNames: "price_source_id, revision_position", constraintName: pk_price_source_revision }
+        - addPrimaryKey: { tableName: price_source_assessment, columnNames: "price_source_id, assessment_position", constraintName: pk_price_source_assessment }
+        - addForeignKeyConstraint: { baseTableName: price_source_revision, baseColumnNames: price_source_id, referencedTableName: price_source, referencedColumnNames: id, constraintName: fk_price_source_revision_source, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: price_source_assessment, baseColumnNames: price_source_id, referencedTableName: price_source, referencedColumnNames: id, constraintName: fk_price_source_assessment_source, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: price_source_binding, baseColumnNames: price_source_id, referencedTableName: price_source, referencedColumnNames: id, constraintName: fk_price_source_binding_source }
+        - sql:
+            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON price_source, price_source_revision, price_source_assessment, price_source_binding TO "${runtimeRole}"
+      rollback:
+        - sql:
+            sql: REVOKE ALL PRIVILEGES ON price_source, price_source_revision, price_source_assessment, price_source_binding FROM "${runtimeRole}"
+        - dropTable: { tableName: price_source_binding }
+        - dropTable: { tableName: price_source_assessment }
+        - dropTable: { tableName: price_source_revision }
+        - dropTable: { tableName: price_source }

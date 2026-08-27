@@ -4,7 +4,7 @@
   "title": "Skywright Run Definition v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "trainingProjectVersion", "configuration", "datasetDefinition", "targetRequest", "storage", "executionPolicy", "orderingReset"],
+  "required": ["schemaVersion", "trainingProjectVersion", "configuration", "datasetDefinition", "targetRequest", "storage", "costQuote", "executionPolicy", "orderingReset"],
   "properties": {
     "schemaVersion": {"type": "integer", "const": 1},
     "trainingProjectVersion": {"$ref": "#/$defs/trainingProjectVersion"},
@@ -12,6 +12,7 @@
     "datasetDefinition": {"$ref": "#/$defs/datasetDefinition"},
     "targetRequest": {"$ref": "#/$defs/targetRequest"},
     "storage": {"$ref": "#/$defs/storage"},
+    "costQuote": {"$ref": "#/$defs/costQuote"},
     "executionPolicy": {"$ref": "#/$defs/executionPolicy"},
     "orderingReset": {"type": "boolean"}
   },
@@ -94,6 +95,95 @@
           "required": ["enabled", "destination"],
           "properties": {"enabled": {"type": "boolean"}, "destination": {"$ref": "#/$defs/storageDescriptor"}}
         }
+      }
+    },
+    "currency": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "minorUnit"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "minorUnit": {"type": "integer", "minimum": 0, "maximum": 9}
+      }
+    },
+    "billingRules": {
+      "type": "object", "additionalProperties": false,
+      "required": ["minimumQuantity", "billingQuantum"],
+      "properties": {
+        "minimumQuantity": {"type": "number", "exclusiveMinimum": 0},
+        "billingQuantum": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "priceSourceProvenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sourceId", "revision", "kind"],
+      "properties": {
+        "sourceId": {"type": "string", "format": "uuid"},
+        "revision": {"type": "integer", "minimum": 1},
+        "kind": {"enum": ["operator-schedule", "provider-api", "skypilot-catalog"]}
+      }
+    },
+    "priceInterval": {
+      "type": "object", "additionalProperties": false,
+      "required": ["from", "until"],
+      "properties": {
+        "from": {"type": "string", "format": "date-time"},
+        "until": {"type": ["string", "null"], "format": "date-time"}
+      }
+    },
+    "nativeRate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["amount", "currency", "unit", "billingRules"],
+      "properties": {
+        "amount": {"type": "number", "minimum": 0},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "unit": {"enum": ["gpu-hour"]},
+        "billingRules": {"$ref": "#/$defs/billingRules"}
+      }
+    },
+    "conversion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rate", "source", "observedAt", "maximumObservationAge"],
+      "properties": {
+        "rate": {"type": "number", "exclusiveMinimum": 0},
+        "source": {"$ref": "#/$defs/priceSourceProvenance"},
+        "observedAt": {"type": "string", "format": "date-time"},
+        "maximumObservationAge": {"type": "string", "format": "duration"}
+      }
+    },
+    "costQuoteCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["target", "gpuModel", "gpuCount", "purchaseMode", "nativeRate", "source", "effectiveInterval", "observationInterval", "conversion", "reportingHourlyRate"],
+      "properties": {
+        "target": {"type": "string", "minLength": 1},
+        "gpuModel": {"type": "string", "minLength": 1},
+        "gpuCount": {"type": "integer", "minimum": 1},
+        "purchaseMode": {"enum": ["local", "on-demand", "spot"]},
+        "nativeRate": {"$ref": "#/$defs/nativeRate"},
+        "source": {"$ref": "#/$defs/priceSourceProvenance"},
+        "effectiveInterval": {"$ref": "#/$defs/priceInterval"},
+        "observationInterval": {"$ref": "#/$defs/priceInterval"},
+        "conversion": {"$ref": "#/$defs/conversion"},
+        "reportingHourlyRate": {"type": "number", "minimum": 0}
+      }
+    },
+    "quoteRange": {
+      "type": "object", "additionalProperties": false,
+      "required": ["minimum", "maximum"],
+      "properties": {
+        "minimum": {"type": "number", "minimum": 0},
+        "maximum": {"type": "number", "minimum": 0}
+      }
+    },
+    "costQuote": {
+      "type": "object", "additionalProperties": false,
+      "required": ["quoteTime", "reportingCurrency", "candidates", "hourly", "daily", "weekly"],
+      "properties": {
+        "quoteTime": {"type": "string", "format": "date-time"},
+        "reportingCurrency": {"$ref": "#/$defs/currency"},
+        "candidates": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/costQuoteCandidate"}},
+        "hourly": {"$ref": "#/$defs/quoteRange"},
+        "daily": {"$ref": "#/$defs/quoteRange"},
+        "weekly": {"$ref": "#/$defs/quoteRange"}
       }
     },
     "costCeiling": {

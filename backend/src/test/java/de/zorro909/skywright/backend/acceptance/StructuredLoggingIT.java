@@ -31,7 +31,8 @@ final class StructuredLoggingIT {
 		var port = BackendProcess.availablePort();
 		var correlationId = "acceptance-correlation";
 		try (var backend = BackendProcess.startWithDatabase(runtimeDirectory, Map.of(), List.of(),
-				"--server.port=" + port, "--skywright.deployment.environment=acceptance")) {
+				"--server.port=" + port, "--skywright.deployment.environment=acceptance",
+				"--skywright.deployment.reporting-currency=EUR")) {
 			BackendProcess.awaitReadiness(port, Duration.ofSeconds(20));
 			var request = HttpRequest
 				.newBuilder(URI.create("http://127.0.0.1:" + port + "/readyz?key=hidden-query-value"))
@@ -69,7 +70,7 @@ final class StructuredLoggingIT {
 		var port = BackendProcess.availablePort();
 		try (var backend = BackendProcess.startWithDatabase(runtimeDirectory, Map.of(), List.of(),
 				"--server.port=" + port, "--skywright.deployment.environment=local",
-				"--spring.profiles.active=local")) {
+				"--skywright.deployment.reporting-currency=EUR", "--spring.profiles.active=local")) {
 			BackendProcess.awaitReadiness(port, Duration.ofSeconds(20));
 
 			assertThat(backend.isAlive()).isTrue();
