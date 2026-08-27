@@ -8,7 +8,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Currency;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -28,9 +27,6 @@ public class PriceSourceRegistry {
 
 	private static final Pattern BINDING_KEY = Pattern
 		.compile("(?:target:[A-Za-z0-9._-]+:resource:[a-z][a-z0-9-]*|currency:[A-Z]{3}:[A-Z]{3})");
-
-	private static final Set<String> SECRET_KEYS = Set.of("secret", "password", "token", "apikey", "api-key",
-			"privatekey", "private-key", "credential", "credentials");
 
 	private final EntityManager entities;
 
@@ -83,7 +79,7 @@ public class PriceSourceRegistry {
 			.filter(revision -> revision.revision == source.candidateRevision.longValue())
 			.findFirst()
 			.orElseThrow().configurationJson);
-		List<String> capabilities = assess(source.kind, configuration);
+		List<String> capabilities = assess(source, configuration);
 		boolean successful = capabilities.stream().noneMatch(value -> value.startsWith("failed:"));
 		source.assessments.add(new PriceSourceAssessmentValue(UUID.randomUUID(), source.candidateRevision, successful,
 				String.join("\n", capabilities), started, this.clock.instant()));
@@ -189,13 +185,27 @@ public class PriceSourceRegistry {
 					.toList());
 	}
 
-	private static List<String> assess(String kind, Map<String, Object> configuration) {
+	private List<String> assess(PriceSourceEntity source, Map<String, Object> configuration) {
 		List<String> results = new ArrayList<>();
-		if ("operator-schedule".equals(kind)) {
+		if ("operator-schedule".equals(source.kind)) {
 			Object rates = configuration.get("rates");
-			results.add(rates instanceof List<?> values && !values.isEmpty()
-					&& values.stream().allMatch(PriceSourceRegistry::validRate) ? "passed:rates"
-							: "failed:rates-required");
+			List<GpuPriceScheduleEntryEntity> schedule = this.entities
+				.createQuery(
+						"select entry from GpuPriceScheduleEntryEntity entry "
+								+ "where entry.sourceId = :sourceId and entry.sourceRevision = :sourceRevision",
+						GpuPriceScheduleEntryEntity.class)
+				.setParameter("sourceId", source.id)
+				.setParameter("sourceRevision", source.candidateRevision)
+				.getResultList();
+			boolean legacyRatesValid = rates instanceof List<?> values && !values.isEmpty()
+					&& values.stream().allMatch(PriceSourceRegistry::validRate);
+			if (rates != null) {
+				results.add(legacyRatesValid ? "passed:rates" : "failed:rates-required");
+			}
+			else {
+				results.add(validSchedule(schedule, configuration) ? "passed:gpu-compute-rates"
+						: "failed:gpu-compute-rates-required");
+			}
 		}
 		else {
 			Object endpoint = configuration.get("endpoint");
@@ -207,6 +217,34 @@ public class PriceSourceRegistry {
 		results.add(capabilities instanceof List<?> values && !values.isEmpty() ? "passed:capabilities"
 				: "failed:capabilities-required");
 		return results;
+	}
+
+	private static boolean validSchedule(List<GpuPriceScheduleEntryEntity> entries, Map<String, Object> configuration) {
+		if (entries.isEmpty()) {
+			return false;
+		}
+		Set<String> currencies = declarations(configuration, "nativeCurrencies", "currencies");
+		Set<String> units = declarations(configuration, "nativeUnits", "units");
+		boolean entriesMatch = entries.stream()
+			.allMatch(entry -> (currencies.isEmpty() || currencies.contains(entry.nativeCurrency))
+					&& (units.isEmpty() || units.contains(entry.nativeUnit)));
+		boolean declarationsCovered = (currencies.isEmpty() || currencies.stream()
+			.allMatch(currency -> entries.stream().anyMatch(entry -> entry.nativeCurrency.equals(currency))))
+				&& (units.isEmpty() || units.stream()
+					.allMatch(unit -> entries.stream().anyMatch(entry -> entry.nativeUnit.equals(unit))));
+		return entriesMatch && declarationsCovered;
+	}
+
+	private static Set<String> declarations(Map<String, Object> configuration, String primaryKey, String legacyKey) {
+		Object value = configuration.containsKey(primaryKey) ? configuration.get(primaryKey)
+				: configuration.get(legacyKey);
+		if (!(value instanceof List<?> values)) {
+			return Set.of();
+		}
+		return values.stream()
+			.filter(String.class::isInstance)
+			.map(String.class::cast)
+			.collect(java.util.stream.Collectors.toUnmodifiableSet());
 	}
 
 	private static boolean validRate(Object value) {
@@ -250,43 +288,13 @@ public class PriceSourceRegistry {
 			throw new PriceSourceValidationException("PRICE_SOURCE_CONFIGURATION_INVALID",
 					"Configuration must not be empty");
 		}
-		requireNoSecrets(configuration);
+		NonSecretDocument.requireSafe(configuration);
 		try {
 			return JSON.writeValueAsString(configuration);
 		}
 		catch (JacksonException error) {
 			throw new PriceSourceValidationException("PRICE_SOURCE_CONFIGURATION_INVALID",
 					"Configuration must be valid JSON");
-		}
-	}
-
-	private static void requireNoSecrets(Object value) {
-		if (value instanceof Map<?, ?> map) {
-			for (Map.Entry<?, ?> entry : map.entrySet()) {
-				String key = String.valueOf(entry.getKey()).toLowerCase(Locale.ROOT).replace("_", "");
-				if (SECRET_KEYS.contains(key) || key.contains("secret") || key.contains("password")
-						|| key.contains("token")) {
-					throw new PriceSourceValidationException("PRICE_SOURCE_SECRET_FORBIDDEN",
-							"Configuration must contain only non-secret values");
-				}
-				requireNoSecrets(entry.getValue());
-			}
-		}
-		else if (value instanceof Iterable<?> values) {
-			values.forEach(PriceSourceRegistry::requireNoSecrets);
-		}
-		else if (value instanceof String text && text.matches("(?i)https?://.*")) {
-			try {
-				var uri = java.net.URI.create(text);
-				if (uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) {
-					throw new PriceSourceValidationException("PRICE_SOURCE_SECRET_FORBIDDEN",
-							"Configuration must contain only non-secret values");
-				}
-			}
-			catch (IllegalArgumentException error) {
-				throw new PriceSourceValidationException("PRICE_SOURCE_CONFIGURATION_INVALID",
-						"Configuration contains an invalid endpoint");
-			}
 		}
 	}
 
