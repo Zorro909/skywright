@@ -16,6 +16,13 @@ final class PriceSourceApiIT {
 			assertThat(rejectedSecret.statusCode()).isEqualTo(422);
 			assertThat(rejectedSecret.body()).contains("SKYWRIGHT_PRICE_SOURCE_SECRET_FORBIDDEN")
 				.doesNotContain("do-not-store");
+			var invalidRate = backend.post("/api/v1/price-sources", registration("invalid schedule",
+					"{\"capabilities\":[\"compute\"],\"rates\":[{\"amount\":{},\"currency\":\"ZZZ\"}]}"));
+			assertThat(invalidRate.statusCode()).as(invalidRate.body()).isEqualTo(201);
+			String invalidSourceId = jsonString(invalidRate.body(), "id");
+			var invalidAssessment = backend.post("/api/v1/price-sources/" + invalidSourceId + "/assessment", "");
+			assertThat(invalidAssessment.statusCode()).as(invalidAssessment.body()).isEqualTo(200);
+			assertThat(invalidAssessment.body()).contains("\"successful\":false", "failed:rates-required");
 
 			var created = backend.post("/api/v1/price-sources", registration("operator schedule",
 					"{\"capabilities\":[\"compute\"],\"rates\":[{\"amount\":\"2.3400\",\"currency\":\"USD\"}]}"));

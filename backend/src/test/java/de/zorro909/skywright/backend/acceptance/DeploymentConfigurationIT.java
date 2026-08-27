@@ -81,6 +81,18 @@ final class DeploymentConfigurationIT {
 	}
 
 	@Test
+	void reportingCurrencyWithoutAMinorUnitStopsStartup() throws Exception {
+		try (var backend = BackendProcess.startWithDatabase("--server.port=0",
+				"--skywright.deployment.environment=test", "--skywright.deployment.reporting-currency=XAU")) {
+			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
+
+			assertThat(exitCode).isNotZero();
+			assertThat(backend.output()).contains("reportingCurrencyMinorUnitDefined")
+				.doesNotContain("Started SkywrightBackendApplication");
+		}
+	}
+
+	@Test
 	void missingRequiredDeploymentConfigurationStopsStartupBeforeReadiness() throws Exception {
 		try (var backend = BackendProcess.startWithDatabase("--server.port=0")) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));

@@ -1,18 +1,20 @@
 package de.zorro909.skywright.backend.pricing;
 
 import jakarta.persistence.EntityManager;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Currency;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
-import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
@@ -211,8 +213,16 @@ public class PriceSourceRegistry {
 		if (!(value instanceof Map<?, ?> rate)) {
 			return false;
 		}
-		return rate.get("amount") != null && rate.get("currency") instanceof String currency
-				&& currency.matches("[A-Z]{3}");
+		try {
+			Object amount = rate.get("amount");
+			BigDecimal decimal = amount instanceof Number || amount instanceof String
+					? new BigDecimal(amount.toString()) : null;
+			return decimal != null && decimal.signum() >= 0 && rate.get("currency") instanceof String currency
+					&& Currency.getInstance(currency).getCurrencyCode().equals(currency);
+		}
+		catch (IllegalArgumentException error) {
+			return false;
+		}
 	}
 
 	private static void requireRevision(PriceSourceEntity source, long expected) {

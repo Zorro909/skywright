@@ -7,6 +7,7 @@ import java.math.BigInteger;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -77,6 +78,43 @@ class RunDefinitionResolverIT {
 		assertThat(definition.at("/costQuote/weekly/minimum").decimalValue()).isEqualByComparingTo("840.0000");
 		assertThat(definition.toString()).doesNotContain("credential", "runId", "checkpointReference", "metricCatalog",
 				"lifecycle", "orchestrator", "instanceType", "storageLocation", "datasetCopy");
+	}
+
+	@Test
+	void appliesBillingMinimumsAndQuantumRoundingForEachQuoteDuration() {
+		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
+		EligibleTarget candidate = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
+				80L * 1024 * 1024 * 1024);
+		EligibleTargetPrice price = price(new BigDecimal("3"), new BigDecimal("2"),
+				Instant.parse("2025-01-01T00:00:00Z"), null, quoteTime.minusSeconds(1));
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				new TargetEligibilityAssessment(List.of(withPrice(candidate, price)), List.of()), storage(), "EUR",
+				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC));
+
+		JsonNode quote = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null)
+			.definition()
+			.value()
+			.path("costQuote");
+
+		assertThat(quote.at("/hourly/minimum").decimalValue()).isEqualByComparingTo("10");
+		assertThat(quote.at("/daily/minimum").decimalValue()).isEqualByComparingTo("120");
+		assertThat(quote.at("/weekly/minimum").decimalValue()).isEqualByComparingTo("840");
+	}
+
+	@Test
+	void rejectsRatesOutsideOrWithInvertedEffectiveIntervals() {
+		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
+		EligibleTarget candidate = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
+				80L * 1024 * 1024 * 1024);
+		EligibleTargetPrice price = price(BigDecimal.ONE, BigDecimal.ONE, quoteTime.plusSeconds(60),
+				quoteTime.minusSeconds(60), quoteTime.minusSeconds(1));
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				new TargetEligibilityAssessment(List.of(withPrice(candidate, price)), List.of()), storage(), "EUR",
+				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC));
+
+		assertThat(resolver.resolve(submission(TargetClass.CLOUD_SPOT), null).failures())
+			.extracting(RunDefinitionFailure::code)
+			.contains("PRICE_NOT_EFFECTIVE", "PRICE_EFFECTIVE_INTERVAL_INVALID");
 	}
 
 	@Test
@@ -367,9 +405,15 @@ class RunDefinitionResolverIT {
 
 	private RunDefinitionResolver resolver(ProjectVersionRegistry registry, DatasetDefinitionAssessment dataset,
 			TargetEligibilityAssessment eligibility, RunDefinitionStorageSelection storage, String currency) {
+		return resolver(registry, dataset, eligibility, storage, currency, Clock.systemUTC());
+	}
+
+	private RunDefinitionResolver resolver(ProjectVersionRegistry registry, DatasetDefinitionAssessment dataset,
+			TargetEligibilityAssessment eligibility, RunDefinitionStorageSelection storage, String currency,
+			Clock clock) {
 		return new RunDefinitionResolver(
 				new TrainingProjectVersions(registry, this.configurationContracts, this.metricContracts),
-				ignored -> dataset, () -> eligibility, (targetClass, overrides) -> storage, () -> currency);
+				ignored -> dataset, () -> eligibility, (targetClass, overrides) -> storage, () -> currency, clock);
 	}
 
 	private RunSubmission submission(TargetClass targetClass) {
@@ -412,10 +456,22 @@ class RunDefinitionResolverIT {
 		Instant observed = Instant.now();
 		UUID source = UUID.fromString("00000000-0000-0000-0000-000000000100");
 		return new EligibleTarget(target, targetClass, acceleratorBackend, gpuModel, maximumGpuCount, gpuMemoryBytes,
-				new EligibleTargetPrice(new BigDecimal("2.5000"), "EUR", BigDecimal.ONE,
-						new BigDecimal("0.0002777777777777778"), source, 3, "operator-schedule",
-						Instant.parse("2025-01-01T00:00:00Z"), null, observed.minusSeconds(1), observed, BigDecimal.ONE,
-						source, 3, "operator-schedule", observed, Duration.ofHours(24)));
+				new EligibleTargetPrice(new BigDecimal("2.5000"), "EUR", BigDecimal.ONE, BigDecimal.ONE, source, 3,
+						"operator-schedule", Instant.parse("2025-01-01T00:00:00Z"), null, observed.minusSeconds(1),
+						observed, BigDecimal.ONE, source, 3, "operator-schedule", observed, Duration.ofHours(24)));
+	}
+
+	private static EligibleTargetPrice price(BigDecimal minimumQuantity, BigDecimal billingQuantum,
+			Instant effectiveFrom, Instant effectiveUntil, Instant observed) {
+		UUID source = UUID.fromString("00000000-0000-0000-0000-000000000100");
+		return new EligibleTargetPrice(new BigDecimal("2.5000"), "EUR", minimumQuantity, billingQuantum, source, 3,
+				"operator-schedule", effectiveFrom, effectiveUntil, observed.minusSeconds(1), observed, BigDecimal.ONE,
+				source, 3, "operator-schedule", observed, Duration.ofHours(24));
+	}
+
+	private static EligibleTarget withPrice(EligibleTarget target, EligibleTargetPrice price) {
+		return new EligibleTarget(target.target(), target.targetClass(), target.acceleratorBackend(), target.gpuModel(),
+				target.maximumGpuCount(), target.gpuMemoryBytes(), price);
 	}
 
 	private static RunDefinitionStorageSelection storage() {

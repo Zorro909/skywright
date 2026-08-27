@@ -1,5 +1,6 @@
 package de.zorro909.skywright.backend.configuration;
 
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -19,6 +20,11 @@ public record DeploymentProperties(
 
 	public int reportingCurrencyMinorUnit() {
 		return this.reportingCurrency.getDefaultFractionDigits();
+	}
+
+	@AssertTrue(message = "reporting currency must define a standard minor unit")
+	public boolean isReportingCurrencyMinorUnitDefined() {
+		return this.reportingCurrency == null || reportingCurrencyMinorUnit() >= 0;
 	}
 
 }

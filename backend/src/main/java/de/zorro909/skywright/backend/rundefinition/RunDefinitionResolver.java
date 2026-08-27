@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.rundefinition;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -263,7 +264,8 @@ public final class RunDefinitionResolver {
 		try {
 			String currency = this.reportingCurrency.reportingCurrency();
 			if (currency == null || !CURRENCY.matcher(currency).matches()
-					|| !Currency.getAvailableCurrencies().contains(Currency.getInstance(currency))) {
+					|| !Currency.getAvailableCurrencies().contains(Currency.getInstance(currency))
+					|| Currency.getInstance(currency).getDefaultFractionDigits() < 0) {
 				failures.add(failure("REPORTING_CURRENCY_INVALID", "reporting-currency", "/costCeiling/currency",
 						"pattern"));
 				return null;
@@ -298,6 +300,16 @@ public final class RunDefinitionResolver {
 					|| price.effectiveFrom() == null || price.observedFrom() == null || price.observedUntil() == null) {
 				failures.add(failure("PRICE_PROVENANCE_INVALID", "price-source", "/costQuote/candidates/source",
 						"required"));
+			}
+			if (price.effectiveFrom() != null && (price.effectiveFrom().isAfter(quoteTime)
+					|| price.effectiveUntil() != null && !quoteTime.isBefore(price.effectiveUntil()))) {
+				failures.add(failure("PRICE_NOT_EFFECTIVE", "price-source", "/costQuote/candidates/effectiveInterval",
+						"contains"));
+			}
+			if (price.effectiveFrom() != null && price.effectiveUntil() != null
+					&& !price.effectiveFrom().isBefore(price.effectiveUntil())) {
+				failures.add(failure("PRICE_EFFECTIVE_INTERVAL_INVALID", "price-source",
+						"/costQuote/candidates/effectiveInterval", "interval"));
 			}
 			if (price.conversionRate() == null || price.conversionRate().signum() <= 0
 					|| price.conversionSourceId() == null || price.conversionSourceRevision() < 1
@@ -381,12 +393,16 @@ public final class RunDefinitionResolver {
 			.put("minorUnit", Currency.getInstance(currency).getDefaultFractionDigits());
 		var candidates = result.putArray("candidates");
 		List<BigDecimal> hourlyRates = new ArrayList<>();
+		List<BigDecimal> dailyRates = new ArrayList<>();
+		List<BigDecimal> weeklyRates = new ArrayList<>();
 		for (EligibleTarget eligible : target.candidates()) {
 			EligibleTargetPrice price = eligible.price();
-			BigDecimal hourly = price.nativeHourlyRate()
-				.multiply(price.conversionRate())
-				.multiply(BigDecimal.valueOf(target.request().gpuCount()));
+			BigDecimal hourly = quotedCost(price, target.request().gpuCount(), 1);
+			BigDecimal daily = quotedCost(price, target.request().gpuCount(), 24);
+			BigDecimal weekly = quotedCost(price, target.request().gpuCount(), 168);
 			hourlyRates.add(hourly);
+			dailyRates.add(daily);
+			weeklyRates.add(weekly);
 			ObjectNode candidate = candidates.addObject()
 				.put("target", eligible.target())
 				.put("gpuModel", eligible.gpuModel())
@@ -410,14 +426,26 @@ public final class RunDefinitionResolver {
 			provenance(conversion.putObject("source"), price.conversionSourceId(), price.conversionSourceRevision(),
 					price.conversionSourceKind());
 		}
-		BigDecimal minimum = hourlyRates.stream().min(BigDecimal::compareTo).orElseThrow();
-		BigDecimal maximum = hourlyRates.stream().max(BigDecimal::compareTo).orElseThrow();
-		range(result.putObject("hourly"), minimum, maximum);
-		range(result.putObject("daily"), minimum.multiply(BigDecimal.valueOf(24)),
-				maximum.multiply(BigDecimal.valueOf(24)));
-		range(result.putObject("weekly"), minimum.multiply(BigDecimal.valueOf(168)),
-				maximum.multiply(BigDecimal.valueOf(168)));
+		range(result.putObject("hourly"), minimum(hourlyRates), maximum(hourlyRates));
+		range(result.putObject("daily"), minimum(dailyRates), maximum(dailyRates));
+		range(result.putObject("weekly"), minimum(weeklyRates), maximum(weeklyRates));
 		return result;
+	}
+
+	private static BigDecimal quotedCost(EligibleTargetPrice price, int gpuCount, int hours) {
+		BigDecimal requestedQuantity = BigDecimal.valueOf(gpuCount).multiply(BigDecimal.valueOf(hours));
+		BigDecimal minimumQuantity = requestedQuantity.max(price.minimumQuantity());
+		BigDecimal billableQuantity = minimumQuantity.divide(price.billingQuantum(), 0, RoundingMode.CEILING)
+			.multiply(price.billingQuantum());
+		return price.nativeHourlyRate().multiply(billableQuantity).multiply(price.conversionRate());
+	}
+
+	private static BigDecimal minimum(List<BigDecimal> values) {
+		return values.stream().min(BigDecimal::compareTo).orElseThrow();
+	}
+
+	private static BigDecimal maximum(List<BigDecimal> values) {
+		return values.stream().max(BigDecimal::compareTo).orElseThrow();
 	}
 
 	private static void provenance(ObjectNode result, java.util.UUID id, long revision, String kind) {
