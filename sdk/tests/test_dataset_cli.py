@@ -721,6 +721,91 @@ def test_command_reports_and_explicitly_resumes_one_publication(
     upload.assert_called_once()
 
 
+def test_command_renews_a_stale_decision_under_the_same_publication(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus)
+    inspected = inspect_mds_corpus(corpus)
+    publication_id = "00000000-0000-0000-0000-000000000010"
+    dataset_id = "00000000-0000-0000-0000-000000000020"
+    storage_id = "00000000-0000-0000-0000-000000000001"
+    stale = {
+        "publicationId": publication_id,
+        "state": "failed",
+        "failureCode": "DATASET_REVISION_STALE",
+        "datasetId": dataset_id,
+        "definitionId": "00000000-0000-0000-0000-000000000030",
+        "copyId": "00000000-0000-0000-0000-000000000040",
+        "targetStorageId": storage_id,
+        "expectedDatasetRevision": 1,
+        "preferredDefinitionDecision": "advance",
+        "versionLabel": "v2",
+        "formatIdentity": inspected.format_identity,
+        "manifestIdentity": inspected.manifest_identity,
+        "contentFingerprint": inspected.content_fingerprint,
+        "objectCount": inspected.object_count,
+        "byteCount": inspected.byte_count,
+        "payloadLocation": "datasets/payload",
+        "operationLocation": "operations/publication",
+    }
+    calls: list[tuple[str, str, object]] = []
+
+    def request(_base: str, method: str, path: str, body: object) -> object:
+        calls.append((method, path, body))
+        if path.endswith("/resume"):
+            raise DatasetPublicationError(
+                "DATASET_PUBLICATION_CONFLICT", "The decision changed"
+            )
+        if method == "GET" and path.endswith(publication_id):
+            return stale if len(calls) == 2 else {**stale, "state": "committed"}
+        if path.endswith("/preferred-definition-decision"):
+            return {
+                **stale,
+                "state": "verifying",
+                "failureCode": None,
+                "expectedDatasetRevision": 2,
+                "preferredDefinitionDecision": "keep",
+            }
+        raise AssertionError((method, path))
+
+    stdout = StringIO()
+    with (
+        patch("skywright._dataset_cli._request", side_effect=request),
+        patch("skywright._dataset_cli.time.sleep"),
+        patch("skywright._dataset_cli._upload") as upload,
+        redirect_stdout(stdout),
+    ):
+        status = main(
+            [
+                "publish",
+                str(corpus),
+                "--control-plane",
+                "http://control-plane",
+                "--target-storage",
+                storage_id,
+                "--dataset",
+                dataset_id,
+                "--expected-dataset-revision",
+                "2",
+                "--keep-preferred",
+                "--version-label",
+                "v2",
+                "--resume",
+                publication_id,
+            ]
+        )
+
+    assert status == 0
+    assert json.loads(stdout.getvalue())["publicationId"] == publication_id
+    assert calls[2] == (
+        "POST",
+        f"/api/v1/dataset-publications/{publication_id}/preferred-definition-decision",
+        {"expectedDatasetRevision": 2, "preferredDefinitionDecision": "keep"},
+    )
+    upload.assert_not_called()
+
+
 def test_publish_fences_transfer_when_abort_becomes_visible(tmp_path: Path) -> None:
     corpus = tmp_path / "corpus"
     write_corpus(corpus)
@@ -785,7 +870,7 @@ def test_publish_fences_transfer_when_abort_becomes_visible(tmp_path: Path) -> N
             ]
         )
 
-    assert status == 1
+    assert status == 3
     assert json.loads(stderr.getvalue().splitlines()[-1])["errorCode"] == (
         "SKYWRIGHT_DATASET_PUBLICATION_ABORTED"
     )
@@ -1015,7 +1100,7 @@ def test_command_rejects_an_existing_object_without_validated_sha256(
             ]
         )
 
-    assert status == 1
+    assert status == 3
     assert json.loads(stderr.getvalue().splitlines()[-1])["errorCode"] == (
         "SKYWRIGHT_DATASET_UPLOAD_CONFLICT"
     )
@@ -1445,7 +1530,7 @@ def test_command_rejects_every_source_change_after_scan(
             ]
         )
 
-    assert status == 1
+    assert status == 2
     assert json.loads(stderr.getvalue().splitlines()[-1])["errorCode"] == (
         "SKYWRIGHT_DATASET_SOURCE_MUTATED"
     )
@@ -1477,7 +1562,7 @@ def test_command_reports_malformed_success_response_as_one_problem_line(
             ]
         )
 
-    assert status == 1
+    assert status == 69
     assert stdout.getvalue() == ""
     assert stderr.getvalue().count("\n") == 1
     assert "Traceback" not in stderr.getvalue()

@@ -80,6 +80,10 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 	DatasetPublicationView resume(UUID publicationId, DatasetPublicationRequest request) {
 		validate(request);
 		DatasetPublicationEntity operation = this.publication(publicationId);
+		if (!DatasetPublicationStatePolicy.canResume(operation.state)) {
+			throw new DatasetPublicationException("DATASET_PUBLICATION_CONFLICT",
+					"The Dataset Publication cannot be resumed in its current state", false);
+		}
 		UUID requestedDatasetId = operation.expectedDatasetRevision == null ? null : operation.datasetId;
 		if (!java.util.Objects.equals(requestedDatasetId, request.datasetId())
 				|| !java.util.Objects.equals(operation.expectedDatasetRevision, request.expectedDatasetRevision())
@@ -93,6 +97,39 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 			throw new DatasetPublicationException("DATASET_PUBLICATION_CONFLICT",
 					"The resumed Dataset Publication changes immutable facts", false);
 		}
+		return operation.view();
+	}
+
+	@Transactional
+	DatasetPublicationView renewPreferredDefinitionDecision(UUID publicationId, long expectedDatasetRevision,
+			PreferredDefinitionDecision decision) {
+		DatasetPublicationEntity operation = this.publicationForUpdate(publicationId);
+		if (!DatasetPublicationStatePolicy.canRenewPreferredDefinitionDecision(operation)) {
+			throw new DatasetPublicationException("DATASET_PUBLICATION_DECISION_CONFLICT",
+					"The Dataset Publication has no stale preferred-definition decision", false);
+		}
+		DatasetLineageEntity lineage = this.entityManager.find(DatasetLineageEntity.class, operation.datasetId,
+				LockModeType.PESSIMISTIC_WRITE);
+		if (lineage == null) {
+			throw new DatasetPublicationException("DATASET_NOT_FOUND", "The requested Dataset does not exist", false);
+		}
+		if (lineage.revision != expectedDatasetRevision) {
+			throw new DatasetPublicationException("DATASET_REVISION_STALE",
+					"The Dataset revision changed after the renewed preferred-definition decision", false);
+		}
+		operation.expectedDatasetRevision = expectedDatasetRevision;
+		operation.preferredDefinitionDecision = decision;
+		operation.preferredDefinitionId = lineage.preferredDefinitionId;
+		operation.preferredDefinitionChanged = false;
+		operation.state = DatasetPublicationState.VERIFYING;
+		operation.failureCode = null;
+		operation.failureDetail = null;
+		operation.unavailableSource = null;
+		operation.retryable = false;
+		operation.completedAt = null;
+		operation.verificationWorkerPid = 0;
+		operation.updatedAt = this.clock.instant();
+		this.events.publishEvent(new DatasetPublicationVerificationRequested(publicationId));
 		return operation.view();
 	}
 
@@ -199,14 +236,10 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 	@Transactional
 	DatasetPublicationView abort(UUID publicationId) {
 		DatasetPublicationEntity operation = this.publicationForUpdate(publicationId);
-		if (operation.state == DatasetPublicationState.ABORTED || operation.state == DatasetPublicationState.ABORTING) {
+		if (DatasetPublicationStatePolicy.abortAlreadyAccepted(operation.state)) {
 			return operation.view();
 		}
-		if (operation.state == DatasetPublicationState.COMMITTING
-				|| operation.state == DatasetPublicationState.PUBLISHED_CLEANUP_PENDING
-				|| operation.state == DatasetPublicationState.COMMITTED
-				|| operation.state == DatasetPublicationState.FAILED_CLEANUP
-						&& operation.preferredDefinitionId != null) {
+		if (DatasetPublicationStatePolicy.crossedCommitBoundary(operation)) {
 			throw new DatasetPublicationException("DATASET_PUBLICATION_COMMIT_STARTED",
 					"The Dataset Publication crossed its catalog commit boundary", false);
 		}
@@ -279,38 +312,36 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 	@Transactional(readOnly = true)
 	public DatasetPublicationView verificationInput(UUID publicationId) {
 		DatasetPublicationEntity operation = this.publication(publicationId);
-		return operation.state == DatasetPublicationState.VERIFYING ? operation.view() : null;
+		return DatasetPublicationStatePolicy.needsVerificationReconciliation(operation.state) ? operation.view() : null;
 	}
 
 	@Transactional(readOnly = true)
 	public List<UUID> pendingVerifications() {
 		return this.entityManager
-			.createQuery("select publicationId from DatasetPublicationEntity where state = :state", UUID.class)
-			.setParameter("state", DatasetPublicationState.VERIFYING)
+			.createQuery("select publicationId from DatasetPublicationEntity where state in :states", UUID.class)
+			.setParameter("states", DatasetPublicationStatePolicy.verificationReconciliationStates())
 			.getResultList();
 	}
 
 	@Transactional
 	public DatasetPublicationView cleanupInput(UUID publicationId) {
 		DatasetPublicationEntity operation = this.publicationForUpdate(publicationId);
-		return !transferActive(operation, this.clock.instant()) && (operation.state == DatasetPublicationState.ABORTING
-				|| operation.state == DatasetPublicationState.PUBLISHED_CLEANUP_PENDING) ? operation.view() : null;
+		return !transferActive(operation, this.clock.instant())
+				&& DatasetPublicationStatePolicy.needsCleanupReconciliation(operation.state) ? operation.view() : null;
 	}
 
 	@Transactional(readOnly = true)
 	public List<UUID> pendingCleanups() {
 		return this.entityManager
 			.createQuery("select publicationId from DatasetPublicationEntity where state in :states", UUID.class)
-			.setParameter("states",
-					List.of(DatasetPublicationState.ABORTING, DatasetPublicationState.PUBLISHED_CLEANUP_PENDING))
+			.setParameter("states", DatasetPublicationStatePolicy.cleanupReconciliationStates())
 			.getResultList();
 	}
 
 	@Transactional(readOnly = true)
 	public boolean cleanupDeferred(UUID publicationId) {
 		DatasetPublicationEntity operation = this.publication(publicationId);
-		return (operation.state == DatasetPublicationState.ABORTING
-				|| operation.state == DatasetPublicationState.PUBLISHED_CLEANUP_PENDING)
+		return DatasetPublicationStatePolicy.needsCleanupReconciliation(operation.state)
 				&& operation.activeTransferId != null && operation.activeTransferExpiresAt != null
 				&& operation.activeTransferExpiresAt.isAfter(this.clock.instant());
 	}
@@ -318,7 +349,7 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 	@Transactional
 	public void commit(UUID publicationId, DatasetPublicationWorkerResult verified) {
 		DatasetPublicationEntity operation = this.publicationForUpdate(publicationId);
-		if (operation.state != DatasetPublicationState.VERIFYING) {
+		if (!DatasetPublicationStatePolicy.canCommit(operation.state)) {
 			return;
 		}
 		operation.state = DatasetPublicationState.COMMITTING;
@@ -414,8 +445,8 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 
 	@Transactional
 	public void fail(UUID publicationId, DatasetPublicationWorkerResult failure) {
-		DatasetPublicationEntity operation = this.publication(publicationId);
-		if (operation.state != DatasetPublicationState.VERIFYING) {
+		DatasetPublicationEntity operation = this.publicationForUpdate(publicationId);
+		if (!DatasetPublicationStatePolicy.canCommit(operation.state)) {
 			return;
 		}
 		operation.state = DatasetPublicationState.FAILED;
@@ -424,6 +455,11 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 		operation.unavailableSource = unavailableSource(failure);
 		operation.retryable = failure.retryable();
 		operation.verificationWorkerPid = failure.workerPid();
+		if ("DATASET_REVISION_STALE".equals(failure.failureCode())) {
+			DatasetLineageEntity lineage = this.entityManager.find(DatasetLineageEntity.class, operation.datasetId);
+			operation.preferredDefinitionId = lineage == null ? null : lineage.preferredDefinitionId;
+			operation.preferredDefinitionChanged = false;
+		}
 		operation.completedAt = this.clock.instant();
 		operation.updatedAt = operation.completedAt;
 	}

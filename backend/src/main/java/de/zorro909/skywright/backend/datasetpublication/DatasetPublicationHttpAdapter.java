@@ -3,6 +3,7 @@ package de.zorro909.skywright.backend.datasetpublication;
 import de.zorro909.skywright.backend.boundary.generated.api.DatasetPublicationsApi;
 import de.zorro909.skywright.backend.boundary.generated.api.DatasetsApi;
 import de.zorro909.skywright.backend.boundary.generated.model.InitiateDatasetPublication;
+import de.zorro909.skywright.backend.boundary.generated.model.RenewDatasetPreferredDefinitionDecision;
 import java.time.ZoneOffset;
 import java.util.Locale;
 import java.util.UUID;
@@ -29,6 +30,15 @@ public class DatasetPublicationHttpAdapter implements DatasetPublicationsApi, Da
 	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> resumeDatasetPublication(
 			UUID publicationId, InitiateDatasetPublication request) {
 		return ResponseEntity.ok(publication(this.publications.resume(publicationId, request(request))));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.DatasetPublication> renewDatasetPublicationPreferredDefinitionDecision(
+			UUID publicationId, RenewDatasetPreferredDefinitionDecision request) {
+		var decision = PreferredDefinitionDecision.valueOf(request.getPreferredDefinitionDecision().name());
+		return ResponseEntity.accepted()
+			.body(publication(this.publications.renewPreferredDefinitionDecision(publicationId,
+					request.getExpectedDatasetRevision(), decision)));
 	}
 
 	@Override

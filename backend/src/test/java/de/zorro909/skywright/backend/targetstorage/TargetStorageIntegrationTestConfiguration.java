@@ -1,5 +1,6 @@
 package de.zorro909.skywright.backend.targetstorage;
 
+import de.zorro909.skywright.backend.acceptance.SeaweedFsFixture;
 import java.util.Optional;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,7 +14,7 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 public class TargetStorageIntegrationTestConfiguration {
 
 	private static final StaticCredentialsProvider CREDENTIALS = StaticCredentialsProvider
-		.create(AwsBasicCredentials.create("test-key", "test-secret"));
+		.create(AwsBasicCredentials.create(SeaweedFsFixture.WORKER_ACCESS_KEY, SeaweedFsFixture.WORKER_SECRET_KEY));
 
 	@Bean
 	TargetStorageCredentialAccess integrationTargetStorageCredentialAccess() {

@@ -13,16 +13,22 @@ databaseChangeLog:
               - column: { name: failure_detail, type: varchar(255) }
               - column: { name: unavailable_source, type: varchar(128) }
               - column: { name: updated_at, type: timestamp with time zone, defaultValueComputed: CURRENT_TIMESTAMP, constraints: { nullable: false } }
-        - sql:
-            comment: A blank label cannot pass request validation, so publications created before resume facts were recorded fail closed.
-            sql: UPDATE dataset_publication SET requested_version_label = '' WHERE requested_version_label IS NULL
       rollback:
-        - sql:
-            comment: Preserve the application schema for earlier raw-SQL rollbacks.
-            sql: SET search_path TO skywright
         - dropColumn: { tableName: dataset_publication, columnName: updated_at }
         - dropColumn: { tableName: dataset_publication, columnName: unavailable_source }
         - dropColumn: { tableName: dataset_publication, columnName: failure_detail }
         - dropColumn: { tableName: dataset_publication, columnName: uploaded_byte_count }
         - dropColumn: { tableName: dataset_publication, columnName: uploaded_object_count }
         - dropColumn: { tableName: dataset_publication, columnName: requested_version_label }
+  - changeSet:
+      id: issue-167-resumable-dataset-publication-backfill
+      author: skywright
+      logicalFilePath: db/changelog/versions/0006-resumable-dataset-publication.yaml
+      changes:
+        - sql:
+            comment: A blank label cannot pass request validation, so publications created before resume facts were recorded fail closed.
+            sql: UPDATE dataset_publication SET requested_version_label = '' WHERE requested_version_label IS NULL
+      rollback:
+        - sql:
+            comment: Restore the application schema before earlier raw-SQL rollbacks run.
+            sql: SET search_path TO skywright

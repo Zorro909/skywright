@@ -30,6 +30,8 @@ final class DatasetPublicationWorkerDispatcher {
 
 	private final Set<UUID> dispatchedVerifications = ConcurrentHashMap.newKeySet();
 
+	private final Set<UUID> requestedVerificationRedrives = ConcurrentHashMap.newKeySet();
+
 	private final Set<UUID> dispatchedCleanups = ConcurrentHashMap.newKeySet();
 
 	private final Set<UUID> requestedCleanupRedrives = ConcurrentHashMap.newKeySet();
@@ -63,10 +65,12 @@ final class DatasetPublicationWorkerDispatcher {
 			.forEach(publicationId -> this.recovery.whenRecovered(publicationId, () -> dispatchCleanup(publicationId)));
 	}
 
-	private void dispatchVerification(UUID publicationId) {
-		if (this.dispatchedVerifications.add(publicationId)) {
-			this.executor.submit(() -> verify(publicationId, 0));
+	private synchronized void dispatchVerification(UUID publicationId) {
+		if (!this.dispatchedVerifications.add(publicationId)) {
+			this.requestedVerificationRedrives.add(publicationId);
+			return;
 		}
+		this.executor.submit(() -> verify(publicationId, 0));
 	}
 
 	private synchronized void dispatchCleanup(UUID publicationId) {
@@ -112,8 +116,15 @@ final class DatasetPublicationWorkerDispatcher {
 		}
 		finally {
 			if (!retryScheduled) {
-				this.dispatchedVerifications.remove(publicationId);
+				finishVerification(publicationId);
 			}
+		}
+	}
+
+	private synchronized void finishVerification(UUID publicationId) {
+		this.dispatchedVerifications.remove(publicationId);
+		if (this.requestedVerificationRedrives.remove(publicationId) && !this.closing.get()) {
+			dispatchVerification(publicationId);
 		}
 	}
 

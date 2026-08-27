@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import cast
 
 from skywright._dataset_errors import DatasetPublicationError
+from skywright._dataset_errors import exit_code as _exit_code
+from skywright._dataset_errors import problem as _problem
+from skywright._dataset_errors import protocol_error as _protocol_error
 from skywright._dataset_publication import inspect_mds_corpus
 from skywright._dataset_transfer import TransferLease
 from skywright._dataset_upload import upload as _upload
@@ -82,7 +85,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "The local Dataset corpus could not be read",
         )
         print(_json(_problem(error)), file=sys.stderr)
-        return 1
+        return _exit_code(error)
     return 64
 
 
@@ -167,12 +170,42 @@ def _publish(
             requested,
         )
     else:
-        publication = _request(
-            control_plane,
-            "POST",
-            f"/api/v1/dataset-publications/{resume_publication_id}/resume",
-            requested,
-        )
+        try:
+            publication = _request(
+                control_plane,
+                "POST",
+                f"/api/v1/dataset-publications/{resume_publication_id}/resume",
+                requested,
+            )
+        except DatasetPublicationError as error:
+            if error.code != "DATASET_PUBLICATION_CONFLICT":
+                raise
+            inspected = _request(
+                control_plane,
+                "GET",
+                f"/api/v1/dataset-publications/{resume_publication_id}",
+                None,
+            )
+            if not isinstance(inspected, dict):
+                raise _protocol_error() from error
+            inspected = cast(dict[str, object], inspected)
+            if not (
+                inspected.get("state") == "failed"
+                and inspected.get("failureCode") == "DATASET_REVISION_STALE"
+            ):
+                raise
+            _validate_immutable_publication_identity(
+                inspected, requested, resume_publication_id
+            )
+            publication = _request(
+                control_plane,
+                "POST",
+                f"/api/v1/dataset-publications/{resume_publication_id}/preferred-definition-decision",
+                {
+                    "expectedDatasetRevision": expected_dataset_revision,
+                    "preferredDefinitionDecision": preferred_definition_decision,
+                },
+            )
     if not isinstance(publication, dict):
         raise _protocol_error()
     publication = cast(dict[str, object], publication)
@@ -375,6 +408,38 @@ def _validate_publication_identity(
         )
 
 
+def _validate_immutable_publication_identity(
+    publication: dict[str, object],
+    requested: dict[str, object],
+    publication_id: str,
+) -> None:
+    if publication.get("publicationId") != publication_id:
+        raise _protocol_error()
+    for field in (
+        "targetStorageId",
+        "datasetId",
+        "formatIdentity",
+        "manifestIdentity",
+        "contentFingerprint",
+        "objectCount",
+        "byteCount",
+    ):
+        if publication.get(field) != requested.get(field):
+            raise DatasetPublicationError(
+                "DATASET_PUBLICATION_CONFLICT",
+                "The Dataset Publication does not match the requested immutable facts",
+            )
+    requested_label = requested["versionLabel"]
+    if (
+        requested_label is not None
+        and publication.get("versionLabel") != requested_label
+    ):
+        raise DatasetPublicationError(
+            "DATASET_PUBLICATION_CONFLICT",
+            "The Dataset Publication does not match the requested immutable facts",
+        )
+
+
 def _request(base: str, method: str, path: str, body: object | None) -> object:
     url = base.rstrip("/") + path
     data = None if body is None else _json(body).encode()
@@ -419,42 +484,6 @@ def _request(base: str, method: str, path: str, body: object | None) -> object:
             "CONTROL_PLANE_ADDRESS_INVALID",
             "The control-plane address is invalid",
         ) from error
-
-
-def _problem(error: DatasetPublicationError) -> dict[str, object]:
-    return {
-        "type": "about:blank",
-        "title": "Dataset publication failed",
-        "status": 503 if error.retryable else 422,
-        "detail": error.detail,
-        "instance": "skywright-datasets:publish",
-        "errorCode": f"SKYWRIGHT_{error.code}",
-        "correlationId": "local",
-        "fieldViolations": [],
-        "unavailableSource": None,
-        "retryable": error.retryable,
-    }
-
-
-def _protocol_error() -> DatasetPublicationError:
-    return DatasetPublicationError(
-        "CONTROL_PLANE_PROTOCOL_FAILURE",
-        "The control plane returned an invalid Dataset Publication response",
-    )
-
-
-def _exit_code(error: DatasetPublicationError) -> int:
-    if (
-        error.code.startswith("DATASET_CORPUS_")
-        or error.code.startswith("DATASET_MDS_")
-        or error.code == "DATASET_STREAMING_FORMAT_UNSUPPORTED"
-        or error.code == "DATASET_PREFERRED_DEFINITION_DECISION_REQUIRED"
-        or error.code.endswith("_INVALID")
-    ):
-        return 2
-    if error.retryable:
-        return 75
-    return 1
 
 
 def _json(value: object) -> str:
