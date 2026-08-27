@@ -107,6 +107,76 @@ paths:
               schema: { $ref: '#/components/schemas/PriceSource' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /price-sources/{sourceId}/gpu-price-schedule-entries:
+    parameters:
+      - { name: sourceId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      operationId: listGpuPriceScheduleEntries
+      summary: List the operator-maintained GPU-compute schedule for a Price Source.
+      responses:
+        '200':
+          description: Schedule entries ordered by source revision, offering, and effective start.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/GpuPriceScheduleEntry' } }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: createGpuPriceScheduleEntry
+      summary: Add an effective-dated GPU-compute rate to an operator-maintained Price Source.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateGpuPriceScheduleEntry' }
+      responses:
+        '201':
+          description: Schedule entry created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GpuPriceScheduleEntry' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /price-sources/{sourceId}/gpu-price-schedule-entries/{entryId}:
+    parameters:
+      - { name: sourceId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+      - { name: entryId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      operationId: getGpuPriceScheduleEntry
+      summary: Read one operator-maintained GPU-compute schedule entry.
+      responses:
+        '200':
+          description: Current schedule entry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GpuPriceScheduleEntry' }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      operationId: updateGpuPriceScheduleEntry
+      summary: Replace a schedule entry using its expected revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateGpuPriceScheduleEntry' }
+      responses:
+        '200':
+          description: Schedule entry replaced.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GpuPriceScheduleEntry' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: deleteGpuPriceScheduleEntry
+      summary: Remove a schedule entry using its expected revision.
+      parameters:
+        - { name: expectedRevision, in: query, required: true, schema: { type: integer, format: int64, minimum: 1 } }
+      responses:
+        '204': { description: Schedule entry removed. }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /price-source-bindings/{bindingKey}:
     parameters:
       - { name: bindingKey, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 255 } }
@@ -1158,6 +1228,66 @@ components:
         observedAt: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
         effectiveFrom: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
         effectiveUntil: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
+    CreateGpuPriceScheduleEntry:
+      type: object
+      additionalProperties: false
+      required: [sourceRevision, offeringId, nativeCurrency, nativeUnit, value, minimumQuantity, billingQuantum, provenance, observedAt, effectiveFrom, effectiveUntil]
+      properties:
+        sourceRevision: { type: integer, format: int64, minimum: 1 }
+        offeringId: { $ref: '#/components/schemas/SkywrightId' }
+        nativeCurrency: { type: string, pattern: '^[A-Z]{3}$' }
+        nativeUnit: { type: string, enum: [instance-hour] }
+        value: { type: number, minimum: 0 }
+        minimumQuantity: { type: number, exclusiveMinimum: 0 }
+        billingQuantum: { type: number, exclusiveMinimum: 0 }
+        provenance:
+          type: object
+          description: Non-sensitive facts identifying where the operator obtained the rate.
+          additionalProperties: true
+        observedAt: { type: string, format: date-time, description: A UTC RFC 3339 instant. }
+        effectiveFrom: { type: string, format: date-time, description: The inclusive UTC interval start. }
+        effectiveUntil: { type: string, format: date-time, description: The exclusive UTC interval end. }
+    UpdateGpuPriceScheduleEntry:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, sourceRevision, offeringId, nativeCurrency, nativeUnit, value, minimumQuantity, billingQuantum, provenance, observedAt, effectiveFrom, effectiveUntil]
+      properties:
+        expectedRevision: { type: integer, format: int64, minimum: 1 }
+        sourceRevision: { type: integer, format: int64, minimum: 1 }
+        offeringId: { $ref: '#/components/schemas/SkywrightId' }
+        nativeCurrency: { type: string, pattern: '^[A-Z]{3}$' }
+        nativeUnit: { type: string, enum: [instance-hour] }
+        value: { type: number, minimum: 0 }
+        minimumQuantity: { type: number, exclusiveMinimum: 0 }
+        billingQuantum: { type: number, exclusiveMinimum: 0 }
+        provenance:
+          type: object
+          description: Non-sensitive facts identifying where the operator obtained the rate.
+          additionalProperties: true
+        observedAt: { type: string, format: date-time, description: A UTC RFC 3339 instant. }
+        effectiveFrom: { type: string, format: date-time, description: The inclusive UTC interval start. }
+        effectiveUntil: { type: string, format: date-time, description: The exclusive UTC interval end. }
+    GpuPriceScheduleEntry:
+      type: object
+      additionalProperties: false
+      required: [id, revision, sourceRevision, offeringId, nativeCurrency, nativeUnit, value, minimumQuantity, billingQuantum, provenance, observedAt, effectiveFrom, effectiveUntil]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        revision: { type: integer, format: int64, minimum: 1 }
+        sourceRevision: { type: integer, format: int64, minimum: 1 }
+        offeringId: { $ref: '#/components/schemas/SkywrightId' }
+        nativeCurrency: { type: string, pattern: '^[A-Z]{3}$' }
+        nativeUnit: { type: string, enum: [instance-hour] }
+        value: { type: number, minimum: 0 }
+        minimumQuantity: { type: number, exclusiveMinimum: 0 }
+        billingQuantum: { type: number, exclusiveMinimum: 0 }
+        provenance:
+          type: object
+          description: Non-sensitive facts identifying where the operator obtained the rate.
+          additionalProperties: true
+        observedAt: { type: string, format: date-time, description: A UTC RFC 3339 instant. }
+        effectiveFrom: { type: string, format: date-time, description: The inclusive UTC interval start. }
+        effectiveUntil: { type: string, format: date-time, description: The exclusive UTC interval end. }
     DatasetPublicationState:
       type: string
       enum: [awaiting-upload, uploading, verifying, committing, aborting, aborted, published-cleanup-pending, committed, failed, failed-cleanup]

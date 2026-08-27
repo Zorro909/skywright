@@ -28,6 +28,7 @@ class CurrencyConversionSchedule {
 		CurrencyConversionValue valid = validate(value);
 		this.entities.persist(new CurrencyConversionEntity(UUID.randomUUID(), sourceId, valid));
 		source.conversionScheduleRevision++;
+		invalidateCandidateAssessment(source);
 		flush();
 		return view(source);
 	}
@@ -40,6 +41,7 @@ class CurrencyConversionSchedule {
 		CurrencyConversionEntity conversion = conversion(sourceId, conversionId);
 		conversion.replace(validate(value));
 		source.conversionScheduleRevision++;
+		invalidateCandidateAssessment(source);
 		flush();
 		return view(source);
 	}
@@ -50,6 +52,7 @@ class CurrencyConversionSchedule {
 		requireRevision(source, expectedScheduleRevision);
 		this.entities.remove(conversion(sourceId, conversionId));
 		source.conversionScheduleRevision++;
+		invalidateCandidateAssessment(source);
 		flush();
 		return view(source);
 	}
@@ -153,6 +156,13 @@ class CurrencyConversionSchedule {
 		if (source.conversionScheduleRevision != expected) {
 			throw new PriceSourceConflictException("CURRENCY_CONVERSION_SCHEDULE_REVISION_CONFLICT",
 					"The currency conversion schedule changed; reload it and retry");
+		}
+	}
+
+	private static void invalidateCandidateAssessment(PriceSourceEntity source) {
+		if (source.candidateRevision != null) {
+			source.scheduleRevision++;
+			source.assessedScheduleRevision = null;
 		}
 	}
 

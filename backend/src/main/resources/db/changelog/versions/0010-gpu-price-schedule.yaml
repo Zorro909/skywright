@@ -1,0 +1,50 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-176-gpu-price-schedule-table
+      author: skywright
+      logicalFilePath: db/changelog/versions/0010-gpu-price-schedule.yaml
+      changes:
+        - addColumn:
+            tableName: price_source
+            columns:
+              - column: { name: schedule_revision, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: assessed_schedule_revision, type: bigint }
+        - createTable:
+            tableName: gpu_price_schedule_entry
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: price_source_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: source_revision, type: bigint, constraints: { nullable: false, checkConstraint: source_revision > 0 } }
+              - column: { name: eligible_gpu_offering_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: native_currency, type: varchar(3), constraints: { nullable: false } }
+              - column: { name: native_unit, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: exact_value, type: numeric, constraints: { nullable: false, checkConstraint: exact_value >= 0 } }
+              - column: { name: minimum_quantity, type: numeric, constraints: { nullable: false, checkConstraint: minimum_quantity > 0 } }
+              - column: { name: billing_quantum, type: numeric, constraints: { nullable: false, checkConstraint: billing_quantum > 0 } }
+              - column: { name: provenance_json, type: varchar(100000), constraints: { nullable: false } }
+              - column: { name: observed_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: effective_from, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: effective_until, type: timestamp with time zone, constraints: { nullable: false, checkConstraint: effective_from < effective_until } }
+              - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+        - addForeignKeyConstraint: { baseTableName: gpu_price_schedule_entry, baseColumnNames: price_source_id, referencedTableName: price_source, referencedColumnNames: id, constraintName: fk_gpu_price_schedule_source, onDelete: CASCADE }
+        - addForeignKeyConstraint: { baseTableName: gpu_price_schedule_entry, baseColumnNames: eligible_gpu_offering_id, referencedTableName: eligible_gpu_offering, referencedColumnNames: id, constraintName: fk_gpu_price_schedule_offering }
+        - sql:
+            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON skywright.gpu_price_schedule_entry TO "${runtimeRole}"
+      rollback:
+        - sql:
+            sql: REVOKE ALL PRIVILEGES ON skywright.gpu_price_schedule_entry FROM "${runtimeRole}"
+        - dropTable: { schemaName: skywright, tableName: gpu_price_schedule_entry }
+        - dropColumn: { schemaName: skywright, tableName: price_source, columnName: assessed_schedule_revision }
+        - dropColumn: { schemaName: skywright, tableName: price_source, columnName: schedule_revision }
+  - changeSet:
+      id: issue-176-gpu-price-schedule-overlap-constraint
+      author: skywright
+      logicalFilePath: db/changelog/versions/0010-gpu-price-schedule.yaml
+      changes:
+        - sqlFile:
+            path: db/changelog/versions/sql/0010-gpu-price-schedule-overlap.sql
+            splitStatements: false
+      rollback:
+        - sqlFile:
+            path: db/changelog/versions/undo/0010-gpu-price-schedule-overlap.sql
