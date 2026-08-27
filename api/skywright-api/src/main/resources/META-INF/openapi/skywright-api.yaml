@@ -1110,7 +1110,7 @@ components:
         sourceId: { $ref: '#/components/schemas/SkywrightId' }
         sourceRevision: { type: integer, format: int64, minimum: 1 }
         maximumObservationAge: { $ref: '#/components/schemas/Duration' }
-    GpuPriceScheduleEntryInput:
+    CreateGpuPriceScheduleEntry:
       type: object
       additionalProperties: false
       required: [sourceRevision, offeringId, nativeCurrency, nativeUnit, value, minimumQuantity, billingQuantum, provenance, observedAt, effectiveFrom, effectiveUntil]
@@ -1129,26 +1129,47 @@ components:
         observedAt: { type: string, format: date-time, description: A UTC RFC 3339 instant. }
         effectiveFrom: { type: string, format: date-time, description: The inclusive UTC interval start. }
         effectiveUntil: { type: string, format: date-time, description: The exclusive UTC interval end. }
-    CreateGpuPriceScheduleEntry:
-      allOf:
-        - { $ref: '#/components/schemas/GpuPriceScheduleEntryInput' }
     UpdateGpuPriceScheduleEntry:
-      allOf:
-        - { $ref: '#/components/schemas/GpuPriceScheduleEntryInput' }
-        - type: object
-          additionalProperties: false
-          required: [expectedRevision]
-          properties:
-            expectedRevision: { type: integer, format: int64, minimum: 1 }
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, sourceRevision, offeringId, nativeCurrency, nativeUnit, value, minimumQuantity, billingQuantum, provenance, observedAt, effectiveFrom, effectiveUntil]
+      properties:
+        expectedRevision: { type: integer, format: int64, minimum: 1 }
+        sourceRevision: { type: integer, format: int64, minimum: 1 }
+        offeringId: { $ref: '#/components/schemas/SkywrightId' }
+        nativeCurrency: { type: string, pattern: '^[A-Z]{3}$' }
+        nativeUnit: { type: string, enum: [instance-hour] }
+        value: { type: number, minimum: 0 }
+        minimumQuantity: { type: number, exclusiveMinimum: 0 }
+        billingQuantum: { type: number, exclusiveMinimum: 0 }
+        provenance:
+          type: object
+          description: Non-sensitive facts identifying where the operator obtained the rate.
+          additionalProperties: true
+        observedAt: { type: string, format: date-time, description: A UTC RFC 3339 instant. }
+        effectiveFrom: { type: string, format: date-time, description: The inclusive UTC interval start. }
+        effectiveUntil: { type: string, format: date-time, description: The exclusive UTC interval end. }
     GpuPriceScheduleEntry:
-      allOf:
-        - { $ref: '#/components/schemas/GpuPriceScheduleEntryInput' }
-        - type: object
-          additionalProperties: false
-          required: [id, revision]
-          properties:
-            id: { $ref: '#/components/schemas/SkywrightId' }
-            revision: { type: integer, format: int64, minimum: 1 }
+      type: object
+      additionalProperties: false
+      required: [id, revision, sourceRevision, offeringId, nativeCurrency, nativeUnit, value, minimumQuantity, billingQuantum, provenance, observedAt, effectiveFrom, effectiveUntil]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        revision: { type: integer, format: int64, minimum: 1 }
+        sourceRevision: { type: integer, format: int64, minimum: 1 }
+        offeringId: { $ref: '#/components/schemas/SkywrightId' }
+        nativeCurrency: { type: string, pattern: '^[A-Z]{3}$' }
+        nativeUnit: { type: string, enum: [instance-hour] }
+        value: { type: number, minimum: 0 }
+        minimumQuantity: { type: number, exclusiveMinimum: 0 }
+        billingQuantum: { type: number, exclusiveMinimum: 0 }
+        provenance:
+          type: object
+          description: Non-sensitive facts identifying where the operator obtained the rate.
+          additionalProperties: true
+        observedAt: { type: string, format: date-time, description: A UTC RFC 3339 instant. }
+        effectiveFrom: { type: string, format: date-time, description: The inclusive UTC interval start. }
+        effectiveUntil: { type: string, format: date-time, description: The exclusive UTC interval end. }
     DatasetPublicationState:
       type: string
       enum: [awaiting-upload, uploading, verifying, committing, aborting, aborted, published-cleanup-pending, committed, failed, failed-cleanup]

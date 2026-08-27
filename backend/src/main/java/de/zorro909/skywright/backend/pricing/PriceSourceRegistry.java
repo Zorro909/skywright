@@ -83,6 +83,7 @@ public class PriceSourceRegistry {
 		boolean successful = capabilities.stream().noneMatch(value -> value.startsWith("failed:"));
 		source.assessments.add(new PriceSourceAssessmentValue(UUID.randomUUID(), source.candidateRevision, successful,
 				String.join("\n", capabilities), started, this.clock.instant()));
+		source.assessedScheduleRevision = successful ? source.scheduleRevision : null;
 		source.registrationRevision++;
 	}
 
@@ -93,8 +94,9 @@ public class PriceSourceRegistry {
 			throw new PriceSourceConflictException("PRICE_SOURCE_CANDIDATE_CHANGED",
 					"The requested revision is not the current candidate");
 		}
-		boolean successful = source.assessments.stream()
-			.anyMatch(assessment -> assessment.revision == revision && assessment.successful);
+		boolean successful = source.assessedScheduleRevision != null
+				&& source.assessedScheduleRevision == source.scheduleRevision && source.assessments.stream()
+					.anyMatch(assessment -> assessment.revision == revision && assessment.successful);
 		if (!successful) {
 			throw new PriceSourceValidationException("PRICE_SOURCE_ASSESSMENT_REQUIRED",
 					"Promotion requires a successful assessment of the candidate revision");

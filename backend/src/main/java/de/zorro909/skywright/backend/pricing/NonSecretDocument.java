@@ -28,7 +28,7 @@ final class NonSecretDocument {
 		else if (value instanceof Iterable<?> values) {
 			values.forEach(NonSecretDocument::requireSafe);
 		}
-		else if (value instanceof String text && text.matches("(?i)https?://.*")) {
+		else if (value instanceof String text && text.matches("(?i)[a-z][a-z0-9+.-]*://.*")) {
 			try {
 				URI uri = URI.create(text);
 				if (uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) {

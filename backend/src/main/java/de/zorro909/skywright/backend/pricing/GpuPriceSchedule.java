@@ -31,10 +31,11 @@ public class GpuPriceSchedule implements GpuPriceScheduleReader {
 	}
 
 	public GpuPriceScheduleEntryView create(UUID sourceId, GpuPriceScheduleEntryInput input) {
-		validateSourceAndInput(sourceId, input);
+		PriceSourceEntity source = validateSourceAndInput(sourceId, input);
 		GpuPriceScheduleEntryEntity entry = GpuPriceScheduleEntryEntity.create(UUID.randomUUID(), sourceId, input,
 				encode(input.provenance()));
 		this.entities.persist(entry);
+		invalidateCandidateAssessment(source, input.sourceRevision());
 		flushConstraints();
 		return view(entry);
 	}
@@ -60,11 +61,13 @@ public class GpuPriceSchedule implements GpuPriceScheduleReader {
 
 	public GpuPriceScheduleEntryView update(UUID sourceId, UUID entryId, long expectedRevision,
 			GpuPriceScheduleEntryInput input) {
-		validateSourceAndInput(sourceId, input);
+		PriceSourceEntity source = validateSourceAndInput(sourceId, input);
 		GpuPriceScheduleEntryEntity entry = entry(sourceId, entryId);
 		requireRevision(entry, expectedRevision);
+		long previousSourceRevision = entry.sourceRevision;
 		entry.replace(input, encode(input.provenance()));
 		entry.revision++;
+		invalidateCandidateAssessment(source, previousSourceRevision, input.sourceRevision());
 		flushConstraints();
 		return view(entry);
 	}
@@ -72,6 +75,8 @@ public class GpuPriceSchedule implements GpuPriceScheduleReader {
 	public void delete(UUID sourceId, UUID entryId, long expectedRevision) {
 		GpuPriceScheduleEntryEntity entry = entry(sourceId, entryId);
 		requireRevision(entry, expectedRevision);
+		PriceSourceEntity source = requireOperatorSource(sourceId);
+		invalidateCandidateAssessment(source, entry.sourceRevision);
 		this.entities.remove(entry);
 		flushConstraints();
 	}
@@ -111,7 +116,7 @@ public class GpuPriceSchedule implements GpuPriceScheduleReader {
 			.toList();
 	}
 
-	private void validateSourceAndInput(UUID sourceId, GpuPriceScheduleEntryInput input) {
+	private PriceSourceEntity validateSourceAndInput(UUID sourceId, GpuPriceScheduleEntryInput input) {
 		PriceSourceEntity source = requireOperatorSource(sourceId);
 		if (input == null || input.sourceRevision() <= 0 || input.offeringId() == null || input.observedAt() == null
 				|| input.effectiveFrom() == null || input.effectiveUntil() == null || input.provenance() == null) {
@@ -150,6 +155,20 @@ public class GpuPriceSchedule implements GpuPriceScheduleReader {
 			throw invalid("GPU_PRICE_SCHEDULE_INTERVAL_INVALID", "Effective from must be before effective until");
 		}
 		NonSecretDocument.requireSafe(input.provenance());
+		return source;
+	}
+
+	private static void invalidateCandidateAssessment(PriceSourceEntity source, long... affectedRevisions) {
+		if (source.candidateRevision == null) {
+			return;
+		}
+		for (long affectedRevision : affectedRevisions) {
+			if (source.candidateRevision == affectedRevision) {
+				source.scheduleRevision++;
+				source.assessedScheduleRevision = null;
+				return;
+			}
+		}
 	}
 
 	private PriceSourceEntity requireOperatorSource(UUID sourceId) {

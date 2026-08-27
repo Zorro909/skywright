@@ -25,6 +25,14 @@ final class GpuPriceScheduleApiIT {
 			String sourceId = jsonString(createdSource.body(), "id");
 			String schedulePath = "/api/v1/price-sources/" + sourceId + "/gpu-price-schedule-entries";
 
+			var rejectedSecret = backend.post(schedulePath,
+					entry(offeringId, "2", "1", "1", "2029-10-01T00:00:00Z", "2029-11-01T00:00:00Z",
+							"2029-09-30T18:00:00Z")
+						.replace("operator tariff", "postgresql://user:do-not-store@host/db"));
+			assertThat(rejectedSecret.statusCode()).as(rejectedSecret.body()).isEqualTo(422);
+			assertThat(rejectedSecret.body()).contains("SKYWRIGHT_PRICE_SOURCE_SECRET_FORBIDDEN")
+				.doesNotContain("do-not-store");
+
 			var first = backend.post(schedulePath, entry(offeringId, "2.3400", "0.250", "0.016666666666666666",
 					"2030-01-01T00:00:00Z", "2030-02-01T00:00:00Z", "2029-12-31T18:00:00Z"));
 			assertThat(first.statusCode()).as(first.body()).isEqualTo(201);
@@ -53,6 +61,17 @@ final class GpuPriceScheduleApiIT {
 			var assessed = backend.post("/api/v1/price-sources/" + sourceId + "/assessment", "");
 			assertThat(assessed.statusCode()).as(assessed.body()).isEqualTo(200);
 			assertThat(assessed.body()).contains("\"successful\":true", "passed:gpu-compute-rates");
+
+			var postAssessmentChange = backend.post(schedulePath, entry(offeringId, "3.1000", "1", "1",
+					"2030-08-01T00:00:00Z", "2030-09-01T00:00:00Z", "2030-07-31T18:00:00Z"));
+			assertThat(postAssessmentChange.statusCode()).as(postAssessmentChange.body()).isEqualTo(201);
+			var staleAssessmentPromotion = backend.put("/api/v1/price-sources/" + sourceId + "/promotion",
+					"{\"expectedRegistrationRevision\":2,\"revision\":1}");
+			assertThat(staleAssessmentPromotion.statusCode()).as(staleAssessmentPromotion.body()).isEqualTo(422);
+			assertThat(staleAssessmentPromotion.body()).contains("SKYWRIGHT_PRICE_SOURCE_ASSESSMENT_REQUIRED");
+			var reassessed = backend.post("/api/v1/price-sources/" + sourceId + "/assessment", "");
+			assertThat(reassessed.statusCode()).as(reassessed.body()).isEqualTo(200);
+			assertThat(reassessed.body()).contains("\"successful\":true", "passed:gpu-compute-rates");
 
 			assertContractOutcomes(backend, sourceId, offeringId);
 			backend.restart();

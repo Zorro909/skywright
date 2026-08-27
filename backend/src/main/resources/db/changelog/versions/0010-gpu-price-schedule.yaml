@@ -4,6 +4,11 @@ databaseChangeLog:
       author: skywright
       logicalFilePath: db/changelog/versions/0010-gpu-price-schedule.yaml
       changes:
+        - addColumn:
+            tableName: price_source
+            columns:
+              - column: { name: schedule_revision, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: assessed_schedule_revision, type: bigint }
         - createTable:
             tableName: gpu_price_schedule_entry
             columns:
@@ -30,6 +35,8 @@ databaseChangeLog:
         - sql:
             sql: REVOKE ALL PRIVILEGES ON skywright.gpu_price_schedule_entry FROM "${runtimeRole}"
         - dropTable: { schemaName: skywright, tableName: gpu_price_schedule_entry }
+        - dropColumn: { schemaName: skywright, tableName: price_source, columnName: assessed_schedule_revision }
+        - dropColumn: { schemaName: skywright, tableName: price_source, columnName: schedule_revision }
   - changeSet:
       id: issue-176-gpu-price-schedule-overlap-constraint
       author: skywright

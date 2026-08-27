@@ -39,6 +39,12 @@ class PriceSourceEntity {
 	@Column(name = "candidate_revision")
 	Long candidateRevision;
 
+	@Column(name = "schedule_revision", nullable = false)
+	long scheduleRevision;
+
+	@Column(name = "assessed_schedule_revision")
+	Long assessedScheduleRevision;
+
 	@Column(name = "credential_binding_id")
 	UUID credentialBindingId;
 

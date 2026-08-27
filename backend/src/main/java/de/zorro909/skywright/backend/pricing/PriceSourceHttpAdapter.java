@@ -157,11 +157,11 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 	}
 
 	private static GpuPriceScheduleEntry entry(GpuPriceScheduleEntryView value) {
-		return new GpuPriceScheduleEntry(value.sourceRevision(), value.offeringId(), value.nativeCurrency(),
-				GpuPriceScheduleEntry.NativeUnitEnum.fromValue(value.nativeUnit()), value.value(),
-				value.minimumQuantity(), value.billingQuantum(), value.provenance(),
+		return new GpuPriceScheduleEntry(value.id(), value.revision(), value.sourceRevision(), value.offeringId(),
+				value.nativeCurrency(), GpuPriceScheduleEntry.NativeUnitEnum.fromValue(value.nativeUnit()),
+				value.value(), value.minimumQuantity(), value.billingQuantum(), value.provenance(),
 				value.observedAt().atOffset(ZoneOffset.UTC), value.effectiveFrom().atOffset(ZoneOffset.UTC),
-				value.effectiveUntil().atOffset(ZoneOffset.UTC), value.id(), value.revision());
+				value.effectiveUntil().atOffset(ZoneOffset.UTC));
 	}
 
 	private static GpuPriceScheduleEntryInput input(CreateGpuPriceScheduleEntry request) {
