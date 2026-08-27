@@ -15,6 +15,7 @@ from typing import BinaryIO, cast
 from ._dataset_errors import DatasetPublicationError
 from ._dataset_errors import metadata_error as _metadata
 from ._dataset_errors import publication_error as _error
+from ._dataset_errors import source_mutated_error as _source_mutated
 from ._mds_validation import SUPPORTED_COMPRESSIONS as _COMPRESSIONS
 from ._mds_validation import decompress as _decompress
 from ._mds_validation import file_descriptor as _file_descriptor
@@ -450,12 +451,6 @@ def _digest(value: bytes) -> str:
 
 def _path_error(detail: str) -> DatasetPublicationError:
     return _error("DATASET_CORPUS_PATH_INVALID", detail)
-
-
-def _source_mutated() -> DatasetPublicationError:
-    return _error(
-        "DATASET_SOURCE_MUTATED", "A local corpus file changed during publication"
-    )
 
 
 def verify_source_inventory(corpus: InspectedCorpus) -> None:

@@ -164,6 +164,28 @@ class DatasetPublicationWorkerDispatcherTest {
 	}
 
 	@Test
+	void verificationRenewalCommittedDuringWorkerTeardownIsRedispatched() throws Exception {
+		UUID publicationId = UUID.randomUUID();
+		var publications = new VerificationRedriveService(publicationId);
+		var verificationAttempts = new AtomicInteger();
+		var dispatcher = new DatasetPublicationWorkerDispatcher(publications, publication -> {
+			boolean verified = verificationAttempts.incrementAndGet() == 2;
+			return new DatasetPublicationWorkerResult(verified, List.of(), 0, 0, Instant.now(), 1,
+					verified ? null : "DATASET_REVISION_STALE", false);
+		}, new DatasetPublicationWorkerRecovery(null, null, null), new RecordingScheduler());
+		publications.dispatcher = dispatcher;
+		try {
+			dispatcher.requested(new DatasetPublicationVerificationRequested(publicationId));
+
+			publications.committed.get(1, TimeUnit.SECONDS);
+			assertThat(verificationAttempts).hasValue(2);
+		}
+		finally {
+			dispatcher.close();
+		}
+	}
+
+	@Test
 	void backendShutdownLeavesVerificationPendingForStartupRecovery() throws Exception {
 		UUID publicationId = UUID.randomUUID();
 		var publications = new RecordingService(publicationId);
@@ -332,6 +354,39 @@ class DatasetPublicationWorkerDispatcherTest {
 		public void cleanupSucceeded(UUID succeededPublicationId, DatasetPublicationWorkerResult result) {
 			assertThat(succeededPublicationId).isEqualTo(this.publicationId);
 			this.succeeded.complete(null);
+		}
+
+	}
+
+	private static final class VerificationRedriveService extends StubPublicationOperations {
+
+		private final UUID publicationId;
+
+		private final CompletableFuture<Void> committed = new CompletableFuture<>();
+
+		private DatasetPublicationWorkerDispatcher dispatcher;
+
+		private VerificationRedriveService(UUID publicationId) {
+			this.publicationId = publicationId;
+		}
+
+		@Override
+		public DatasetPublicationView verificationInput(UUID requestedPublicationId) {
+			assertThat(requestedPublicationId).isEqualTo(this.publicationId);
+			return publicationView(this.publicationId);
+		}
+
+		@Override
+		public void fail(UUID failedPublicationId, DatasetPublicationWorkerResult failure) {
+			assertThat(failedPublicationId).isEqualTo(this.publicationId);
+			assertThat(failure.failureCode()).isEqualTo("DATASET_REVISION_STALE");
+			this.dispatcher.requested(new DatasetPublicationVerificationRequested(this.publicationId));
+		}
+
+		@Override
+		public void commit(UUID committedPublicationId, DatasetPublicationWorkerResult verified) {
+			assertThat(committedPublicationId).isEqualTo(this.publicationId);
+			this.committed.complete(null);
 		}
 
 	}

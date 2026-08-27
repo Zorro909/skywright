@@ -212,6 +212,9 @@ databaseChangeLog:
       changes:
         - sql:
             comment: Grant the runtime role the JPA access required by the Dataset Catalog.
-            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON dataset_catalog, dataset_manifest_entry, dataset_copy_identity, dataset_generation_identity, dataset_copy, dataset_copy_generation, dataset_lease, dataset_copy_operation, dataset_cache TO "${runtimeRole}"
+            sql: GRANT SELECT, INSERT, UPDATE ON dataset_catalog, dataset_manifest_entry, dataset_copy_identity, dataset_generation_identity, dataset_copy, dataset_copy_generation, dataset_lease, dataset_copy_operation, dataset_cache TO "${runtimeRole}"
+        - sql:
+            comment: Hibernate collection maintenance and explicit copy lifecycle paths delete only mutable child rows.
+            sql: GRANT DELETE ON dataset_manifest_entry, dataset_copy, dataset_copy_generation, dataset_lease, dataset_copy_operation, dataset_cache TO "${runtimeRole}"
       rollback:
         - sql: { sql: 'REVOKE ALL PRIVILEGES ON dataset_catalog, dataset_manifest_entry, dataset_copy_identity, dataset_generation_identity, dataset_copy, dataset_copy_generation, dataset_lease, dataset_copy_operation, dataset_cache FROM "${runtimeRole}"' }

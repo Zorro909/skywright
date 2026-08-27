@@ -85,12 +85,20 @@ databaseChangeLog:
         - dropColumn: { tableName: dataset_publication, columnName: preferred_definition_decision }
         - dropColumn: { tableName: dataset_publication, columnName: expected_dataset_revision }
   - changeSet:
-      id: issue-164-dataset-publication-constraints
+      id: issue-164-dataset-publication-unique-constraints
       author: skywright
       logicalFilePath: db/changelog/versions/0005-dataset-publication.yaml
       changes:
         - addUniqueConstraint: { tableName: dataset_publication, columnNames: definition_id, constraintName: uq_dataset_publication_definition }
         - addUniqueConstraint: { tableName: dataset_publication, columnNames: copy_id, constraintName: uq_dataset_publication_copy }
+      rollback:
+        - dropUniqueConstraint: { tableName: dataset_publication, constraintName: uq_dataset_publication_copy }
+        - dropUniqueConstraint: { tableName: dataset_publication, constraintName: uq_dataset_publication_definition }
+  - changeSet:
+      id: issue-164-dataset-publication-foreign-keys
+      author: skywright
+      logicalFilePath: db/changelog/versions/0005-dataset-publication.yaml
+      changes:
         - addForeignKeyConstraint: { baseTableName: dataset_publication, baseColumnNames: target_storage_id, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_dataset_publication_storage }
         - addForeignKeyConstraint: { baseTableName: credential_projection_record, baseColumnNames: publication_id, referencedTableName: dataset_publication, referencedColumnNames: publication_id, constraintName: fk_credential_projection_publication }
         - addForeignKeyConstraint: { baseTableName: dataset_lineage, baseColumnNames: preferred_definition_id, referencedTableName: dataset_catalog, referencedColumnNames: definition_id, constraintName: fk_dataset_lineage_preferred, deferrable: true, initiallyDeferred: true }
@@ -98,8 +106,6 @@ databaseChangeLog:
         - dropForeignKeyConstraint: { baseTableName: credential_projection_record, constraintName: fk_credential_projection_publication }
         - dropForeignKeyConstraint: { baseTableName: dataset_lineage, constraintName: fk_dataset_lineage_preferred }
         - dropForeignKeyConstraint: { baseTableName: dataset_publication, constraintName: fk_dataset_publication_storage }
-        - dropUniqueConstraint: { tableName: dataset_publication, constraintName: uq_dataset_publication_copy }
-        - dropUniqueConstraint: { tableName: dataset_publication, constraintName: uq_dataset_publication_definition }
   - changeSet:
       id: issue-164-dataset-publication-grants
       author: skywright
@@ -107,7 +113,7 @@ databaseChangeLog:
       changes:
         - sql:
             comment: Grant the runtime role the JPA access required by Dataset Publication.
-            sql: GRANT SELECT, INSERT, UPDATE, DELETE ON dataset_lineage, dataset_publication TO "${runtimeRole}"
+            sql: GRANT SELECT, INSERT, UPDATE ON dataset_lineage, dataset_publication TO "${runtimeRole}"
         - sql:
             comment: Credential projection evidence may be completed but not deleted by the runtime role.
             sql: GRANT SELECT, INSERT, UPDATE ON credential_projection_record TO "${runtimeRole}"

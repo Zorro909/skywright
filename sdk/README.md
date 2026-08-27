@@ -236,8 +236,15 @@ skywright-datasets publish ./corpus \
   --advance-preferred
 ```
 
-Use `--keep-preferred` instead to preserve the current pointer. A stale revision fails. Read the
-Dataset again before retrying so the next advance or keep decision is based on its current state.
+Use `--keep-preferred` instead to preserve the current pointer. If the revision becomes stale after
+upload, read the Dataset again and repeat the command with `--resume`, the existing publication ID,
+the current revision, and a new explicit advance or keep decision. The command keeps the allocated
+Dataset Definition, Dataset Copy, and Storage Location identities.
+
+The command has stable exit classes for automation: `0` means success, `2` means invalid local or
+request input, `3` means a conflict, `69` means a required dependency is unavailable, and `75`
+means the direct transfer can be retried. Error output remains an RFC 9457 problem document whose
+`errorCode` identifies the exact failure.
 
 ## Operational runtime command
 
