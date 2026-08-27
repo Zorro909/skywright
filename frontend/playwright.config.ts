@@ -24,7 +24,7 @@ export default defineConfig({
     browserName: 'chromium',
   },
   webServer: {
-    command: `java -Dloader.path=${JSON.stringify(backendTestFixture)} -cp ${JSON.stringify(backendExecutable)} org.springframework.boot.loader.launch.PropertiesLauncher --skywright.deployment.environment=acceptance --spring.profiles.active=target-storage-acceptance --server.port=${port}`,
+    command: `java -Dloader.path=${JSON.stringify(backendTestFixture)} -cp ${JSON.stringify(backendExecutable)} org.springframework.boot.loader.launch.PropertiesLauncher --skywright.deployment.environment=acceptance --skywright.deployment.reporting-currency=EUR --spring.profiles.active=target-storage-acceptance --server.port=${port}`,
     url: `http://127.0.0.1:${port}/readyz`,
     reuseExistingServer: false,
     timeout: 120_000,
