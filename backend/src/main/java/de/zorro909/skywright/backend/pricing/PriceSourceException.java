@@ -23,6 +23,14 @@ final class PriceSourceNotFoundException extends PriceSourceException {
 
 }
 
+final class CurrencyConversionNotFoundException extends PriceSourceException {
+
+	CurrencyConversionNotFoundException() {
+		super("CURRENCY_CONVERSION_NOT_FOUND", "The currency conversion does not exist");
+	}
+
+}
+
 final class PriceSourceConflictException extends PriceSourceException {
 
 	PriceSourceConflictException(String code, String message) {

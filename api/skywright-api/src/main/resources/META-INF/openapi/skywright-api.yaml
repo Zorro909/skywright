@@ -136,6 +136,75 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/PriceSourceBinding' } }
+  /price-sources/{sourceId}/currency-conversions:
+    parameters:
+      - { name: sourceId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      operationId: listCurrencyConversions
+      summary: Read an operator-maintained currency conversion schedule.
+      responses:
+        '200':
+          description: Current schedule and its revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrencyConversionSchedule' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: createCurrencyConversion
+      summary: Add one effective-dated currency conversion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCurrencyConversion' }
+      responses:
+        '201':
+          description: Conversion added.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrencyConversionSchedule' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /price-sources/{sourceId}/currency-conversions/{conversionId}:
+    parameters:
+      - { name: sourceId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+      - { name: conversionId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    put:
+      operationId: replaceCurrencyConversion
+      summary: Replace one effective-dated currency conversion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplaceCurrencyConversion' }
+      responses:
+        '200':
+          description: Conversion replaced.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrencyConversionSchedule' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: deleteCurrencyConversion
+      summary: Remove one effective-dated currency conversion.
+      parameters:
+        - name: expectedScheduleRevision
+          in: query
+          required: true
+          schema: { type: integer, format: int64, minimum: 0 }
+      responses:
+        '200':
+          description: Conversion removed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrencyConversionSchedule' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /system-information:
     get:
       operationId: getSystemInformation
@@ -1040,6 +1109,55 @@ components:
         sourceId: { $ref: '#/components/schemas/SkywrightId' }
         sourceRevision: { type: integer, format: int64, minimum: 1 }
         maximumObservationAge: { $ref: '#/components/schemas/Duration' }
+    CurrencyConversion:
+      type: object
+      additionalProperties: false
+      required: [id, nativeCurrency, reportingCurrency, rate, provenance, observedAt, effectiveFrom, effectiveUntil]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        nativeCurrency: { type: string, pattern: '^[A-Z]{3}$' }
+        reportingCurrency: { type: string, pattern: '^[A-Z]{3}$' }
+        rate: { type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$' }
+        provenance: { type: string, minLength: 1, maxLength: 1024 }
+        observedAt: { $ref: '#/components/schemas/UtcInstant' }
+        effectiveFrom: { $ref: '#/components/schemas/UtcInstant' }
+        effectiveUntil: { $ref: '#/components/schemas/UtcInstant' }
+    CurrencyConversionSchedule:
+      type: object
+      additionalProperties: false
+      required: [sourceId, scheduleRevision, entries]
+      properties:
+        sourceId: { $ref: '#/components/schemas/SkywrightId' }
+        scheduleRevision: { type: integer, format: int64, minimum: 0 }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/CurrencyConversion' }
+    CurrencyConversionInput:
+      type: object
+      additionalProperties: false
+      required: [nativeCurrency, reportingCurrency, rate, provenance, observedAt, effectiveFrom, effectiveUntil]
+      properties:
+        nativeCurrency: { type: string, pattern: '^[A-Z]{3}$' }
+        reportingCurrency: { type: string, pattern: '^[A-Z]{3}$' }
+        rate: { type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$' }
+        provenance: { type: string, minLength: 1, maxLength: 1024 }
+        observedAt: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
+        effectiveFrom: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
+        effectiveUntil: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
+    CreateCurrencyConversion:
+      allOf:
+        - $ref: '#/components/schemas/CurrencyConversionInput'
+        - type: object
+          required: [expectedScheduleRevision]
+          properties:
+            expectedScheduleRevision: { type: integer, format: int64, minimum: 0 }
+    ReplaceCurrencyConversion:
+      allOf:
+        - $ref: '#/components/schemas/CurrencyConversionInput'
+        - type: object
+          required: [expectedScheduleRevision]
+          properties:
+            expectedScheduleRevision: { type: integer, format: int64, minimum: 0 }
     DatasetPublicationState:
       type: string
       enum: [awaiting-upload, uploading, verifying, committing, aborting, aborted, published-cleanup-pending, committed, failed, failed-cleanup]

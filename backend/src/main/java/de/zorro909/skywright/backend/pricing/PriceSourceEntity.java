@@ -42,6 +42,9 @@ class PriceSourceEntity {
 	@Column(name = "credential_binding_id")
 	UUID credentialBindingId;
 
+	@Column(name = "conversion_schedule_revision", nullable = false)
+	long conversionScheduleRevision;
+
 	@Version
 	@Column(name = "persistence_version", nullable = false)
 	long persistenceVersion;

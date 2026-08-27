@@ -83,7 +83,7 @@ public class PriceSourceRegistry {
 			.filter(revision -> revision.revision == source.candidateRevision.longValue())
 			.findFirst()
 			.orElseThrow().configurationJson);
-		List<String> capabilities = assess(source.kind, configuration);
+		List<String> capabilities = assess(source, configuration);
 		boolean successful = capabilities.stream().noneMatch(value -> value.startsWith("failed:"));
 		source.assessments.add(new PriceSourceAssessmentValue(UUID.randomUUID(), source.candidateRevision, successful,
 				String.join("\n", capabilities), started, this.clock.instant()));
@@ -122,6 +122,10 @@ public class PriceSourceRegistry {
 		if (source.activeRevision == null || source.activeRevision != sourceRevision) {
 			throw new PriceSourceValidationException("PRICE_SOURCE_REVISION_NOT_ACTIVE",
 					"A binding must select the source's active revision");
+		}
+		if (bindingKey.startsWith("currency:") && !assessedForCapability(source, sourceRevision, bindingKey)) {
+			throw new PriceSourceValidationException("PRICE_SOURCE_CAPABILITY_UNAVAILABLE",
+					"The active Price Source revision cannot provide the bound currency pair");
 		}
 		PriceSourceBindingEntity binding = this.entities.find(PriceSourceBindingEntity.class, bindingKey);
 		if (binding == null) {
@@ -189,9 +193,9 @@ public class PriceSourceRegistry {
 					.toList());
 	}
 
-	private static List<String> assess(String kind, Map<String, Object> configuration) {
+	private List<String> assess(PriceSourceEntity source, Map<String, Object> configuration) {
 		List<String> results = new ArrayList<>();
-		if ("operator-schedule".equals(kind)) {
+		if ("operator-schedule".equals(source.kind)) {
 			Object rates = configuration.get("rates");
 			results.add(rates instanceof List<?> values && !values.isEmpty()
 					&& values.stream().allMatch(PriceSourceRegistry::validRate) ? "passed:rates"
@@ -206,7 +210,59 @@ public class PriceSourceRegistry {
 		Object capabilities = configuration.get("capabilities");
 		results.add(capabilities instanceof List<?> values && !values.isEmpty() ? "passed:capabilities"
 				: "failed:capabilities-required");
+		java.util.stream.Stream<String> declaredPairs = capabilities instanceof List<?> values ? values.stream()
+			.filter(String.class::isInstance)
+			.map(String.class::cast)
+			.filter(value -> value.startsWith("currency:")) : java.util.stream.Stream.empty();
+		java.util.stream.Stream<String> boundPairs = this.entities
+			.createQuery(
+					"select binding.bindingKey from PriceSourceBindingEntity binding "
+							+ "where binding.sourceId = :sourceId and binding.bindingKey like 'currency:%'",
+					String.class)
+			.setParameter("sourceId", source.id)
+			.getResultStream();
+		java.util.stream.Stream.concat(declaredPairs, boundPairs)
+			.distinct()
+			.forEach(
+					pair -> results.add(canProvide(source, configuration, pair) ? "passed:" + pair : "failed:" + pair));
 		return results;
+	}
+
+	private boolean canProvide(PriceSourceEntity source, Map<String, Object> configuration, String bindingKey) {
+		Object capabilities = configuration.get("capabilities");
+		boolean declared = capabilities instanceof List<?> values && values.contains(bindingKey);
+		if (!declared || !"operator-schedule".equals(source.kind)) {
+			return declared;
+		}
+		String[] pair = bindingKey.split(":", -1);
+		if (pair.length != 3 || !validCurrency(pair[1]) || !validCurrency(pair[2]) || pair[1].equals(pair[2])) {
+			return false;
+		}
+		return this.entities.createQuery("""
+				select count(conversion) from CurrencyConversionEntity conversion
+				where conversion.sourceId = :sourceId
+				  and conversion.nativeCurrency = :nativeCurrency
+				  and conversion.reportingCurrency = :reportingCurrency
+				""", Long.class)
+			.setParameter("sourceId", source.id)
+			.setParameter("nativeCurrency", pair[1])
+			.setParameter("reportingCurrency", pair[2])
+			.getSingleResult() > 0;
+	}
+
+	private static boolean validCurrency(String value) {
+		try {
+			return value.matches("[A-Z]{3}") && Currency.getInstance(value).getCurrencyCode().equals(value);
+		}
+		catch (IllegalArgumentException failure) {
+			return false;
+		}
+	}
+
+	private static boolean assessedForCapability(PriceSourceEntity source, long revision, String bindingKey) {
+		return source.assessments.stream()
+			.anyMatch(assessment -> assessment.revision == revision && assessment.successful
+					&& List.of(assessment.capabilityResults.split("\\n")).contains("passed:" + bindingKey));
 	}
 
 	private static boolean validRate(Object value) {

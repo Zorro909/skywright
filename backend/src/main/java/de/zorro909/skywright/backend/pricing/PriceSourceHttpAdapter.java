@@ -3,14 +3,18 @@ package de.zorro909.skywright.backend.pricing;
 import de.zorro909.skywright.backend.boundary.generated.api.PriceSourceBindingsApi;
 import de.zorro909.skywright.backend.boundary.generated.api.PriceSourcesApi;
 import de.zorro909.skywright.backend.boundary.generated.model.BindPriceSource;
+import de.zorro909.skywright.backend.boundary.generated.model.CreateCurrencyConversion;
 import de.zorro909.skywright.backend.boundary.generated.model.CreatePriceSource;
+import de.zorro909.skywright.backend.boundary.generated.model.CurrencyConversion;
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSource;
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSourceAssessment;
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSourceKind;
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSourceRevision;
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSourceRevisionState;
 import de.zorro909.skywright.backend.boundary.generated.model.PromotePriceSource;
+import de.zorro909.skywright.backend.boundary.generated.model.ReplaceCurrencyConversion;
 import de.zorro909.skywright.backend.boundary.generated.model.StagePriceSourceRevision;
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -23,8 +27,39 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 
 	private final PriceSourceRegistry registry;
 
-	PriceSourceHttpAdapter(PriceSourceRegistry registry) {
+	private final CurrencyConversionSchedule conversionSchedule;
+
+	PriceSourceHttpAdapter(PriceSourceRegistry registry, CurrencyConversionSchedule conversionSchedule) {
 		this.registry = registry;
+		this.conversionSchedule = conversionSchedule;
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.CurrencyConversionSchedule> listCurrencyConversions(
+			UUID sourceId) {
+		return ResponseEntity.ok(schedule(this.conversionSchedule.get(sourceId)));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.CurrencyConversionSchedule> createCurrencyConversion(
+			UUID sourceId, CreateCurrencyConversion request) {
+		return ResponseEntity.status(201)
+			.body(schedule(
+					this.conversionSchedule.create(sourceId, request.getExpectedScheduleRevision(), value(request))));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.CurrencyConversionSchedule> replaceCurrencyConversion(
+			UUID sourceId, UUID conversionId, ReplaceCurrencyConversion request) {
+		return ResponseEntity.ok(schedule(this.conversionSchedule.replace(sourceId, conversionId,
+				request.getExpectedScheduleRevision(), value(request))));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.CurrencyConversionSchedule> deleteCurrencyConversion(
+			Long expectedScheduleRevision, UUID sourceId, UUID conversionId) {
+		return ResponseEntity
+			.ok(schedule(this.conversionSchedule.delete(sourceId, conversionId, expectedScheduleRevision.longValue())));
 	}
 
 	@Override
@@ -118,6 +153,53 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 			throw new PriceSourceValidationException("PRICE_SOURCE_FRESHNESS_INVALID",
 					"Maximum observation age must be an ISO 8601 duration");
 		}
+	}
+
+	private static CurrencyConversionValue value(CreateCurrencyConversion request) {
+		return value(request.getNativeCurrency(), request.getReportingCurrency(), request.getRate(),
+				request.getProvenance(), request.getObservedAt(), request.getEffectiveFrom(),
+				request.getEffectiveUntil());
+	}
+
+	private static CurrencyConversionValue value(ReplaceCurrencyConversion request) {
+		return value(request.getNativeCurrency(), request.getReportingCurrency(), request.getRate(),
+				request.getProvenance(), request.getObservedAt(), request.getEffectiveFrom(),
+				request.getEffectiveUntil());
+	}
+
+	private static CurrencyConversionValue value(String nativeCurrency, String reportingCurrency, String rate,
+			String provenance, java.time.OffsetDateTime observedAt, java.time.OffsetDateTime effectiveFrom,
+			java.time.OffsetDateTime effectiveUntil) {
+		try {
+			if (!utc(observedAt) || !utc(effectiveFrom) || !utc(effectiveUntil)) {
+				throw new PriceSourceValidationException("CURRENCY_CONVERSION_INVALID",
+						"Observation and effective interval times must use UTC");
+			}
+			return new CurrencyConversionValue(nativeCurrency, reportingCurrency, new BigDecimal(rate), provenance,
+					observedAt == null ? null : observedAt.toInstant(),
+					effectiveFrom == null ? null : effectiveFrom.toInstant(),
+					effectiveUntil == null ? null : effectiveUntil.toInstant());
+		}
+		catch (NumberFormatException failure) {
+			throw new PriceSourceValidationException("CURRENCY_CONVERSION_INVALID",
+					"The conversion rate must be an exact positive decimal");
+		}
+	}
+
+	private static boolean utc(java.time.OffsetDateTime value) {
+		return value == null || value.getOffset().equals(ZoneOffset.UTC);
+	}
+
+	private static de.zorro909.skywright.backend.boundary.generated.model.CurrencyConversionSchedule schedule(
+			CurrencyConversionScheduleView value) {
+		return new de.zorro909.skywright.backend.boundary.generated.model.CurrencyConversionSchedule(value.sourceId(),
+				value.scheduleRevision(), value.entries().stream().map(PriceSourceHttpAdapter::conversion).toList());
+	}
+
+	private static CurrencyConversion conversion(CurrencyConversionView value) {
+		return new CurrencyConversion(value.id(), value.nativeCurrency(), value.reportingCurrency(),
+				value.rate().toPlainString(), value.provenance(), value.observedAt().atOffset(ZoneOffset.UTC),
+				value.effectiveFrom().atOffset(ZoneOffset.UTC), value.effectiveUntil().atOffset(ZoneOffset.UTC));
 	}
 
 }
