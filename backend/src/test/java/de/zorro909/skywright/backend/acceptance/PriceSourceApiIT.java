@@ -104,7 +104,7 @@ final class PriceSourceApiIT {
 
 			assertThat(backend
 				.post("/api/v1/price-sources/" + sourceId + "/currency-conversions",
-						conversion(0, "0.910000", "2026-08-27T10:00:00Z", "2026-08-27T13:00:00Z"))
+						conversion(0, "0.910000", "2026-08-27T09:00:00Z", "2026-08-27T13:00:00Z"))
 				.statusCode()).isEqualTo(201);
 			assertThat(backend
 				.post("/api/v1/price-sources/" + sourceId + "/currency-conversions",

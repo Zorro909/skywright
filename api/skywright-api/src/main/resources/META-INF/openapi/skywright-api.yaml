@@ -1132,11 +1132,12 @@ components:
         entries:
           type: array
           items: { $ref: '#/components/schemas/CurrencyConversion' }
-    CurrencyConversionInput:
+    CreateCurrencyConversion:
       type: object
       additionalProperties: false
-      required: [nativeCurrency, reportingCurrency, rate, provenance, observedAt, effectiveFrom, effectiveUntil]
+      required: [expectedScheduleRevision, nativeCurrency, reportingCurrency, rate, provenance, observedAt, effectiveFrom, effectiveUntil]
       properties:
+        expectedScheduleRevision: { type: integer, format: int64, minimum: 0 }
         nativeCurrency: { type: string, pattern: '^[A-Z]{3}$' }
         reportingCurrency: { type: string, pattern: '^[A-Z]{3}$' }
         rate: { type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$' }
@@ -1144,20 +1145,19 @@ components:
         observedAt: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
         effectiveFrom: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
         effectiveUntil: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
-    CreateCurrencyConversion:
-      allOf:
-        - $ref: '#/components/schemas/CurrencyConversionInput'
-        - type: object
-          required: [expectedScheduleRevision]
-          properties:
-            expectedScheduleRevision: { type: integer, format: int64, minimum: 0 }
     ReplaceCurrencyConversion:
-      allOf:
-        - $ref: '#/components/schemas/CurrencyConversionInput'
-        - type: object
-          required: [expectedScheduleRevision]
-          properties:
-            expectedScheduleRevision: { type: integer, format: int64, minimum: 0 }
+      type: object
+      additionalProperties: false
+      required: [expectedScheduleRevision, nativeCurrency, reportingCurrency, rate, provenance, observedAt, effectiveFrom, effectiveUntil]
+      properties:
+        expectedScheduleRevision: { type: integer, format: int64, minimum: 0 }
+        nativeCurrency: { type: string, pattern: '^[A-Z]{3}$' }
+        reportingCurrency: { type: string, pattern: '^[A-Z]{3}$' }
+        rate: { type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$' }
+        provenance: { type: string, minLength: 1, maxLength: 1024 }
+        observedAt: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
+        effectiveFrom: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
+        effectiveUntil: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
     DatasetPublicationState:
       type: string
       enum: [awaiting-upload, uploading, verifying, committing, aborting, aborted, published-cleanup-pending, committed, failed, failed-cleanup]

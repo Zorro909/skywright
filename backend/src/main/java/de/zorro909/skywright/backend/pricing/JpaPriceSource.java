@@ -50,6 +50,10 @@ class JpaPriceSource implements PriceSource {
 					reportingCurrency, binding.sourceId, binding.sourceRevision);
 		}
 		CurrencyConversionEntity match = matches.getFirst();
+		if (match.observedAt.isAfter(quoteTime)) {
+			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.MISSING, nativeCurrency,
+					reportingCurrency, binding.sourceId, binding.sourceRevision);
+		}
 		CurrencyConversionOutcome outcome = match.observedAt
 			.isBefore(quoteTime.minus(Duration.parse(binding.maximumObservationAge))) ? CurrencyConversionOutcome.STALE
 					: CurrencyConversionOutcome.QUALIFYING;
