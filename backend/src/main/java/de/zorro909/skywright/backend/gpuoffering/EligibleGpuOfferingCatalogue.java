@@ -1,8 +1,5 @@
 package de.zorro909.skywright.backend.gpuoffering;
 
-import de.zorro909.skywright.backend.rundefinition.EligibleTarget;
-import de.zorro909.skywright.backend.rundefinition.TargetEligibilityAssessment;
-import de.zorro909.skywright.backend.rundefinition.TargetEligibilityReader;
 import de.zorro909.skywright.backend.rundefinition.TargetRequest;
 import de.zorro909.skywright.backend.targetstorage.TargetClass;
 import jakarta.persistence.EntityManager;
@@ -14,7 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @Transactional
-public class EligibleGpuOfferingCatalogue implements TargetEligibilityReader {
+public class EligibleGpuOfferingCatalogue {
 
 	private final EntityManager entities;
 
@@ -62,20 +59,6 @@ public class EligibleGpuOfferingCatalogue implements TargetEligibilityReader {
 		return list().stream().filter(offering -> matches(offering, request)).toList();
 	}
 
-	@Override
-	@Transactional(readOnly = true)
-	public TargetEligibilityAssessment assess() {
-		List<EligibleTarget> targets = list().stream()
-			.filter(EligibleGpuOfferingCatalogue::isAdmissiblePair)
-			.map(offering -> new EligibleTarget(offering.id(), offering.target(), offering.providerOfferingId(),
-					offering.region(), offering.instanceType(), offering.targetClass(),
-					acceleratorBackend(offering.targetClass()), offering.gpuModel(), offering.gpuCount(),
-					offering.gpuMemoryBytes(), offering.purchaseMode().wireValue(), offering.supportTier().wireValue(),
-					null))
-			.toList();
-		return new TargetEligibilityAssessment(targets, List.of());
-	}
-
 	static boolean matches(EligibleGpuOfferingView offering, TargetRequest request) {
 		return request.gpuCount() > 0 && isAdmissiblePair(offering) && offering.targetClass() == request.targetClass()
 				&& offering.gpuCount() >= request.gpuCount()
@@ -95,13 +78,6 @@ public class EligibleGpuOfferingCatalogue implements TargetEligibilityReader {
 			case LOCAL_SINGLE_GPU, LOCAL_MULTI_GPU -> GpuOfferingPurchaseMode.LOCAL;
 			case CLOUD_ON_DEMAND -> GpuOfferingPurchaseMode.ON_DEMAND;
 			case CLOUD_SPOT -> GpuOfferingPurchaseMode.SPOT;
-		};
-	}
-
-	private static String acceleratorBackend(TargetClass targetClass) {
-		return switch (targetClass) {
-			case LOCAL_SINGLE_GPU, LOCAL_MULTI_GPU -> "rocm";
-			case CLOUD_ON_DEMAND, CLOUD_SPOT -> "cuda";
 		};
 	}
 

@@ -25,8 +25,6 @@ final class EligibleGpuOfferingApiIT {
 			var eligible = catalogue
 				.eligible(new TargetRequest(TargetClass.CLOUD_SPOT, 8, 85899345920L, "nebius", "H100", null));
 			assertThat(eligible).singleElement().extracting(value -> value.id().toString()).isEqualTo(offeringId);
-			assertThat(catalogue.assess().targets()).singleElement()
-				.satisfies(target -> assertThat(target.offeringId().toString()).isEqualTo(offeringId));
 
 			assertThat(backend.get("/api/v1/eligible-gpu-offerings").body()).contains(offeringId, "H100");
 			assertThat(backend.get("/api/v1/eligible-gpu-offerings/" + offeringId).body()).contains(offeringId,
