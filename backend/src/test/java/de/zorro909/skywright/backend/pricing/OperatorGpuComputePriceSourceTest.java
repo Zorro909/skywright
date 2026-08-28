@@ -39,12 +39,14 @@ final class OperatorGpuComputePriceSourceTest {
 		var stale = new OperatorGpuComputePriceSource(
 				query -> Optional.of(entry(QUOTE_TIME.minus(Duration.ofHours(6)).minusNanos(1))));
 		var missing = new OperatorGpuComputePriceSource(query -> Optional.empty());
+		var future = new OperatorGpuComputePriceSource(query -> Optional.of(entry(QUOTE_TIME.plusNanos(1))));
 		var unavailable = new OperatorGpuComputePriceSource(query -> {
 			throw new IllegalStateException("database password must not escape");
 		});
 
 		assertThat(stale.price(query(Duration.ofHours(6))).outcome()).isEqualTo(GpuComputePriceResult.Outcome.STALE);
 		assertThat(missing.price(query(Duration.ofHours(6))).code()).isEqualTo("GPU_COMPUTE_PRICE_MISSING");
+		assertThat(future.price(query(Duration.ofHours(6))).code()).isEqualTo("GPU_COMPUTE_PRICE_MISSING");
 		GpuComputePriceResult unavailableResult = unavailable.price(query(Duration.ofHours(6)));
 		assertThat(unavailableResult.outcome()).isEqualTo(GpuComputePriceResult.Outcome.UNAVAILABLE);
 		assertThat(unavailableResult.detail()).doesNotContain("password", "database");

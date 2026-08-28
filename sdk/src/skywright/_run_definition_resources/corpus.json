@@ -37,21 +37,19 @@
         "reportingCurrency": {"code": "EUR", "minorUnit": 2},
         "candidates": [
           {
-            "target": "aws/eu-central-1",
-            "gpuModel": "H100",
-            "gpuCount": 2,
-            "purchaseMode": "spot",
-            "nativeRate": {"amount": 2.123400, "currency": "USD", "unit": "gpu-hour", "billingRules": {"minimumQuantity": 0.0166666666666667, "billingQuantum": 0.000277777777777778}},
+            "offering": {"id": "00000000-0000-0000-0000-000000000020", "revision": 3, "targetClass": "cloud-spot", "target": "aws/eu-central-1", "providerOfferingId": "p5.48xlarge-eu-central-1", "region": "eu-central-1", "instanceType": "p5.48xlarge", "gpuModel": "H100", "gpuCount": 8, "gpuMemoryBytes": 85899345920, "purchaseMode": "spot", "supportTier": "first-class"},
+            "nativeRate": {"amount": 2.123400, "currency": "EUR", "unit": "instance-hour", "billingRules": {"minimumQuantity": 0.0166666666666667, "billingQuantum": 0.000277777777777778}, "provenance": {"schedule": "operator-eu-2026-08"}},
             "source": {"sourceId": "00000000-0000-0000-0000-000000000010", "revision": 4, "kind": "provider-api"},
             "effectiveInterval": {"from": "2026-08-01T00:00:00Z", "until": null},
             "observationInterval": {"from": "2026-08-27T11:55:00Z", "until": "2026-08-27T11:55:02Z"},
-            "conversion": {"rate": 0.850000, "source": {"sourceId": "00000000-0000-0000-0000-000000000011", "revision": 7, "kind": "operator-schedule"}, "observedAt": "2026-08-27T11:50:00Z", "maximumObservationAge": "PT1H"},
-            "reportingHourlyRate": 3.6097800000
+            "rateObservedAt": "2026-08-27T11:50:00Z",
+            "maximumObservationAge": "PT1H",
+            "reportingHourlyRate": 2.12
           }
         ],
-        "hourly": {"minimum": 3.6097800000, "maximum": 3.6097800000},
-        "daily": {"minimum": 86.6347200000, "maximum": 86.6347200000},
-        "weekly": {"minimum": 606.4430400000, "maximum": 606.4430400000}
+        "hourly": {"minimum": 2.12, "maximum": 2.12},
+        "daily": {"minimum": 50.96, "maximum": 50.96},
+        "weekly": {"minimum": 356.73, "maximum": 356.73}
       },
       "executionPolicy": {"maximumRecoveryDebt": 3, "runtimeCeiling": "PT1H", "costCeiling": {"amount": 12.3400, "currency": "EUR"}},
       "orderingReset": false

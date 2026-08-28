@@ -4,7 +4,14 @@
   "title": "Skywright Run Definition v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "trainingProjectVersion", "configuration", "datasetDefinition", "targetRequest", "storage", "costQuote", "executionPolicy", "orderingReset"],
+  "required": ["schemaVersion", "trainingProjectVersion", "configuration", "datasetDefinition", "targetRequest", "storage", "executionPolicy", "orderingReset"],
+  "allOf": [
+    {
+      "if": {"properties": {"targetRequest": {"properties": {"targetClass": {"enum": ["cloud-on-demand", "cloud-spot"]}}}}},
+      "then": {"required": ["costQuote"]},
+      "else": {"not": {"required": ["costQuote"]}}
+    }
+  ],
   "properties": {
     "schemaVersion": {"type": "integer", "const": 1},
     "trainingProjectVersion": {"$ref": "#/$defs/trainingProjectVersion"},
@@ -132,12 +139,13 @@
     },
     "nativeRate": {
       "type": "object", "additionalProperties": false,
-      "required": ["amount", "currency", "unit", "billingRules"],
+      "required": ["amount", "currency", "unit", "billingRules", "provenance"],
       "properties": {
         "amount": {"type": "number", "minimum": 0},
         "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
-        "unit": {"enum": ["gpu-hour"]},
-        "billingRules": {"$ref": "#/$defs/billingRules"}
+        "unit": {"enum": ["instance-hour"]},
+        "billingRules": {"$ref": "#/$defs/billingRules"},
+        "provenance": {"type": "object"}
       }
     },
     "conversion": {
@@ -150,18 +158,35 @@
         "maximumObservationAge": {"type": "string", "format": "duration"}
       }
     },
-    "costQuoteCandidate": {
+    "eligibleGpuOfferingSnapshot": {
       "type": "object", "additionalProperties": false,
-      "required": ["target", "gpuModel", "gpuCount", "purchaseMode", "nativeRate", "source", "effectiveInterval", "observationInterval", "conversion", "reportingHourlyRate"],
+      "required": ["id", "revision", "targetClass", "target", "providerOfferingId", "region", "instanceType", "gpuModel", "gpuCount", "gpuMemoryBytes", "purchaseMode", "supportTier"],
       "properties": {
+        "id": {"type": "string", "format": "uuid"},
+        "revision": {"type": "integer", "minimum": 1},
+        "targetClass": {"enum": ["local-single-gpu", "local-multi-gpu", "cloud-on-demand", "cloud-spot"]},
         "target": {"type": "string", "minLength": 1},
+        "providerOfferingId": {"type": "string", "minLength": 1},
+        "region": {"type": "string", "minLength": 1},
+        "instanceType": {"type": "string", "minLength": 1},
         "gpuModel": {"type": "string", "minLength": 1},
         "gpuCount": {"type": "integer", "minimum": 1},
+        "gpuMemoryBytes": {"type": "integer", "minimum": 1},
         "purchaseMode": {"enum": ["local", "on-demand", "spot"]},
+        "supportTier": {"enum": ["first-class", "compatible"]}
+      }
+    },
+    "costQuoteCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["offering", "nativeRate", "source", "effectiveInterval", "observationInterval", "rateObservedAt", "maximumObservationAge", "reportingHourlyRate"],
+      "properties": {
+        "offering": {"$ref": "#/$defs/eligibleGpuOfferingSnapshot"},
         "nativeRate": {"$ref": "#/$defs/nativeRate"},
         "source": {"$ref": "#/$defs/priceSourceProvenance"},
         "effectiveInterval": {"$ref": "#/$defs/priceInterval"},
         "observationInterval": {"$ref": "#/$defs/priceInterval"},
+        "rateObservedAt": {"type": "string", "format": "date-time"},
+        "maximumObservationAge": {"type": "string", "format": "duration"},
         "conversion": {"$ref": "#/$defs/conversion"},
         "reportingHourlyRate": {"type": "number", "minimum": 0}
       }

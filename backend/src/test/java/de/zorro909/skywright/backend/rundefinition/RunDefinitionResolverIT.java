@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 import de.zorro909.skywright.backend.configurationcontract.ConfigurationContracts;
@@ -72,12 +73,14 @@ class RunDefinitionResolverIT {
 		assertThat(definition.at("/costQuote/reportingCurrency/minorUnit").asInt()).isEqualTo(2);
 		assertThat(definition.at("/costQuote/candidates/0/nativeRate/amount").decimalValue())
 			.isEqualByComparingTo("2.5000");
+		assertThat(definition.at("/costQuote/candidates/0/offering/id").asText())
+			.isEqualTo("00000000-0000-0000-0000-000000000200");
 		assertThat(definition.at("/costQuote/candidates/0/source/revision").asLong()).isEqualTo(3);
-		assertThat(definition.at("/costQuote/hourly/minimum").decimalValue()).isEqualByComparingTo("5.0000");
-		assertThat(definition.at("/costQuote/daily/minimum").decimalValue()).isEqualByComparingTo("120.0000");
-		assertThat(definition.at("/costQuote/weekly/minimum").decimalValue()).isEqualByComparingTo("840.0000");
+		assertThat(definition.at("/costQuote/hourly/minimum").decimalValue()).isEqualByComparingTo("2.50");
+		assertThat(definition.at("/costQuote/daily/minimum").decimalValue()).isEqualByComparingTo("60.00");
+		assertThat(definition.at("/costQuote/weekly/minimum").decimalValue()).isEqualByComparingTo("420.00");
 		assertThat(definition.toString()).doesNotContain("credential", "runId", "checkpointReference", "metricCatalog",
-				"lifecycle", "orchestrator", "instanceType", "storageLocation", "datasetCopy");
+				"lifecycle", "orchestrator", "storageLocation", "datasetCopy");
 	}
 
 	@Test
@@ -85,11 +88,12 @@ class RunDefinitionResolverIT {
 		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
 		EligibleTarget candidate = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
 				80L * 1024 * 1024 * 1024);
-		EligibleTargetPrice price = price(new BigDecimal("3"), new BigDecimal("2"),
-				Instant.parse("2025-01-01T00:00:00Z"), null, quoteTime.minusSeconds(1));
+		CostQuoteCandidate quoted = withBillingRules(quoteCandidate(candidate, quoteTime), new BigDecimal("3"),
+				new BigDecimal("2"));
 		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
-				new TargetEligibilityAssessment(List.of(withPrice(candidate, price)), List.of()), storage(), "EUR",
-				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC));
+				new TargetEligibilityAssessment(List.of(candidate), List.of()), storage(), "EUR",
+				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC),
+				(request, currency, time) -> new CostQuoteAssessment(List.of(quoted), List.of()));
 
 		JsonNode quote = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null)
 			.definition()
@@ -97,8 +101,132 @@ class RunDefinitionResolverIT {
 			.path("costQuote");
 
 		assertThat(quote.at("/hourly/minimum").decimalValue()).isEqualByComparingTo("10");
-		assertThat(quote.at("/daily/minimum").decimalValue()).isEqualByComparingTo("120");
-		assertThat(quote.at("/weekly/minimum").decimalValue()).isEqualByComparingTo("840");
+		assertThat(quote.at("/daily/minimum").decimalValue()).isEqualByComparingTo("60");
+		assertThat(quote.at("/weekly/minimum").decimalValue()).isEqualByComparingTo("420");
+	}
+
+	@Test
+	void findsEachDurationRangeBeforeRoundingForTheReportingCurrency() {
+		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
+		EligibleTarget target = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
+				80L * 1024 * 1024 * 1024);
+		CostQuoteCandidate minimumHeavy = withBillingRules(quoteCandidate(target, quoteTime), new BigDecimal("10"),
+				BigDecimal.ONE);
+		CostQuoteCandidate higherRate = withRate(quoteCandidate(target, quoteTime), new BigDecimal("5.0049"));
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				new TargetEligibilityAssessment(List.of(target), List.of()), storage(), "EUR",
+				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC),
+				(request, currency, time) -> new CostQuoteAssessment(List.of(minimumHeavy, higherRate), List.of()));
+
+		JsonNode quote = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null)
+			.definition()
+			.value()
+			.path("costQuote");
+
+		assertThat(quote.at("/hourly/minimum").decimalValue()).isEqualByComparingTo("5.00");
+		assertThat(quote.at("/hourly/maximum").decimalValue()).isEqualByComparingTo("25.00");
+		assertThat(quote.at("/daily/minimum").decimalValue()).isEqualByComparingTo("60.00");
+		assertThat(quote.at("/daily/maximum").decimalValue()).isEqualByComparingTo("120.12");
+		assertThat(quote.at("/weekly/minimum").decimalValue()).isEqualByComparingTo("420.00");
+		assertThat(quote.at("/weekly/maximum").decimalValue()).isEqualByComparingTo("840.82");
+	}
+
+	@Test
+	void roundsZeroTwoAndThreeDecimalCurrenciesOnlyAtPresentation() {
+		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
+		EligibleTarget target = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
+				80L * 1024 * 1024 * 1024);
+		for (Map.Entry<String, String> currency : Map.of("JPY", "1", "EUR", "1.23", "KWD", "1.235").entrySet()) {
+			CostQuoteCandidate candidate = withCurrencyAndRate(quoteCandidate(target, quoteTime), currency.getKey(),
+					new BigDecimal("1.23456"));
+			RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+					new TargetEligibilityAssessment(List.of(target), List.of()), storage(), currency.getKey(),
+					Clock.fixed(quoteTime, java.time.ZoneOffset.UTC),
+					(request, reportingCurrency, time) -> new CostQuoteAssessment(List.of(candidate), List.of()));
+
+			JsonNode quote = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null)
+				.definition()
+				.value()
+				.path("costQuote");
+			assertThat(quote.at("/hourly/minimum").decimalValue()).as(currency.getKey())
+				.isEqualByComparingTo(currency.getValue());
+			assertThat(quote.at("/candidates/0/nativeRate/amount").decimalValue()).as(currency.getKey())
+				.isEqualByComparingTo("1.23456");
+		}
+	}
+
+	@Test
+	void acceptedQuoteRemainsFrozenAfterCatalogueScheduleAndCurrencyChanges() {
+		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
+		EligibleTarget target = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
+				80L * 1024 * 1024 * 1024);
+		AtomicReference<String> currency = new AtomicReference<>("EUR");
+		AtomicReference<CostQuoteCandidate> candidate = new AtomicReference<>(quoteCandidate(target, quoteTime));
+		RunDefinitionResolver resolver = new RunDefinitionResolver(
+				new TrainingProjectVersions(eligibleVersionRegistry(), this.configurationContracts,
+						this.metricContracts),
+				ignored -> DatasetDefinitionAssessment.accepted(),
+				() -> new TargetEligibilityAssessment(List.of(target), List.of()),
+				(targetClass, overrides) -> storage(), currency::get,
+				(request, reportingCurrency, time) -> new CostQuoteAssessment(List.of(candidate.get()), List.of()),
+				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC));
+
+		RunDefinition accepted = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null).definition();
+		String frozen = accepted.encode();
+		currency.set("JPY");
+		candidate.set(withCurrencyAndRate(candidate.get(), "JPY", new BigDecimal("99.999")));
+		RunDefinition later = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null).definition();
+
+		assertThat(accepted.encode()).isEqualTo(frozen);
+		assertThat(RunDefinition.decode(accepted.encode())).isEqualTo(accepted);
+		assertThat(accepted.value().at("/costQuote/reportingCurrency/code").asText()).isEqualTo("EUR");
+		assertThat(accepted.value().at("/costQuote/candidates/0/nativeRate/amount").decimalValue())
+			.isEqualByComparingTo("2.5000");
+		assertThat(later.value().at("/costQuote/reportingCurrency/code").asText()).isEqualTo("JPY");
+		assertThat(later.value().at("/costQuote/candidates/0/nativeRate/amount").decimalValue())
+			.isEqualByComparingTo("99.999");
+	}
+
+	@Test
+	void localAdmissionDoesNotRequireOrResolveACloudCostQuote() {
+		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
+		EligibleTarget local = eligibleTarget("local", TargetClass.LOCAL_SINGLE_GPU, "cuda", "H100", 1,
+				80L * 1024 * 1024 * 1024);
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				new TargetEligibilityAssessment(List.of(local), List.of()), storage(), "EUR",
+				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC), (request, currency, time) -> {
+					throw new AssertionError("cloud Cost Quote must not be resolved for a local target");
+				});
+
+		RunDefinitionResolution resolution = resolver.resolve(submission(TargetClass.LOCAL_SINGLE_GPU), null);
+
+		assertThat(resolution.failures()).isEmpty();
+		assertThat(resolution.definition().value().has("costQuote")).isFalse();
+	}
+
+	@Test
+	void incompleteQuotesReturnNoDefinitionAndOrderDistinctPriceFailures() {
+		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
+		EligibleTarget target = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
+				80L * 1024 * 1024 * 1024);
+		CostQuoteReader incomplete = (request, currency, time) -> new CostQuoteAssessment(List.of(),
+				List.of(new RunDefinitionFailure("GPU_COMPUTE_PRICE_STALE", "price-source", "/costQuote/candidates/b",
+						"complete", Map.of("offeringId", "b")),
+						new RunDefinitionFailure("PRICE_SOURCE_UNAVAILABLE", "price-source", "/costQuote/candidates/c",
+								"complete", Map.of("offeringId", "c")),
+						new RunDefinitionFailure("GPU_COMPUTE_PRICE_MISSING", "price-source", "/costQuote/candidates/a",
+								"complete", Map.of("offeringId", "a"))));
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				new TargetEligibilityAssessment(List.of(target), List.of()), storage(), "EUR",
+				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC), incomplete);
+
+		RunDefinitionResolution resolution = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null);
+
+		assertThat(resolution.definition()).isNull();
+		assertThat(resolution.failures()).extracting(RunDefinitionFailure::code)
+			.containsExactly("GPU_COMPUTE_PRICE_MISSING", "GPU_COMPUTE_PRICE_STALE", "PRICE_SOURCE_UNAVAILABLE");
+		assertThat(resolution.failures())
+			.allSatisfy(failure -> assertThat(failure.details()).containsKey("offeringId"));
 	}
 
 	@Test
@@ -106,11 +234,12 @@ class RunDefinitionResolverIT {
 		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
 		EligibleTarget candidate = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
 				80L * 1024 * 1024 * 1024);
-		EligibleTargetPrice price = price(BigDecimal.ONE, BigDecimal.ONE, quoteTime.plusSeconds(60),
-				quoteTime.minusSeconds(60), quoteTime.minusSeconds(1));
+		CostQuoteCandidate invalid = withEffectiveInterval(quoteCandidate(candidate, quoteTime),
+				quoteTime.plusSeconds(60), quoteTime.minusSeconds(60));
 		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
-				new TargetEligibilityAssessment(List.of(withPrice(candidate, price)), List.of()), storage(), "EUR",
-				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC));
+				new TargetEligibilityAssessment(List.of(candidate), List.of()), storage(), "EUR",
+				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC),
+				(request, currency, time) -> new CostQuoteAssessment(List.of(invalid), List.of()));
 
 		assertThat(resolver.resolve(submission(TargetClass.CLOUD_SPOT), null).failures())
 			.extracting(RunDefinitionFailure::code)
@@ -169,7 +298,9 @@ class RunDefinitionResolverIT {
 					throw new AssertionError("target eligibility must not be queried");
 				}, (targetClass, overrides) -> {
 					throw new AssertionError("Target Storage must not be queried");
-				}, () -> "EUR");
+				}, () -> "EUR", (request, currency, quoteTime) -> {
+					throw new AssertionError("Cost Quote must not be resolved");
+				});
 		RunSubmission submission = withTarget(submission(TargetClass.CLOUD_SPOT),
 				new TargetRequest(null, 1, null, null, "H100", null));
 
@@ -381,6 +512,8 @@ class RunDefinitionResolverIT {
 					throw new IllegalStateException("TARGET_STORAGE_INELIGIBLE: inactive");
 				}, () -> {
 					throw new IllegalStateException("offline");
+				}, (request, currency, quoteTime) -> {
+					throw new IllegalStateException("offline");
 				});
 
 		assertThat(resolver.resolve(submission(TargetClass.CLOUD_SPOT), null).failures())
@@ -396,7 +529,7 @@ class RunDefinitionResolverIT {
 						this.metricContracts),
 				ignored -> DatasetDefinitionAssessment.accepted(), () -> targets(), (targetClass, overrides) -> {
 					throw new RunDefinitionStorageException("TARGET_STORAGE_INELIGIBLE", "inactive", null);
-				}, () -> "EUR");
+				}, () -> "EUR", quoteReader(targets()));
 
 		assertThat(resolver.resolve(submission(TargetClass.CLOUD_SPOT), null).failures())
 			.extracting(RunDefinitionFailure::code)
@@ -411,9 +544,16 @@ class RunDefinitionResolverIT {
 	private RunDefinitionResolver resolver(ProjectVersionRegistry registry, DatasetDefinitionAssessment dataset,
 			TargetEligibilityAssessment eligibility, RunDefinitionStorageSelection storage, String currency,
 			Clock clock) {
+		return resolver(registry, dataset, eligibility, storage, currency, clock, quoteReader(eligibility));
+	}
+
+	private RunDefinitionResolver resolver(ProjectVersionRegistry registry, DatasetDefinitionAssessment dataset,
+			TargetEligibilityAssessment eligibility, RunDefinitionStorageSelection storage, String currency,
+			Clock clock, CostQuoteReader quoteReader) {
 		return new RunDefinitionResolver(
 				new TrainingProjectVersions(registry, this.configurationContracts, this.metricContracts),
-				ignored -> dataset, () -> eligibility, (targetClass, overrides) -> storage, () -> currency, clock);
+				ignored -> dataset, () -> eligibility, (targetClass, overrides) -> storage, () -> currency, quoteReader,
+				clock);
 	}
 
 	private RunSubmission submission(TargetClass targetClass) {
@@ -453,25 +593,73 @@ class RunDefinitionResolverIT {
 
 	private static EligibleTarget eligibleTarget(String target, TargetClass targetClass, String acceleratorBackend,
 			String gpuModel, int maximumGpuCount, long gpuMemoryBytes) {
-		Instant observed = Instant.now();
-		UUID source = UUID.fromString("00000000-0000-0000-0000-000000000100");
-		return new EligibleTarget(target, targetClass, acceleratorBackend, gpuModel, maximumGpuCount, gpuMemoryBytes,
-				new EligibleTargetPrice(new BigDecimal("2.5000"), "EUR", BigDecimal.ONE, BigDecimal.ONE, source, 3,
-						"operator-schedule", Instant.parse("2025-01-01T00:00:00Z"), null, observed.minusSeconds(1),
-						observed, BigDecimal.ONE, source, 3, "operator-schedule", observed, Duration.ofHours(24)));
+		return new EligibleTarget(target, targetClass, acceleratorBackend, gpuModel, maximumGpuCount, gpuMemoryBytes);
 	}
 
-	private static EligibleTargetPrice price(BigDecimal minimumQuantity, BigDecimal billingQuantum,
-			Instant effectiveFrom, Instant effectiveUntil, Instant observed) {
-		UUID source = UUID.fromString("00000000-0000-0000-0000-000000000100");
-		return new EligibleTargetPrice(new BigDecimal("2.5000"), "EUR", minimumQuantity, billingQuantum, source, 3,
-				"operator-schedule", effectiveFrom, effectiveUntil, observed.minusSeconds(1), observed, BigDecimal.ONE,
-				source, 3, "operator-schedule", observed, Duration.ofHours(24));
+	private static CostQuoteReader quoteReader(TargetEligibilityAssessment eligibility) {
+		return (request, currency,
+				quoteTime) -> new CostQuoteAssessment(eligibility.targets()
+					.stream()
+					.filter(target -> target.targetClass() == request.targetClass())
+					.filter(target -> request.target() == null || request.target().equals(target.target()))
+					.filter(target -> request.gpuModel() == null || request.gpuModel().equals(target.gpuModel()))
+					.map(target -> quoteCandidate(target, quoteTime))
+					.toList(), List.of());
 	}
 
-	private static EligibleTarget withPrice(EligibleTarget target, EligibleTargetPrice price) {
-		return new EligibleTarget(target.target(), target.targetClass(), target.acceleratorBackend(), target.gpuModel(),
-				target.maximumGpuCount(), target.gpuMemoryBytes(), price);
+	private static CostQuoteCandidate quoteCandidate(EligibleTarget target, Instant quoteTime) {
+		UUID source = UUID.fromString("00000000-0000-0000-0000-000000000100");
+		return new CostQuoteCandidate(UUID.fromString("00000000-0000-0000-0000-000000000200"), 1, target.targetClass(),
+				target.target(), "provider-offering", "test-region", "test-instance", target.gpuModel(),
+				target.maximumGpuCount(), target.gpuMemoryBytes(), purchaseMode(target.targetClass()), "first-class",
+				new BigDecimal("2.5000"), "EUR", "instance-hour", BigDecimal.ONE, BigDecimal.ONE,
+				java.util.Collections.singletonMap("note", null), source, 3, "operator-schedule",
+				Instant.parse("2025-01-01T00:00:00Z"), null, quoteTime.minusSeconds(1), quoteTime.minusSeconds(2),
+				quoteTime.minusSeconds(1), Duration.ofHours(24));
+	}
+
+	private static CostQuoteCandidate withBillingRules(CostQuoteCandidate source, BigDecimal minimumQuantity,
+			BigDecimal billingQuantum) {
+		return new CostQuoteCandidate(source.offeringId(), source.offeringRevision(), source.targetClass(),
+				source.target(), source.providerOfferingId(), source.region(), source.instanceType(), source.gpuModel(),
+				source.gpuCount(), source.gpuMemoryBytes(), source.purchaseMode(), source.supportTier(),
+				source.nativeRate(), source.nativeCurrency(), source.nativeUnit(), minimumQuantity, billingQuantum,
+				source.provenance(), source.sourceId(), source.sourceRevision(), source.sourceKind(),
+				source.effectiveFrom(), source.effectiveUntil(), source.rateObservedAt(), source.sourceObservedFrom(),
+				source.sourceObservedUntil(), source.maximumObservationAge());
+	}
+
+	private static CostQuoteCandidate withEffectiveInterval(CostQuoteCandidate source, Instant effectiveFrom,
+			Instant effectiveUntil) {
+		return new CostQuoteCandidate(source.offeringId(), source.offeringRevision(), source.targetClass(),
+				source.target(), source.providerOfferingId(), source.region(), source.instanceType(), source.gpuModel(),
+				source.gpuCount(), source.gpuMemoryBytes(), source.purchaseMode(), source.supportTier(),
+				source.nativeRate(), source.nativeCurrency(), source.nativeUnit(), source.minimumQuantity(),
+				source.billingQuantum(), source.provenance(), source.sourceId(), source.sourceRevision(),
+				source.sourceKind(), effectiveFrom, effectiveUntil, source.rateObservedAt(),
+				source.sourceObservedFrom(), source.sourceObservedUntil(), source.maximumObservationAge());
+	}
+
+	private static CostQuoteCandidate withRate(CostQuoteCandidate source, BigDecimal rate) {
+		return withCurrencyAndRate(source, source.nativeCurrency(), rate);
+	}
+
+	private static CostQuoteCandidate withCurrencyAndRate(CostQuoteCandidate source, String currency, BigDecimal rate) {
+		return new CostQuoteCandidate(source.offeringId(), source.offeringRevision(), source.targetClass(),
+				source.target(), source.providerOfferingId(), source.region(), source.instanceType(), source.gpuModel(),
+				source.gpuCount(), source.gpuMemoryBytes(), source.purchaseMode(), source.supportTier(), rate, currency,
+				source.nativeUnit(), source.minimumQuantity(), source.billingQuantum(), source.provenance(),
+				source.sourceId(), source.sourceRevision(), source.sourceKind(), source.effectiveFrom(),
+				source.effectiveUntil(), source.rateObservedAt(), source.sourceObservedFrom(),
+				source.sourceObservedUntil(), source.maximumObservationAge());
+	}
+
+	private static String purchaseMode(TargetClass targetClass) {
+		return switch (targetClass) {
+			case LOCAL_SINGLE_GPU, LOCAL_MULTI_GPU -> "local";
+			case CLOUD_ON_DEMAND -> "on-demand";
+			case CLOUD_SPOT -> "spot";
+		};
 	}
 
 	private static RunDefinitionStorageSelection storage() {
