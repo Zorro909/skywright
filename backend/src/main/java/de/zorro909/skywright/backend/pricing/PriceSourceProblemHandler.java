@@ -20,6 +20,7 @@ final class PriceSourceProblemHandler {
 	@ExceptionHandler(PriceSourceException.class)
 	ResponseEntity<Problem> handle(PriceSourceException failure, HttpServletRequest request) {
 		HttpStatus status = failure instanceof PriceSourceNotFoundException
+				|| failure instanceof CurrencyConversionNotFoundException
 				|| failure instanceof GpuPriceScheduleEntryNotFoundException ? HttpStatus.NOT_FOUND
 						: failure instanceof PriceSourceConflictException ? HttpStatus.CONFLICT
 								: HttpStatus.UNPROCESSABLE_ENTITY;
