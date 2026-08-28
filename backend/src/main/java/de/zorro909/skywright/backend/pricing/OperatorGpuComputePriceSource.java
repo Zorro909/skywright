@@ -30,6 +30,9 @@ public class OperatorGpuComputePriceSource implements GpuComputePriceSource {
 	}
 
 	private static GpuComputePriceResult result(GpuComputePriceQuery query, GpuPriceScheduleEntryView entry) {
+		if (entry.observedAt().isAfter(query.quoteTime())) {
+			return GpuComputePriceResult.missing();
+		}
 		GpuComputeRate rate = new GpuComputeRate(entry.sourceId(), entry.sourceRevision(), entry.offeringId(),
 				entry.nativeCurrency(), entry.nativeUnit(), entry.value(), entry.minimumQuantity(),
 				entry.billingQuantum(), entry.provenance(), entry.observedAt(), entry.effectiveFrom(),

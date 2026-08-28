@@ -47,27 +47,31 @@ public final class RunDefinitionResolver {
 
 	private final ReportingCurrencyReader reportingCurrency;
 
+	private final CostQuoteReader costQuotes;
+
 	private final Clock clock;
 
 	public RunDefinitionResolver(TrainingProjectVersions projectVersions, DatasetDefinitionReader datasets,
 			TargetEligibilityReader targetEligibility, RunDefinitionStorageReader targetStorages,
-			ReportingCurrencyReader reportingCurrency) {
+			ReportingCurrencyReader reportingCurrency, CostQuoteReader costQuotes) {
 		this.projectVersions = projectVersions;
 		this.datasets = datasets;
 		this.targetEligibility = targetEligibility;
 		this.targetStorages = targetStorages;
 		this.reportingCurrency = reportingCurrency;
+		this.costQuotes = costQuotes;
 		this.clock = Clock.systemUTC();
 	}
 
 	RunDefinitionResolver(TrainingProjectVersions projectVersions, DatasetDefinitionReader datasets,
 			TargetEligibilityReader targetEligibility, RunDefinitionStorageReader targetStorages,
-			ReportingCurrencyReader reportingCurrency, Clock clock) {
+			ReportingCurrencyReader reportingCurrency, CostQuoteReader costQuotes, Clock clock) {
 		this.projectVersions = projectVersions;
 		this.datasets = datasets;
 		this.targetEligibility = targetEligibility;
 		this.targetStorages = targetStorages;
 		this.reportingCurrency = reportingCurrency;
+		this.costQuotes = costQuotes;
 		this.clock = clock;
 	}
 
@@ -82,7 +86,7 @@ public final class RunDefinitionResolver {
 		RunDefinitionStorageSelection storage = resolveStorage(submission, failures);
 		String currency = resolveCurrency(failures);
 		Instant quoteTime = this.clock.instant();
-		assessPrices(target, currency, quoteTime, failures);
+		CostQuoteAssessment quote = resolveQuote(submission.targetRequest(), target, currency, quoteTime, failures);
 		assessCheckpoint(submission, checkpointSeed, version, configuration, datasetReferenceValid, failures);
 
 		List<RunDefinitionFailure> ordered = failures.stream().distinct().sorted().toList();
@@ -91,7 +95,7 @@ public final class RunDefinitionResolver {
 		}
 		try {
 			return new RunDefinitionResolution(
-					build(submission, version, configuration, target, storage, currency, quoteTime), List.of());
+					build(submission, version, configuration, target, storage, currency, quoteTime, quote), List.of());
 		}
 		catch (RunDefinitionValidationException error) {
 			return new RunDefinitionResolution(null, error.failures().stream().distinct().sorted().toList());
@@ -279,52 +283,74 @@ public final class RunDefinitionResolver {
 		}
 	}
 
-	private static void assessPrices(ResolvedTarget target, String reportingCurrency, Instant quoteTime,
-			List<RunDefinitionFailure> failures) {
+	private CostQuoteAssessment resolveQuote(TargetRequest request, ResolvedTarget target, String reportingCurrency,
+			Instant quoteTime, List<RunDefinitionFailure> failures) {
 		if (target == null || reportingCurrency == null) {
+			return null;
+		}
+		try {
+			CostQuoteAssessment quote = this.costQuotes.resolve(request, reportingCurrency, quoteTime);
+			failures.addAll(quote.failures());
+			if (quote.failures().isEmpty() && quote.candidates().isEmpty()) {
+				failures
+					.add(failure("GPU_OFFERING_NONE_ELIGIBLE", "gpu-offering-catalogue", "/targetRequest", "eligible"));
+			}
+			for (int index = 0; index < quote.candidates().size(); index++) {
+				assessCandidate(quote.candidates().get(index), request, reportingCurrency, quoteTime, index, failures);
+			}
+			return failures.isEmpty() ? quote : null;
+		}
+		catch (RuntimeException error) {
+			failures.add(failure("COST_QUOTE_UNAVAILABLE", "cost-quote", "/costQuote", "available"));
+			return null;
+		}
+	}
+
+	private static void assessCandidate(CostQuoteCandidate candidate, TargetRequest request, String reportingCurrency,
+			Instant quoteTime, int index, List<RunDefinitionFailure> failures) {
+		String pointer = "/costQuote/candidates/" + index;
+		if (candidate == null || candidate.offeringId() == null || candidate.offeringRevision() < 1
+				|| candidate.targetClass() == null || blank(candidate.target()) || blank(candidate.providerOfferingId())
+				|| blank(candidate.region()) || blank(candidate.instanceType()) || blank(candidate.gpuModel())
+				|| candidate.gpuCount() <= 0 || candidate.gpuMemoryBytes() <= 0 || blank(candidate.purchaseMode())
+				|| blank(candidate.supportTier())) {
+			failures.add(failure("GPU_OFFERING_SNAPSHOT_INVALID", "gpu-offering-catalogue", pointer + "/offering",
+					"required"));
 			return;
 		}
-		for (EligibleTarget candidate : target.candidates()) {
-			EligibleTargetPrice price = candidate.price();
-			if (price == null) {
-				failures.add(failure("PRICE_MISSING", "price-source", "/costQuote/candidates", "required"));
-				continue;
-			}
-			if (price.nativeHourlyRate() == null || price.nativeHourlyRate().signum() < 0
-					|| price.minimumQuantity() == null || price.minimumQuantity().signum() <= 0
-					|| price.billingQuantum() == null || price.billingQuantum().signum() <= 0
-					|| price.nativeCurrency() == null || !CURRENCY.matcher(price.nativeCurrency()).matches()) {
-				failures.add(failure("PRICE_RATE_INVALID", "price-source", "/costQuote/candidates", "minimum"));
-			}
-			if (price.sourceId() == null || price.sourceRevision() < 1 || !validSourceKind(price.sourceKind())
-					|| price.effectiveFrom() == null || price.observedFrom() == null || price.observedUntil() == null) {
-				failures.add(failure("PRICE_PROVENANCE_INVALID", "price-source", "/costQuote/candidates/source",
-						"required"));
-			}
-			if (price.effectiveFrom() != null && (price.effectiveFrom().isAfter(quoteTime)
-					|| price.effectiveUntil() != null && !quoteTime.isBefore(price.effectiveUntil()))) {
-				failures.add(failure("PRICE_NOT_EFFECTIVE", "price-source", "/costQuote/candidates/effectiveInterval",
-						"contains"));
-			}
-			if (price.effectiveFrom() != null && price.effectiveUntil() != null
-					&& !price.effectiveFrom().isBefore(price.effectiveUntil())) {
-				failures.add(failure("PRICE_EFFECTIVE_INTERVAL_INVALID", "price-source",
-						"/costQuote/candidates/effectiveInterval", "interval"));
-			}
-			if (price.conversionRate() == null || price.conversionRate().signum() <= 0
-					|| price.conversionSourceId() == null || price.conversionSourceRevision() < 1
-					|| !validSourceKind(price.conversionSourceKind()) || price.conversionObservedAt() == null) {
-				failures.add(failure("CURRENCY_CONVERSION_MISSING", "price-source", "/costQuote/candidates/conversion",
-						"required"));
-			}
-			if (price.maximumObservationAge() == null || price.maximumObservationAge().isNegative()
-					|| price.maximumObservationAge().isZero() || price.observedUntil() == null
-					|| price.observedUntil().plus(price.maximumObservationAge()).isBefore(quoteTime)
-					|| price.conversionObservedAt() == null
-					|| price.conversionObservedAt().plus(price.maximumObservationAge()).isBefore(quoteTime)) {
-				failures.add(failure("PRICE_OBSERVATION_STALE", "price-source", "/costQuote/candidates",
-						"maximumObservationAge"));
-			}
+		if (candidate.targetClass() != request.targetClass() || candidate.gpuCount() < request.gpuCount()
+				|| !candidate.purchaseMode().equals(purchaseMode(request.targetClass()))
+				|| request.minimumGpuMemoryBytes() != null
+						&& candidate.gpuMemoryBytes() < request.minimumGpuMemoryBytes()
+				|| request.target() != null && !request.target().equals(candidate.target())
+				|| request.gpuModel() != null && !request.gpuModel().equals(candidate.gpuModel())) {
+			failures.add(failure("GPU_OFFERING_SNAPSHOT_INELIGIBLE", "gpu-offering-catalogue", pointer + "/offering",
+					"eligible"));
+		}
+		if (candidate.nativeRate() == null || candidate.nativeRate().signum() < 0 || candidate.minimumQuantity() == null
+				|| candidate.minimumQuantity().signum() <= 0 || candidate.billingQuantum() == null
+				|| candidate.billingQuantum().signum() <= 0 || !reportingCurrency.equals(candidate.nativeCurrency())
+				|| !"instance-hour".equals(candidate.nativeUnit()) || candidate.provenance() == null) {
+			failures.add(failure("PRICE_RATE_INVALID", "price-source", pointer + "/nativeRate", "required"));
+		}
+		if (candidate.sourceId() == null || candidate.sourceRevision() < 1 || !validSourceKind(candidate.sourceKind())
+				|| candidate.sourceObservedFrom() == null || candidate.sourceObservedUntil() == null
+				|| candidate.rateObservedAt() == null || candidate.maximumObservationAge() == null
+				|| candidate.maximumObservationAge().isNegative() || candidate.maximumObservationAge().isZero()) {
+			failures.add(failure("PRICE_PROVENANCE_INVALID", "price-source", pointer + "/source", "required"));
+		}
+		if (candidate.effectiveFrom() == null || candidate.effectiveFrom().isAfter(quoteTime)
+				|| candidate.effectiveUntil() != null && !quoteTime.isBefore(candidate.effectiveUntil())) {
+			failures.add(failure("PRICE_NOT_EFFECTIVE", "price-source", pointer + "/effectiveInterval", "contains"));
+		}
+		if (candidate.effectiveFrom() != null && candidate.effectiveUntil() != null
+				&& !candidate.effectiveFrom().isBefore(candidate.effectiveUntil())) {
+			failures.add(failure("PRICE_EFFECTIVE_INTERVAL_INVALID", "price-source", pointer + "/effectiveInterval",
+					"interval"));
+		}
+		if (candidate.rateObservedAt() != null && candidate.maximumObservationAge() != null
+				&& candidate.rateObservedAt().plus(candidate.maximumObservationAge()).isBefore(quoteTime)) {
+			failures.add(failure("GPU_COMPUTE_PRICE_STALE", "price-source", pointer, "maximumObservationAge"));
 		}
 	}
 
@@ -371,7 +397,8 @@ public final class RunDefinitionResolver {
 	}
 
 	private static RunDefinition build(RunSubmission submission, TrainingProjectVersion version, JsonNode configuration,
-			ResolvedTarget target, RunDefinitionStorageSelection storage, String currency, Instant quoteTime) {
+			ResolvedTarget target, RunDefinitionStorageSelection storage, String currency, Instant quoteTime,
+			CostQuoteAssessment quote) {
 		ObjectNode root = JSON.createObjectNode();
 		root.put("schemaVersion", 1);
 		root.set("trainingProjectVersion", projectVersion(version));
@@ -379,65 +406,71 @@ public final class RunDefinitionResolver {
 		root.set("datasetDefinition", dataset(submission.datasetDefinition()));
 		root.set("targetRequest", target(target));
 		root.set("storage", storage(storage));
-		root.set("costQuote", costQuote(target, currency, quoteTime));
+		root.set("costQuote", costQuote(quote, currency, quoteTime));
 		root.set("executionPolicy", executionPolicy(submission, currency));
 		root.put("orderingReset", submission.orderingReset());
 		return RunDefinition.from(root);
 	}
 
-	private static ObjectNode costQuote(ResolvedTarget target, String currency, Instant quoteTime) {
+	private static ObjectNode costQuote(CostQuoteAssessment quote, String currency, Instant quoteTime) {
 		ObjectNode result = JSON.createObjectNode();
 		result.put("quoteTime", quoteTime.toString());
-		result.putObject("reportingCurrency")
-			.put("code", currency)
-			.put("minorUnit", Currency.getInstance(currency).getDefaultFractionDigits());
+		int minorUnit = Currency.getInstance(currency).getDefaultFractionDigits();
+		result.putObject("reportingCurrency").put("code", currency).put("minorUnit", minorUnit);
 		var candidates = result.putArray("candidates");
 		List<BigDecimal> hourlyRates = new ArrayList<>();
 		List<BigDecimal> dailyRates = new ArrayList<>();
 		List<BigDecimal> weeklyRates = new ArrayList<>();
-		for (EligibleTarget eligible : target.candidates()) {
-			EligibleTargetPrice price = eligible.price();
-			BigDecimal hourly = quotedCost(price, target.request().gpuCount(), 1);
-			BigDecimal daily = quotedCost(price, target.request().gpuCount(), 24);
-			BigDecimal weekly = quotedCost(price, target.request().gpuCount(), 168);
+		for (CostQuoteCandidate price : quote.candidates()) {
+			BigDecimal hourly = quotedCost(price, 1);
+			BigDecimal daily = quotedCost(price, 24);
+			BigDecimal weekly = quotedCost(price, 168);
 			hourlyRates.add(hourly);
 			dailyRates.add(daily);
 			weeklyRates.add(weekly);
 			ObjectNode candidate = candidates.addObject()
-				.put("target", eligible.target())
-				.put("gpuModel", eligible.gpuModel())
-				.put("gpuCount", target.request().gpuCount())
-				.put("purchaseMode", target.purchaseMode())
-				.put("reportingHourlyRate", hourly);
+				.put("rateObservedAt", price.rateObservedAt().toString())
+				.put("maximumObservationAge", price.maximumObservationAge().toString())
+				.put("reportingHourlyRate", present(hourly, minorUnit));
+			candidate.putObject("offering")
+				.put("id", price.offeringId().toString())
+				.put("revision", price.offeringRevision())
+				.put("targetClass", price.targetClass().wireValue())
+				.put("target", price.target())
+				.put("providerOfferingId", price.providerOfferingId())
+				.put("region", price.region())
+				.put("instanceType", price.instanceType())
+				.put("gpuModel", price.gpuModel())
+				.put("gpuCount", price.gpuCount())
+				.put("gpuMemoryBytes", price.gpuMemoryBytes())
+				.put("purchaseMode", price.purchaseMode())
+				.put("supportTier", price.supportTier());
 			candidate.putObject("nativeRate")
-				.put("amount", price.nativeHourlyRate())
+				.put("amount", price.nativeRate())
 				.put("currency", price.nativeCurrency())
-				.put("unit", "gpu-hour")
+				.put("unit", price.nativeUnit())
+				.set("provenance", JSON.valueToTree(price.provenance()));
+			candidate.withObject("/nativeRate")
 				.putObject("billingRules")
 				.put("minimumQuantity", price.minimumQuantity())
 				.put("billingQuantum", price.billingQuantum());
 			provenance(candidate.putObject("source"), price.sourceId(), price.sourceRevision(), price.sourceKind());
 			interval(candidate.putObject("effectiveInterval"), price.effectiveFrom(), price.effectiveUntil());
-			interval(candidate.putObject("observationInterval"), price.observedFrom(), price.observedUntil());
-			ObjectNode conversion = candidate.putObject("conversion")
-				.put("rate", price.conversionRate())
-				.put("observedAt", price.conversionObservedAt().toString())
-				.put("maximumObservationAge", price.maximumObservationAge().toString());
-			provenance(conversion.putObject("source"), price.conversionSourceId(), price.conversionSourceRevision(),
-					price.conversionSourceKind());
+			interval(candidate.putObject("observationInterval"), price.sourceObservedFrom(),
+					price.sourceObservedUntil());
 		}
-		range(result.putObject("hourly"), minimum(hourlyRates), maximum(hourlyRates));
-		range(result.putObject("daily"), minimum(dailyRates), maximum(dailyRates));
-		range(result.putObject("weekly"), minimum(weeklyRates), maximum(weeklyRates));
+		range(result.putObject("hourly"), minimum(hourlyRates), maximum(hourlyRates), minorUnit);
+		range(result.putObject("daily"), minimum(dailyRates), maximum(dailyRates), minorUnit);
+		range(result.putObject("weekly"), minimum(weeklyRates), maximum(weeklyRates), minorUnit);
 		return result;
 	}
 
-	private static BigDecimal quotedCost(EligibleTargetPrice price, int gpuCount, int hours) {
-		BigDecimal requestedQuantity = BigDecimal.valueOf(gpuCount).multiply(BigDecimal.valueOf(hours));
+	private static BigDecimal quotedCost(CostQuoteCandidate price, int hours) {
+		BigDecimal requestedQuantity = BigDecimal.valueOf(hours);
 		BigDecimal minimumQuantity = requestedQuantity.max(price.minimumQuantity());
 		BigDecimal billableQuantity = minimumQuantity.divide(price.billingQuantum(), 0, RoundingMode.CEILING)
 			.multiply(price.billingQuantum());
-		return price.nativeHourlyRate().multiply(billableQuantity).multiply(price.conversionRate());
+		return price.nativeRate().multiply(billableQuantity);
 	}
 
 	private static BigDecimal minimum(List<BigDecimal> values) {
@@ -462,8 +495,12 @@ public final class RunDefinitionResolver {
 		}
 	}
 
-	private static void range(ObjectNode result, BigDecimal minimum, BigDecimal maximum) {
-		result.put("minimum", minimum).put("maximum", maximum);
+	private static void range(ObjectNode result, BigDecimal minimum, BigDecimal maximum, int minorUnit) {
+		result.put("minimum", present(minimum, minorUnit)).put("maximum", present(maximum, minorUnit));
+	}
+
+	private static BigDecimal present(BigDecimal amount, int minorUnit) {
+		return amount.setScale(minorUnit, RoundingMode.HALF_EVEN);
 	}
 
 	private static ObjectNode projectVersion(TrainingProjectVersion version) {
