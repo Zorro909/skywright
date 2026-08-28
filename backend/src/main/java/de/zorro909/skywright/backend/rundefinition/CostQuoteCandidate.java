@@ -4,6 +4,10 @@ import de.zorro909.skywright.backend.targetstorage.TargetClass;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -17,7 +21,27 @@ public record CostQuoteCandidate(UUID offeringId, long offeringRevision, TargetC
 		Duration maximumObservationAge) {
 
 	public CostQuoteCandidate {
-		provenance = Map.copyOf(provenance);
+		provenance = immutableObject(provenance);
+	}
+
+	private static Map<String, Object> immutableObject(Map<String, Object> source) {
+		Map<String, Object> copy = new LinkedHashMap<>();
+		source.forEach((key, value) -> copy.put(key, immutableValue(value)));
+		return Collections.unmodifiableMap(copy);
+	}
+
+	private static Object immutableValue(Object value) {
+		if (value instanceof Map<?, ?> map) {
+			Map<String, Object> copy = new LinkedHashMap<>();
+			map.forEach((key, nested) -> copy.put((String) key, immutableValue(nested)));
+			return Collections.unmodifiableMap(copy);
+		}
+		if (value instanceof List<?> list) {
+			List<Object> copy = new ArrayList<>(list.size());
+			list.forEach(nested -> copy.add(immutableValue(nested)));
+			return Collections.unmodifiableList(copy);
+		}
+		return value;
 	}
 
 }

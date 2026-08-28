@@ -188,6 +188,23 @@ class RunDefinitionResolverIT {
 	}
 
 	@Test
+	void localAdmissionDoesNotRequireOrResolveACloudCostQuote() {
+		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
+		EligibleTarget local = eligibleTarget("local", TargetClass.LOCAL_SINGLE_GPU, "cuda", "H100", 1,
+				80L * 1024 * 1024 * 1024);
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				new TargetEligibilityAssessment(List.of(local), List.of()), storage(), "EUR",
+				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC), (request, currency, time) -> {
+					throw new AssertionError("cloud Cost Quote must not be resolved for a local target");
+				});
+
+		RunDefinitionResolution resolution = resolver.resolve(submission(TargetClass.LOCAL_SINGLE_GPU), null);
+
+		assertThat(resolution.failures()).isEmpty();
+		assertThat(resolution.definition().value().has("costQuote")).isFalse();
+	}
+
+	@Test
 	void incompleteQuotesReturnNoDefinitionAndOrderDistinctPriceFailures() {
 		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
 		EligibleTarget target = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
@@ -596,8 +613,9 @@ class RunDefinitionResolverIT {
 				target.target(), "provider-offering", "test-region", "test-instance", target.gpuModel(),
 				target.maximumGpuCount(), target.gpuMemoryBytes(), purchaseMode(target.targetClass()), "first-class",
 				new BigDecimal("2.5000"), "EUR", "instance-hour", BigDecimal.ONE, BigDecimal.ONE,
-				Map.of("source", "test"), source, 3, "operator-schedule", Instant.parse("2025-01-01T00:00:00Z"), null,
-				quoteTime.minusSeconds(1), quoteTime.minusSeconds(2), quoteTime.minusSeconds(1), Duration.ofHours(24));
+				java.util.Collections.singletonMap("note", null), source, 3, "operator-schedule",
+				Instant.parse("2025-01-01T00:00:00Z"), null, quoteTime.minusSeconds(1), quoteTime.minusSeconds(2),
+				quoteTime.minusSeconds(1), Duration.ofHours(24));
 	}
 
 	private static CostQuoteCandidate withBillingRules(CostQuoteCandidate source, BigDecimal minimumQuantity,

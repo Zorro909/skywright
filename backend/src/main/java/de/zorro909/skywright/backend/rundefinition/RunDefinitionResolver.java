@@ -285,6 +285,9 @@ public final class RunDefinitionResolver {
 
 	private CostQuoteAssessment resolveQuote(TargetRequest request, ResolvedTarget target, String reportingCurrency,
 			Instant quoteTime, List<RunDefinitionFailure> failures) {
+		if (request == null || request.targetClass() == null || !cloud(request.targetClass())) {
+			return null;
+		}
 		if (target == null || reportingCurrency == null) {
 			return null;
 		}
@@ -406,7 +409,9 @@ public final class RunDefinitionResolver {
 		root.set("datasetDefinition", dataset(submission.datasetDefinition()));
 		root.set("targetRequest", target(target));
 		root.set("storage", storage(storage));
-		root.set("costQuote", costQuote(quote, currency, quoteTime));
+		if (quote != null) {
+			root.set("costQuote", costQuote(quote, currency, quoteTime));
+		}
 		root.set("executionPolicy", executionPolicy(submission, currency));
 		root.put("orderingReset", submission.orderingReset());
 		return RunDefinition.from(root);
@@ -606,6 +611,10 @@ public final class RunDefinitionResolver {
 			case CLOUD_ON_DEMAND -> "on-demand";
 			case CLOUD_SPOT -> "spot";
 		};
+	}
+
+	private static boolean cloud(TargetClass targetClass) {
+		return targetClass == TargetClass.CLOUD_ON_DEMAND || targetClass == TargetClass.CLOUD_SPOT;
 	}
 
 	private static boolean validGpuCount(TargetRequest request) {

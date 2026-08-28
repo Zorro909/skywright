@@ -4,7 +4,14 @@
   "title": "Skywright Run Definition v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "trainingProjectVersion", "configuration", "datasetDefinition", "targetRequest", "storage", "costQuote", "executionPolicy", "orderingReset"],
+  "required": ["schemaVersion", "trainingProjectVersion", "configuration", "datasetDefinition", "targetRequest", "storage", "executionPolicy", "orderingReset"],
+  "allOf": [
+    {
+      "if": {"properties": {"targetRequest": {"properties": {"targetClass": {"enum": ["cloud-on-demand", "cloud-spot"]}}}}},
+      "then": {"required": ["costQuote"]},
+      "else": {"not": {"required": ["costQuote"]}}
+    }
+  ],
   "properties": {
     "schemaVersion": {"type": "integer", "const": 1},
     "trainingProjectVersion": {"$ref": "#/$defs/trainingProjectVersion"},
