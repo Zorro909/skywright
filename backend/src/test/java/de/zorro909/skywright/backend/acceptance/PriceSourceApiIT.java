@@ -102,10 +102,10 @@ final class PriceSourceApiIT {
 			var rejectedAssessment = backend.post("/api/v1/price-sources/" + sourceId + "/assessment", "");
 			assertThat(rejectedAssessment.body()).contains("\"successful\":false", "failed:currency:USD:EUR");
 
-			assertThat(backend
-				.post("/api/v1/price-sources/" + sourceId + "/currency-conversions",
-						conversion(0, "0.910000", "2026-08-27T09:00:00Z", "2026-08-27T13:00:00Z"))
-				.statusCode()).isEqualTo(201);
+			var firstConversion = backend.post("/api/v1/price-sources/" + sourceId + "/currency-conversions",
+					conversion(0, "0.910000", "2026-08-27T09:00:00Z", "2026-08-27T13:00:00Z"));
+			assertThat(firstConversion.statusCode()).isEqualTo(201);
+			String firstConversionId = jsonString(firstConversion.body(), "id");
 			assertThat(backend
 				.post("/api/v1/price-sources/" + sourceId + "/currency-conversions",
 						conversion(1, "0.930000", "2026-08-27T14:00:00Z", "2026-08-27T15:00:00Z"))
@@ -131,6 +131,8 @@ final class PriceSourceApiIT {
 			var fresh = prices.resolveCurrencyConversion("USD", "EUR", Instant.parse("2026-08-27T12:00:00Z"));
 			assertThat(fresh.outcome()).isEqualTo(CurrencyConversionOutcome.QUALIFYING);
 			assertThat(fresh.rate()).isEqualByComparingTo("0.910000");
+			assertThat(fresh.sourceRevision()).isEqualTo(1);
+			assertThat(fresh.scheduleRevision()).isEqualTo(2);
 			assertThat(
 					prices.resolveCurrencyConversion("USD", "EUR", Instant.parse("2026-08-27T12:00:00.001Z")).outcome())
 				.isEqualTo(CurrencyConversionOutcome.STALE);
@@ -140,6 +142,15 @@ final class PriceSourceApiIT {
 				.isEqualTo(CurrencyConversionOutcome.MISSING);
 			assertThat(prices.resolveCurrencyConversion("USD", "EUR", Instant.parse("2026-08-27T14:00:00Z")).rate())
 				.isEqualByComparingTo("0.930000");
+
+			assertThat(backend
+				.put("/api/v1/price-sources/" + sourceId + "/currency-conversions/" + firstConversionId,
+						conversion(2, "0.920000", "2026-08-27T09:00:00Z", "2026-08-27T13:00:00Z"))
+				.statusCode()).isEqualTo(200);
+			var changedSchedule = prices.resolveCurrencyConversion("USD", "EUR", Instant.parse("2026-08-27T12:00:00Z"));
+			assertThat(changedSchedule.sourceRevision()).isEqualTo(1);
+			assertThat(changedSchedule.scheduleRevision()).isEqualTo(3);
+			assertThat(changedSchedule.rate()).isEqualByComparingTo("0.920000");
 		}
 	}
 
