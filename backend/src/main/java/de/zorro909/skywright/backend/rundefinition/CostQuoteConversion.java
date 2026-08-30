@@ -10,6 +10,7 @@ import java.util.UUID;
  * candidate.
  */
 public record CostQuoteConversion(String nativeCurrency, String reportingCurrency, BigDecimal rate, String provenance,
-		UUID sourceId, long sourceRevision, String sourceKind, Instant effectiveFrom, Instant effectiveUntil,
-		Instant observedAt, Instant sourceObservedFrom, Instant sourceObservedUntil, Duration maximumObservationAge) {
+		UUID sourceId, long sourceRevision, long scheduleRevision, String sourceKind, Instant effectiveFrom,
+		Instant effectiveUntil, Instant observedAt, Instant sourceObservedFrom, Instant sourceObservedUntil,
+		Duration maximumObservationAge) {
 }

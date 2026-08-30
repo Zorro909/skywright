@@ -129,6 +129,7 @@ final class CostQuoteAdmissionIT {
 			assertThat(converted.conversion().reportingCurrency()).isEqualTo("EUR");
 			assertThat(converted.conversion().sourceId().toString()).isEqualTo(conversionSource);
 			assertThat(converted.conversion().sourceRevision()).isEqualTo(1);
+			assertThat(converted.conversion().scheduleRevision()).isEqualTo(1);
 			assertThat(converted.conversion().provenance()).isEqualTo("ECB reference data");
 			assertThat(converted.conversion().effectiveFrom()).isEqualTo(Instant.parse("2030-01-01T00:00:00Z"));
 			assertThat(converted.conversion().effectiveUntil()).isEqualTo(Instant.parse("2030-01-20T00:00:00Z"));

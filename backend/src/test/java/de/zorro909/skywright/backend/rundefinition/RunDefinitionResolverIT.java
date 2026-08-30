@@ -164,7 +164,7 @@ class RunDefinitionResolverIT {
 		CostQuoteCandidate converted = withConversion(
 				withCurrencyAndRate(quoteCandidate(target, quoteTime), "USD", new BigDecimal("1.0049")),
 				new CostQuoteConversion("USD", "EUR", new BigDecimal("1.0049"), "operator conversion",
-						UUID.fromString("00000000-0000-0000-0000-000000000300"), 7, "operator-schedule",
+						UUID.fromString("00000000-0000-0000-0000-000000000300"), 7, 11, "operator-schedule",
 						quoteTime.minus(Duration.ofDays(1)), quoteTime.plus(Duration.ofDays(1)),
 						quoteTime.minus(Duration.ofMinutes(5)), quoteTime.minus(Duration.ofMinutes(1)), quoteTime,
 						Duration.ofHours(1)));
@@ -187,6 +187,7 @@ class RunDefinitionResolverIT {
 		assertThat(quote.at("/candidates/1/conversion/nativeCurrency").asText()).isEqualTo("USD");
 		assertThat(quote.at("/candidates/1/conversion/reportingCurrency").asText()).isEqualTo("EUR");
 		assertThat(quote.at("/candidates/1/conversion/source/revision").asLong()).isEqualTo(7);
+		assertThat(quote.at("/candidates/1/conversion/scheduleRevision").asLong()).isEqualTo(11);
 		assertThat(quote.at("/candidates/1/conversion/effectiveInterval/from").asText())
 			.isEqualTo("2026-08-26T12:00:00Z");
 		assertThat(quote.at("/candidates/1/conversion/observationInterval/until").asText())
@@ -231,7 +232,7 @@ class RunDefinitionResolverIT {
 		EligibleTarget target = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
 				80L * 1024 * 1024 * 1024);
 		CostQuoteConversion firstConversion = new CostQuoteConversion("USD", "EUR", new BigDecimal("0.910000"),
-				"first conversion", UUID.fromString("00000000-0000-0000-0000-000000000300"), 4, "operator-schedule",
+				"first conversion", UUID.fromString("00000000-0000-0000-0000-000000000300"), 4, 1, "operator-schedule",
 				quoteTime.minus(Duration.ofDays(1)), quoteTime.plus(Duration.ofDays(1)),
 				quoteTime.minus(Duration.ofMinutes(5)), quoteTime.minus(Duration.ofMinutes(1)), quoteTime,
 				Duration.ofHours(1));
@@ -247,7 +248,7 @@ class RunDefinitionResolverIT {
 		String frozen = accepted.encode();
 		candidate.set(withConversion(candidate.get(),
 				new CostQuoteConversion("USD", "EUR", new BigDecimal("0.800000"), "later conversion",
-						UUID.fromString("00000000-0000-0000-0000-000000000300"), 5, "operator-schedule",
+						UUID.fromString("00000000-0000-0000-0000-000000000300"), 4, 2, "operator-schedule",
 						quoteTime.minus(Duration.ofDays(1)), quoteTime.plus(Duration.ofDays(1)),
 						quoteTime.minus(Duration.ofMinutes(5)), quoteTime.minus(Duration.ofMinutes(1)), quoteTime,
 						Duration.ofHours(1))));
@@ -258,9 +259,11 @@ class RunDefinitionResolverIT {
 		assertThat(accepted.value().at("/costQuote/candidates/0/conversion/rate").decimalValue())
 			.isEqualByComparingTo("0.910000");
 		assertThat(accepted.value().at("/costQuote/candidates/0/conversion/source/revision").asLong()).isEqualTo(4);
+		assertThat(accepted.value().at("/costQuote/candidates/0/conversion/scheduleRevision").asLong()).isEqualTo(1);
 		assertThat(later.value().at("/costQuote/candidates/0/conversion/rate").decimalValue())
 			.isEqualByComparingTo("0.800000");
-		assertThat(later.value().at("/costQuote/candidates/0/conversion/source/revision").asLong()).isEqualTo(5);
+		assertThat(later.value().at("/costQuote/candidates/0/conversion/source/revision").asLong()).isEqualTo(4);
+		assertThat(later.value().at("/costQuote/candidates/0/conversion/scheduleRevision").asLong()).isEqualTo(2);
 	}
 
 	@Test

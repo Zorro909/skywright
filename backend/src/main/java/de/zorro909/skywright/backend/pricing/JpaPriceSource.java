@@ -24,7 +24,7 @@ class JpaPriceSource implements PriceSource {
 		PriceSourceBindingEntity binding = this.entities.find(PriceSourceBindingEntity.class, bindingKey);
 		if (binding == null) {
 			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.UNAVAILABLE, nativeCurrency,
-					reportingCurrency, null, null, null, null, null, null);
+					reportingCurrency, null, null, null, null, null, null, null);
 		}
 		Duration maximumAge = Duration.parse(binding.maximumObservationAge);
 		PriceSourceEntity source = this.entities.find(PriceSourceEntity.class, binding.sourceId);
@@ -33,7 +33,8 @@ class JpaPriceSource implements PriceSource {
 		if (source == null || source.activeRevision == null || source.activeRevision != binding.sourceRevision
 				|| assessment == null) {
 			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.UNAVAILABLE, nativeCurrency,
-					reportingCurrency, binding.sourceId, binding.sourceRevision, source == null ? null : source.kind,
+					reportingCurrency, binding.sourceId, binding.sourceRevision,
+					source == null ? null : source.conversionScheduleRevision, source == null ? null : source.kind,
 					maximumAge, assessment == null ? null : assessment.observedFrom,
 					assessment == null ? null : assessment.observedUntil);
 		}
@@ -52,20 +53,21 @@ class JpaPriceSource implements PriceSource {
 			.getResultList();
 		if (matches.isEmpty()) {
 			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.MISSING, nativeCurrency,
-					reportingCurrency, binding.sourceId, binding.sourceRevision, source.kind, maximumAge,
-					assessment.observedFrom, assessment.observedUntil);
+					reportingCurrency, binding.sourceId, binding.sourceRevision, source.conversionScheduleRevision,
+					source.kind, maximumAge, assessment.observedFrom, assessment.observedUntil);
 		}
 		CurrencyConversionEntity match = matches.getFirst();
 		if (match.observedAt.isAfter(quoteTime)) {
 			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.MISSING, nativeCurrency,
-					reportingCurrency, binding.sourceId, binding.sourceRevision, source.kind, maximumAge,
-					assessment.observedFrom, assessment.observedUntil);
+					reportingCurrency, binding.sourceId, binding.sourceRevision, source.conversionScheduleRevision,
+					source.kind, maximumAge, assessment.observedFrom, assessment.observedUntil);
 		}
 		CurrencyConversionOutcome outcome = match.observedAt.isBefore(quoteTime.minus(maximumAge))
 				? CurrencyConversionOutcome.STALE : CurrencyConversionOutcome.QUALIFYING;
 		return new CurrencyConversionQuote(outcome, nativeCurrency, reportingCurrency, match.rate, match.provenance,
 				match.observedAt, match.effectiveFrom, match.effectiveUntil, binding.sourceId, binding.sourceRevision,
-				source.kind, maximumAge, assessment.observedFrom, assessment.observedUntil);
+				source.conversionScheduleRevision, source.kind, maximumAge, assessment.observedFrom,
+				assessment.observedUntil);
 	}
 
 	private static PriceSourceAssessmentValue assessmentForPair(PriceSourceEntity source, long revision,

@@ -122,9 +122,9 @@ public class CostQuoteSnapshotReader implements CostQuoteReader {
 
 	private static CostQuoteConversion conversion(CurrencyConversionQuote value) {
 		return new CostQuoteConversion(value.nativeCurrency(), value.reportingCurrency(), value.rate(),
-				value.provenance(), value.sourceId(), value.sourceRevision(), value.sourceKind(), value.effectiveFrom(),
-				value.effectiveUntil(), value.observedAt(), value.sourceObservedFrom(), value.sourceObservedUntil(),
-				value.maximumObservationAge());
+				value.provenance(), value.sourceId(), value.sourceRevision(), value.scheduleRevision(),
+				value.sourceKind(), value.effectiveFrom(), value.effectiveUntil(), value.observedAt(),
+				value.sourceObservedFrom(), value.sourceObservedUntil(), value.maximumObservationAge());
 	}
 
 	private static CostQuoteAssessment failed(RunDefinitionFailure failure) {

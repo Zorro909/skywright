@@ -379,7 +379,7 @@ public final class RunDefinitionResolver {
 				|| conversion.rate().signum() <= 0 || blank(conversion.provenance())) {
 			failures.add(failure("CURRENCY_CONVERSION_INVALID", "price-source", conversionPointer, "required"));
 		}
-		if (conversion.sourceId() == null || conversion.sourceRevision() < 1
+		if (conversion.sourceId() == null || conversion.sourceRevision() < 1 || conversion.scheduleRevision() < 1
 				|| !validSourceKind(conversion.sourceKind()) || conversion.sourceObservedFrom() == null
 				|| conversion.sourceObservedUntil() == null || conversion.observedAt() == null
 				|| conversion.maximumObservationAge() == null || conversion.maximumObservationAge().isNegative()
@@ -544,6 +544,7 @@ public final class RunDefinitionResolver {
 			.put("reportingCurrency", conversion.reportingCurrency())
 			.put("rate", conversion.rate())
 			.put("provenance", conversion.provenance())
+			.put("scheduleRevision", conversion.scheduleRevision())
 			.put("observedAt", conversion.observedAt().toString())
 			.put("maximumObservationAge", conversion.maximumObservationAge().toString());
 		provenance(result.putObject("source"), conversion.sourceId(), conversion.sourceRevision(),

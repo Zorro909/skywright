@@ -49,6 +49,7 @@
               "reportingCurrency": "EUR",
               "rate": 0.912345678900,
               "provenance": "ECB reference data",
+              "scheduleRevision": 12,
               "source": {"sourceId": "00000000-0000-0000-0000-000000000011", "revision": 7, "kind": "operator-schedule"},
               "effectiveInterval": {"from": "2026-08-27T00:00:00Z", "until": "2026-08-28T00:00:00Z"},
               "observationInterval": {"from": "2026-08-27T11:57:00Z", "until": "2026-08-27T11:57:01Z"},
