@@ -156,6 +156,44 @@ class RunDefinitionResolverIT {
 	}
 
 	@Test
+	void combinesDirectAndExactConvertedAmountsBeforePresentationRounding() {
+		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
+		EligibleTarget target = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
+				80L * 1024 * 1024 * 1024);
+		CostQuoteCandidate direct = withRate(quoteCandidate(target, quoteTime), new BigDecimal("2.0000"));
+		CostQuoteCandidate converted = withConversion(
+				withCurrencyAndRate(quoteCandidate(target, quoteTime), "USD", new BigDecimal("1.0049")),
+				new CostQuoteConversion("USD", "EUR", new BigDecimal("1.0049"), "operator conversion",
+						UUID.fromString("00000000-0000-0000-0000-000000000300"), 7, "operator-schedule",
+						quoteTime.minus(Duration.ofDays(1)), quoteTime.plus(Duration.ofDays(1)),
+						quoteTime.minus(Duration.ofMinutes(5)), quoteTime.minus(Duration.ofMinutes(1)), quoteTime,
+						Duration.ofHours(1)));
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				new TargetEligibilityAssessment(List.of(target), List.of()), storage(), "EUR",
+				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC),
+				(request, currency, time) -> new CostQuoteAssessment(List.of(direct, converted), List.of()));
+
+		JsonNode quote = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null)
+			.definition()
+			.value()
+			.path("costQuote");
+
+		assertThat(quote.at("/hourly/minimum").decimalValue()).isEqualByComparingTo("1.01");
+		assertThat(quote.at("/hourly/maximum").decimalValue()).isEqualByComparingTo("2.00");
+		assertThat(quote.at("/daily/minimum").decimalValue()).isEqualByComparingTo("24.24");
+		assertThat(quote.at("/weekly/minimum").decimalValue()).isEqualByComparingTo("169.65");
+		assertThat(quote.at("/candidates/1/nativeRate/amount").decimalValue()).isEqualByComparingTo("1.0049");
+		assertThat(quote.at("/candidates/1/conversion/rate").decimalValue()).isEqualByComparingTo("1.0049");
+		assertThat(quote.at("/candidates/1/conversion/nativeCurrency").asText()).isEqualTo("USD");
+		assertThat(quote.at("/candidates/1/conversion/reportingCurrency").asText()).isEqualTo("EUR");
+		assertThat(quote.at("/candidates/1/conversion/source/revision").asLong()).isEqualTo(7);
+		assertThat(quote.at("/candidates/1/conversion/effectiveInterval/from").asText())
+			.isEqualTo("2026-08-26T12:00:00Z");
+		assertThat(quote.at("/candidates/1/conversion/observationInterval/until").asText())
+			.isEqualTo("2026-08-27T12:00:00Z");
+	}
+
+	@Test
 	void acceptedQuoteRemainsFrozenAfterCatalogueScheduleAndCurrencyChanges() {
 		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
 		EligibleTarget target = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
@@ -185,6 +223,44 @@ class RunDefinitionResolverIT {
 		assertThat(later.value().at("/costQuote/reportingCurrency/code").asText()).isEqualTo("JPY");
 		assertThat(later.value().at("/costQuote/candidates/0/nativeRate/amount").decimalValue())
 			.isEqualByComparingTo("99.999");
+	}
+
+	@Test
+	void acceptedConversionRemainsFrozenAfterTheSourceChanges() {
+		Instant quoteTime = Instant.parse("2026-08-27T12:00:00Z");
+		EligibleTarget target = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
+				80L * 1024 * 1024 * 1024);
+		CostQuoteConversion firstConversion = new CostQuoteConversion("USD", "EUR", new BigDecimal("0.910000"),
+				"first conversion", UUID.fromString("00000000-0000-0000-0000-000000000300"), 4, "operator-schedule",
+				quoteTime.minus(Duration.ofDays(1)), quoteTime.plus(Duration.ofDays(1)),
+				quoteTime.minus(Duration.ofMinutes(5)), quoteTime.minus(Duration.ofMinutes(1)), quoteTime,
+				Duration.ofHours(1));
+		AtomicReference<CostQuoteCandidate> candidate = new AtomicReference<>(
+				withConversion(withCurrencyAndRate(quoteCandidate(target, quoteTime), "USD", new BigDecimal("2.5000")),
+						firstConversion));
+		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
+				new TargetEligibilityAssessment(List.of(target), List.of()), storage(), "EUR",
+				Clock.fixed(quoteTime, java.time.ZoneOffset.UTC),
+				(request, currency, time) -> new CostQuoteAssessment(List.of(candidate.get()), List.of()));
+
+		RunDefinition accepted = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null).definition();
+		String frozen = accepted.encode();
+		candidate.set(withConversion(candidate.get(),
+				new CostQuoteConversion("USD", "EUR", new BigDecimal("0.800000"), "later conversion",
+						UUID.fromString("00000000-0000-0000-0000-000000000300"), 5, "operator-schedule",
+						quoteTime.minus(Duration.ofDays(1)), quoteTime.plus(Duration.ofDays(1)),
+						quoteTime.minus(Duration.ofMinutes(5)), quoteTime.minus(Duration.ofMinutes(1)), quoteTime,
+						Duration.ofHours(1))));
+		RunDefinition later = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null).definition();
+
+		assertThat(accepted.encode()).isEqualTo(frozen);
+		assertThat(RunDefinition.decode(accepted.encode())).isEqualTo(accepted);
+		assertThat(accepted.value().at("/costQuote/candidates/0/conversion/rate").decimalValue())
+			.isEqualByComparingTo("0.910000");
+		assertThat(accepted.value().at("/costQuote/candidates/0/conversion/source/revision").asLong()).isEqualTo(4);
+		assertThat(later.value().at("/costQuote/candidates/0/conversion/rate").decimalValue())
+			.isEqualByComparingTo("0.800000");
+		assertThat(later.value().at("/costQuote/candidates/0/conversion/source/revision").asLong()).isEqualTo(5);
 	}
 
 	@Test
@@ -615,7 +691,7 @@ class RunDefinitionResolverIT {
 				new BigDecimal("2.5000"), "EUR", "instance-hour", BigDecimal.ONE, BigDecimal.ONE,
 				java.util.Collections.singletonMap("note", null), source, 3, "operator-schedule",
 				Instant.parse("2025-01-01T00:00:00Z"), null, quoteTime.minusSeconds(1), quoteTime.minusSeconds(2),
-				quoteTime.minusSeconds(1), Duration.ofHours(24));
+				quoteTime.minusSeconds(1), Duration.ofHours(24), null);
 	}
 
 	private static CostQuoteCandidate withBillingRules(CostQuoteCandidate source, BigDecimal minimumQuantity,
@@ -626,7 +702,7 @@ class RunDefinitionResolverIT {
 				source.nativeRate(), source.nativeCurrency(), source.nativeUnit(), minimumQuantity, billingQuantum,
 				source.provenance(), source.sourceId(), source.sourceRevision(), source.sourceKind(),
 				source.effectiveFrom(), source.effectiveUntil(), source.rateObservedAt(), source.sourceObservedFrom(),
-				source.sourceObservedUntil(), source.maximumObservationAge());
+				source.sourceObservedUntil(), source.maximumObservationAge(), source.conversion());
 	}
 
 	private static CostQuoteCandidate withEffectiveInterval(CostQuoteCandidate source, Instant effectiveFrom,
@@ -637,7 +713,8 @@ class RunDefinitionResolverIT {
 				source.nativeRate(), source.nativeCurrency(), source.nativeUnit(), source.minimumQuantity(),
 				source.billingQuantum(), source.provenance(), source.sourceId(), source.sourceRevision(),
 				source.sourceKind(), effectiveFrom, effectiveUntil, source.rateObservedAt(),
-				source.sourceObservedFrom(), source.sourceObservedUntil(), source.maximumObservationAge());
+				source.sourceObservedFrom(), source.sourceObservedUntil(), source.maximumObservationAge(),
+				source.conversion());
 	}
 
 	private static CostQuoteCandidate withRate(CostQuoteCandidate source, BigDecimal rate) {
@@ -651,7 +728,17 @@ class RunDefinitionResolverIT {
 				source.nativeUnit(), source.minimumQuantity(), source.billingQuantum(), source.provenance(),
 				source.sourceId(), source.sourceRevision(), source.sourceKind(), source.effectiveFrom(),
 				source.effectiveUntil(), source.rateObservedAt(), source.sourceObservedFrom(),
-				source.sourceObservedUntil(), source.maximumObservationAge());
+				source.sourceObservedUntil(), source.maximumObservationAge(), source.conversion());
+	}
+
+	private static CostQuoteCandidate withConversion(CostQuoteCandidate source, CostQuoteConversion conversion) {
+		return new CostQuoteCandidate(source.offeringId(), source.offeringRevision(), source.targetClass(),
+				source.target(), source.providerOfferingId(), source.region(), source.instanceType(), source.gpuModel(),
+				source.gpuCount(), source.gpuMemoryBytes(), source.purchaseMode(), source.supportTier(),
+				source.nativeRate(), source.nativeCurrency(), source.nativeUnit(), source.minimumQuantity(),
+				source.billingQuantum(), source.provenance(), source.sourceId(), source.sourceRevision(),
+				source.sourceKind(), source.effectiveFrom(), source.effectiveUntil(), source.rateObservedAt(),
+				source.sourceObservedFrom(), source.sourceObservedUntil(), source.maximumObservationAge(), conversion);
 	}
 
 	private static String purchaseMode(TargetClass targetClass) {

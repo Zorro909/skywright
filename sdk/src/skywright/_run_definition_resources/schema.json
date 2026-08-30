@@ -150,10 +150,15 @@
     },
     "conversion": {
       "type": "object", "additionalProperties": false,
-      "required": ["rate", "source", "observedAt", "maximumObservationAge"],
+      "required": ["nativeCurrency", "reportingCurrency", "rate", "provenance", "source", "effectiveInterval", "observationInterval", "observedAt", "maximumObservationAge"],
       "properties": {
+        "nativeCurrency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "reportingCurrency": {"type": "string", "pattern": "^[A-Z]{3}$"},
         "rate": {"type": "number", "exclusiveMinimum": 0},
+        "provenance": {"type": "string", "minLength": 1, "maxLength": 1024},
         "source": {"$ref": "#/$defs/priceSourceProvenance"},
+        "effectiveInterval": {"$ref": "#/$defs/priceInterval"},
+        "observationInterval": {"$ref": "#/$defs/priceInterval"},
         "observedAt": {"type": "string", "format": "date-time"},
         "maximumObservationAge": {"type": "string", "format": "duration"}
       }

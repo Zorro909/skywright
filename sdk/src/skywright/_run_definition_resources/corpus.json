@@ -38,12 +38,23 @@
         "candidates": [
           {
             "offering": {"id": "00000000-0000-0000-0000-000000000020", "revision": 3, "targetClass": "cloud-spot", "target": "aws/eu-central-1", "providerOfferingId": "p5.48xlarge-eu-central-1", "region": "eu-central-1", "instanceType": "p5.48xlarge", "gpuModel": "H100", "gpuCount": 8, "gpuMemoryBytes": 85899345920, "purchaseMode": "spot", "supportTier": "first-class"},
-            "nativeRate": {"amount": 2.123400, "currency": "EUR", "unit": "instance-hour", "billingRules": {"minimumQuantity": 0.0166666666666667, "billingQuantum": 0.000277777777777778}, "provenance": {"schedule": "operator-eu-2026-08"}},
+            "nativeRate": {"amount": 2.123400, "currency": "USD", "unit": "instance-hour", "billingRules": {"minimumQuantity": 0.0166666666666667, "billingQuantum": 0.000277777777777778}, "provenance": {"schedule": "operator-us-2026-08"}},
             "source": {"sourceId": "00000000-0000-0000-0000-000000000010", "revision": 4, "kind": "provider-api"},
             "effectiveInterval": {"from": "2026-08-01T00:00:00Z", "until": null},
             "observationInterval": {"from": "2026-08-27T11:55:00Z", "until": "2026-08-27T11:55:02Z"},
             "rateObservedAt": "2026-08-27T11:50:00Z",
             "maximumObservationAge": "PT1H",
+            "conversion": {
+              "nativeCurrency": "USD",
+              "reportingCurrency": "EUR",
+              "rate": 0.912345678900,
+              "provenance": "ECB reference data",
+              "source": {"sourceId": "00000000-0000-0000-0000-000000000011", "revision": 7, "kind": "operator-schedule"},
+              "effectiveInterval": {"from": "2026-08-27T00:00:00Z", "until": "2026-08-28T00:00:00Z"},
+              "observationInterval": {"from": "2026-08-27T11:57:00Z", "until": "2026-08-27T11:57:01Z"},
+              "observedAt": "2026-08-27T11:45:00Z",
+              "maximumObservationAge": "PT2H"
+            },
             "reportingHourlyRate": 2.12
           }
         ],
@@ -72,6 +83,7 @@
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/targetClass", "replacementJson": "\"local-single-gpu\""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest", "replacementJson": "{\"targetClass\":\"local-multi-gpu\",\"purchaseMode\":\"local\",\"gpuCount\":1}"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/targetRequest/gpuCount", "replacementJson": "2147483648"},
+    {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/costQuote/candidates/0/conversion/rate", "replacementJson": "0"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/configuration/nested/array/2", "replacementJson": "1e-1000000001"},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/datasetDefinition/datasetIdentity", "replacementJson": "\"   \""},
     {"code": "RUN_DEFINITION_SCHEMA_VALIDATION", "pointer": "/datasetDefinition/version", "replacementJson": "\"   \""},

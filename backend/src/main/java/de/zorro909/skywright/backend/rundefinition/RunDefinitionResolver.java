@@ -332,7 +332,7 @@ public final class RunDefinitionResolver {
 		}
 		if (candidate.nativeRate() == null || candidate.nativeRate().signum() < 0 || candidate.minimumQuantity() == null
 				|| candidate.minimumQuantity().signum() <= 0 || candidate.billingQuantum() == null
-				|| candidate.billingQuantum().signum() <= 0 || !reportingCurrency.equals(candidate.nativeCurrency())
+				|| candidate.billingQuantum().signum() <= 0 || !validCurrency(candidate.nativeCurrency())
 				|| !"instance-hour".equals(candidate.nativeUnit()) || candidate.provenance() == null) {
 			failures.add(failure("PRICE_RATE_INVALID", "price-source", pointer + "/nativeRate", "required"));
 		}
@@ -354,6 +354,63 @@ public final class RunDefinitionResolver {
 		if (candidate.rateObservedAt() != null && candidate.maximumObservationAge() != null
 				&& candidate.rateObservedAt().plus(candidate.maximumObservationAge()).isBefore(quoteTime)) {
 			failures.add(failure("GPU_COMPUTE_PRICE_STALE", "price-source", pointer, "maximumObservationAge"));
+		}
+		if (reportingCurrency.equals(candidate.nativeCurrency())) {
+			if (candidate.conversion() != null) {
+				failures
+					.add(failure("CURRENCY_CONVERSION_UNEXPECTED", "price-source", pointer + "/conversion", "absent"));
+			}
+		}
+		else {
+			assessConversion(candidate.conversion(), candidate.nativeCurrency(), reportingCurrency, quoteTime, pointer,
+					failures);
+		}
+	}
+
+	private static void assessConversion(CostQuoteConversion conversion, String nativeCurrency,
+			String reportingCurrency, Instant quoteTime, String pointer, List<RunDefinitionFailure> failures) {
+		String conversionPointer = pointer + "/conversion";
+		if (conversion == null) {
+			failures.add(failure("CURRENCY_CONVERSION_MISSING", "price-source", conversionPointer, "required"));
+			return;
+		}
+		if (!nativeCurrency.equals(conversion.nativeCurrency())
+				|| !reportingCurrency.equals(conversion.reportingCurrency()) || conversion.rate() == null
+				|| conversion.rate().signum() <= 0 || blank(conversion.provenance())) {
+			failures.add(failure("CURRENCY_CONVERSION_INVALID", "price-source", conversionPointer, "required"));
+		}
+		if (conversion.sourceId() == null || conversion.sourceRevision() < 1
+				|| !validSourceKind(conversion.sourceKind()) || conversion.sourceObservedFrom() == null
+				|| conversion.sourceObservedUntil() == null || conversion.observedAt() == null
+				|| conversion.maximumObservationAge() == null || conversion.maximumObservationAge().isNegative()
+				|| conversion.maximumObservationAge().isZero()) {
+			failures.add(failure("CURRENCY_CONVERSION_PROVENANCE_INVALID", "price-source",
+					conversionPointer + "/source", "required"));
+		}
+		if (conversion.effectiveFrom() == null || conversion.effectiveFrom().isAfter(quoteTime)
+				|| conversion.effectiveUntil() != null && quoteTime.isAfter(conversion.effectiveUntil())) {
+			failures.add(failure("CURRENCY_CONVERSION_NOT_EFFECTIVE", "price-source",
+					conversionPointer + "/effectiveInterval", "contains"));
+		}
+		if (conversion.effectiveFrom() != null && conversion.effectiveUntil() != null
+				&& !conversion.effectiveFrom().isBefore(conversion.effectiveUntil())) {
+			failures.add(failure("CURRENCY_CONVERSION_EFFECTIVE_INTERVAL_INVALID", "price-source",
+					conversionPointer + "/effectiveInterval", "interval"));
+		}
+		if (conversion.observedAt() != null && conversion.maximumObservationAge() != null
+				&& conversion.observedAt().plus(conversion.maximumObservationAge()).isBefore(quoteTime)) {
+			failures
+				.add(failure("CURRENCY_CONVERSION_STALE", "price-source", conversionPointer, "maximumObservationAge"));
+		}
+	}
+
+	private static boolean validCurrency(String value) {
+		try {
+			return value != null && CURRENCY.matcher(value).matches()
+					&& Currency.getInstance(value).getCurrencyCode().equals(value);
+		}
+		catch (IllegalArgumentException failure) {
+			return false;
 		}
 	}
 
@@ -463,6 +520,9 @@ public final class RunDefinitionResolver {
 			interval(candidate.putObject("effectiveInterval"), price.effectiveFrom(), price.effectiveUntil());
 			interval(candidate.putObject("observationInterval"), price.sourceObservedFrom(),
 					price.sourceObservedUntil());
+			if (price.conversion() != null) {
+				conversion(candidate.putObject("conversion"), price.conversion());
+			}
 		}
 		range(result.putObject("hourly"), minimum(hourlyRates), maximum(hourlyRates), minorUnit);
 		range(result.putObject("daily"), minimum(dailyRates), maximum(dailyRates), minorUnit);
@@ -475,7 +535,22 @@ public final class RunDefinitionResolver {
 		BigDecimal minimumQuantity = requestedQuantity.max(price.minimumQuantity());
 		BigDecimal billableQuantity = minimumQuantity.divide(price.billingQuantum(), 0, RoundingMode.CEILING)
 			.multiply(price.billingQuantum());
-		return price.nativeRate().multiply(billableQuantity);
+		BigDecimal nativeAmount = price.nativeRate().multiply(billableQuantity);
+		return price.conversion() == null ? nativeAmount : nativeAmount.multiply(price.conversion().rate());
+	}
+
+	private static void conversion(ObjectNode result, CostQuoteConversion conversion) {
+		result.put("nativeCurrency", conversion.nativeCurrency())
+			.put("reportingCurrency", conversion.reportingCurrency())
+			.put("rate", conversion.rate())
+			.put("provenance", conversion.provenance())
+			.put("observedAt", conversion.observedAt().toString())
+			.put("maximumObservationAge", conversion.maximumObservationAge().toString());
+		provenance(result.putObject("source"), conversion.sourceId(), conversion.sourceRevision(),
+				conversion.sourceKind());
+		interval(result.putObject("effectiveInterval"), conversion.effectiveFrom(), conversion.effectiveUntil());
+		interval(result.putObject("observationInterval"), conversion.sourceObservedFrom(),
+				conversion.sourceObservedUntil());
 	}
 
 	private static BigDecimal minimum(List<BigDecimal> values) {
