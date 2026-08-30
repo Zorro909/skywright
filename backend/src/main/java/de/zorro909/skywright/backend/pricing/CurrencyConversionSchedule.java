@@ -6,6 +6,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Currency;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.stereotype.Service;
@@ -112,10 +113,12 @@ class CurrencyConversionSchedule {
 		if (rate == null || rate.signum() <= 0) {
 			throw invalid("The conversion rate must be positive");
 		}
-		String provenance = value.provenance();
-		if (provenance == null || provenance.isBlank() || provenance.length() > 1024
-				|| provenance.chars().anyMatch(Character::isISOControl)) {
-			throw invalid("Provenance must contain between 1 and 1024 non-control characters");
+		Map<String, Object> provenance;
+		try {
+			provenance = PriceRateProvenance.validate(value.provenance());
+		}
+		catch (IllegalArgumentException failure) {
+			throw invalid("Provenance does not match the non-secret price evidence shape");
 		}
 		Instant observedAt = requireInstant(value.observedAt());
 		Instant effectiveFrom = requireInstant(value.effectiveFrom());
@@ -147,7 +150,7 @@ class CurrencyConversionSchedule {
 	}
 
 	private static void requireOperatorSchedule(PriceSourceEntity source) {
-		if (!"operator-schedule".equals(source.kind)) {
+		if (source.kind != PriceSourceKind.OPERATOR_SCHEDULE) {
 			throw invalid("Currency conversion entries require an operator-maintained Price Source");
 		}
 	}

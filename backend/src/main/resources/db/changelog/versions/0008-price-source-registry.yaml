@@ -21,7 +21,7 @@ databaseChangeLog:
               - column: { name: price_source_id, type: uuid, constraints: { nullable: false } }
               - column: { name: revision_position, type: integer, constraints: { nullable: false } }
               - column: { name: configuration_revision, type: bigint, constraints: { nullable: false } }
-              - column: { name: configuration_json, type: varchar(100000), constraints: { nullable: false } }
+              - column: { name: configuration_json, type: jsonb, constraints: { nullable: false } }
         - createTable:
             tableName: price_source_assessment
             columns:
@@ -30,7 +30,7 @@ databaseChangeLog:
               - column: { name: assessment_id, type: uuid, constraints: { nullable: false } }
               - column: { name: configuration_revision, type: bigint, constraints: { nullable: false } }
               - column: { name: successful, type: boolean, constraints: { nullable: false } }
-              - column: { name: capability_results, type: varchar(4096), constraints: { nullable: false } }
+              - column: { name: capability_results, type: jsonb, constraints: { nullable: false } }
               - column: { name: observed_from, type: timestamp with time zone, constraints: { nullable: false } }
               - column: { name: observed_until, type: timestamp with time zone, constraints: { nullable: false } }
         - createTable:

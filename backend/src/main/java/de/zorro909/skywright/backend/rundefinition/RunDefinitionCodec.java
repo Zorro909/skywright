@@ -45,11 +45,13 @@ final class RunDefinitionCodec {
 		.enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
 		.build();
 
-	private static final Schema SCHEMA = SchemaRegistry
-		.withDefaultDialect(SpecificationVersion.DRAFT_2020_12,
-				builder -> builder
-					.schemaRegistryConfig(SchemaRegistryConfig.builder().formatAssertionsEnabled(true).build()))
-		.getSchema(schema());
+	private static final SchemaRegistry SCHEMA_REGISTRY = SchemaRegistry
+		.withDefaultDialect(SpecificationVersion.DRAFT_2020_12, builder -> builder
+			.schemaRegistryConfig(SchemaRegistryConfig.builder().formatAssertionsEnabled(true).build()));
+
+	private static final Map<Integer, Schema> SCHEMAS = Map.of(1, schema("schema-v1.json"), 2, schema("schema.json"));
+
+	private static final JsonNode CURRENCY_MINOR_UNITS = jsonResource("iso-4217.json");
 
 	private RunDefinitionCodec() {
 	}
@@ -65,14 +67,18 @@ final class RunDefinitionCodec {
 		if (parsed == null || parsed.isMissingNode()) {
 			throw failure("RUN_DEFINITION_INVALID_JSON", "", "parse");
 		}
-		if (parsed.isObject() && parsed.path("schemaVersion").isIntegralNumber()
-				&& !parsed.path("schemaVersion").bigIntegerValue().equals(BigInteger.ONE)) {
-			throw failure("RUN_DEFINITION_SCHEMA_VERSION_UNSUPPORTED", "/schemaVersion", "const");
+		Schema selectedSchema = SCHEMAS.get(2);
+		if (parsed.isObject() && parsed.path("schemaVersion").isIntegralNumber()) {
+			BigInteger version = parsed.path("schemaVersion").bigIntegerValue();
+			if (!version.equals(BigInteger.ONE) && !version.equals(BigInteger.TWO)) {
+				throw failure("RUN_DEFINITION_SCHEMA_VERSION_UNSUPPORTED", "/schemaVersion", "const");
+			}
+			selectedSchema = SCHEMAS.get(version.intValueExact());
 		}
 		if (parsed.isObject() && parsed.path("schemaVersion").isFloatingPointNumber()) {
 			throw failure("RUN_DEFINITION_SCHEMA_VALIDATION", "/schemaVersion", "type");
 		}
-		List<RunDefinitionFailure> failures = new ArrayList<>(SCHEMA.validate(parsed)
+		List<RunDefinitionFailure> failures = new ArrayList<>(selectedSchema.validate(parsed)
 			.stream()
 			.map(error -> new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition",
 					error.getInstanceLocation().toString(), error.getKeyword()))
@@ -81,10 +87,57 @@ final class RunDefinitionCodec {
 		validateProjectVersionRelationships(parsed, failures);
 		validateTargetRelationships(parsed, failures);
 		validateStorageEndpoints(parsed, failures);
+		validateQuoteRelationships(parsed, failures);
 		if (!failures.isEmpty()) {
 			throw new RunDefinitionValidationException(failures);
 		}
 		return ((ObjectNode) parsed).deepCopy();
+	}
+
+	private static void validateQuoteRelationships(JsonNode definition, List<RunDefinitionFailure> failures) {
+		if (!definition.isObject() || definition.path("schemaVersion").asInt() != 2
+				|| !definition.path("costQuote").isObject()) {
+			return;
+		}
+		JsonNode quote = definition.path("costQuote");
+		JsonNode reporting = quote.path("reportingCurrency");
+		String reportingCode = reporting.path("code").asText();
+		JsonNode expectedMinorUnit = CURRENCY_MINOR_UNITS.path(reportingCode);
+		if (!expectedMinorUnit.isIntegralNumber() || !reporting.path("minorUnit").isIntegralNumber()
+				|| expectedMinorUnit.intValue() != reporting.path("minorUnit").intValue()) {
+			failures.add(quoteFailure("/costQuote/reportingCurrency", "currency"));
+		}
+		JsonNode candidates = quote.path("candidates");
+		if (candidates.isArray()) {
+			for (int index = 0; index < candidates.size(); index++) {
+				JsonNode candidate = candidates.get(index);
+				String nativeCurrency = candidate.at("/nativeRate/currency").asText();
+				JsonNode conversion = candidate.path("conversion");
+				boolean relationshipValid = CURRENCY_MINOR_UNITS.has(nativeCurrency)
+						&& (nativeCurrency.equals(reportingCode) ? conversion.isMissingNode()
+								: conversion.isObject()
+										&& nativeCurrency.equals(conversion.path("nativeCurrency").asText())
+										&& reportingCode.equals(conversion.path("reportingCurrency").asText()));
+				if (!relationshipValid) {
+					failures.add(quoteFailure("/costQuote/candidates/" + index, "currencyRelationship"));
+				}
+			}
+		}
+		for (String name : List.of("hourly", "daily", "weekly")) {
+			JsonNode range = quote.path(name);
+			if (range.path("minimum").isNumber() && range.path("maximum").isNumber()
+					&& range.path("minimum").decimalValue().compareTo(range.path("maximum").decimalValue()) > 0) {
+				failures.add(quoteFailure("/costQuote/" + name, "orderedRange"));
+			}
+		}
+		JsonNode ceiling = definition.at("/executionPolicy/costCeiling");
+		if (ceiling.isObject() && !reportingCode.equals(ceiling.path("currency").asText())) {
+			failures.add(quoteFailure("/executionPolicy/costCeiling/currency", "currencyRelationship"));
+		}
+	}
+
+	private static RunDefinitionFailure quoteFailure(String pointer, String keyword) {
+		return new RunDefinitionFailure("RUN_DEFINITION_SCHEMA_VALIDATION", "run-definition", pointer, keyword);
 	}
 
 	private static void validateProjectVersionRelationships(JsonNode definition, List<RunDefinitionFailure> failures) {
@@ -200,16 +253,29 @@ final class RunDefinitionCodec {
 				List.of(new RunDefinitionFailure(code, "run-definition", pointer, keyword)));
 	}
 
-	private static String schema() {
+	private static Schema schema(String name) {
+		return SCHEMA_REGISTRY.getSchema(resource(name));
+	}
+
+	private static JsonNode jsonResource(String name) {
+		try {
+			return JSON.readTree(resource(name));
+		}
+		catch (JacksonException error) {
+			throw new IllegalStateException("Run Definition resource cannot be parsed: " + name, error);
+		}
+	}
+
+	private static String resource(String name) {
 		try (InputStream stream = RunDefinitionCodec.class
-			.getResourceAsStream("/META-INF/skywright/run-definition/schema.json")) {
+			.getResourceAsStream("/META-INF/skywright/run-definition/" + name)) {
 			if (stream == null) {
-				throw new IllegalStateException("Run Definition schema is not packaged");
+				throw new IllegalStateException("Run Definition resource is not packaged: " + name);
 			}
 			return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
 		}
 		catch (IOException error) {
-			throw new IllegalStateException("Run Definition schema cannot be read", error);
+			throw new IllegalStateException("Run Definition resource cannot be read: " + name, error);
 		}
 	}
 

@@ -18,7 +18,7 @@ PYTHON = ROOT / "sdk/src/skywright/_run_definition.py"
 def outputs() -> dict[Path, str]:
     schema = json.loads(SCHEMA.read_text())
     version = schema["properties"]["schemaVersion"]["const"]
-    if schema.get("type") != "object" or version != 1:
+    if schema.get("type") != "object" or version != 2:
         raise SystemExit("unsupported Run Definition schema shape or version")
     java = dedent(
         f"""\
@@ -29,7 +29,7 @@ def outputs() -> dict[Path, str]:
         import tools.jackson.databind.JsonNode;
         import tools.jackson.databind.node.ObjectNode;
 
-        /** Immutable internal model generated for Run Definition schema version {version}. */
+        /** Immutable internal model supporting Run Definition schema versions 1 and {version}. */
         @Generated("scripts/generate-run-definition-models")
         public final class RunDefinition {{
 
@@ -101,7 +101,7 @@ def outputs() -> dict[Path, str]:
 
         @dataclass(frozen=True, init=False, eq=False)
         class RunDefinition:
-            """Immutable internal model generated for Run Definition schema version {version}."""
+            """Immutable internal model supporting Run Definition schema versions 1 and {version}."""
 
             _value: dict[str, Any]
 

@@ -7,7 +7,7 @@ from copy import deepcopy
 from decimal import Decimal
 from importlib.resources import files
 from ipaddress import ip_address
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator, FormatChecker
@@ -36,6 +36,14 @@ _MAXIMUM_PORTABLE_NUMBER_LENGTH = 4_000
 _MAXIMUM_PORTABLE_NESTING_DEPTH = 256
 
 
+class _SchemaError(Protocol):
+    path: Iterable[object]
+
+
+class _Validator(Protocol):
+    def iter_errors(self, instance: object) -> Iterable[_SchemaError]: ...
+
+
 def _parse_integer(value: str) -> int:
     if len(value) > _MAXIMUM_PORTABLE_NUMBER_LENGTH:
         raise RunDefinitionValidationError("RUN_DEFINITION_INVALID_JSON")
@@ -52,10 +60,28 @@ def _parse_decimal(value: str) -> Decimal:
     return parsed
 
 
-_SCHEMA = json.loads(
-    files("skywright._run_definition_resources").joinpath("schema.json").read_text()
+_RESOURCE_ROOT = files("skywright._run_definition_resources")
+_SCHEMAS: dict[int, dict[str, Any]] = {
+    1: cast(
+        dict[str, Any],
+        json.loads(_RESOURCE_ROOT.joinpath("schema-v1.json").read_text()),
+    ),
+    2: cast(
+        dict[str, Any],
+        json.loads(_RESOURCE_ROOT.joinpath("schema.json").read_text()),
+    ),
+}
+_VALIDATORS: dict[int, _Validator] = {
+    version: cast(
+        _Validator,
+        Draft202012Validator(schema, format_checker=FormatChecker()),
+    )
+    for version, schema in _SCHEMAS.items()
+}
+_CURRENCY_MINOR_UNITS = cast(
+    dict[str, int],
+    json.loads(_RESOURCE_ROOT.joinpath("iso-4217.json").read_text()),
 )
-_VALIDATOR: Any = Draft202012Validator(_SCHEMA, format_checker=FormatChecker())
 _MAXIMUM_PORTABLE_DECIMAL_EXPONENT = 1_000_000_000
 
 
@@ -82,21 +108,108 @@ def decode(document: str) -> dict[str, Any]:
     if (
         isinstance(schema_version, int)
         and not isinstance(schema_version, bool)
-        and schema_version != 1
+        and schema_version not in _VALIDATORS
     ):
         raise RunDefinitionValidationError("RUN_DEFINITION_SCHEMA_VERSION_UNSUPPORTED")
     if isinstance(schema_version, Decimal):
         raise RunDefinitionValidationError("RUN_DEFINITION_SCHEMA_VALIDATION")
-    errors = sorted(_VALIDATOR.iter_errors(value), key=lambda error: list(error.path))
+    validator = (
+        _VALIDATORS[schema_version]
+        if isinstance(schema_version, int)
+        and not isinstance(schema_version, bool)
+        and schema_version in _VALIDATORS
+        else _VALIDATORS[2]
+    )
+    errors = sorted(
+        validator.iter_errors(cast(object, value)),
+        key=lambda error: list(error.path),
+    )
     if (
         errors
         or not _has_portable_decimals(value)
         or not _has_valid_project_version_relationships(value)
         or not _has_valid_target_relationships(value)
         or not _has_valid_storage_endpoints(value)
+        or not _has_valid_quote_relationships(value)
     ):
         raise RunDefinitionValidationError("RUN_DEFINITION_SCHEMA_VALIDATION")
     return deepcopy(cast(dict[str, Any], value))
+
+
+def _has_valid_quote_relationships(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return True
+    definition = cast(dict[str, Any], value)
+    if definition.get("schemaVersion") != 2:
+        return True
+    quote_value = definition.get("costQuote")
+    if not isinstance(quote_value, dict):
+        return True
+    quote = cast(dict[str, Any], quote_value)
+    reporting_value = quote.get("reportingCurrency")
+    if not isinstance(reporting_value, dict):
+        return True
+    reporting = cast(dict[str, Any], reporting_value)
+    reporting_code = reporting.get("code")
+    if not isinstance(reporting_code, str) or _CURRENCY_MINOR_UNITS.get(
+        reporting_code
+    ) != reporting.get("minorUnit"):
+        return False
+    candidates_value = quote.get("candidates")
+    if not isinstance(candidates_value, list):
+        return True
+    candidates = cast(list[Any], candidates_value)
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_mapping = cast(dict[str, Any], candidate)
+        native_rate_value = candidate_mapping.get("nativeRate")
+        if not isinstance(native_rate_value, dict):
+            continue
+        native_rate = cast(dict[str, Any], native_rate_value)
+        native_currency = native_rate.get("currency")
+        if (
+            not isinstance(native_currency, str)
+            or native_currency not in _CURRENCY_MINOR_UNITS
+        ):
+            return False
+        conversion_value = candidate_mapping.get("conversion")
+        if native_currency == reporting_code:
+            if conversion_value is not None:
+                return False
+        elif not isinstance(conversion_value, dict):
+            return False
+        else:
+            conversion = cast(dict[str, Any], conversion_value)
+            if (
+                conversion.get("nativeCurrency") != native_currency
+                or conversion.get("reportingCurrency") != reporting_code
+            ):
+                return False
+    for name in ("hourly", "daily", "weekly"):
+        interval_value = quote.get(name)
+        interval = (
+            cast(dict[str, Any], interval_value)
+            if isinstance(interval_value, dict)
+            else None
+        )
+        if (
+            interval is not None
+            and isinstance(interval.get("minimum"), (int, Decimal))
+            and isinstance(interval.get("maximum"), (int, Decimal))
+            and interval["minimum"] > interval["maximum"]
+        ):
+            return False
+    policy_value = definition.get("executionPolicy")
+    policy = (
+        cast(dict[str, Any], policy_value) if isinstance(policy_value, dict) else None
+    )
+    ceiling_value = policy.get("costCeiling") if policy is not None else None
+    if not isinstance(ceiling_value, dict):
+        return True
+    ceiling = cast(dict[str, Any], ceiling_value)
+    ceiling_currency: object = ceiling.get("currency")
+    return ceiling_currency == reporting_code
 
 
 def _has_portable_nesting(value: Any) -> bool:

@@ -25,13 +25,28 @@ final class GpuPriceScheduleApiIT {
 			String sourceId = jsonString(createdSource.body(), "id");
 			String schedulePath = "/api/v1/price-sources/" + sourceId + "/gpu-price-schedule-entries";
 
-			var rejectedSecret = backend.post(schedulePath,
+			var rejectedAuthorization = backend.post(schedulePath,
+					entry(offeringId, "2", "1", "1", "2029-10-01T00:00:00Z", "2029-11-01T00:00:00Z",
+							"2029-09-30T18:00:00Z")
+						.replace("\"source\": \"operator tariff\", \"documentRevision\": \"2029-12\"",
+								"\"authorization\": \"do-not-store\""));
+			assertThat(rejectedAuthorization.statusCode()).as(rejectedAuthorization.body()).isEqualTo(400);
+			assertThat(rejectedAuthorization.body()).contains("SKYWRIGHT_HTTP_BAD_REQUEST")
+				.doesNotContain("do-not-store");
+			var rejectedAccessKey = backend.post(schedulePath,
+					entry(offeringId, "2", "1", "1", "2029-10-01T00:00:00Z", "2029-11-01T00:00:00Z",
+							"2029-09-30T18:00:00Z")
+						.replace("\"source\": \"operator tariff\", \"documentRevision\": \"2029-12\"",
+								"\"access_key\": \"do-not-store\""));
+			assertThat(rejectedAccessKey.statusCode()).as(rejectedAccessKey.body()).isEqualTo(400);
+			assertThat(rejectedAccessKey.body()).contains("SKYWRIGHT_HTTP_BAD_REQUEST").doesNotContain("do-not-store");
+			var rejectedEmbeddedCredential = backend.post(schedulePath,
 					entry(offeringId, "2", "1", "1", "2029-10-01T00:00:00Z", "2029-11-01T00:00:00Z",
 							"2029-09-30T18:00:00Z")
 						.replace("operator tariff", "postgresql://user:do-not-store@host/db"));
-			assertThat(rejectedSecret.statusCode()).as(rejectedSecret.body()).isEqualTo(422);
-			assertThat(rejectedSecret.body()).contains("SKYWRIGHT_PRICE_SOURCE_SECRET_FORBIDDEN")
-				.doesNotContain("do-not-store");
+			assertThat(rejectedEmbeddedCredential.statusCode()).as(rejectedEmbeddedCredential.body()).isEqualTo(422);
+			assertThat(rejectedEmbeddedCredential.body()).doesNotContain("do-not-store");
+			assertThat(backend.get(schedulePath).body()).doesNotContain("do-not-store", "authorization", "access_key");
 
 			var first = backend.post(schedulePath, entry(offeringId, "2.3400", "0.250", "0.016666666666666666",
 					"2030-01-01T00:00:00Z", "2030-02-01T00:00:00Z", "2029-12-31T18:00:00Z"));

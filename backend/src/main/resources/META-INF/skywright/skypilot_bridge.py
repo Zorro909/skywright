@@ -73,6 +73,12 @@ def _field(value, name):
     return getattr(value, name)
 
 
+def _optional_field(value, name):
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
 def _handle(value):
     return {
         "type": type(value).__name__,
@@ -126,11 +132,29 @@ def bridge_catalog_price(serialized):
                 continue
             if float(hourly_rate) < 0:
                 continue
+            native_currency = _optional_field(offering, "native_currency")
+            native_unit = _optional_field(offering, "native_unit")
+            minimum_quantity = _optional_field(offering, "minimum_quantity")
+            billing_quantum = _optional_field(offering, "billing_quantum")
+            if any(
+                value is None
+                for value in (
+                    native_currency,
+                    native_unit,
+                    minimum_quantity,
+                    billing_quantum,
+                )
+            ):
+                continue
             observed_at = str(query["observedAt"])
             return json.dumps(
                 {
                     "outcome": "available",
                     "hourly_rate": str(hourly_rate),
+                    "native_currency": str(native_currency),
+                    "native_unit": str(native_unit),
+                    "minimum_quantity": str(minimum_quantity),
+                    "billing_quantum": str(billing_quantum),
                     "observed_at": observed_at,
                     "effective_from": observed_at,
                     "effective_until": None,

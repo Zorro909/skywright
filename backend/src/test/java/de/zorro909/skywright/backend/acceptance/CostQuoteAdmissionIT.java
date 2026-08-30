@@ -22,11 +22,15 @@ final class CostQuoteAdmissionIT {
 
 	private static final Instant QUOTE_TIME = Instant.parse("2030-01-15T12:00:00Z");
 
+	private static final String TARGET = "aws/eu-central-1";
+
+	private static final String TARGET_BINDING = "target:aws~1eu-central-1:resource:gpu-compute";
+
 	@Test
 	void resolvesEveryEligibleOfferingOrReturnsOrderedStableFailures() throws Exception {
 		try (var backend = BackendFixture.start()) {
 			var quotes = backend.bean(CostQuoteSnapshotReader.class);
-			var request = new TargetRequest(TargetClass.CLOUD_ON_DEMAND, 1, null, "aws", "H100", null);
+			var request = new TargetRequest(TargetClass.CLOUD_ON_DEMAND, 1, null, TARGET, "H100", null);
 
 			assertThat(quotes.resolve(request, "EUR", QUOTE_TIME).failures()).extracting(RunDefinitionFailure::code)
 				.containsExactly("GPU_OFFERING_NONE_ELIGIBLE");
@@ -42,7 +46,7 @@ final class CostQuoteAdmissionIT {
 			backend.post("/api/v1/price-sources/" + sourceId + "/assessment", "");
 			backend.put("/api/v1/price-sources/" + sourceId + "/promotion",
 					"{\"expectedRegistrationRevision\":2,\"revision\":1}");
-			backend.put("/api/v1/price-source-bindings/target:aws:resource:gpu-compute",
+			backend.put("/api/v1/price-source-bindings/" + TARGET_BINDING,
 					"{\"sourceId\":\"" + sourceId + "\",\"sourceRevision\":1,\"maximumObservationAge\":\"PT6H\"}");
 
 			assertThat(quotes.resolve(request, "EUR", QUOTE_TIME).failures()).extracting(RunDefinitionFailure::code)
@@ -73,7 +77,7 @@ final class CostQuoteAdmissionIT {
 	void resolvesDirectAndConvertedCandidatesOrRejectsTheWholeQuote() throws Exception {
 		try (var backend = BackendFixture.start()) {
 			var quotes = backend.bean(CostQuoteSnapshotReader.class);
-			var request = new TargetRequest(TargetClass.CLOUD_ON_DEMAND, 1, null, "aws", "H100", null);
+			var request = new TargetRequest(TargetClass.CLOUD_ON_DEMAND, 1, null, TARGET, "H100", null);
 			String directOffering = createOffering(backend, "direct", "eu-west-1");
 			String convertedOffering = createOffering(backend, "converted", "us-east-1");
 			String gpuSource = jsonString(backend.post("/api/v1/price-sources", mixedCurrencyRegistration()).body(),
@@ -84,7 +88,7 @@ final class CostQuoteAdmissionIT {
 			backend.post("/api/v1/price-sources/" + gpuSource + "/assessment", "");
 			backend.put("/api/v1/price-sources/" + gpuSource + "/promotion",
 					"{\"expectedRegistrationRevision\":2,\"revision\":1}");
-			backend.put("/api/v1/price-source-bindings/target:aws:resource:gpu-compute",
+			backend.put("/api/v1/price-source-bindings/" + TARGET_BINDING,
 					"{\"sourceId\":\"" + gpuSource + "\",\"sourceRevision\":1,\"maximumObservationAge\":\"PT1000H\"}");
 
 			var unavailable = quotes.resolve(request, "EUR", QUOTE_TIME);
@@ -130,7 +134,7 @@ final class CostQuoteAdmissionIT {
 			assertThat(converted.conversion().sourceId().toString()).isEqualTo(conversionSource);
 			assertThat(converted.conversion().sourceRevision()).isEqualTo(1);
 			assertThat(converted.conversion().scheduleRevision()).isEqualTo(1);
-			assertThat(converted.conversion().provenance()).isEqualTo("ECB reference data");
+			assertThat(converted.conversion().provenance()).containsEntry("source", "ECB reference data");
 			assertThat(converted.conversion().effectiveFrom()).isEqualTo(Instant.parse("2030-01-01T00:00:00Z"));
 			assertThat(converted.conversion().effectiveUntil()).isEqualTo(Instant.parse("2030-01-20T00:00:00Z"));
 			assertThat(converted.conversion().sourceObservedFrom()).isNotNull();
@@ -155,7 +159,7 @@ final class CostQuoteAdmissionIT {
 		try (var backend = BackendFixture.start(); var executor = Executors.newVirtualThreadPerTaskExecutor()) {
 			var quotes = backend.bean(CostQuoteSnapshotReader.class);
 			var catalogue = backend.bean(EligibleGpuOfferingCatalogue.class);
-			var request = new TargetRequest(TargetClass.CLOUD_ON_DEMAND, 1, null, "aws", "H100", null);
+			var request = new TargetRequest(TargetClass.CLOUD_ON_DEMAND, 1, null, TARGET, "H100", null);
 			String directOffering = createOffering(backend, "direct-snapshot", "eu-west-1");
 			String convertedOffering = createOffering(backend, "converted-snapshot", "us-east-1");
 			String gpuSource = jsonString(backend.post("/api/v1/price-sources", mixedCurrencyRegistration()).body(),
@@ -166,7 +170,7 @@ final class CostQuoteAdmissionIT {
 			backend.post("/api/v1/price-sources/" + gpuSource + "/assessment", "");
 			backend.put("/api/v1/price-sources/" + gpuSource + "/promotion",
 					"{\"expectedRegistrationRevision\":2,\"revision\":1}");
-			backend.put("/api/v1/price-source-bindings/target:aws:resource:gpu-compute",
+			backend.put("/api/v1/price-source-bindings/" + TARGET_BINDING,
 					"{\"sourceId\":\"" + gpuSource + "\",\"sourceRevision\":1,\"maximumObservationAge\":\"PT1000H\"}");
 			String conversionSource = jsonString(backend.post("/api/v1/price-sources", conversionRegistration()).body(),
 					"id");
@@ -213,9 +217,6 @@ final class CostQuoteAdmissionIT {
 			assertThat(accepted.failures()).isEmpty();
 			assertThat(accepted.candidates())
 				.allSatisfy(candidate -> assertThat(candidate.sourceRevision()).isEqualTo(1));
-			backend.put("/api/v1/price-source-bindings/target:aws:resource:gpu-compute", "{\"sourceId\":\"" + gpuSource
-					+ "\",\"sourceRevision\":2,\"maximumObservationAge\":\"PT1000H\",\"expectedBindingRevision\":1}");
-
 			var later = quotes.resolve(request, "EUR", QUOTE_TIME);
 			assertThat(later.failures()).isEmpty();
 			assertThat(later.candidates()).allSatisfy(candidate -> assertThat(candidate.sourceRevision()).isEqualTo(2));
@@ -240,7 +241,7 @@ final class CostQuoteAdmissionIT {
 		return jsonString(backend.post("/api/v1/eligible-gpu-offerings", """
 				{
 				  "targetClass": "cloud-on-demand",
-				  "target": "aws",
+				  "target": "%s",
 				  "providerOfferingId": "%s-%s",
 				  "region": "%s",
 				  "instanceType": "%s",
@@ -250,7 +251,7 @@ final class CostQuoteAdmissionIT {
 				  "purchaseMode": "on-demand",
 				  "supportTier": "first-class"
 				}
-				""".formatted(instanceType, region, region, instanceType)).body(), "id");
+				""".formatted(TARGET, instanceType, region, region, instanceType)).body(), "id");
 	}
 
 	private static String registration() {
@@ -301,7 +302,7 @@ final class CostQuoteAdmissionIT {
 				  "nativeCurrency": "USD",
 				  "reportingCurrency": "EUR",
 				  "rate": "0.500000",
-				  "provenance": "ECB reference data",
+				  "provenance": {"source":"ECB reference data","documentRevision":"2030-01"},
 				  "observedAt": "2030-01-15T11:00:00Z",
 				  "effectiveFrom": "2030-01-01T00:00:00Z",
 				  "effectiveUntil": "2030-01-20T00:00:00Z"
@@ -329,7 +330,7 @@ final class CostQuoteAdmissionIT {
 				  "value": %s,
 				  "minimumQuantity": %s,
 				  "billingQuantum": %s,
-				  "provenance": {"schedule": "operator-2030-01"},
+				  "provenance": {"source": "operator tariff", "documentRevision": "2030-01"},
 				  "observedAt": "%s",
 				  "effectiveFrom": "2030-01-01T00:00:00Z",
 				  "effectiveUntil": "2030-02-01T00:00:00Z"

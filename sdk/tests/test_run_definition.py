@@ -1,103 +1,47 @@
 import json
+from copy import deepcopy
+from decimal import Decimal
 from importlib.resources import files
+from typing import Any, cast
 
 import pytest
 
 from skywright._run_definition import RunDefinition, RunDefinitionValidationError
+from skywright._run_definition_codec import encode
 
 
 def test_python_accepts_shared_run_definition_corpus() -> None:
     corpus = json.loads(
-        files("skywright._run_definition_resources").joinpath("corpus.json").read_text()
+        files("skywright._run_definition_resources")
+        .joinpath("corpus.json")
+        .read_text(),
+        parse_float=Decimal,
     )
     for value in corpus["valid"]:
-        document = json.dumps(value, ensure_ascii=False).replace(
-            "0.1", "0.1000000000000000001"
-        )
+        document = encode(value)
         decoded = RunDefinition.decode(document)
-        assert json.loads(decoded.to_json(), parse_float=str) == json.loads(
-            document, parse_float=str
-        )
+        assert decoded.value() == value
         assert "0.1000000000000000001" in decoded.to_json()
         mutated = decoded.value()
         mutated["configuration"]["nested"]["array"][0] = "changed"
         assert decoded.value()["configuration"]["nested"]["array"][0] is None
+    historical = deepcopy(corpus["valid"][0])
+    historical["schemaVersion"] = 1
+    del historical["costQuote"]
+    assert RunDefinition.decode(encode(historical)).value() == historical
     for invalid in corpus["invalid"]:
         with pytest.raises(RunDefinitionValidationError) as failure:
             RunDefinition.decode(invalid["json"])
         assert failure.value.code == invalid["code"]
     for invalid in corpus["invalidMutations"]:
-        value = corpus["valid"][0]
-        document = json.dumps(value)
-        replacement = invalid["replacementJson"]
-        if invalid["pointer"] == "/targetRequest/purchaseMode":
-            document = document.replace(
-                '"purchaseMode": "spot"', f'"purchaseMode": {replacement}'
-            )
-        elif invalid["pointer"] == "/targetRequest/targetClass":
-            document = document.replace(
-                '"targetClass": "cloud-spot"', f'"targetClass": {replacement}'
-            )
-        elif invalid["pointer"] == "/targetRequest":
-            start = document.index('"targetRequest": {')
-            end = document.index('}, "storage"', start) + 1
-            document = (
-                document[:start] + f'"targetRequest": {replacement}' + document[end:]
-            )
-        elif invalid["pointer"] == "/targetRequest/gpuCount":
-            document = document.replace('"gpuCount": 2', f'"gpuCount": {replacement}')
-        elif invalid["pointer"] == "/configuration/nested/array/2":
-            document = document.replace("0.1", replacement)
-        elif invalid["pointer"] == "/datasetDefinition/datasetIdentity":
-            document = document.replace(
-                '"datasetIdentity": "dataset-1"', f'"datasetIdentity": {replacement}'
-            )
-        elif invalid["pointer"] == "/datasetDefinition/version":
-            document = document.replace('"version": "v1"', f'"version": {replacement}')
-        elif invalid["pointer"] == "/storage/execution/endpoint":
-            document = document.replace(
-                '"endpoint": "https://objects.example"',
-                f'"endpoint": {replacement}',
-            )
-        elif invalid["pointer"] == "/storage/repatriation/destination/endpoint":
-            document = document.replace(
-                '"endpoint": "https://home.example"', f'"endpoint": {replacement}'
-            )
-        elif invalid["pointer"] == "/storage/execution/bucket":
-            document = document.replace('"bucket": "runs"', f'"bucket": {replacement}')
-        elif invalid["pointer"] == "/storage/repatriation/destination/region":
-            document = document.replace('"region": "local"', f'"region": {replacement}')
-        elif invalid["pointer"] == "/storage/execution/compatibilityOptions":
-            document = document.replace(
-                '"compatibilityOptions": {"chunkedEncoding": "disabled"}',
-                f'"compatibilityOptions": {replacement}',
-            )
-        elif invalid["pointer"] == "/trainingProjectVersion/versionLabel":
-            document = document.replace(
-                '"versionLabel": "0123456789abcdef0123456789abcdef01234567-42"',
-                f'"versionLabel": {replacement}',
-            )
-        elif invalid["pointer"] == "/trainingProjectVersion/manifestArtifactDigest":
-            document = document.replace(
-                '"manifestArtifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"',
-                f'"manifestArtifactDigest": {replacement}',
-            )
-        elif invalid["pointer"] == "/trainingProjectVersion/pipeline":
-            document = document.replace(
-                '"pipeline": "42"', f'"pipeline": {replacement}'
-            )
-        else:
-            start = document.index('"environmentProfiles": {')
-            end = document.index('}, "configurationContract"', start) + 1
-            document = (
-                document[:start]
-                + f'"environmentProfiles": {replacement}'
-                + document[end:]
-            )
+        value = deepcopy(corpus["valid"][0])
+        replacement = json.loads(invalid["replacementJson"], parse_float=Decimal)
+        _set_json_pointer(value, invalid["pointer"], replacement)
+        document = encode(value)
         with pytest.raises(RunDefinitionValidationError) as failure:
             RunDefinition.decode(document)
         assert failure.value.code == invalid["code"]
-    template = json.dumps(corpus["valid"][0])
+    template = encode(corpus["valid"][0])
     for number_case in corpus["numberLengthCases"]:
         document = template.replace("9007199254740993", "1" * number_case["digits"])
         if number_case["code"] is None:
@@ -109,12 +53,12 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
                 RunDefinition.decode(document)
             assert failure.value.code == number_case["code"]
     for nesting_case in corpus["nestingCases"]:
-        nesting_value = json.loads(template)
+        nesting_value = json.loads(template, parse_float=Decimal)
         nested = None
         for _ in range(nesting_case["depth"]):
             nested = [nested]
         nesting_value["configuration"]["nested"] = nested
-        document = json.dumps(nesting_value)
+        document = encode(nesting_value)
         if nesting_case["code"] is None:
             assert isinstance(
                 RunDefinition.decode(document).value()["configuration"]["nested"], list
@@ -124,7 +68,7 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
                 RunDefinition.decode(document)
             assert failure.value.code == nesting_case["code"]
     for exponent_case in corpus["decimalExponentCases"]:
-        document = template.replace(", 0.1]", f", {exponent_case['number']}]")
+        document = template.replace("0.1000000000000000001", exponent_case["number"])
         with pytest.raises(RunDefinitionValidationError) as failure:
             RunDefinition.decode(document)
         assert failure.value.code == exponent_case["code"]
@@ -138,6 +82,26 @@ def test_python_accepts_shared_run_definition_corpus() -> None:
             with pytest.raises(RunDefinitionValidationError) as failure:
                 RunDefinition.decode(document)
             assert failure.value.code == endpoint_case["code"]
+
+
+def _set_json_pointer(root: dict[str, Any], pointer: str, replacement: Any) -> None:
+    tokens = [
+        token.replace("~1", "/").replace("~0", "~") for token in pointer.split("/")[1:]
+    ]
+    parent: dict[str, Any] | list[Any] = root
+    for token in tokens[:-1]:
+        child = (
+            cast(list[Any], parent)[int(token)]
+            if isinstance(parent, list)
+            else parent[token]
+        )
+        assert isinstance(child, (dict, list))
+        parent = cast(dict[str, Any] | list[Any], child)
+    token = tokens[-1]
+    if isinstance(parent, list):
+        parent[int(token)] = replacement
+    else:
+        parent[token] = replacement
 
 
 def test_python_preserves_large_decimal_exponents_compactly() -> None:

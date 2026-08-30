@@ -20,7 +20,7 @@ class JpaPriceSource implements PriceSource {
 	@Override
 	public CurrencyConversionQuote resolveCurrencyConversion(String nativeCurrency, String reportingCurrency,
 			Instant quoteTime) {
-		String bindingKey = "currency:" + nativeCurrency + ":" + reportingCurrency;
+		String bindingKey = PriceSourceBindingKey.currencyPair(nativeCurrency, reportingCurrency).value();
 		PriceSourceBindingEntity binding = this.entities.find(PriceSourceBindingEntity.class, bindingKey);
 		if (binding == null) {
 			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.UNAVAILABLE, nativeCurrency,
@@ -34,8 +34,9 @@ class JpaPriceSource implements PriceSource {
 				|| assessment == null) {
 			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.UNAVAILABLE, nativeCurrency,
 					reportingCurrency, binding.sourceId, binding.sourceRevision,
-					source == null ? null : source.conversionScheduleRevision, source == null ? null : source.kind,
-					maximumAge, assessment == null ? null : assessment.observedFrom,
+					source == null ? null : source.conversionScheduleRevision,
+					source == null ? null : source.kind.wireValue(), maximumAge,
+					assessment == null ? null : assessment.observedFrom,
 					assessment == null ? null : assessment.observedUntil);
 		}
 		List<CurrencyConversionEntity> matches = this.entities.createQuery("""
@@ -54,19 +55,19 @@ class JpaPriceSource implements PriceSource {
 		if (matches.isEmpty()) {
 			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.MISSING, nativeCurrency,
 					reportingCurrency, binding.sourceId, binding.sourceRevision, source.conversionScheduleRevision,
-					source.kind, maximumAge, assessment.observedFrom, assessment.observedUntil);
+					source.kind.wireValue(), maximumAge, assessment.observedFrom, assessment.observedUntil);
 		}
 		CurrencyConversionEntity match = matches.getFirst();
 		if (match.observedAt.isAfter(quoteTime)) {
 			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.MISSING, nativeCurrency,
 					reportingCurrency, binding.sourceId, binding.sourceRevision, source.conversionScheduleRevision,
-					source.kind, maximumAge, assessment.observedFrom, assessment.observedUntil);
+					source.kind.wireValue(), maximumAge, assessment.observedFrom, assessment.observedUntil);
 		}
 		CurrencyConversionOutcome outcome = match.observedAt.isBefore(quoteTime.minus(maximumAge))
 				? CurrencyConversionOutcome.STALE : CurrencyConversionOutcome.QUALIFYING;
 		return new CurrencyConversionQuote(outcome, nativeCurrency, reportingCurrency, match.rate, match.provenance,
 				match.observedAt, match.effectiveFrom, match.effectiveUntil, binding.sourceId, binding.sourceRevision,
-				source.conversionScheduleRevision, source.kind, maximumAge, assessment.observedFrom,
+				source.conversionScheduleRevision, source.kind.wireValue(), maximumAge, assessment.observedFrom,
 				assessment.observedUntil);
 	}
 
@@ -74,7 +75,7 @@ class JpaPriceSource implements PriceSource {
 			String bindingKey) {
 		List<PriceSourceAssessmentValue> assessments = source.assessments.stream()
 			.filter(assessment -> assessment.revision == revision && assessment.successful
-					&& List.of(assessment.capabilityResults.split("\\n")).contains("passed:" + bindingKey))
+					&& assessment.capabilityResults.contains("passed:" + bindingKey))
 			.toList();
 		return assessments.isEmpty() ? null : assessments.getLast();
 	}

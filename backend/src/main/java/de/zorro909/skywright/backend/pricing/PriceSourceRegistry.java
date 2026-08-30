@@ -12,22 +12,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import tools.jackson.core.JacksonException;
-import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.json.JsonMapper;
 
 @Service
 @Transactional
 public class PriceSourceRegistry {
-
-	private static final JsonMapper JSON = JsonMapper.builder().build();
-
-	private static final Pattern BINDING_KEY = Pattern
-		.compile("(?:target:[A-Za-z0-9._-]+:resource:[a-z][a-z0-9-]*|currency:[A-Z]{3}:[A-Z]{3})");
 
 	private final EntityManager entities;
 
@@ -53,7 +44,7 @@ public class PriceSourceRegistry {
 
 	public UUID register(String name, String kind, UUID credentialBindingId, Map<String, Object> configuration) {
 		requireName(name);
-		requireKind(kind);
+		PriceSourceKind parsedKind = requireKind(kind);
 		if (!this.entities
 			.createQuery("select source.id from PriceSourceEntity source where source.name = :name", UUID.class)
 			.setParameter("name", name)
@@ -62,9 +53,9 @@ public class PriceSourceRegistry {
 			throw new PriceSourceConflictException("PRICE_SOURCE_NAME_CONFLICT",
 					"A Price Source with this name already exists");
 		}
-		String encoded = encodeSafe(configuration);
+		Map<String, Object> validated = PriceSourceConfiguration.validate(parsedKind, configuration);
 		UUID id = UUID.randomUUID();
-		this.entities.persist(PriceSourceEntity.create(id, name, kind, credentialBindingId, encoded));
+		this.entities.persist(PriceSourceEntity.create(id, name, parsedKind, credentialBindingId, validated));
 		return id;
 	}
 
@@ -72,7 +63,8 @@ public class PriceSourceRegistry {
 		PriceSourceEntity source = source(id);
 		requireRevision(source, expectedRegistrationRevision);
 		long revision = source.revisions.getLast().revision + 1;
-		source.revisions.add(new PriceSourceRevisionValue(revision, encodeSafe(configuration)));
+		source.revisions
+			.add(new PriceSourceRevisionValue(revision, PriceSourceConfiguration.validate(source.kind, configuration)));
 		source.candidateRevision = revision;
 		source.registrationRevision++;
 	}
@@ -84,14 +76,14 @@ public class PriceSourceRegistry {
 					"There is no candidate revision to assess");
 		}
 		Instant started = this.clock.instant();
-		Map<String, Object> configuration = decode(source.revisions.stream()
+		Map<String, Object> configuration = source.revisions.stream()
 			.filter(revision -> revision.revision == source.candidateRevision.longValue())
 			.findFirst()
-			.orElseThrow().configurationJson);
+			.orElseThrow().configuration;
 		List<String> capabilities = assess(source, configuration, started);
 		boolean successful = capabilities.stream().noneMatch(value -> value.startsWith("failed:"));
 		source.assessments.add(new PriceSourceAssessmentValue(UUID.randomUUID(), source.candidateRevision, successful,
-				String.join("\n", capabilities), started, this.clock.instant()));
+				capabilities, started, this.clock.instant()));
 		source.assessedScheduleRevision = successful ? source.scheduleRevision : null;
 		source.registrationRevision++;
 	}
@@ -110,14 +102,31 @@ public class PriceSourceRegistry {
 			throw new PriceSourceValidationException("PRICE_SOURCE_ASSESSMENT_REQUIRED",
 					"Promotion requires a successful assessment of the candidate revision");
 		}
+		Long previousActiveRevision = source.activeRevision;
 		source.activeRevision = revision;
 		source.candidateRevision = null;
 		source.registrationRevision++;
+		if (previousActiveRevision != null) {
+			this.entities
+				.createQuery("select binding from PriceSourceBindingEntity binding where binding.sourceId = :sourceId "
+						+ "and binding.sourceRevision = :sourceRevision", PriceSourceBindingEntity.class)
+				.setParameter("sourceId", source.id)
+				.setParameter("sourceRevision", previousActiveRevision)
+				.getResultList()
+				.forEach(binding -> {
+					binding.sourceRevision = revision;
+					binding.bindingRevision++;
+				});
+		}
 	}
 
 	public PriceSourceBindingView bind(String bindingKey, UUID sourceId, long sourceRevision,
 			Duration maximumObservationAge, Long expectedBindingRevision) {
-		if (bindingKey == null || !BINDING_KEY.matcher(bindingKey).matches()) {
+		PriceSourceBindingKey parsedKey;
+		try {
+			parsedKey = PriceSourceBindingKey.parse(bindingKey);
+		}
+		catch (IllegalArgumentException failure) {
 			throw new PriceSourceValidationException("PRICE_SOURCE_BINDING_KEY_INVALID",
 					"Binding keys identify one target resource family or one currency pair");
 		}
@@ -130,22 +139,24 @@ public class PriceSourceRegistry {
 			throw new PriceSourceValidationException("PRICE_SOURCE_REVISION_NOT_ACTIVE",
 					"A binding must select the source's active revision");
 		}
-		if (bindingKey.startsWith("currency:") && !assessedForCapability(source, sourceRevision, bindingKey)) {
+		if (parsedKey instanceof PriceSourceBindingKey.CurrencyPair
+				&& !assessedForCapability(source, sourceRevision, parsedKey.value())) {
 			throw new PriceSourceValidationException("PRICE_SOURCE_CAPABILITY_UNAVAILABLE",
 					"The active Price Source revision cannot provide the bound currency pair");
 		}
-		if ("skypilot-catalog".equals(source.kind) && bindingKey.startsWith("target:")
-				&& !assessedForCapability(source, sourceRevision, bindingKey)) {
+		if (source.kind == PriceSourceKind.SKYPILOT_CATALOG && parsedKey instanceof PriceSourceBindingKey.TargetResource
+				&& !assessedForCapability(source, sourceRevision, parsedKey.value())) {
 			throw new PriceSourceValidationException("PRICE_SOURCE_CAPABILITY_UNAVAILABLE",
 					"The active SkyPilot catalogue revision cannot price the bound target");
 		}
-		PriceSourceBindingEntity binding = this.entities.find(PriceSourceBindingEntity.class, bindingKey);
+		PriceSourceBindingEntity binding = this.entities.find(PriceSourceBindingEntity.class, parsedKey.value());
 		if (binding == null) {
 			if (expectedBindingRevision != null) {
 				throw new PriceSourceConflictException("PRICE_SOURCE_BINDING_REVISION_CONFLICT",
 						"The Price Source binding changed; reload it and retry");
 			}
-			binding = new PriceSourceBindingEntity(bindingKey, 1, sourceId, sourceRevision, maximumObservationAge);
+			binding = new PriceSourceBindingEntity(parsedKey.value(), 1, sourceId, sourceRevision,
+					maximumObservationAge);
 			this.entities.persist(binding);
 		}
 		else {
@@ -197,44 +208,20 @@ public class PriceSourceRegistry {
 		return new PriceSourceView(source.id, source.name, source.kind, source.registrationRevision,
 				source.activeRevision, source.candidateRevision, source.credentialBindingId,
 				source.revisions.stream()
-					.map(value -> new PriceSourceRevisionView(value.revision, decode(value.configurationJson)))
+					.map(value -> new PriceSourceRevisionView(value.revision, Map.copyOf(value.configuration)))
 					.toList(),
 				source.assessments.stream()
 					.map(value -> new PriceSourceAssessmentView(value.id, value.revision, value.successful,
-							List.of(value.capabilityResults.split("\\n")), value.observedFrom, value.observedUntil))
+							List.copyOf(value.capabilityResults), value.observedFrom, value.observedUntil))
 					.toList());
 	}
 
 	private List<String> assess(PriceSourceEntity source, Map<String, Object> configuration, Instant observedAt) {
 		List<String> results = new ArrayList<>();
-		if ("operator-schedule".equals(source.kind)) {
-			Object rates = configuration.get("rates");
-			List<GpuPriceScheduleEntryEntity> schedule = this.entities
-				.createQuery(
-						"select entry from GpuPriceScheduleEntryEntity entry "
-								+ "where entry.sourceId = :sourceId and entry.sourceRevision = :sourceRevision",
-						GpuPriceScheduleEntryEntity.class)
-				.setParameter("sourceId", source.id)
-				.setParameter("sourceRevision", source.candidateRevision)
-				.getResultList();
-			boolean legacyRatesValid = rates instanceof List<?> values && !values.isEmpty()
-					&& values.stream().allMatch(PriceSourceRegistry::validRate);
-			if (rates != null) {
-				results.add(legacyRatesValid ? "passed:rates" : "failed:rates-required");
-			}
-			else {
-				results.add(validSchedule(schedule, configuration) ? "passed:gpu-compute-rates"
-						: "failed:gpu-compute-rates-required");
-			}
-		}
-		else if ("skypilot-catalog".equals(source.kind)) {
-			assessSkyPilot(configuration, observedAt, results);
-		}
-		else {
-			Object endpoint = configuration.get("endpoint");
-			results
-				.add(endpoint instanceof String value && (value.startsWith("https://") || value.startsWith("http://"))
-						? "passed:endpoint" : "failed:endpoint-required");
+		switch (source.kind) {
+			case OPERATOR_SCHEDULE -> assessOperatorSchedule(source, configuration, results);
+			case SKYPILOT_CATALOG -> assessSkyPilot(configuration, observedAt, results);
+			case PROVIDER_API -> assessProvider(configuration, results);
 		}
 		Object capabilities = configuration.get("capabilities");
 		results.add(capabilities instanceof List<?> values && !values.isEmpty() ? "passed:capabilities"
@@ -257,6 +244,34 @@ public class PriceSourceRegistry {
 		return results;
 	}
 
+	private void assessOperatorSchedule(PriceSourceEntity source, Map<String, Object> configuration,
+			List<String> results) {
+		Object rates = configuration.get("rates");
+		List<GpuPriceScheduleEntryEntity> schedule = this.entities
+			.createQuery(
+					"select entry from GpuPriceScheduleEntryEntity entry "
+							+ "where entry.sourceId = :sourceId and entry.sourceRevision = :sourceRevision",
+					GpuPriceScheduleEntryEntity.class)
+			.setParameter("sourceId", source.id)
+			.setParameter("sourceRevision", source.candidateRevision)
+			.getResultList();
+		boolean legacyRatesValid = rates instanceof List<?> values && !values.isEmpty()
+				&& values.stream().allMatch(PriceSourceRegistry::validRate);
+		if (rates != null) {
+			results.add(legacyRatesValid ? "passed:rates" : "failed:rates-required");
+		}
+		else {
+			results.add(validSchedule(schedule, configuration) ? "passed:gpu-compute-rates"
+					: "failed:gpu-compute-rates-required");
+		}
+	}
+
+	private static void assessProvider(Map<String, Object> configuration, List<String> results) {
+		Object endpoint = configuration.get("endpoint");
+		results.add(endpoint instanceof String value && (value.startsWith("https://") || value.startsWith("http://"))
+				? "passed:endpoint" : "failed:endpoint-required");
+	}
+
 	private void assessSkyPilot(Map<String, Object> configuration, Instant observedAt, List<String> results) {
 		Set<String> capabilities = declarations(configuration, "capabilities", null);
 		Set<String> targets = declarations(configuration, "targets", null);
@@ -277,9 +292,14 @@ public class PriceSourceRegistry {
 	}
 
 	private void assessSkyPilotTarget(String target, Instant observedAt, List<String> results) {
-		String bindingKey = "target:" + target + ":resource:gpu-compute";
-		if (!BINDING_KEY.matcher(bindingKey).matches()) {
-			results.add("failed:" + bindingKey);
+		String bindingKey;
+		try {
+			bindingKey = PriceSourceBindingKey
+				.gpuCompute(new de.zorro909.skywright.backend.target.TargetIdentity(target))
+				.value();
+		}
+		catch (IllegalArgumentException failure) {
+			results.add("failed:target:" + target + ":resource:gpu-compute");
 			return;
 		}
 		List<de.zorro909.skywright.backend.gpuoffering.EligibleGpuOfferingView> offerings = this.gpuOfferings
@@ -314,11 +334,18 @@ public class PriceSourceRegistry {
 	private boolean canProvide(PriceSourceEntity source, Map<String, Object> configuration, String bindingKey) {
 		Object capabilities = configuration.get("capabilities");
 		boolean declared = capabilities instanceof List<?> values && values.contains(bindingKey);
-		if (!declared || !"operator-schedule".equals(source.kind)) {
+		if (!declared || source.kind != PriceSourceKind.OPERATOR_SCHEDULE) {
 			return declared;
 		}
-		String[] pair = bindingKey.split(":", -1);
-		if (pair.length != 3 || !validCurrency(pair[1]) || !validCurrency(pair[2]) || pair[1].equals(pair[2])) {
+		PriceSourceBindingKey parsed;
+		try {
+			parsed = PriceSourceBindingKey.parse(bindingKey);
+		}
+		catch (IllegalArgumentException failure) {
+			return false;
+		}
+		if (!(parsed instanceof PriceSourceBindingKey.CurrencyPair pair)
+				|| pair.nativeCurrency().equals(pair.reportingCurrency())) {
 			return false;
 		}
 		return this.entities.createQuery("""
@@ -328,8 +355,8 @@ public class PriceSourceRegistry {
 				  and conversion.reportingCurrency = :reportingCurrency
 				""", Long.class)
 			.setParameter("sourceId", source.id)
-			.setParameter("nativeCurrency", pair[1])
-			.setParameter("reportingCurrency", pair[2])
+			.setParameter("nativeCurrency", pair.nativeCurrency())
+			.setParameter("reportingCurrency", pair.reportingCurrency())
 			.getSingleResult() > 0;
 	}
 
@@ -345,7 +372,7 @@ public class PriceSourceRegistry {
 	private static boolean assessedForCapability(PriceSourceEntity source, long revision, String bindingKey) {
 		return source.assessments.stream()
 			.anyMatch(assessment -> assessment.revision == revision && assessment.successful
-					&& List.of(assessment.capabilityResults.split("\\n")).contains("passed:" + bindingKey));
+					&& assessment.capabilityResults.contains("passed:" + bindingKey));
 	}
 
 	private static boolean validSchedule(List<GpuPriceScheduleEntryEntity> entries, Map<String, Object> configuration) {
@@ -406,34 +433,12 @@ public class PriceSourceRegistry {
 		}
 	}
 
-	private static void requireKind(String kind) {
-		if (!Set.of("operator-schedule", "provider-api", "skypilot-catalog").contains(kind)) {
+	private static PriceSourceKind requireKind(String kind) {
+		try {
+			return PriceSourceKind.parse(kind);
+		}
+		catch (IllegalArgumentException failure) {
 			throw new PriceSourceValidationException("PRICE_SOURCE_KIND_INVALID", "Price Source kind is not supported");
-		}
-	}
-
-	private static String encodeSafe(Map<String, Object> configuration) {
-		if (configuration == null || configuration.isEmpty()) {
-			throw new PriceSourceValidationException("PRICE_SOURCE_CONFIGURATION_INVALID",
-					"Configuration must not be empty");
-		}
-		NonSecretDocument.requireSafe(configuration);
-		try {
-			return JSON.writeValueAsString(configuration);
-		}
-		catch (JacksonException error) {
-			throw new PriceSourceValidationException("PRICE_SOURCE_CONFIGURATION_INVALID",
-					"Configuration must be valid JSON");
-		}
-	}
-
-	private static Map<String, Object> decode(String value) {
-		try {
-			return JSON.readValue(value, new TypeReference<>() {
-			});
-		}
-		catch (JacksonException error) {
-			throw new IllegalStateException("Persisted Price Source configuration is invalid", error);
 		}
 	}
 

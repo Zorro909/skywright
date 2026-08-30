@@ -17,7 +17,7 @@ __all__ = ["RunDefinition", "RunDefinitionValidationError"]
 
 @dataclass(frozen=True, init=False, eq=False)
 class RunDefinition:
-    """Immutable internal model generated for Run Definition schema version 1."""
+    """Immutable internal model supporting Run Definition schema versions 1 and 2."""
 
     _value: dict[str, Any]
 

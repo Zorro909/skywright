@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:skywright:run-definition:v1",
+  "title": "Skywright Run Definition v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "trainingProjectVersion", "configuration", "datasetDefinition", "targetRequest", "storage", "executionPolicy", "orderingReset"],
+  "properties": {
+    "schemaVersion": {"type": "integer", "const": 1},
+    "trainingProjectVersion": {"$ref": "#/$defs/trainingProjectVersion"},
+    "configuration": {"type": "object"},
+    "datasetDefinition": {"$ref": "#/$defs/datasetDefinition"},
+    "targetRequest": {"$ref": "#/$defs/targetRequest"},
+    "storage": {"$ref": "#/$defs/storage"},
+    "executionPolicy": {"$ref": "#/$defs/executionPolicy"},
+    "orderingReset": {"type": "boolean"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "minLength": 71, "maxLength": 71, "pattern": "^sha256:[0-9a-f]{64}$"},
+    "schemaIdentity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "digest"],
+      "properties": {"version": {"type": "string", "minLength": 1}, "digest": {"$ref": "#/$defs/digest"}}
+    },
+    "contractIdentity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["digest", "skywrightSchema"],
+      "properties": {"digest": {"$ref": "#/$defs/digest"}, "skywrightSchema": {"$ref": "#/$defs/schemaIdentity"}}
+    },
+    "trainingProjectVersion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["projectIdentity", "versionLabel", "manifestArtifactDigest", "sourceRevision", "pipeline", "images", "environmentProfiles", "configurationContract", "metricContract"],
+      "properties": {
+        "projectIdentity": {"type": "string", "minLength": 1},
+        "versionLabel": {"type": "string", "minLength": 1},
+        "manifestArtifactDigest": {"$ref": "#/$defs/digest"},
+        "sourceRevision": {"type": "string", "minLength": 40, "maxLength": 40, "pattern": "^[0-9a-f]{40}$"},
+        "pipeline": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,86}(?![\\s\\S])"},
+        "images": {"type": "object", "minProperties": 1, "additionalProperties": false, "properties": {"cuda": {"$ref": "#/$defs/digest"}, "rocm": {"$ref": "#/$defs/digest"}}},
+        "environmentProfiles": {"type": "object", "minProperties": 1, "additionalProperties": false, "properties": {"cuda": {"$ref": "#/$defs/environmentProfile"}, "rocm": {"$ref": "#/$defs/environmentProfile"}}},
+        "configurationContract": {"$ref": "#/$defs/contractIdentity"},
+        "metricContract": {"$ref": "#/$defs/contractIdentity"}
+      }
+    },
+    "datasetDefinition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["datasetIdentity", "version", "contentFingerprint"],
+      "properties": {
+        "datasetIdentity": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "version": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "contentFingerprint": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "targetRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["targetClass", "purchaseMode", "gpuCount"],
+      "properties": {
+        "targetClass": {"enum": ["local-single-gpu", "local-multi-gpu", "cloud-on-demand", "cloud-spot"]},
+        "purchaseMode": {"enum": ["local", "on-demand", "spot"]},
+        "gpuCount": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "minimumGpuMemoryBytes": {"type": "integer", "minimum": 1},
+        "target": {"type": "string", "minLength": 1},
+        "gpuModel": {"type": "string", "minLength": 1}
+      }
+    },
+    "environmentProfile": {"type": "string", "pattern": "^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?|\\[[0-9A-Fa-f:.]+\\](?::[0-9]+)?)/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[0-9a-f]{64}(?![\\s\\S])"},
+    "storageDescriptor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["storageId", "registrationRevision", "configurationRevision", "endpoint", "bucket", "region", "addressingMode", "compatibilityOptions"],
+      "properties": {
+        "storageId": {"type": "string", "format": "uuid"},
+        "registrationRevision": {"type": "integer", "minimum": 1},
+        "configurationRevision": {"type": "integer", "minimum": 1},
+        "endpoint": {"type": "string", "format": "uri"},
+        "bucket": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "\\S"},
+        "region": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "\\S"},
+        "addressingMode": {"enum": ["path", "virtual-hosted"]},
+        "compatibilityOptions": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "chunkedEncoding": {"enum": ["enabled", "disabled"]},
+            "checksumCalculation": {"enum": ["when-required", "when-supported"]}
+          }
+        }
+      }
+    },
+    "storage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["execution", "repatriation"],
+      "properties": {
+        "execution": {"$ref": "#/$defs/storageDescriptor"},
+        "repatriation": {
+          "type": "object", "additionalProperties": false,
+          "required": ["enabled", "destination"],
+          "properties": {"enabled": {"type": "boolean"}, "destination": {"$ref": "#/$defs/storageDescriptor"}}
+        }
+      }
+    },
+    "costCeiling": {
+      "type": "object", "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {"amount": {"type": "number", "exclusiveMinimum": 0}, "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}}
+    },
+    "executionPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["maximumRecoveryDebt"],
+      "properties": {
+        "maximumRecoveryDebt": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "runtimeCeiling": {"type": "string", "pattern": "^PT(?=.*[1-9])(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\\.[0-9]+)?S)?$"},
+        "costCeiling": {"$ref": "#/$defs/costCeiling"}
+      }
+    }
+  }
+}

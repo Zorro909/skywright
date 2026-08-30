@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 class RunDefinitionCorpusTest {
 
@@ -23,6 +24,11 @@ class RunDefinitionCorpusTest {
 			definition.value().withObject("/configuration").put("changed", true);
 			assertThat(definition.value().path("configuration").has("changed")).isFalse();
 		}
+		ObjectNode historical = (ObjectNode) corpus.path("valid").get(0).deepCopy();
+		historical.put("schemaVersion", 1);
+		historical.remove("costQuote");
+		assertThat(JsonMapper.builder().build().readTree(RunDefinition.decode(historical.toString()).encode()))
+			.isEqualTo(historical);
 		for (JsonNode invalid : corpus.path("invalid")) {
 			assertThatThrownBy(() -> RunDefinition.decode(invalid.path("json").asText()))
 				.isInstanceOf(RunDefinitionValidationException.class)

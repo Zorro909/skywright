@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:skywright:run-definition:v1",
-  "title": "Skywright Run Definition v1",
+  "$id": "urn:skywright:run-definition:v2",
+  "title": "Skywright Run Definition v2",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "trainingProjectVersion", "configuration", "datasetDefinition", "targetRequest", "storage", "executionPolicy", "orderingReset"],
@@ -13,7 +13,7 @@
     }
   ],
   "properties": {
-    "schemaVersion": {"type": "integer", "const": 1},
+    "schemaVersion": {"type": "integer", "const": 2},
     "trainingProjectVersion": {"$ref": "#/$defs/trainingProjectVersion"},
     "configuration": {"type": "object"},
     "datasetDefinition": {"$ref": "#/$defs/datasetDefinition"},
@@ -67,7 +67,7 @@
         "purchaseMode": {"enum": ["local", "on-demand", "spot"]},
         "gpuCount": {"type": "integer", "minimum": 1, "maximum": 2147483647},
         "minimumGpuMemoryBytes": {"type": "integer", "minimum": 1},
-        "target": {"type": "string", "minLength": 1},
+        "target": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"},
         "gpuModel": {"type": "string", "minLength": 1}
       }
     },
@@ -129,6 +129,23 @@
         "kind": {"enum": ["operator-schedule", "provider-api", "skypilot-catalog"]}
       }
     },
+    "priceRateProvenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1, "maxLength": 255},
+        "documentRevision": {"type": "string", "minLength": 1, "maxLength": 255},
+        "valueKind": {"enum": ["estimate"]},
+        "skyPilotVersion": {"type": "string", "minLength": 1, "maxLength": 255},
+        "catalogRequestId": {"type": "string", "minLength": 1, "maxLength": 255},
+        "target": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"},
+        "region": {"type": "string", "minLength": 1, "maxLength": 255},
+        "instanceType": {"type": "string", "minLength": 1, "maxLength": 255},
+        "gpuModel": {"type": "string", "minLength": 1, "maxLength": 255},
+        "gpuCount": {"type": "integer", "minimum": 1},
+        "purchaseMode": {"enum": ["on-demand", "spot"]}
+      }
+    },
     "priceInterval": {
       "type": "object", "additionalProperties": false,
       "required": ["from", "until"],
@@ -146,7 +163,7 @@
         "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
         "unit": {"enum": ["instance-hour"]},
         "billingRules": {"$ref": "#/$defs/billingRules"},
-        "provenance": {"type": "object"}
+        "provenance": {"$ref": "#/$defs/priceRateProvenance"}
       }
     },
     "conversion": {
@@ -156,7 +173,7 @@
         "nativeCurrency": {"type": "string", "pattern": "^[A-Z]{3}$"},
         "reportingCurrency": {"type": "string", "pattern": "^[A-Z]{3}$"},
         "rate": {"type": "number", "exclusiveMinimum": 0},
-        "provenance": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "provenance": {"$ref": "#/$defs/priceRateProvenance"},
         "scheduleRevision": {"type": "integer", "minimum": 1},
         "source": {"$ref": "#/$defs/priceSourceProvenance"},
         "effectiveInterval": {"$ref": "#/$defs/priceInterval"},
@@ -172,7 +189,7 @@
         "id": {"type": "string", "format": "uuid"},
         "revision": {"type": "integer", "minimum": 1},
         "targetClass": {"enum": ["local-single-gpu", "local-multi-gpu", "cloud-on-demand", "cloud-spot"]},
-        "target": {"type": "string", "minLength": 1},
+        "target": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"},
         "providerOfferingId": {"type": "string", "minLength": 1},
         "region": {"type": "string", "minLength": 1},
         "instanceType": {"type": "string", "minLength": 1},

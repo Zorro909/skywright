@@ -26,6 +26,8 @@ abstract class GpuComputePriceSourceContract {
 
 	abstract BigDecimal expectedBillingQuantum();
 
+	abstract String expectedNativeCurrency();
+
 	@Test
 	void preservesExactRateBillingSourceAndTimeFactsAtFreshnessBoundary() {
 		GpuComputePriceResult result = sourceWithObservation(QUOTE_TIME.minus(Duration.ofHours(6)))
@@ -38,7 +40,7 @@ abstract class GpuComputePriceSourceContract {
 		assertThat(result.rate().value()).isEqualByComparingTo("2.3400");
 		assertThat(result.rate().minimumQuantity()).isEqualByComparingTo(expectedMinimumQuantity());
 		assertThat(result.rate().billingQuantum()).isEqualByComparingTo(expectedBillingQuantum());
-		assertThat(result.rate().nativeCurrency()).isEqualTo("USD");
+		assertThat(result.rate().nativeCurrency()).isEqualTo(expectedNativeCurrency());
 		assertThat(result.rate().nativeUnit()).isEqualTo("instance-hour");
 		assertThat(result.rate().provenance()).containsEntry("source", "contract fixture");
 		assertThat(result.rate().observedAt()).isEqualTo(QUOTE_TIME.minus(Duration.ofHours(6)));

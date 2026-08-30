@@ -2,6 +2,7 @@ package de.zorro909.skywright.backend.pricing;
 
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Embeddable;
 import jakarta.persistence.Entity;
@@ -16,6 +17,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity(name = "PriceSourceEntity")
 @Table(name = "price_source")
@@ -28,7 +31,8 @@ class PriceSourceEntity {
 	String name;
 
 	@Column(nullable = false)
-	String kind;
+	@Convert(converter = PriceSourceKindConverter.class)
+	PriceSourceKind kind;
 
 	@Column(name = "registration_revision", nullable = false)
 	long registrationRevision;
@@ -68,8 +72,8 @@ class PriceSourceEntity {
 	protected PriceSourceEntity() {
 	}
 
-	static PriceSourceEntity create(UUID id, String name, String kind, UUID credentialBindingId,
-			String configurationJson) {
+	static PriceSourceEntity create(UUID id, String name, PriceSourceKind kind, UUID credentialBindingId,
+			Map<String, Object> configuration) {
 		PriceSourceEntity source = new PriceSourceEntity();
 		source.id = id;
 		source.name = name;
@@ -77,7 +81,7 @@ class PriceSourceEntity {
 		source.registrationRevision = 1;
 		source.candidateRevision = 1L;
 		source.credentialBindingId = credentialBindingId;
-		source.revisions.add(new PriceSourceRevisionValue(1, configurationJson));
+		source.revisions.add(new PriceSourceRevisionValue(1, configuration));
 		return source;
 	}
 
@@ -89,15 +93,16 @@ class PriceSourceRevisionValue {
 	@Column(name = "configuration_revision", nullable = false)
 	long revision;
 
-	@Column(name = "configuration_json", nullable = false, length = 100000)
-	String configurationJson;
+	@Column(name = "configuration_json", nullable = false, columnDefinition = "jsonb")
+	@JdbcTypeCode(SqlTypes.JSON)
+	Map<String, Object> configuration;
 
 	protected PriceSourceRevisionValue() {
 	}
 
-	PriceSourceRevisionValue(long revision, String configurationJson) {
+	PriceSourceRevisionValue(long revision, Map<String, Object> configuration) {
 		this.revision = revision;
-		this.configurationJson = configurationJson;
+		this.configuration = Map.copyOf(configuration);
 	}
 
 }
@@ -114,8 +119,9 @@ class PriceSourceAssessmentValue {
 	@Column(nullable = false)
 	boolean successful;
 
-	@Column(name = "capability_results", nullable = false, columnDefinition = "text")
-	String capabilityResults;
+	@Column(name = "capability_results", nullable = false, columnDefinition = "jsonb")
+	@JdbcTypeCode(SqlTypes.JSON)
+	List<String> capabilityResults;
 
 	@Column(name = "observed_from", nullable = false)
 	Instant observedFrom;
@@ -126,19 +132,19 @@ class PriceSourceAssessmentValue {
 	protected PriceSourceAssessmentValue() {
 	}
 
-	PriceSourceAssessmentValue(UUID id, long revision, boolean successful, String capabilityResults,
+	PriceSourceAssessmentValue(UUID id, long revision, boolean successful, List<String> capabilityResults,
 			Instant observedFrom, Instant observedUntil) {
 		this.id = id;
 		this.revision = revision;
 		this.successful = successful;
-		this.capabilityResults = capabilityResults;
+		this.capabilityResults = List.copyOf(capabilityResults);
 		this.observedFrom = observedFrom;
 		this.observedUntil = observedUntil;
 	}
 
 }
 
-record PriceSourceView(UUID id, String name, String kind, long registrationRevision, Long activeRevision,
+record PriceSourceView(UUID id, String name, PriceSourceKind kind, long registrationRevision, Long activeRevision,
 		Long candidateRevision, UUID credentialBindingId, List<PriceSourceRevisionView> revisions,
 		List<PriceSourceAssessmentView> assessments) {
 }

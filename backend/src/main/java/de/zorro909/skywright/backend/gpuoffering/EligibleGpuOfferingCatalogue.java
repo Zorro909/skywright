@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.gpuoffering;
 
 import de.zorro909.skywright.backend.rundefinition.TargetRequest;
+import de.zorro909.skywright.backend.target.TargetIdentity;
 import de.zorro909.skywright.backend.targetstorage.TargetClass;
 import jakarta.persistence.EntityManager;
 import java.util.List;
@@ -119,7 +120,9 @@ public class EligibleGpuOfferingCatalogue {
 				|| input.supportTier() == null) {
 			throw new GpuOfferingValidationException("GPU_OFFERING_INVALID", "Required offering facts are missing");
 		}
-		requireText(input.target(), "Target");
+		if (!TargetIdentity.valid(input.target())) {
+			throw new GpuOfferingValidationException("GPU_OFFERING_INVALID", "Target identity is invalid");
+		}
 		requireText(input.providerOfferingId(), "Provider offering identity");
 		requireText(input.region(), "Region");
 		requireText(input.instanceType(), "Instance type");
