@@ -60,8 +60,8 @@ final class SkyPilotPriceSourceIT {
 				assertThat(candidate.sourceRevision()).isEqualTo(1);
 				assertThat(candidate.sourceKind()).isEqualTo("skypilot-catalog");
 				assertThat(candidate.nativeRate()).isEqualByComparingTo("2.3400");
-				assertThat(candidate.minimumQuantity()).isEqualByComparingTo(BigDecimal.ONE);
-				assertThat(candidate.billingQuantum()).isEqualByComparingTo(BigDecimal.ONE);
+				assertThat(candidate.minimumQuantity()).isEqualByComparingTo("0.25");
+				assertThat(candidate.billingQuantum()).isEqualByComparingTo("0.016666666666666666");
 				assertThat(candidate.nativeCurrency()).isEqualTo("USD");
 				assertThat(candidate.nativeUnit()).isEqualTo("instance-hour");
 				assertThat(candidate.provenance()).containsEntry("source", "SkyPilot catalogue")
@@ -198,7 +198,8 @@ final class SkyPilotPriceSourceIT {
 			if (this.missing || "inert".equals(query.instanceType())) {
 				return Optional.empty();
 			}
-			return Optional.of(new SkyPilotCatalogueObservation(new BigDecimal("2.3400"),
+			return Optional.of(new SkyPilotCatalogueObservation(new BigDecimal("2.3400"), "USD", "instance-hour",
+					new BigDecimal("0.25"), new BigDecimal("0.016666666666666666"),
 					Map.of("source", "SkyPilot catalogue", "valueKind", "estimate", "target", query.target()),
 					Instant.parse("2030-01-15T11:00:00Z"), Instant.parse("2030-01-01T00:00:00Z"), null));
 		}

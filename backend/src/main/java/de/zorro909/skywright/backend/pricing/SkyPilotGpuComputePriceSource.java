@@ -2,6 +2,7 @@ package de.zorro909.skywright.backend.pricing;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Currency;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -45,19 +46,40 @@ public class SkyPilotGpuComputePriceSource implements GpuComputePriceSource {
 	}
 
 	private static GpuComputePriceResult result(GpuComputePriceQuery query, SkyPilotCatalogueObservation observation) {
+		java.util.Map<String, Object> provenance;
+		try {
+			provenance = PriceRateProvenance.validate(observation.provenance());
+		}
+		catch (IllegalArgumentException failure) {
+			return GpuComputePriceResult.missing();
+		}
 		if (observation.hourlyRate() == null || observation.hourlyRate().signum() < 0
-				|| observation.provenance() == null || observation.observedAt() == null
-				|| observation.effectiveFrom() == null || observation.observedAt().isAfter(query.quoteTime())
+				|| !validCurrency(observation.nativeCurrency()) || !"instance-hour".equals(observation.nativeUnit())
+				|| observation.minimumQuantity() == null || observation.minimumQuantity().signum() <= 0
+				|| observation.billingQuantum() == null || observation.billingQuantum().signum() <= 0
+				|| observation.observedAt() == null || observation.effectiveFrom() == null
+				|| observation.observedAt().isAfter(query.quoteTime())
 				|| observation.effectiveFrom().isAfter(query.quoteTime())
 				|| observation.effectiveUntil() != null && !query.quoteTime().isBefore(observation.effectiveUntil())) {
 			return GpuComputePriceResult.missing();
 		}
-		GpuComputeRate rate = new GpuComputeRate(query.sourceId(), query.sourceRevision(), query.offeringId(), "USD",
-				"instance-hour", observation.hourlyRate(), BigDecimal.ONE, BigDecimal.ONE, observation.provenance(),
-				observation.observedAt(), observation.effectiveFrom(), observation.effectiveUntil());
+		GpuComputeRate rate = new GpuComputeRate(query.sourceId(), query.sourceRevision(), query.offeringId(),
+				observation.nativeCurrency(), observation.nativeUnit(), observation.hourlyRate(),
+				observation.minimumQuantity(), observation.billingQuantum(), provenance, observation.observedAt(),
+				observation.effectiveFrom(), observation.effectiveUntil());
 		Instant oldestAcceptedObservation = query.quoteTime().minus(query.maximumObservationAge());
 		return observation.observedAt().isBefore(oldestAcceptedObservation) ? GpuComputePriceResult.stale(rate)
 				: GpuComputePriceResult.available(rate);
+	}
+
+	private static boolean validCurrency(String value) {
+		try {
+			return value != null && value.matches("[A-Z]{3}")
+					&& Currency.getInstance(value).getCurrencyCode().equals(value);
+		}
+		catch (IllegalArgumentException failure) {
+			return false;
+		}
 	}
 
 }

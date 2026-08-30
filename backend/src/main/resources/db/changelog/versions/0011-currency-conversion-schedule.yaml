@@ -4,8 +4,6 @@ databaseChangeLog:
       author: skywright
       logicalFilePath: db/changelog/versions/0011-currency-conversion-schedule.yaml
       changes:
-        - sql:
-            sql: CREATE EXTENSION IF NOT EXISTS btree_gist
         - addColumn:
             schemaName: skywright
             tableName: price_source
@@ -20,21 +18,18 @@ databaseChangeLog:
               - column: { name: native_currency, type: varchar(3), constraints: { nullable: false } }
               - column: { name: reporting_currency, type: varchar(3), constraints: { nullable: false } }
               - column: { name: rate, type: numeric, constraints: { nullable: false } }
-              - column: { name: provenance, type: varchar(1024), constraints: { nullable: false } }
+              - column: { name: provenance, type: jsonb, constraints: { nullable: false } }
               - column: { name: observed_at, type: timestamp with time zone, constraints: { nullable: false } }
               - column: { name: effective_from, type: timestamp with time zone, constraints: { nullable: false } }
               - column: { name: effective_until, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: persistence_version, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
         - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: currency_conversion, baseColumnNames: price_source_id, referencedTableSchemaName: skywright, referencedTableName: price_source, referencedColumnNames: id, constraintName: fk_currency_conversion_source, onDelete: CASCADE }
-        - sql:
-            sql: ALTER TABLE skywright.currency_conversion ADD CONSTRAINT ck_currency_conversion_interval CHECK (effective_from < effective_until)
-        - sql:
-            sql: ALTER TABLE skywright.currency_conversion ADD CONSTRAINT ck_currency_conversion_rate CHECK (rate > 0)
-        - sql:
-            sql: ALTER TABLE skywright.currency_conversion ADD CONSTRAINT ex_currency_conversion_effective_interval EXCLUDE USING gist (price_source_id WITH =, native_currency WITH =, reporting_currency WITH =, tstzrange(effective_from, effective_until, '[]') WITH &&)
+        - sqlFile: { path: sql/0011-currency-conversion-exclusion.sql, relativeToChangelogFile: true, splitStatements: false }
         - sql:
             sql: GRANT SELECT, INSERT, UPDATE, DELETE ON skywright.currency_conversion TO "${runtimeRole}"
       rollback:
         - sql:
             sql: REVOKE ALL PRIVILEGES ON skywright.currency_conversion FROM "${runtimeRole}"
+        - sqlFile: { path: undo/0011-currency-conversion-exclusion.sql, relativeToChangelogFile: true, splitStatements: false }
         - dropTable: { schemaName: skywright, tableName: currency_conversion }
         - dropColumn: { schemaName: skywright, tableName: price_source, columnName: conversion_schedule_revision }

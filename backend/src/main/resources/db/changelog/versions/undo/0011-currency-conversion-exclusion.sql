@@ -1,0 +1,6 @@
+ALTER TABLE skywright.currency_conversion
+DROP CONSTRAINT ex_currency_conversion_effective_interval,
+DROP CONSTRAINT currency_conversion_effective_until_check,
+DROP CONSTRAINT currency_conversion_rate_check;
+
+DROP EXTENSION IF EXISTS btree_gist;

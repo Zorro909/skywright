@@ -23,6 +23,14 @@ final class DatabaseStartupIT {
 				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
 
 				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(31);
+				assertThat(database.extensionExists("btree_gist")).isTrue();
+				assertThat(database.constraints("currency_conversion")).contains(
+						"ex_currency_conversion_effective_interval", "currency_conversion_rate_check",
+						"currency_conversion_effective_until_check");
+				assertThat(database.columnType("price_source_revision", "configuration_json")).isEqualTo("jsonb");
+				assertThat(database.columnType("price_source_assessment", "capability_results")).isEqualTo("jsonb");
+				assertThat(database.columnType("gpu_price_schedule_entry", "provenance_json")).isEqualTo("jsonb");
+				assertThat(database.columnType("currency_conversion", "provenance")).isEqualTo("jsonb");
 				assertThat(database.countTables("public")).isZero();
 			}
 		}
@@ -44,6 +52,10 @@ final class DatabaseStartupIT {
 				}
 
 				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(31);
+				assertThat(database.extensionExists("btree_gist")).isTrue();
+				assertThat(database.constraints("currency_conversion")).contains(
+						"ex_currency_conversion_effective_interval", "currency_conversion_rate_check",
+						"currency_conversion_effective_until_check");
 			}
 		}
 	}

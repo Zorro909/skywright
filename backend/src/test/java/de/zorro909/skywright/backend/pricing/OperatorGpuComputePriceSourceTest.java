@@ -35,6 +35,11 @@ final class OperatorGpuComputePriceSourceTest extends GpuComputePriceSourceContr
 		return new BigDecimal("0.016666666666666666");
 	}
 
+	@Override
+	String expectedNativeCurrency() {
+		return "USD";
+	}
+
 	private static GpuPriceScheduleEntryView entry(Instant observedAt) {
 		return new GpuPriceScheduleEntryView(UUID.randomUUID(), 1, SOURCE_ID, 1, OFFERING_ID, "USD", "instance-hour",
 				new BigDecimal("2.3400"), new BigDecimal("0.250"), new BigDecimal("0.016666666666666666"),

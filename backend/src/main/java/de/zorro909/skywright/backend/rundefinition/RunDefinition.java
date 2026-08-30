@@ -5,7 +5,7 @@ import javax.annotation.processing.Generated;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
-/** Immutable internal model generated for Run Definition schema version 1. */
+/** Immutable internal model supporting Run Definition schema versions 1 and 2. */
 @Generated("scripts/generate-run-definition-models")
 public final class RunDefinition {
 

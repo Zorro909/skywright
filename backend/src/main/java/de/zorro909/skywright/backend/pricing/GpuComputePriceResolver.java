@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.pricing;
 
 import de.zorro909.skywright.backend.gpuoffering.EligibleGpuOfferingView;
+import de.zorro909.skywright.backend.target.TargetIdentity;
 import jakarta.persistence.EntityManager;
 import java.time.Duration;
 import java.time.Instant;
@@ -29,35 +30,35 @@ public class GpuComputePriceResolver {
 
 	public BoundGpuComputePrice resolve(EligibleGpuOfferingView offering, Instant quoteTime) {
 		PriceSourceBindingEntity binding = this.entities.find(PriceSourceBindingEntity.class,
-				"target:" + offering.target() + ":resource:gpu-compute");
+				PriceSourceBindingKey.gpuCompute(new TargetIdentity(offering.target())).value());
 		if (binding == null) {
 			return unavailable(null, 0, null, null, null);
 		}
 		Duration maximumAge = Duration.parse(binding.maximumObservationAge);
 		PriceSourceEntity source = this.entities.find(PriceSourceEntity.class, binding.sourceId);
 		if (source == null || source.activeRevision == null || source.activeRevision != binding.sourceRevision) {
-			return unavailable(binding.sourceId, binding.sourceRevision, source == null ? null : source.kind,
-					maximumAge, null);
+			return unavailable(binding.sourceId, binding.sourceRevision,
+					source == null ? null : source.kind.wireValue(), maximumAge, null);
 		}
 		PriceSourceAssessmentValue assessment = latestSuccessfulAssessment(source, binding.sourceRevision);
-		if (assessment == null
-				|| "skypilot-catalog".equals(source.kind) && !passed(assessment, offeringCapability(offering))) {
-			return unavailable(binding.sourceId, binding.sourceRevision, source.kind, maximumAge, null);
+		if (assessment == null || source.kind == PriceSourceKind.SKYPILOT_CATALOG
+				&& !passed(assessment, offeringCapability(offering))) {
+			return unavailable(binding.sourceId, binding.sourceRevision, source.kind.wireValue(), maximumAge, null);
 		}
 		GpuComputePriceQuery query = new GpuComputePriceQuery(binding.sourceId, binding.sourceRevision, offering.id(),
 				offering.target(), offering.region(), offering.instanceType(), offering.gpuModel(), offering.gpuCount(),
 				"spot".equals(offering.purchaseMode().wireValue()), quoteTime, maximumAge);
 		GpuComputePriceResult result = switch (source.kind) {
-			case "operator-schedule" -> this.operatorSchedules.price(query);
-			case "skypilot-catalog" -> this.skyPilotCatalogue.price(query);
-			default -> GpuComputePriceResult.unavailable();
+			case OPERATOR_SCHEDULE -> this.operatorSchedules.price(query);
+			case SKYPILOT_CATALOG -> this.skyPilotCatalogue.price(query);
+			case PROVIDER_API -> GpuComputePriceResult.unavailable();
 		};
-		return new BoundGpuComputePrice(result, binding.sourceId, binding.sourceRevision, source.kind, maximumAge,
-				assessment.observedFrom, assessment.observedUntil);
+		return new BoundGpuComputePrice(result, binding.sourceId, binding.sourceRevision, source.kind.wireValue(),
+				maximumAge, assessment.observedFrom, assessment.observedUntil);
 	}
 
 	private static boolean passed(PriceSourceAssessmentValue assessment, String capability) {
-		return List.of(assessment.capabilityResults.split("\\n")).contains("passed:" + capability);
+		return assessment.capabilityResults.contains("passed:" + capability);
 	}
 
 	private static String offeringCapability(EligibleGpuOfferingView offering) {

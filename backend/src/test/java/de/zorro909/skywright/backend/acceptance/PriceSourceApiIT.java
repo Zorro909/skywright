@@ -16,13 +16,23 @@ final class PriceSourceApiIT {
 	void operatorsManageExactEffectiveDatedCurrencyConversions() throws Exception {
 		try (var backend = BackendFixture.start()) {
 			String sourceId = createOperatorSchedule(backend, "currency schedule", "currency:USD:EUR");
+			for (String field : java.util.List.of("authorization", "access_key")) {
+				var rejected = backend.post("/api/v1/price-sources/" + sourceId + "/currency-conversions",
+						conversion(0, "0.910000", "2026-08-27T00:00:00Z", "2026-08-28T00:00:00Z").replace(
+								"\"source\":\"ECB reference data\",\"documentRevision\":\"2026-08-27\"",
+								"\"" + field + "\":\"do-not-store\""));
+				assertThat(rejected.statusCode()).as(rejected.body()).isEqualTo(400);
+				assertThat(rejected.body()).contains("SKYWRIGHT_HTTP_BAD_REQUEST").doesNotContain("do-not-store");
+			}
+			assertThat(backend.get("/api/v1/price-sources/" + sourceId + "/currency-conversions").body())
+				.doesNotContain("do-not-store", "authorization", "access_key");
 			var created = backend.post("/api/v1/price-sources/" + sourceId + "/currency-conversions", """
 					{
 					  "expectedScheduleRevision": 0,
 					  "nativeCurrency": "USD",
 					  "reportingCurrency": "EUR",
 					  "rate": "0.910000",
-					  "provenance": "ECB reference data",
+					  "provenance": {"source":"ECB reference data","documentRevision":"2026-08-27"},
 					  "observedAt": "2026-08-27T10:00:00Z",
 					  "effectiveFrom": "2026-08-27T00:00:00Z",
 					  "effectiveUntil": "2026-08-28T00:00:00Z"
@@ -157,18 +167,17 @@ final class PriceSourceApiIT {
 	@Test
 	void revisionsAssessmentsPromotionsAndBindingsSurviveRestart() throws Exception {
 		try (var backend = BackendFixture.start()) {
-			var rejectedSecret = backend.post("/api/v1/price-sources", registration("secret schedule",
-					"{\"capabilities\":[\"compute\"],\"rates\":[{}],\"apiToken\":\"do-not-store\"}"));
-			assertThat(rejectedSecret.statusCode()).isEqualTo(422);
-			assertThat(rejectedSecret.body()).contains("SKYWRIGHT_PRICE_SOURCE_SECRET_FORBIDDEN")
-				.doesNotContain("do-not-store");
+			for (String field : java.util.List.of("authorization", "access_key")) {
+				var rejectedSecret = backend.post("/api/v1/price-sources", registration("secret schedule " + field,
+						"{\"capabilities\":[\"compute\"],\"rates\":[{}],\"" + field + "\":\"do-not-store\"}"));
+				assertThat(rejectedSecret.statusCode()).isEqualTo(400);
+				assertThat(rejectedSecret.body()).contains("SKYWRIGHT_HTTP_BAD_REQUEST").doesNotContain("do-not-store");
+			}
+			assertThat(backend.get("/api/v1/price-sources").body()).doesNotContain("do-not-store", "authorization",
+					"access_key");
 			var invalidRate = backend.post("/api/v1/price-sources", registration("invalid schedule",
 					"{\"capabilities\":[\"compute\"],\"rates\":[{\"amount\":{},\"currency\":\"ZZZ\"}]}"));
-			assertThat(invalidRate.statusCode()).as(invalidRate.body()).isEqualTo(201);
-			String invalidSourceId = jsonString(invalidRate.body(), "id");
-			var invalidAssessment = backend.post("/api/v1/price-sources/" + invalidSourceId + "/assessment", "");
-			assertThat(invalidAssessment.statusCode()).as(invalidAssessment.body()).isEqualTo(200);
-			assertThat(invalidAssessment.body()).contains("\"successful\":false", "failed:rates-required");
+			assertThat(invalidRate.statusCode()).as(invalidRate.body()).isEqualTo(400);
 
 			var created = backend.post("/api/v1/price-sources", registration("operator schedule",
 					"{\"capabilities\":[\"compute\"],\"rates\":[{\"amount\":\"2.3400\",\"currency\":\"USD\"}]}"));
@@ -223,7 +232,7 @@ final class PriceSourceApiIT {
 				  "nativeCurrency": "USD",
 				  "reportingCurrency": "EUR",
 				  "rate": "%s",
-				  "provenance": "ECB reference data",
+				  "provenance": {"source":"ECB reference data","documentRevision":"2026-08-27"},
 				  "observedAt": "2026-08-27T10:00:00Z",
 				  "effectiveFrom": "%s",
 				  "effectiveUntil": "%s"

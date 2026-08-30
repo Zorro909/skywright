@@ -9,6 +9,8 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity(name = "GpuPriceScheduleEntryEntity")
 @Table(name = "gpu_price_schedule_entry")
@@ -44,8 +46,9 @@ class GpuPriceScheduleEntryEntity {
 	@Column(name = "billing_quantum", nullable = false)
 	BigDecimal billingQuantum;
 
-	@Column(name = "provenance_json", nullable = false, length = 100000)
-	String provenanceJson;
+	@Column(name = "provenance_json", nullable = false, columnDefinition = "jsonb")
+	@JdbcTypeCode(SqlTypes.JSON)
+	Map<String, Object> provenance;
 
 	@Column(name = "observed_at", nullable = false)
 	Instant observedAt;
@@ -63,17 +66,16 @@ class GpuPriceScheduleEntryEntity {
 	protected GpuPriceScheduleEntryEntity() {
 	}
 
-	static GpuPriceScheduleEntryEntity create(UUID id, UUID sourceId, GpuPriceScheduleEntryInput input,
-			String provenanceJson) {
+	static GpuPriceScheduleEntryEntity create(UUID id, UUID sourceId, GpuPriceScheduleEntryInput input) {
 		GpuPriceScheduleEntryEntity entry = new GpuPriceScheduleEntryEntity();
 		entry.id = id;
 		entry.revision = 1;
 		entry.sourceId = sourceId;
-		entry.replace(input, provenanceJson);
+		entry.replace(input);
 		return entry;
 	}
 
-	void replace(GpuPriceScheduleEntryInput input, String provenanceJson) {
+	void replace(GpuPriceScheduleEntryInput input) {
 		this.sourceRevision = input.sourceRevision();
 		this.offeringId = input.offeringId();
 		this.nativeCurrency = input.nativeCurrency();
@@ -81,16 +83,17 @@ class GpuPriceScheduleEntryEntity {
 		this.value = input.value();
 		this.minimumQuantity = input.minimumQuantity();
 		this.billingQuantum = input.billingQuantum();
-		this.provenanceJson = provenanceJson;
+		this.provenance = Map.copyOf(input.provenance());
 		this.observedAt = input.observedAt();
 		this.effectiveFrom = input.effectiveFrom();
 		this.effectiveUntil = input.effectiveUntil();
 	}
 
-	GpuPriceScheduleEntryView view(Map<String, Object> provenance) {
+	GpuPriceScheduleEntryView view() {
 		return new GpuPriceScheduleEntryView(this.id, this.revision, this.sourceId, this.sourceRevision,
 				this.offeringId, this.nativeCurrency, this.nativeUnit, this.value, this.minimumQuantity,
-				this.billingQuantum, provenance, this.observedAt, this.effectiveFrom, this.effectiveUntil);
+				this.billingQuantum, Map.copyOf(this.provenance), this.observedAt, this.effectiveFrom,
+				this.effectiveUntil);
 	}
 
 }

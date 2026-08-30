@@ -21,6 +21,7 @@ import de.zorro909.skywright.backend.targetstorage.RunDefinitionStorageSelection
 import de.zorro909.skywright.backend.targetstorage.RunDefinitionStorageSnapshot;
 import de.zorro909.skywright.backend.targetstorage.RunDefinitionStorageOverrides;
 import de.zorro909.skywright.backend.targetstorage.TargetClass;
+import de.zorro909.skywright.backend.target.TargetIdentity;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -118,6 +119,9 @@ public final class RunDefinitionResolver {
 		if (target != null && target.minimumThroughput() != null) {
 			failures.add(failure("MINIMUM_THROUGHPUT_UNSUPPORTED", "submission", "/targetRequest/minimumThroughput",
 					"unsupported"));
+		}
+		if (target != null && target.target() != null && !TargetIdentity.valid(target.target())) {
+			failures.add(failure("TARGET_IDENTITY_INVALID", "submission", "/targetRequest/target", "pattern"));
 		}
 		Integer maximumDebt = submission.maximumRecoveryDebt();
 		if (maximumDebt != null && maximumDebt <= 0) {
@@ -313,10 +317,10 @@ public final class RunDefinitionResolver {
 			Instant quoteTime, int index, List<RunDefinitionFailure> failures) {
 		String pointer = "/costQuote/candidates/" + index;
 		if (candidate == null || candidate.offeringId() == null || candidate.offeringRevision() < 1
-				|| candidate.targetClass() == null || blank(candidate.target()) || blank(candidate.providerOfferingId())
-				|| blank(candidate.region()) || blank(candidate.instanceType()) || blank(candidate.gpuModel())
-				|| candidate.gpuCount() <= 0 || candidate.gpuMemoryBytes() <= 0 || blank(candidate.purchaseMode())
-				|| blank(candidate.supportTier())) {
+				|| candidate.targetClass() == null || !TargetIdentity.valid(candidate.target())
+				|| blank(candidate.providerOfferingId()) || blank(candidate.region()) || blank(candidate.instanceType())
+				|| blank(candidate.gpuModel()) || candidate.gpuCount() <= 0 || candidate.gpuMemoryBytes() <= 0
+				|| blank(candidate.purchaseMode()) || blank(candidate.supportTier())) {
 			failures.add(failure("GPU_OFFERING_SNAPSHOT_INVALID", "gpu-offering-catalogue", pointer + "/offering",
 					"required"));
 			return;
@@ -376,7 +380,7 @@ public final class RunDefinitionResolver {
 		}
 		if (!nativeCurrency.equals(conversion.nativeCurrency())
 				|| !reportingCurrency.equals(conversion.reportingCurrency()) || conversion.rate() == null
-				|| conversion.rate().signum() <= 0 || blank(conversion.provenance())) {
+				|| conversion.rate().signum() <= 0 || conversion.provenance() == null) {
 			failures.add(failure("CURRENCY_CONVERSION_INVALID", "price-source", conversionPointer, "required"));
 		}
 		if (conversion.sourceId() == null || conversion.sourceRevision() < 1 || conversion.scheduleRevision() < 1
@@ -460,7 +464,7 @@ public final class RunDefinitionResolver {
 			ResolvedTarget target, RunDefinitionStorageSelection storage, String currency, Instant quoteTime,
 			CostQuoteAssessment quote) {
 		ObjectNode root = JSON.createObjectNode();
-		root.put("schemaVersion", 1);
+		root.put("schemaVersion", 2);
 		root.set("trainingProjectVersion", projectVersion(version));
 		root.set("configuration", configuration.deepCopy());
 		root.set("datasetDefinition", dataset(submission.datasetDefinition()));
@@ -543,10 +547,10 @@ public final class RunDefinitionResolver {
 		result.put("nativeCurrency", conversion.nativeCurrency())
 			.put("reportingCurrency", conversion.reportingCurrency())
 			.put("rate", conversion.rate())
-			.put("provenance", conversion.provenance())
 			.put("scheduleRevision", conversion.scheduleRevision())
 			.put("observedAt", conversion.observedAt().toString())
 			.put("maximumObservationAge", conversion.maximumObservationAge().toString());
+		result.set("provenance", JSON.valueToTree(conversion.provenance()));
 		provenance(result.putObject("source"), conversion.sourceId(), conversion.sourceRevision(),
 				conversion.sourceKind());
 		interval(result.putObject("effectiveInterval"), conversion.effectiveFrom(), conversion.effectiveUntil());

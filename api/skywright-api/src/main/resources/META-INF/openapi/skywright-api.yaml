@@ -179,7 +179,7 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
   /price-source-bindings/{bindingKey}:
     parameters:
-      - { name: bindingKey, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 255 } }
+      - { name: bindingKey, in: path, required: true, schema: { $ref: '#/components/schemas/PriceSourceBindingKey' } }
     put:
       operationId: bindPriceSource
       summary: Bind a target resource family or currency pair to one active source revision.
@@ -1091,14 +1091,61 @@ components:
     PriceSourceKind:
       type: string
       enum: [operator-schedule, provider-api, skypilot-catalog]
+    PriceSourceBindingKey:
+      type: string
+      minLength: 1
+      maxLength: 540
+      pattern: '^(?:target:[A-Za-z0-9][A-Za-z0-9._-]*(?:~1[A-Za-z0-9][A-Za-z0-9._-]*)*:resource:[a-z][a-z0-9-]*|currency:[A-Z]{3}:[A-Z]{3})$'
+      description: Target identities escape slash as ~1 and tilde as ~0 so the key remains one URI path segment.
     PriceSourceConfiguration:
       type: object
       description: |
         Non-secret, source-specific configuration. Operator schedules declare their capabilities and
         schedule dimensions. A SkyPilot catalogue revision declares gpu-compute, one or more targets,
-        USD, and instance-hour before assessment checks every configured Eligible GPU Offering.
+        native currencies and units before assessment checks every configured Eligible GPU Offering.
         Provider-native source configuration is reserved for later provider qualification.
-      additionalProperties: true
+      additionalProperties: false
+      properties:
+        capabilities:
+          type: array
+          minItems: 1
+          items: { type: string, minLength: 1, maxLength: 255 }
+        nativeCurrencies:
+          type: array
+          items: { type: string, pattern: '^[A-Z]{3}$' }
+        nativeUnits:
+          type: array
+          items: { type: string, enum: [instance-hour] }
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/TargetIdentity' }
+        rates:
+          type: array
+          items: { $ref: '#/components/schemas/DeclaredPriceRate' }
+        endpoint: { type: string, format: uri, maxLength: 2048 }
+    DeclaredPriceRate:
+      type: object
+      additionalProperties: false
+      required: [amount, currency]
+      properties:
+        amount: { type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$' }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+    PriceRateProvenance:
+      type: object
+      additionalProperties: false
+      required: [source]
+      properties:
+        source: { type: string, minLength: 1, maxLength: 255 }
+        documentRevision: { type: string, minLength: 1, maxLength: 255 }
+        valueKind: { type: string, enum: [estimate] }
+        skyPilotVersion: { type: string, minLength: 1, maxLength: 255 }
+        catalogRequestId: { type: string, minLength: 1, maxLength: 255 }
+        target: { $ref: '#/components/schemas/TargetIdentity' }
+        region: { type: string, minLength: 1, maxLength: 255 }
+        instanceType: { type: string, minLength: 1, maxLength: 255 }
+        gpuModel: { type: string, minLength: 1, maxLength: 255 }
+        gpuCount: { type: integer, minimum: 1 }
+        purchaseMode: { type: string, enum: [on-demand, spot] }
     PriceSourceRevisionState:
       type: string
       enum: [active, candidate, historical]
@@ -1179,7 +1226,7 @@ components:
       additionalProperties: false
       required: [bindingKey, bindingRevision, sourceId, sourceRevision, maximumObservationAge]
       properties:
-        bindingKey: { type: string }
+        bindingKey: { $ref: '#/components/schemas/PriceSourceBindingKey' }
         bindingRevision: { type: integer, format: int64, minimum: 1 }
         sourceId: { $ref: '#/components/schemas/SkywrightId' }
         sourceRevision: { type: integer, format: int64, minimum: 1 }
@@ -1193,7 +1240,7 @@ components:
         nativeCurrency: { type: string, pattern: '^[A-Z]{3}$' }
         reportingCurrency: { type: string, pattern: '^[A-Z]{3}$' }
         rate: { type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$' }
-        provenance: { type: string, minLength: 1, maxLength: 1024 }
+        provenance: { $ref: '#/components/schemas/PriceRateProvenance' }
         observedAt: { $ref: '#/components/schemas/UtcInstant' }
         effectiveFrom: { $ref: '#/components/schemas/UtcInstant' }
         effectiveUntil: { $ref: '#/components/schemas/UtcInstant' }
@@ -1216,7 +1263,7 @@ components:
         nativeCurrency: { type: string, pattern: '^[A-Z]{3}$' }
         reportingCurrency: { type: string, pattern: '^[A-Z]{3}$' }
         rate: { type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$' }
-        provenance: { type: string, minLength: 1, maxLength: 1024 }
+        provenance: { $ref: '#/components/schemas/PriceRateProvenance' }
         observedAt: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
         effectiveFrom: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
         effectiveUntil: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
@@ -1229,7 +1276,7 @@ components:
         nativeCurrency: { type: string, pattern: '^[A-Z]{3}$' }
         reportingCurrency: { type: string, pattern: '^[A-Z]{3}$' }
         rate: { type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$' }
-        provenance: { type: string, minLength: 1, maxLength: 1024 }
+        provenance: { $ref: '#/components/schemas/PriceRateProvenance' }
         observedAt: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
         effectiveFrom: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
         effectiveUntil: { type: string, format: date-time, description: An RFC 3339 instant in UTC. }
@@ -1245,10 +1292,7 @@ components:
         value: { type: number, minimum: 0 }
         minimumQuantity: { type: number, exclusiveMinimum: 0 }
         billingQuantum: { type: number, exclusiveMinimum: 0 }
-        provenance:
-          type: object
-          description: Non-sensitive facts identifying where the operator obtained the rate.
-          additionalProperties: true
+        provenance: { $ref: '#/components/schemas/PriceRateProvenance' }
         observedAt: { type: string, format: date-time, description: A UTC RFC 3339 instant. }
         effectiveFrom: { type: string, format: date-time, description: The inclusive UTC interval start. }
         effectiveUntil: { type: string, format: date-time, description: The exclusive UTC interval end. }
@@ -1265,10 +1309,7 @@ components:
         value: { type: number, minimum: 0 }
         minimumQuantity: { type: number, exclusiveMinimum: 0 }
         billingQuantum: { type: number, exclusiveMinimum: 0 }
-        provenance:
-          type: object
-          description: Non-sensitive facts identifying where the operator obtained the rate.
-          additionalProperties: true
+        provenance: { $ref: '#/components/schemas/PriceRateProvenance' }
         observedAt: { type: string, format: date-time, description: A UTC RFC 3339 instant. }
         effectiveFrom: { type: string, format: date-time, description: The inclusive UTC interval start. }
         effectiveUntil: { type: string, format: date-time, description: The exclusive UTC interval end. }
@@ -1286,10 +1327,7 @@ components:
         value: { type: number, minimum: 0 }
         minimumQuantity: { type: number, exclusiveMinimum: 0 }
         billingQuantum: { type: number, exclusiveMinimum: 0 }
-        provenance:
-          type: object
-          description: Non-sensitive facts identifying where the operator obtained the rate.
-          additionalProperties: true
+        provenance: { $ref: '#/components/schemas/PriceRateProvenance' }
         observedAt: { type: string, format: date-time, description: A UTC RFC 3339 instant. }
         effectiveFrom: { type: string, format: date-time, description: The inclusive UTC interval start. }
         effectiveUntil: { type: string, format: date-time, description: The exclusive UTC interval end. }
@@ -1578,6 +1616,11 @@ components:
     TargetClass:
       type: string
       enum: [local-single-gpu, local-multi-gpu, cloud-on-demand, cloud-spot]
+    TargetIdentity:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$'
     GpuOfferingPurchaseMode:
       type: string
       enum: [local, on-demand, spot]
@@ -1592,7 +1635,7 @@ components:
         id: { $ref: '#/components/schemas/SkywrightId' }
         revision: { type: integer, format: int64, minimum: 1 }
         targetClass: { $ref: '#/components/schemas/TargetClass' }
-        target: { type: string, minLength: 1, maxLength: 255 }
+        target: { $ref: '#/components/schemas/TargetIdentity' }
         providerOfferingId: { type: string, minLength: 1, maxLength: 255 }
         region: { type: string, minLength: 1, maxLength: 255 }
         instanceType: { type: string, minLength: 1, maxLength: 255 }
@@ -1607,7 +1650,7 @@ components:
       required: [targetClass, target, providerOfferingId, region, instanceType, gpuModel, gpuCount, gpuMemoryBytes, purchaseMode, supportTier]
       properties:
         targetClass: { $ref: '#/components/schemas/TargetClass' }
-        target: { type: string, minLength: 1, maxLength: 255 }
+        target: { $ref: '#/components/schemas/TargetIdentity' }
         providerOfferingId: { type: string, minLength: 1, maxLength: 255 }
         region: { type: string, minLength: 1, maxLength: 255 }
         instanceType: { type: string, minLength: 1, maxLength: 255 }
@@ -1623,7 +1666,7 @@ components:
       properties:
         expectedRevision: { type: integer, format: int64, minimum: 1 }
         targetClass: { $ref: '#/components/schemas/TargetClass' }
-        target: { type: string, minLength: 1, maxLength: 255 }
+        target: { $ref: '#/components/schemas/TargetIdentity' }
         providerOfferingId: { type: string, minLength: 1, maxLength: 255 }
         region: { type: string, minLength: 1, maxLength: 255 }
         instanceType: { type: string, minLength: 1, maxLength: 255 }

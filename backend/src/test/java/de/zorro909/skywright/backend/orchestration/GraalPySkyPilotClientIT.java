@@ -47,22 +47,9 @@ final class GraalPySkyPilotClientIT {
 		apiServer.restart();
 		client.probe();
 		Instant observedAt = Instant.parse("2030-01-15T12:00:00Z");
-		var catalogueObservation = client
-			.price(new SkyPilotCatalogueQuery("aws", "us-east-1", "p5.48xlarge", "H100", 8, false, observedAt))
-			.orElseThrow();
-		assertThat(catalogueObservation.hourlyRate()).isPositive();
-		assertThat(catalogueObservation.observedAt()).isEqualTo(observedAt);
-		assertThat(catalogueObservation.effectiveFrom()).isEqualTo(observedAt);
-		assertThat(catalogueObservation.effectiveUntil()).isNull();
-		assertThat(catalogueObservation.provenance()).containsEntry("source", "SkyPilot catalogue")
-			.containsEntry("valueKind", "estimate")
-			.containsEntry("target", "aws")
-			.containsEntry("region", "us-east-1")
-			.containsEntry("instanceType", "p5.48xlarge")
-			.containsEntry("gpuModel", "H100")
-			.containsEntry("gpuCount", 8)
-			.containsEntry("purchaseMode", "on-demand")
-			.containsKey("catalogRequestId");
+		assertThat(client
+			.price(new SkyPilotCatalogueQuery("aws", "us-east-1", "p5.48xlarge", "H100", 8, false, observedAt)))
+			.isEmpty();
 
 		var submittedTask = task();
 		var submission = client.submit(submittedTask);

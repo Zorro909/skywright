@@ -10,7 +10,6 @@ import de.zorro909.skywright.backend.boundary.generated.model.CurrencyConversion
 import de.zorro909.skywright.backend.boundary.generated.model.GpuPriceScheduleEntry;
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSource;
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSourceAssessment;
-import de.zorro909.skywright.backend.boundary.generated.model.PriceSourceKind;
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSourceRevision;
 import de.zorro909.skywright.backend.boundary.generated.model.PriceSourceRevisionState;
 import de.zorro909.skywright.backend.boundary.generated.model.PromotePriceSource;
@@ -20,7 +19,9 @@ import de.zorro909.skywright.backend.boundary.generated.model.UpdateGpuPriceSche
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
@@ -102,7 +103,7 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 	@Override
 	public ResponseEntity<PriceSource> createPriceSource(CreatePriceSource request) {
 		UUID id = this.registry.register(request.getName(), request.getKind().getValue(),
-				request.getCredentialBindingId(), request.getConfiguration());
+				request.getCredentialBindingId(), configuration(request.getConfiguration()));
 		return ResponseEntity.status(201).body(source(this.registry.get(id)));
 	}
 
@@ -118,7 +119,8 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 
 	@Override
 	public ResponseEntity<PriceSource> stagePriceSourceRevision(UUID sourceId, StagePriceSourceRevision request) {
-		this.registry.stage(sourceId, request.getExpectedRegistrationRevision(), request.getConfiguration());
+		this.registry.stage(sourceId, request.getExpectedRegistrationRevision(),
+				configuration(request.getConfiguration()));
 		return ResponseEntity.ok(source(this.registry.get(sourceId)));
 	}
 
@@ -148,13 +150,15 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 	}
 
 	private static PriceSource source(PriceSourceView value) {
-		return new PriceSource(value.id(), value.name(), PriceSourceKind.fromValue(value.kind()),
+		return new PriceSource(value.id(), value.name(),
+				de.zorro909.skywright.backend.boundary.generated.model.PriceSourceKind
+					.fromValue(value.kind().wireValue()),
 				value.registrationRevision(), value.activeRevision(), value.candidateRevision(),
 				value.credentialBindingId(),
 				value.revisions()
 					.stream()
 					.map(revision -> new PriceSourceRevision(revision.revision(), state(value, revision.revision()),
-							revision.configuration()))
+							configuration(revision.configuration())))
 					.toList(),
 				value.assessments()
 					.stream()
@@ -205,15 +209,16 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 	}
 
 	private static CurrencyConversionValue value(String nativeCurrency, String reportingCurrency, String rate,
-			String provenance, java.time.OffsetDateTime observedAt, java.time.OffsetDateTime effectiveFrom,
+			de.zorro909.skywright.backend.boundary.generated.model.PriceRateProvenance provenance,
+			java.time.OffsetDateTime observedAt, java.time.OffsetDateTime effectiveFrom,
 			java.time.OffsetDateTime effectiveUntil) {
 		try {
 			if (!utc(observedAt) || !utc(effectiveFrom) || !utc(effectiveUntil)) {
 				throw new PriceSourceValidationException("CURRENCY_CONVERSION_INVALID",
 						"Observation and effective interval times must use UTC");
 			}
-			return new CurrencyConversionValue(nativeCurrency, reportingCurrency, new BigDecimal(rate), provenance,
-					observedAt == null ? null : observedAt.toInstant(),
+			return new CurrencyConversionValue(nativeCurrency, reportingCurrency, new BigDecimal(rate),
+					provenance(provenance), observedAt == null ? null : observedAt.toInstant(),
 					effectiveFrom == null ? null : effectiveFrom.toInstant(),
 					effectiveUntil == null ? null : effectiveUntil.toInstant());
 		}
@@ -235,14 +240,15 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 
 	private static CurrencyConversion conversion(CurrencyConversionView value) {
 		return new CurrencyConversion(value.id(), value.nativeCurrency(), value.reportingCurrency(),
-				value.rate().toPlainString(), value.provenance(), value.observedAt().atOffset(ZoneOffset.UTC),
-				value.effectiveFrom().atOffset(ZoneOffset.UTC), value.effectiveUntil().atOffset(ZoneOffset.UTC));
+				value.rate().toPlainString(), provenance(value.provenance()),
+				value.observedAt().atOffset(ZoneOffset.UTC), value.effectiveFrom().atOffset(ZoneOffset.UTC),
+				value.effectiveUntil().atOffset(ZoneOffset.UTC));
 	}
 
 	private static GpuPriceScheduleEntry entry(GpuPriceScheduleEntryView value) {
 		return new GpuPriceScheduleEntry(value.id(), value.revision(), value.sourceRevision(), value.offeringId(),
 				value.nativeCurrency(), GpuPriceScheduleEntry.NativeUnitEnum.fromValue(value.nativeUnit()),
-				value.value(), value.minimumQuantity(), value.billingQuantum(), value.provenance(),
+				value.value(), value.minimumQuantity(), value.billingQuantum(), provenance(value.provenance()),
 				value.observedAt().atOffset(ZoneOffset.UTC), value.effectiveFrom().atOffset(ZoneOffset.UTC),
 				value.effectiveUntil().atOffset(ZoneOffset.UTC));
 	}
@@ -252,7 +258,7 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 				request.getEffectiveUntil().getOffset());
 		return new GpuPriceScheduleEntryInput(request.getSourceRevision(), request.getOfferingId(),
 				request.getNativeCurrency(), request.getNativeUnit().getValue(), request.getValue(),
-				request.getMinimumQuantity(), request.getBillingQuantum(), request.getProvenance(),
+				request.getMinimumQuantity(), request.getBillingQuantum(), provenance(request.getProvenance()),
 				request.getObservedAt().toInstant(), request.getEffectiveFrom().toInstant(),
 				request.getEffectiveUntil().toInstant());
 	}
@@ -262,7 +268,7 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 				request.getEffectiveUntil().getOffset());
 		return new GpuPriceScheduleEntryInput(request.getSourceRevision(), request.getOfferingId(),
 				request.getNativeCurrency(), request.getNativeUnit().getValue(), request.getValue(),
-				request.getMinimumQuantity(), request.getBillingQuantum(), request.getProvenance(),
+				request.getMinimumQuantity(), request.getBillingQuantum(), provenance(request.getProvenance()),
 				request.getObservedAt().toInstant(), request.getEffectiveFrom().toInstant(),
 				request.getEffectiveUntil().toInstant());
 	}
@@ -271,6 +277,99 @@ public class PriceSourceHttpAdapter implements PriceSourcesApi, PriceSourceBindi
 		if (java.util.Arrays.stream(offsets).anyMatch(offset -> !ZoneOffset.UTC.equals(offset))) {
 			throw new PriceSourceValidationException("GPU_PRICE_SCHEDULE_INSTANT_INVALID",
 					"Schedule instants must use the UTC offset");
+		}
+	}
+
+	private static Map<String, Object> configuration(
+			de.zorro909.skywright.backend.boundary.generated.model.PriceSourceConfiguration value) {
+		Map<String, Object> result = new LinkedHashMap<>();
+		result.put("capabilities", value.getCapabilities());
+		if (value.getNativeCurrencies() != null && !value.getNativeCurrencies().isEmpty()) {
+			result.put("nativeCurrencies", value.getNativeCurrencies());
+		}
+		if (value.getNativeUnits() != null && !value.getNativeUnits().isEmpty()) {
+			result.put("nativeUnits", value.getNativeUnits().stream().map(item -> item.getValue()).toList());
+		}
+		if (value.getTargets() != null && !value.getTargets().isEmpty()) {
+			result.put("targets", value.getTargets());
+		}
+		if (value.getRates() != null && !value.getRates().isEmpty()) {
+			result.put("rates",
+					value.getRates()
+						.stream()
+						.map(rate -> Map.of("amount", rate.getAmount(), "currency", rate.getCurrency()))
+						.toList());
+		}
+		if (value.getEndpoint() != null) {
+			result.put("endpoint", value.getEndpoint());
+		}
+		return result;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static de.zorro909.skywright.backend.boundary.generated.model.PriceSourceConfiguration configuration(
+			Map<String, Object> value) {
+		var result = new de.zorro909.skywright.backend.boundary.generated.model.PriceSourceConfiguration();
+		result.setCapabilities((List<String>) value.get("capabilities"));
+		result.setNativeCurrencies((List<String>) value.get("nativeCurrencies"));
+		result.setNativeUnits(value.containsKey("nativeUnits") ? ((List<String>) value.get("nativeUnits")).stream()
+			.map(de.zorro909.skywright.backend.boundary.generated.model.PriceSourceConfiguration.NativeUnitsEnum::fromValue)
+			.toList() : null);
+		result.setTargets((List<String>) value.get("targets"));
+		result.setRates(value.containsKey("rates") ? ((List<Map<String, Object>>) value.get("rates")).stream()
+			.map(rate -> new de.zorro909.skywright.backend.boundary.generated.model.DeclaredPriceRate(
+					rate.get("amount").toString(), rate.get("currency").toString()))
+			.toList() : null);
+		result.setEndpoint((String) value.get("endpoint"));
+		return result;
+	}
+
+	private static Map<String, Object> provenance(
+			de.zorro909.skywright.backend.boundary.generated.model.PriceRateProvenance value) {
+		Map<String, Object> result = new LinkedHashMap<>();
+		result.put("source", value.getSource());
+		put(result, "documentRevision", value.getDocumentRevision());
+		put(result, "valueKind", value.getValueKind() == null ? null : value.getValueKind().getValue());
+		put(result, "skyPilotVersion", value.getSkyPilotVersion());
+		put(result, "catalogRequestId", value.getCatalogRequestId());
+		put(result, "target", value.getTarget());
+		put(result, "region", value.getRegion());
+		put(result, "instanceType", value.getInstanceType());
+		put(result, "gpuModel", value.getGpuModel());
+		put(result, "gpuCount", value.getGpuCount());
+		put(result, "purchaseMode", value.getPurchaseMode() == null ? null : value.getPurchaseMode().getValue());
+		return result;
+	}
+
+	private static de.zorro909.skywright.backend.boundary.generated.model.PriceRateProvenance provenance(
+			Map<String, Object> value) {
+		var result = new de.zorro909.skywright.backend.boundary.generated.model.PriceRateProvenance(
+				(String) value.get("source"));
+		result.setDocumentRevision((String) value.get("documentRevision"));
+		if (value.containsKey("valueKind")) {
+			result.setValueKind(de.zorro909.skywright.backend.boundary.generated.model.PriceRateProvenance.ValueKindEnum
+				.fromValue((String) value.get("valueKind")));
+		}
+		result.setSkyPilotVersion((String) value.get("skyPilotVersion"));
+		result.setCatalogRequestId((String) value.get("catalogRequestId"));
+		result.setTarget((String) value.get("target"));
+		result.setRegion((String) value.get("region"));
+		result.setInstanceType((String) value.get("instanceType"));
+		result.setGpuModel((String) value.get("gpuModel"));
+		if (value.containsKey("gpuCount")) {
+			result.setGpuCount(((Number) value.get("gpuCount")).intValue());
+		}
+		if (value.containsKey("purchaseMode")) {
+			result.setPurchaseMode(
+					de.zorro909.skywright.backend.boundary.generated.model.PriceRateProvenance.PurchaseModeEnum
+						.fromValue((String) value.get("purchaseMode")));
+		}
+		return result;
+	}
+
+	private static void put(Map<String, Object> target, String key, Object value) {
+		if (value != null) {
+			target.put(key, value);
 		}
 	}
 

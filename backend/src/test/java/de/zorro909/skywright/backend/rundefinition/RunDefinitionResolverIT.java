@@ -52,7 +52,7 @@ class RunDefinitionResolverIT {
 
 		assertThat(resolution.accepted()).isTrue();
 		JsonNode definition = resolution.definition().value();
-		assertThat(definition.path("schemaVersion").asInt()).isEqualTo(1);
+		assertThat(definition.path("schemaVersion").asInt()).isEqualTo(2);
 		assertThat(definition.at("/trainingProjectVersion/images/cuda").asText()).isEqualTo("sha256:" + "a".repeat(64));
 		assertThat(definition.at("/trainingProjectVersion/images/rocm").asText()).isEqualTo("sha256:" + "b".repeat(64));
 		assertThat(definition.at("/trainingProjectVersion/environmentProfiles/cuda").asText())
@@ -163,7 +163,7 @@ class RunDefinitionResolverIT {
 		CostQuoteCandidate direct = withRate(quoteCandidate(target, quoteTime), new BigDecimal("2.0000"));
 		CostQuoteCandidate converted = withConversion(
 				withCurrencyAndRate(quoteCandidate(target, quoteTime), "USD", new BigDecimal("1.0049")),
-				new CostQuoteConversion("USD", "EUR", new BigDecimal("1.0049"), "operator conversion",
+				new CostQuoteConversion("USD", "EUR", new BigDecimal("1.0049"), Map.of("source", "operator conversion"),
 						UUID.fromString("00000000-0000-0000-0000-000000000300"), 7, 11, "operator-schedule",
 						quoteTime.minus(Duration.ofDays(1)), quoteTime.plus(Duration.ofDays(1)),
 						quoteTime.minus(Duration.ofMinutes(5)), quoteTime.minus(Duration.ofMinutes(1)), quoteTime,
@@ -232,8 +232,8 @@ class RunDefinitionResolverIT {
 		EligibleTarget target = eligibleTarget("priced-target", TargetClass.CLOUD_SPOT, "cuda", "H100", 8,
 				80L * 1024 * 1024 * 1024);
 		CostQuoteConversion firstConversion = new CostQuoteConversion("USD", "EUR", new BigDecimal("0.910000"),
-				"first conversion", UUID.fromString("00000000-0000-0000-0000-000000000300"), 4, 1, "operator-schedule",
-				quoteTime.minus(Duration.ofDays(1)), quoteTime.plus(Duration.ofDays(1)),
+				Map.of("source", "first conversion"), UUID.fromString("00000000-0000-0000-0000-000000000300"), 4, 1,
+				"operator-schedule", quoteTime.minus(Duration.ofDays(1)), quoteTime.plus(Duration.ofDays(1)),
 				quoteTime.minus(Duration.ofMinutes(5)), quoteTime.minus(Duration.ofMinutes(1)), quoteTime,
 				Duration.ofHours(1));
 		AtomicReference<CostQuoteCandidate> candidate = new AtomicReference<>(
@@ -247,7 +247,7 @@ class RunDefinitionResolverIT {
 		RunDefinition accepted = resolver.resolve(submission(TargetClass.CLOUD_SPOT), null).definition();
 		String frozen = accepted.encode();
 		candidate.set(withConversion(candidate.get(),
-				new CostQuoteConversion("USD", "EUR", new BigDecimal("0.800000"), "later conversion",
+				new CostQuoteConversion("USD", "EUR", new BigDecimal("0.800000"), Map.of("source", "later conversion"),
 						UUID.fromString("00000000-0000-0000-0000-000000000300"), 4, 2, "operator-schedule",
 						quoteTime.minus(Duration.ofDays(1)), quoteTime.plus(Duration.ofDays(1)),
 						quoteTime.minus(Duration.ofMinutes(5)), quoteTime.minus(Duration.ofMinutes(1)), quoteTime,
@@ -692,9 +692,9 @@ class RunDefinitionResolverIT {
 				target.target(), "provider-offering", "test-region", "test-instance", target.gpuModel(),
 				target.maximumGpuCount(), target.gpuMemoryBytes(), purchaseMode(target.targetClass()), "first-class",
 				new BigDecimal("2.5000"), "EUR", "instance-hour", BigDecimal.ONE, BigDecimal.ONE,
-				java.util.Collections.singletonMap("note", null), source, 3, "operator-schedule",
-				Instant.parse("2025-01-01T00:00:00Z"), null, quoteTime.minusSeconds(1), quoteTime.minusSeconds(2),
-				quoteTime.minusSeconds(1), Duration.ofHours(24), null);
+				Map.of("source", "operator tariff", "documentRevision", "test-revision"), source, 3,
+				"operator-schedule", Instant.parse("2025-01-01T00:00:00Z"), null, quoteTime.minusSeconds(1),
+				quoteTime.minusSeconds(2), quoteTime.minusSeconds(1), Duration.ofHours(24), null);
 	}
 
 	private static CostQuoteCandidate withBillingRules(CostQuoteCandidate source, BigDecimal minimumQuantity,

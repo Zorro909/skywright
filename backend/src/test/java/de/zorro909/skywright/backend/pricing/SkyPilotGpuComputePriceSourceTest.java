@@ -26,16 +26,22 @@ final class SkyPilotGpuComputePriceSourceTest extends GpuComputePriceSourceContr
 
 	@Override
 	BigDecimal expectedMinimumQuantity() {
-		return BigDecimal.ONE;
+		return new BigDecimal("0.250");
 	}
 
 	@Override
 	BigDecimal expectedBillingQuantum() {
-		return BigDecimal.ONE;
+		return new BigDecimal("0.016666666666666666");
+	}
+
+	@Override
+	String expectedNativeCurrency() {
+		return "EUR";
 	}
 
 	private static SkyPilotCatalogueObservation observation(Instant observedAt) {
-		return new SkyPilotCatalogueObservation(new BigDecimal("2.3400"), Map.of("source", "contract fixture"),
+		return new SkyPilotCatalogueObservation(new BigDecimal("2.3400"), "EUR", "instance-hour",
+				new BigDecimal("0.250"), new BigDecimal("0.016666666666666666"), Map.of("source", "contract fixture"),
 				observedAt, Instant.parse("2030-01-01T00:00:00Z"), Instant.parse("2030-02-01T00:00:00Z"));
 	}
 

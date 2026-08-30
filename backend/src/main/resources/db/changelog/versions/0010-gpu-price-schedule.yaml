@@ -22,7 +22,7 @@ databaseChangeLog:
               - column: { name: exact_value, type: numeric, constraints: { nullable: false, checkConstraint: exact_value >= 0 } }
               - column: { name: minimum_quantity, type: numeric, constraints: { nullable: false, checkConstraint: minimum_quantity > 0 } }
               - column: { name: billing_quantum, type: numeric, constraints: { nullable: false, checkConstraint: billing_quantum > 0 } }
-              - column: { name: provenance_json, type: varchar(100000), constraints: { nullable: false } }
+              - column: { name: provenance_json, type: jsonb, constraints: { nullable: false } }
               - column: { name: observed_at, type: timestamp with time zone, constraints: { nullable: false } }
               - column: { name: effective_from, type: timestamp with time zone, constraints: { nullable: false } }
               - column: { name: effective_until, type: timestamp with time zone, constraints: { nullable: false, checkConstraint: effective_from < effective_until } }

@@ -86,7 +86,10 @@ final class GraalPySkyPilotClient implements SkyPilotClient, SkyPilotCatalogue {
 		Map<String, Object> provenance = JSON.convertValue(result.required("provenance"), new TypeReference<>() {
 		});
 		return Optional.of(new SkyPilotCatalogueObservation(new BigDecimal(requiredText(result, "hourly_rate")),
-				provenance, java.time.Instant.parse(requiredText(result, "observed_at")),
+				requiredText(result, "native_currency"), requiredText(result, "native_unit"),
+				new BigDecimal(requiredText(result, "minimum_quantity")),
+				new BigDecimal(requiredText(result, "billing_quantum")), provenance,
+				java.time.Instant.parse(requiredText(result, "observed_at")),
 				java.time.Instant.parse(requiredText(result, "effective_from")),
 				result.required("effective_until").isNull() ? null
 						: java.time.Instant.parse(requiredText(result, "effective_until"))));

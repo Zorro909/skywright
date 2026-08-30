@@ -4,9 +4,13 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity(name = "CurrencyConversionEntity")
 @Table(name = "currency_conversion")
@@ -27,8 +31,9 @@ class CurrencyConversionEntity {
 	@Column(nullable = false, columnDefinition = "numeric")
 	BigDecimal rate;
 
-	@Column(nullable = false, length = 1024)
-	String provenance;
+	@Column(nullable = false, columnDefinition = "jsonb")
+	@JdbcTypeCode(SqlTypes.JSON)
+	Map<String, Object> provenance;
 
 	@Column(name = "observed_at", nullable = false)
 	Instant observedAt;
@@ -38,6 +43,10 @@ class CurrencyConversionEntity {
 
 	@Column(name = "effective_until", nullable = false)
 	Instant effectiveUntil;
+
+	@Version
+	@Column(name = "persistence_version", nullable = false)
+	long persistenceVersion;
 
 	protected CurrencyConversionEntity() {
 	}
@@ -65,12 +74,12 @@ class CurrencyConversionEntity {
 
 }
 
-record CurrencyConversionValue(String nativeCurrency, String reportingCurrency, BigDecimal rate, String provenance,
-		Instant observedAt, Instant effectiveFrom, Instant effectiveUntil) {
+record CurrencyConversionValue(String nativeCurrency, String reportingCurrency, BigDecimal rate,
+		Map<String, Object> provenance, Instant observedAt, Instant effectiveFrom, Instant effectiveUntil) {
 }
 
 record CurrencyConversionView(UUID id, String nativeCurrency, String reportingCurrency, BigDecimal rate,
-		String provenance, Instant observedAt, Instant effectiveFrom, Instant effectiveUntil) {
+		Map<String, Object> provenance, Instant observedAt, Instant effectiveFrom, Instant effectiveUntil) {
 }
 
 record CurrencyConversionScheduleView(UUID sourceId, long scheduleRevision,

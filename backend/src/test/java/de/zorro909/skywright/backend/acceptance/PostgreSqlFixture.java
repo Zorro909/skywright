@@ -110,6 +110,59 @@ final class PostgreSqlFixture {
 			}
 		}
 
+		boolean extensionExists(String extension) throws SQLException {
+			try (var connection = DriverManager.getConnection(jdbcUrl, migrator, migratorPassword);
+					var statement = connection
+						.prepareStatement("SELECT count(*) FROM pg_extension WHERE extname = ?")) {
+				statement.setString(1, extension);
+				try (var result = statement.executeQuery()) {
+					result.next();
+					return result.getLong(1) == 1;
+				}
+			}
+		}
+
+		List<String> constraints(String table) throws SQLException {
+			try (var connection = DriverManager.getConnection(jdbcUrl, migrator, migratorPassword);
+					var statement = connection.prepareStatement(
+							"""
+									SELECT constraint_record.conname
+									FROM pg_catalog.pg_constraint constraint_record
+									JOIN pg_catalog.pg_class table_record ON table_record.oid = constraint_record.conrelid
+									JOIN pg_catalog.pg_namespace namespace_record ON namespace_record.oid = table_record.relnamespace
+									WHERE namespace_record.nspname = ? AND table_record.relname = ?
+									ORDER BY constraint_record.conname
+									""")) {
+				statement.setString(1, SCHEMA);
+				statement.setString(2, table);
+				try (var result = statement.executeQuery()) {
+					var values = new java.util.ArrayList<String>();
+					while (result.next()) {
+						values.add(result.getString(1));
+					}
+					return List.copyOf(values);
+				}
+			}
+		}
+
+		String columnType(String table, String column) throws SQLException {
+			try (var connection = DriverManager.getConnection(jdbcUrl, migrator, migratorPassword);
+					var statement = connection.prepareStatement("""
+							SELECT data_type FROM information_schema.columns
+							WHERE table_schema = ? AND table_name = ? AND column_name = ?
+							""")) {
+				statement.setString(1, SCHEMA);
+				statement.setString(2, table);
+				statement.setString(3, column);
+				try (var result = statement.executeQuery()) {
+					if (!result.next()) {
+						throw new SQLException("Column does not exist: " + table + "." + column);
+					}
+					return result.getString(1);
+				}
+			}
+		}
+
 		long countReleasedCredentialProjections(UUID publicationId, UUID bindingId, long bindingRevision)
 				throws SQLException {
 			try (var connection = DriverManager.getConnection(jdbcUrl, runtime, runtimePassword);

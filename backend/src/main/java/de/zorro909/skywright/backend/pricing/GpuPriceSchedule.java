@@ -12,15 +12,10 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import tools.jackson.core.JacksonException;
-import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.json.JsonMapper;
 
 @Service
 @Transactional
 public class GpuPriceSchedule implements GpuPriceScheduleReader {
-
-	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	private static final String NATIVE_UNIT = "instance-hour";
 
@@ -32,8 +27,7 @@ public class GpuPriceSchedule implements GpuPriceScheduleReader {
 
 	public GpuPriceScheduleEntryView create(UUID sourceId, GpuPriceScheduleEntryInput input) {
 		PriceSourceEntity source = validateSourceAndInput(sourceId, input);
-		GpuPriceScheduleEntryEntity entry = GpuPriceScheduleEntryEntity.create(UUID.randomUUID(), sourceId, input,
-				encode(input.provenance()));
+		GpuPriceScheduleEntryEntity entry = GpuPriceScheduleEntryEntity.create(UUID.randomUUID(), sourceId, input);
 		this.entities.persist(entry);
 		invalidateCandidateAssessment(source, input.sourceRevision());
 		flushConstraints();
@@ -65,11 +59,11 @@ public class GpuPriceSchedule implements GpuPriceScheduleReader {
 		GpuPriceScheduleEntryEntity entry = entry(sourceId, entryId);
 		requireRevision(entry, expectedRevision);
 		long previousSourceRevision = entry.sourceRevision;
-		entry.replace(input, encode(input.provenance()));
+		entry.replace(input);
 		entry.revision++;
 		invalidateCandidateAssessment(source, previousSourceRevision, input.sourceRevision());
 		flushConstraints();
-		return view(entry);
+		return entry.view();
 	}
 
 	public void delete(UUID sourceId, UUID entryId, long expectedRevision) {
@@ -154,7 +148,13 @@ public class GpuPriceSchedule implements GpuPriceScheduleReader {
 		if (!input.effectiveFrom().isBefore(input.effectiveUntil())) {
 			throw invalid("GPU_PRICE_SCHEDULE_INTERVAL_INVALID", "Effective from must be before effective until");
 		}
-		NonSecretDocument.requireSafe(input.provenance());
+		try {
+			PriceRateProvenance.validate(input.provenance());
+		}
+		catch (IllegalArgumentException failure) {
+			throw invalid("PRICE_SOURCE_PROVENANCE_INVALID",
+					"Provenance does not match the non-secret price evidence shape");
+		}
 		return source;
 	}
 
@@ -177,7 +177,7 @@ public class GpuPriceSchedule implements GpuPriceScheduleReader {
 		if (source == null) {
 			throw new PriceSourceNotFoundException();
 		}
-		if (!"operator-schedule".equals(source.kind)) {
+		if (source.kind != PriceSourceKind.OPERATOR_SCHEDULE) {
 			throw invalid("GPU_PRICE_SCHEDULE_SOURCE_KIND_INVALID",
 					"GPU price schedules require an operator-schedule Price Source");
 		}
@@ -241,24 +241,8 @@ public class GpuPriceSchedule implements GpuPriceScheduleReader {
 		return new PriceSourceValidationException(code, detail);
 	}
 
-	private static String encode(Map<String, Object> value) {
-		try {
-			return JSON.writeValueAsString(value);
-		}
-		catch (JacksonException failure) {
-			throw invalid("GPU_PRICE_SCHEDULE_PROVENANCE_INVALID", "Provenance must be valid JSON");
-		}
-	}
-
 	private GpuPriceScheduleEntryView view(GpuPriceScheduleEntryEntity entry) {
-		try {
-			Map<String, Object> provenance = JSON.readValue(entry.provenanceJson, new TypeReference<>() {
-			});
-			return entry.view(provenance);
-		}
-		catch (JacksonException failure) {
-			throw new IllegalStateException("Persisted GPU price provenance is invalid", failure);
-		}
+		return entry.view();
 	}
 
 }
