@@ -282,11 +282,9 @@ public class PriceSourceRegistry {
 			results.add("failed:" + bindingKey);
 			return;
 		}
-		List<de.zorro909.skywright.backend.gpuoffering.EligibleGpuOfferingView> offerings = this.gpuOfferings.list()
+		List<de.zorro909.skywright.backend.gpuoffering.EligibleGpuOfferingView> offerings = this.gpuOfferings
+			.admissibleForTarget(target)
 			.stream()
-			.filter(offering -> target.equals(offering.target()))
-			.filter(offering -> !"local".equals(offering.purchaseMode().wireValue()))
-			.filter(offering -> !"deferred".equals(offering.supportTier().wireValue()))
 			.sorted(java.util.Comparator.comparing(offering -> offering.id().toString()))
 			.toList();
 		if (offerings.isEmpty()) {

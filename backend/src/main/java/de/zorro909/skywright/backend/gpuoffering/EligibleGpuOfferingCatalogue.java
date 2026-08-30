@@ -59,6 +59,17 @@ public class EligibleGpuOfferingCatalogue {
 		return list().stream().filter(offering -> matches(offering, request)).toList();
 	}
 
+	@Transactional(readOnly = true)
+	public List<EligibleGpuOfferingView> admissibleForTarget(String target) {
+		if (target == null) {
+			return List.of();
+		}
+		return list().stream()
+			.filter(EligibleGpuOfferingCatalogue::isAdmissiblePair)
+			.filter(offering -> target.equals(offering.target()))
+			.toList();
+	}
+
 	static boolean matches(EligibleGpuOfferingView offering, TargetRequest request) {
 		return request.gpuCount() > 0 && isAdmissiblePair(offering) && offering.targetClass() == request.targetClass()
 				&& offering.gpuCount() >= request.gpuCount()

@@ -28,6 +28,7 @@ final class SkyPilotPriceSourceIT {
 		try (var backend = BackendFixture.startWith(CatalogueConfiguration.class)) {
 			String firstOffering = createOffering(backend, "p5.48xlarge", "us-east-1");
 			String secondOffering = createOffering(backend, "p5.4xlarge", "eu-west-1");
+			createInadmissibleOffering(backend);
 			var created = backend.post("/api/v1/price-sources", registration());
 			assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
 			String sourceId = jsonString(created.body(), "id");
@@ -85,6 +86,24 @@ final class SkyPilotPriceSourceIT {
 		}
 	}
 
+	@Test
+	void retainsAssessmentEvidenceForLargeOfferingCatalogues() throws Exception {
+		try (var backend = BackendFixture.startWith(CatalogueConfiguration.class)) {
+			for (int index = 0; index < 70; index++) {
+				createOffering(backend, "catalogue-instance-" + index, "catalogue-region-" + index);
+			}
+			var created = backend.post("/api/v1/price-sources", registration());
+			assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+
+			var assessed = backend.post("/api/v1/price-sources/" + jsonString(created.body(), "id") + "/assessment",
+					"");
+
+			assertThat(assessed.statusCode()).as(assessed.body()).isEqualTo(200);
+			assertThat(assessed.body()).contains("\"successful\":true", "passed:target:aws:resource:gpu-compute");
+			assertThat(assessed.body().split("passed:gpu-offering:", -1)).hasSize(71);
+		}
+	}
+
 	private static java.net.http.HttpResponse<String> updateOffering(BackendFixture backend, String offeringId)
 			throws Exception {
 		return backend.put("/api/v1/eligible-gpu-offerings/" + offeringId, """
@@ -119,6 +138,24 @@ final class SkyPilotPriceSourceIT {
 				  "supportTier": "first-class"
 				}
 				""".formatted(instanceType, region, region, instanceType)).body(), "id");
+	}
+
+	private static void createInadmissibleOffering(BackendFixture backend) throws Exception {
+		var response = backend.post("/api/v1/eligible-gpu-offerings", """
+				{
+				  "targetClass": "local-single-gpu",
+				  "target": "aws",
+				  "providerOfferingId": "inert-local-pair",
+				  "region": "local",
+				  "instanceType": "inert",
+				  "gpuModel": "H100",
+				  "gpuCount": 1,
+				  "gpuMemoryBytes": 85899345920,
+				  "purchaseMode": "on-demand",
+				  "supportTier": "first-class"
+				}
+				""");
+		assertThat(response.statusCode()).as(response.body()).isEqualTo(201);
 	}
 
 	private static String registration() {
@@ -158,7 +195,7 @@ final class SkyPilotPriceSourceIT {
 		@Override
 		public Optional<SkyPilotCatalogueObservation> price(
 				de.zorro909.skywright.backend.pricing.SkyPilotCatalogueQuery query) {
-			if (this.missing) {
+			if (this.missing || "inert".equals(query.instanceType())) {
 				return Optional.empty();
 			}
 			return Optional.of(new SkyPilotCatalogueObservation(new BigDecimal("2.3400"),

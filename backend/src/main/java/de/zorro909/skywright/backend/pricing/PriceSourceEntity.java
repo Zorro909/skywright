@@ -114,7 +114,7 @@ class PriceSourceAssessmentValue {
 	@Column(nullable = false)
 	boolean successful;
 
-	@Column(name = "capability_results", nullable = false, length = 4096)
+	@Column(name = "capability_results", nullable = false, columnDefinition = "text")
 	String capabilityResults;
 
 	@Column(name = "observed_from", nullable = false)
