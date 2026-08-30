@@ -139,6 +139,7 @@
     },
     "nativeRate": {
       "type": "object", "additionalProperties": false,
+      "description": "A sourced rate used for this estimate. It is not an invoice fact.",
       "required": ["amount", "currency", "unit", "billingRules", "provenance"],
       "properties": {
         "amount": {"type": "number", "minimum": 0},
@@ -201,6 +202,7 @@
     },
     "costQuote": {
       "type": "object", "additionalProperties": false,
+      "description": "A GPU-compute price estimate over configured eligible offerings. It does not report live capacity or provider billing and excludes discounts, credits, taxes, storage, and transfer.",
       "required": ["quoteTime", "reportingCurrency", "candidates", "hourly", "daily", "weekly"],
       "properties": {
         "quoteTime": {"type": "string", "format": "date-time"},

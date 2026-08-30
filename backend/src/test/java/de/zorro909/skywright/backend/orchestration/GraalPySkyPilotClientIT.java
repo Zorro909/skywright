@@ -2,8 +2,10 @@ package de.zorro909.skywright.backend.orchestration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.zorro909.skywright.backend.pricing.SkyPilotCatalogueQuery;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -31,7 +33,7 @@ final class GraalPySkyPilotClientIT {
 	}
 
 	@Test
-	void oneLockedGraalPyContextExercisesThePortAndCancelsHeldNativeWorkOnClose() throws Exception {
+	void oneLockedGraalPyContextExercisesCatalogueAndOrchestrationThroughTheApiServer() throws Exception {
 		var client = client();
 		client.probe();
 		apiServer.stop();
@@ -44,6 +46,23 @@ final class GraalPySkyPilotClientIT {
 		}
 		apiServer.restart();
 		client.probe();
+		Instant observedAt = Instant.parse("2030-01-15T12:00:00Z");
+		var catalogueObservation = client
+			.price(new SkyPilotCatalogueQuery("aws", "us-east-1", "p5.48xlarge", "H100", 8, false, observedAt))
+			.orElseThrow();
+		assertThat(catalogueObservation.hourlyRate()).isPositive();
+		assertThat(catalogueObservation.observedAt()).isEqualTo(observedAt);
+		assertThat(catalogueObservation.effectiveFrom()).isEqualTo(observedAt);
+		assertThat(catalogueObservation.effectiveUntil()).isNull();
+		assertThat(catalogueObservation.provenance()).containsEntry("source", "SkyPilot catalogue")
+			.containsEntry("valueKind", "estimate")
+			.containsEntry("target", "aws")
+			.containsEntry("region", "us-east-1")
+			.containsEntry("instanceType", "p5.48xlarge")
+			.containsEntry("gpuModel", "H100")
+			.containsEntry("gpuCount", 8)
+			.containsEntry("purchaseMode", "on-demand")
+			.containsKey("catalogRequestId");
 
 		var submittedTask = task();
 		var submission = client.submit(submittedTask);

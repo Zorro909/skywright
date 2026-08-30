@@ -125,7 +125,7 @@ final class GpuPriceScheduleApiIT {
 
 	private static GpuComputePriceQuery query(String sourceId, String offeringId, String quoteTime, Duration age) {
 		return new GpuComputePriceQuery(java.util.UUID.fromString(sourceId), 1, java.util.UUID.fromString(offeringId),
-				Instant.parse(quoteTime), age);
+				"aws", "us-east-1", "p5.48xlarge", "H100", 8, false, Instant.parse(quoteTime), age);
 	}
 
 	private static String registration() {

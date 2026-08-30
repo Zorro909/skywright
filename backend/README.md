@@ -55,6 +55,33 @@ version failures return `skypilot-unavailable` with a safe cause category.
 Set `skywright.skypilot.bridge.api-server-endpoint` to the separately operated, version-paired
 SkyPilot API server. The client never starts an API server inside the backend process.
 
+## Price sources and Cost Quotes
+
+Every target and resource family uses one explicit Price Source binding. Skywright does not try a
+second source when the bound source is unavailable, missing a rate, or stale.
+
+A `skypilot-catalog` candidate revision for GPU compute uses this non-secret configuration shape:
+
+```json
+{
+  "capabilities": ["gpu-compute"],
+  "targets": ["aws"],
+  "nativeCurrencies": ["USD"],
+  "nativeUnits": ["instance-hour"]
+}
+```
+
+Assessment checks every non-deferred cloud Eligible GPU Offering for each declared target. It
+records the target binding capability and each offering identity. Promotion is blocked if the
+catalogue lacks the instance type, region, purchase mode, GPU facts, or price. A quote also
+requires its offering identity and revision to appear in the promoted revision's successful
+assessment, so an offering added or changed later needs a new assessed source revision.
+
+SkyPilot catalogue values are GPU-compute price estimates. They do not report live capacity or a
+provider bill. They do not include provider discounts, credits, taxes, storage, or transfer. Each
+candidate retains the catalogue request identity and observation time, SkyPilot version, exact
+hourly value, one-hour normalization rules, source revision, and effective interval.
+
 ## Logging
 
 The production default writes Elastic Common Schema JSON to standard output, one event per line,

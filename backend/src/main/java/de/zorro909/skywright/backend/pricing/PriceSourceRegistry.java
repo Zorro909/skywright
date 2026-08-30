@@ -1,5 +1,6 @@
 package de.zorro909.skywright.backend.pricing;
 
+import de.zorro909.skywright.backend.gpuoffering.EligibleGpuOfferingCatalogue;
 import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -32,14 +33,22 @@ public class PriceSourceRegistry {
 
 	private final Clock clock;
 
+	private final SkyPilotCatalogue skyPilotCatalogue;
+
+	private final EligibleGpuOfferingCatalogue gpuOfferings;
+
 	@Autowired
-	PriceSourceRegistry(EntityManager entities) {
-		this(entities, Clock.systemUTC());
+	PriceSourceRegistry(EntityManager entities, SkyPilotCatalogue skyPilotCatalogue,
+			EligibleGpuOfferingCatalogue gpuOfferings) {
+		this(entities, Clock.systemUTC(), skyPilotCatalogue, gpuOfferings);
 	}
 
-	PriceSourceRegistry(EntityManager entities, Clock clock) {
+	PriceSourceRegistry(EntityManager entities, Clock clock, SkyPilotCatalogue skyPilotCatalogue,
+			EligibleGpuOfferingCatalogue gpuOfferings) {
 		this.entities = entities;
 		this.clock = clock;
+		this.skyPilotCatalogue = skyPilotCatalogue;
+		this.gpuOfferings = gpuOfferings;
 	}
 
 	public UUID register(String name, String kind, UUID credentialBindingId, Map<String, Object> configuration) {
@@ -79,7 +88,7 @@ public class PriceSourceRegistry {
 			.filter(revision -> revision.revision == source.candidateRevision.longValue())
 			.findFirst()
 			.orElseThrow().configurationJson);
-		List<String> capabilities = assess(source, configuration);
+		List<String> capabilities = assess(source, configuration, started);
 		boolean successful = capabilities.stream().noneMatch(value -> value.startsWith("failed:"));
 		source.assessments.add(new PriceSourceAssessmentValue(UUID.randomUUID(), source.candidateRevision, successful,
 				String.join("\n", capabilities), started, this.clock.instant()));
@@ -124,6 +133,11 @@ public class PriceSourceRegistry {
 		if (bindingKey.startsWith("currency:") && !assessedForCapability(source, sourceRevision, bindingKey)) {
 			throw new PriceSourceValidationException("PRICE_SOURCE_CAPABILITY_UNAVAILABLE",
 					"The active Price Source revision cannot provide the bound currency pair");
+		}
+		if ("skypilot-catalog".equals(source.kind) && bindingKey.startsWith("target:")
+				&& !assessedForCapability(source, sourceRevision, bindingKey)) {
+			throw new PriceSourceValidationException("PRICE_SOURCE_CAPABILITY_UNAVAILABLE",
+					"The active SkyPilot catalogue revision cannot price the bound target");
 		}
 		PriceSourceBindingEntity binding = this.entities.find(PriceSourceBindingEntity.class, bindingKey);
 		if (binding == null) {
@@ -191,7 +205,7 @@ public class PriceSourceRegistry {
 					.toList());
 	}
 
-	private List<String> assess(PriceSourceEntity source, Map<String, Object> configuration) {
+	private List<String> assess(PriceSourceEntity source, Map<String, Object> configuration, Instant observedAt) {
 		List<String> results = new ArrayList<>();
 		if ("operator-schedule".equals(source.kind)) {
 			Object rates = configuration.get("rates");
@@ -212,6 +226,9 @@ public class PriceSourceRegistry {
 				results.add(validSchedule(schedule, configuration) ? "passed:gpu-compute-rates"
 						: "failed:gpu-compute-rates-required");
 			}
+		}
+		else if ("skypilot-catalog".equals(source.kind)) {
+			assessSkyPilot(configuration, observedAt, results);
 		}
 		else {
 			Object endpoint = configuration.get("endpoint");
@@ -238,6 +255,62 @@ public class PriceSourceRegistry {
 			.forEach(
 					pair -> results.add(canProvide(source, configuration, pair) ? "passed:" + pair : "failed:" + pair));
 		return results;
+	}
+
+	private void assessSkyPilot(Map<String, Object> configuration, Instant observedAt, List<String> results) {
+		Set<String> capabilities = declarations(configuration, "capabilities", null);
+		Set<String> targets = declarations(configuration, "targets", null);
+		Set<String> currencies = declarations(configuration, "nativeCurrencies", "currencies");
+		Set<String> units = declarations(configuration, "nativeUnits", "units");
+		results.add(capabilities.contains("gpu-compute") ? "passed:gpu-compute" : "failed:gpu-compute-required");
+		results.add(Set.of("USD").equals(currencies) ? "passed:native-currency:USD"
+				: "failed:native-currency-USD-required");
+		results.add(Set.of("instance-hour").equals(units) ? "passed:native-unit:instance-hour"
+				: "failed:native-unit-instance-hour-required");
+		if (targets.isEmpty()) {
+			results.add("failed:targets-required");
+			return;
+		}
+		for (String target : targets.stream().sorted().toList()) {
+			assessSkyPilotTarget(target, observedAt, results);
+		}
+	}
+
+	private void assessSkyPilotTarget(String target, Instant observedAt, List<String> results) {
+		String bindingKey = "target:" + target + ":resource:gpu-compute";
+		if (!BINDING_KEY.matcher(bindingKey).matches()) {
+			results.add("failed:" + bindingKey);
+			return;
+		}
+		List<de.zorro909.skywright.backend.gpuoffering.EligibleGpuOfferingView> offerings = this.gpuOfferings.list()
+			.stream()
+			.filter(offering -> target.equals(offering.target()))
+			.filter(offering -> !"local".equals(offering.purchaseMode().wireValue()))
+			.filter(offering -> !"deferred".equals(offering.supportTier().wireValue()))
+			.sorted(java.util.Comparator.comparing(offering -> offering.id().toString()))
+			.toList();
+		if (offerings.isEmpty()) {
+			results.add("failed:" + bindingKey);
+			return;
+		}
+		boolean targetPassed = true;
+		for (var offering : offerings) {
+			boolean offeringPassed;
+			try {
+				offeringPassed = this.skyPilotCatalogue
+					.price(new SkyPilotCatalogueQuery(offering.target(), offering.region(), offering.instanceType(),
+							offering.gpuModel(), offering.gpuCount(),
+							"spot".equals(offering.purchaseMode().wireValue()), observedAt))
+					.isPresent();
+			}
+			catch (Exception failure) {
+				offeringPassed = false;
+			}
+			results.add((offeringPassed ? "passed:" : "failed:") + "gpu-offering:" + offering.id() + ":revision:"
+					+ offering.revision());
+			targetPassed &= offeringPassed;
+		}
+		results.add((targetPassed ? "passed:" : "failed:") + bindingKey);
 	}
 
 	private boolean canProvide(PriceSourceEntity source, Map<String, Object> configuration, String bindingKey) {
@@ -294,7 +367,7 @@ public class PriceSourceRegistry {
 	}
 
 	private static Set<String> declarations(Map<String, Object> configuration, String primaryKey, String legacyKey) {
-		Object value = configuration.containsKey(primaryKey) ? configuration.get(primaryKey)
+		Object value = configuration.containsKey(primaryKey) || legacyKey == null ? configuration.get(primaryKey)
 				: configuration.get(legacyKey);
 		if (!(value instanceof List<?> values)) {
 			return Set.of();

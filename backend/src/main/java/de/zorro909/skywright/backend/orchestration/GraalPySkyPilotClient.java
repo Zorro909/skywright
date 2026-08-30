@@ -1,12 +1,18 @@
 package de.zorro909.skywright.backend.orchestration;
 
+import de.zorro909.skywright.backend.pricing.SkyPilotCatalogue;
+import de.zorro909.skywright.backend.pricing.SkyPilotCatalogueObservation;
+import de.zorro909.skywright.backend.pricing.SkyPilotCatalogueQuery;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.math.BigDecimal;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.Optional;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.EnvironmentAccess;
 import org.graalvm.polyglot.HostAccess;
@@ -15,10 +21,11 @@ import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.io.IOAccess;
 import org.graalvm.python.embedding.GraalPyResources;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-final class GraalPySkyPilotClient implements SkyPilotClient {
+final class GraalPySkyPilotClient implements SkyPilotClient, SkyPilotCatalogue {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -71,6 +78,21 @@ final class GraalPySkyPilotClient implements SkyPilotClient {
 	}
 
 	@Override
+	public Optional<SkyPilotCatalogueObservation> price(SkyPilotCatalogueQuery query) throws Exception {
+		var result = invoke("bridge_catalog_price", JSON.writeValueAsString(query));
+		if ("missing".equals(requiredText(result, "outcome"))) {
+			return Optional.empty();
+		}
+		Map<String, Object> provenance = JSON.convertValue(result.required("provenance"), new TypeReference<>() {
+		});
+		return Optional.of(new SkyPilotCatalogueObservation(new BigDecimal(requiredText(result, "hourly_rate")),
+				provenance, java.time.Instant.parse(requiredText(result, "observed_at")),
+				java.time.Instant.parse(requiredText(result, "effective_from")),
+				result.required("effective_until").isNull() ? null
+						: java.time.Instant.parse(requiredText(result, "effective_until"))));
+	}
+
+	@Override
 	public OrchestratorOperation submit(OrchestratorTaskSpecification task) throws Exception {
 		return operation(invoke("bridge_submit", JSON.writeValueAsString(task)), OperationKind.SUBMISSION);
 	}
@@ -108,7 +130,7 @@ final class GraalPySkyPilotClient implements SkyPilotClient {
 		};
 	}
 
-	private JsonNode invoke(String function, Object... arguments) throws Exception {
+	private synchronized JsonNode invoke(String function, Object... arguments) throws Exception {
 		initialize();
 		var currentBindings = this.bindings;
 		try {

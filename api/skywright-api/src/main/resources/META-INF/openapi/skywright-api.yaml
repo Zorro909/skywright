@@ -1093,7 +1093,11 @@ components:
       enum: [operator-schedule, provider-api, skypilot-catalog]
     PriceSourceConfiguration:
       type: object
-      description: Non-secret, source-specific configuration. Operator schedules require a non-empty rates array; external sources require an endpoint.
+      description: |
+        Non-secret, source-specific configuration. Operator schedules declare their capabilities and
+        schedule dimensions. A SkyPilot catalogue revision declares gpu-compute, one or more targets,
+        USD, and instance-hour before assessment checks every configured Eligible GPU Offering.
+        Provider-native source configuration is reserved for later provider qualification.
       additionalProperties: true
     PriceSourceRevisionState:
       type: string
@@ -1121,6 +1125,7 @@ components:
         observedUntil: { $ref: '#/components/schemas/UtcInstant' }
     PriceSource:
       type: object
+      description: An explicitly selected rate authority. No source is an automatic fallback for another source.
       additionalProperties: false
       required: [id, name, kind, registrationRevision, activeRevision, candidateRevision, credentialBindingId, revisions, assessments]
       properties:
