@@ -17,8 +17,8 @@ public record CostQuoteCandidate(UUID offeringId, long offeringRevision, TargetC
 		long gpuMemoryBytes, String purchaseMode, String supportTier, BigDecimal nativeRate, String nativeCurrency,
 		String nativeUnit, BigDecimal minimumQuantity, BigDecimal billingQuantum, Map<String, Object> provenance,
 		UUID sourceId, long sourceRevision, String sourceKind, Instant effectiveFrom, Instant effectiveUntil,
-		Instant rateObservedAt, Instant sourceObservedFrom, Instant sourceObservedUntil,
-		Duration maximumObservationAge) {
+		Instant rateObservedAt, Instant sourceObservedFrom, Instant sourceObservedUntil, Duration maximumObservationAge,
+		CostQuoteConversion conversion) {
 
 	public CostQuoteCandidate {
 		provenance = immutableObject(provenance);

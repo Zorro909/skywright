@@ -24,13 +24,19 @@ class JpaPriceSource implements PriceSource {
 		PriceSourceBindingEntity binding = this.entities.find(PriceSourceBindingEntity.class, bindingKey);
 		if (binding == null) {
 			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.UNAVAILABLE, nativeCurrency,
-					reportingCurrency, null, null);
+					reportingCurrency, null, null, null, null, null, null, null);
 		}
+		Duration maximumAge = Duration.parse(binding.maximumObservationAge);
 		PriceSourceEntity source = this.entities.find(PriceSourceEntity.class, binding.sourceId);
+		PriceSourceAssessmentValue assessment = source == null ? null
+				: assessmentForPair(source, binding.sourceRevision, bindingKey);
 		if (source == null || source.activeRevision == null || source.activeRevision != binding.sourceRevision
-				|| !assessedForPair(source, binding.sourceRevision, bindingKey)) {
+				|| assessment == null) {
 			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.UNAVAILABLE, nativeCurrency,
-					reportingCurrency, binding.sourceId, binding.sourceRevision);
+					reportingCurrency, binding.sourceId, binding.sourceRevision,
+					source == null ? null : source.conversionScheduleRevision, source == null ? null : source.kind,
+					maximumAge, assessment == null ? null : assessment.observedFrom,
+					assessment == null ? null : assessment.observedUntil);
 		}
 		List<CurrencyConversionEntity> matches = this.entities.createQuery("""
 				select conversion from CurrencyConversionEntity conversion
@@ -47,24 +53,30 @@ class JpaPriceSource implements PriceSource {
 			.getResultList();
 		if (matches.isEmpty()) {
 			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.MISSING, nativeCurrency,
-					reportingCurrency, binding.sourceId, binding.sourceRevision);
+					reportingCurrency, binding.sourceId, binding.sourceRevision, source.conversionScheduleRevision,
+					source.kind, maximumAge, assessment.observedFrom, assessment.observedUntil);
 		}
 		CurrencyConversionEntity match = matches.getFirst();
 		if (match.observedAt.isAfter(quoteTime)) {
 			return CurrencyConversionQuote.withoutConversion(CurrencyConversionOutcome.MISSING, nativeCurrency,
-					reportingCurrency, binding.sourceId, binding.sourceRevision);
+					reportingCurrency, binding.sourceId, binding.sourceRevision, source.conversionScheduleRevision,
+					source.kind, maximumAge, assessment.observedFrom, assessment.observedUntil);
 		}
-		CurrencyConversionOutcome outcome = match.observedAt
-			.isBefore(quoteTime.minus(Duration.parse(binding.maximumObservationAge))) ? CurrencyConversionOutcome.STALE
-					: CurrencyConversionOutcome.QUALIFYING;
+		CurrencyConversionOutcome outcome = match.observedAt.isBefore(quoteTime.minus(maximumAge))
+				? CurrencyConversionOutcome.STALE : CurrencyConversionOutcome.QUALIFYING;
 		return new CurrencyConversionQuote(outcome, nativeCurrency, reportingCurrency, match.rate, match.provenance,
-				match.observedAt, match.effectiveFrom, match.effectiveUntil, binding.sourceId, binding.sourceRevision);
+				match.observedAt, match.effectiveFrom, match.effectiveUntil, binding.sourceId, binding.sourceRevision,
+				source.conversionScheduleRevision, source.kind, maximumAge, assessment.observedFrom,
+				assessment.observedUntil);
 	}
 
-	private static boolean assessedForPair(PriceSourceEntity source, long revision, String bindingKey) {
-		return source.assessments.stream()
-			.anyMatch(assessment -> assessment.revision == revision && assessment.successful
-					&& List.of(assessment.capabilityResults.split("\\n")).contains("passed:" + bindingKey));
+	private static PriceSourceAssessmentValue assessmentForPair(PriceSourceEntity source, long revision,
+			String bindingKey) {
+		List<PriceSourceAssessmentValue> assessments = source.assessments.stream()
+			.filter(assessment -> assessment.revision == revision && assessment.successful
+					&& List.of(assessment.capabilityResults.split("\\n")).contains("passed:" + bindingKey))
+			.toList();
+		return assessments.isEmpty() ? null : assessments.getLast();
 	}
 
 }

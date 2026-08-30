@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import de.zorro909.skywright.backend.pricing.SkyPilotCatalogue;
 import de.zorro909.skywright.backend.pricing.SkyPilotCatalogueObservation;
-import de.zorro909.skywright.backend.rundefinition.DirectCurrencyCostQuoteReader;
+import de.zorro909.skywright.backend.rundefinition.CostQuoteSnapshotReader;
 import de.zorro909.skywright.backend.rundefinition.RunDefinitionFailure;
 import de.zorro909.skywright.backend.rundefinition.TargetRequest;
 import de.zorro909.skywright.backend.targetstorage.TargetClass;
@@ -51,7 +51,7 @@ final class SkyPilotPriceSourceIT {
 						.statusCode())
 				.isEqualTo(200);
 
-			var quotes = backend.bean(DirectCurrencyCostQuoteReader.class);
+			var quotes = backend.bean(CostQuoteSnapshotReader.class);
 			var request = new TargetRequest(TargetClass.CLOUD_ON_DEMAND, 1, null, "aws", "H100", null);
 			var accepted = quotes.resolve(request, "USD", QUOTE_TIME);
 			assertThat(accepted.failures()).isEmpty();
