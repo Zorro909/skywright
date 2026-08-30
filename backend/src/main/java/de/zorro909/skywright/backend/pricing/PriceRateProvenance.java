@@ -16,6 +16,7 @@ final class PriceRateProvenance {
 	}
 
 	static Map<String, Object> validate(Map<String, Object> value) {
+		SecretFreeText.requireSafe(value);
 		if (value == null || !KEYS.containsAll(value.keySet()) || !text(value.get("source"))) {
 			throw new IllegalArgumentException("Price provenance is invalid");
 		}

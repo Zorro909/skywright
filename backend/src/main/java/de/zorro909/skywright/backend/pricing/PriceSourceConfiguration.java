@@ -24,6 +24,12 @@ final class PriceSourceConfiguration {
 		if (kind == null || value == null || value.isEmpty()) {
 			throw invalid();
 		}
+		try {
+			SecretFreeText.requireSafe(value);
+		}
+		catch (IllegalArgumentException failure) {
+			throw invalid();
+		}
 		Set<String> allowed = switch (kind) {
 			case OPERATOR_SCHEDULE -> OPERATOR_KEYS;
 			case SKYPILOT_CATALOG -> SKYPILOT_KEYS;

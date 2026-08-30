@@ -24,6 +24,11 @@ final class PriceSourceApiIT {
 				assertThat(rejected.statusCode()).as(rejected.body()).isEqualTo(400);
 				assertThat(rejected.body()).contains("SKYWRIGHT_HTTP_BAD_REQUEST").doesNotContain("do-not-store");
 			}
+			var rejectedEmbeddedCredential = backend.post("/api/v1/price-sources/" + sourceId + "/currency-conversions",
+					conversion(0, "0.910000", "2026-08-27T00:00:00Z", "2026-08-28T00:00:00Z")
+						.replace("ECB reference data", "postgresql://user:do-not-store@host/db"));
+			assertThat(rejectedEmbeddedCredential.statusCode()).as(rejectedEmbeddedCredential.body()).isEqualTo(422);
+			assertThat(rejectedEmbeddedCredential.body()).doesNotContain("do-not-store");
 			assertThat(backend.get("/api/v1/price-sources/" + sourceId + "/currency-conversions").body())
 				.doesNotContain("do-not-store", "authorization", "access_key");
 			var created = backend.post("/api/v1/price-sources/" + sourceId + "/currency-conversions", """
@@ -175,6 +180,11 @@ final class PriceSourceApiIT {
 			}
 			assertThat(backend.get("/api/v1/price-sources").body()).doesNotContain("do-not-store", "authorization",
 					"access_key");
+			var rejectedEmbeddedCredential = backend.post("/api/v1/price-sources", registration(
+					"embedded credential schedule",
+					"{\"capabilities\":[\"postgresql://user:do-not-store@host/db\"],\"rates\":[{\"amount\":\"1\",\"currency\":\"USD\"}]}"));
+			assertThat(rejectedEmbeddedCredential.statusCode()).as(rejectedEmbeddedCredential.body()).isEqualTo(422);
+			assertThat(rejectedEmbeddedCredential.body()).doesNotContain("do-not-store");
 			var invalidRate = backend.post("/api/v1/price-sources", registration("invalid schedule",
 					"{\"capabilities\":[\"compute\"],\"rates\":[{\"amount\":{},\"currency\":\"ZZZ\"}]}"));
 			assertThat(invalidRate.statusCode()).as(invalidRate.body()).isEqualTo(400);

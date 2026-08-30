@@ -40,6 +40,12 @@ final class GpuPriceScheduleApiIT {
 								"\"access_key\": \"do-not-store\""));
 			assertThat(rejectedAccessKey.statusCode()).as(rejectedAccessKey.body()).isEqualTo(400);
 			assertThat(rejectedAccessKey.body()).contains("SKYWRIGHT_HTTP_BAD_REQUEST").doesNotContain("do-not-store");
+			var rejectedEmbeddedCredential = backend.post(schedulePath,
+					entry(offeringId, "2", "1", "1", "2029-10-01T00:00:00Z", "2029-11-01T00:00:00Z",
+							"2029-09-30T18:00:00Z")
+						.replace("operator tariff", "postgresql://user:do-not-store@host/db"));
+			assertThat(rejectedEmbeddedCredential.statusCode()).as(rejectedEmbeddedCredential.body()).isEqualTo(422);
+			assertThat(rejectedEmbeddedCredential.body()).doesNotContain("do-not-store");
 			assertThat(backend.get(schedulePath).body()).doesNotContain("do-not-store", "authorization", "access_key");
 
 			var first = backend.post(schedulePath, entry(offeringId, "2.3400", "0.250", "0.016666666666666666",
