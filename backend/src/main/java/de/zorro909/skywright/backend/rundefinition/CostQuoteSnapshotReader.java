@@ -69,7 +69,7 @@ public class CostQuoteSnapshotReader implements CostQuoteReader {
 			List<RunDefinitionFailure> failures) {
 		BoundGpuComputePrice price;
 		try {
-			price = this.prices.resolve(offering.target(), offering.id(), quoteTime);
+			price = this.prices.resolve(offering, quoteTime);
 		}
 		catch (RuntimeException failure) {
 			failures.add(failure("PRICE_SOURCE_UNAVAILABLE", offering, null));

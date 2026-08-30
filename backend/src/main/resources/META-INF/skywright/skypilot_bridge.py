@@ -1,5 +1,7 @@
 import json
+import math
 import os
+import re
 import urllib.error
 import urllib.request
 
@@ -90,6 +92,78 @@ def bridge_probe():
     except Exception as failure:
         return _probe_failure(failure)
     return json.dumps({"server_version": str(info["version"])})
+
+
+@_bridge_boundary
+def bridge_catalog_price(serialized):
+    sky, _, _ = _sky_modules()
+    from sky.client import sdk as sky_sdk
+
+    query = json.loads(serialized)
+    target = str(query["target"])
+    gpu_model = str(query["gpuModel"])
+    request_id = sky_sdk.list_accelerators(
+        gpus_only=True,
+        name_filter=re.escape(gpu_model),
+        region_filter=re.escape(str(query["region"])),
+        quantity_filter=int(query["gpuCount"]),
+        clouds=[target],
+        all_regions=True,
+        require_price=True,
+        case_sensitive=False,
+    )
+    catalogue = sky_sdk.stream_and_get(request_id)
+    for catalogued_model, offerings in catalogue.items():
+        if str(catalogued_model).lower() != gpu_model.lower():
+            continue
+        for offering in offerings:
+            if not _catalogue_offering_matches(offering, query):
+                continue
+            hourly_rate = _field(
+                offering, "spot_price" if query["spot"] else "price"
+            )
+            if hourly_rate is None or not math.isfinite(float(hourly_rate)):
+                continue
+            if float(hourly_rate) < 0:
+                continue
+            observed_at = str(query["observedAt"])
+            return json.dumps(
+                {
+                    "outcome": "available",
+                    "hourly_rate": str(hourly_rate),
+                    "observed_at": observed_at,
+                    "effective_from": observed_at,
+                    "effective_until": None,
+                    "provenance": {
+                        "source": "SkyPilot catalogue",
+                        "valueKind": "estimate",
+                        "skyPilotVersion": str(sky.__version__),
+                        "catalogRequestId": str(request_id),
+                        "target": target,
+                        "region": str(query["region"]),
+                        "instanceType": str(query["instanceType"]),
+                        "gpuModel": gpu_model,
+                        "gpuCount": int(query["gpuCount"]),
+                        "purchaseMode": (
+                            "spot" if query["spot"] else "on-demand"
+                        ),
+                    },
+                },
+                separators=(",", ":"),
+            )
+    return json.dumps({"outcome": "missing"})
+
+
+def _catalogue_offering_matches(offering, query):
+    return (
+        str(_field(offering, "cloud")).lower() == str(query["target"]).lower()
+        and str(_field(offering, "region")) == str(query["region"])
+        and str(_field(offering, "instance_type")) == str(query["instanceType"])
+        and str(_field(offering, "accelerator_name")).lower()
+        == str(query["gpuModel"]).lower()
+        and float(_field(offering, "accelerator_count"))
+        == float(query["gpuCount"])
+    )
 
 
 @_bridge_boundary

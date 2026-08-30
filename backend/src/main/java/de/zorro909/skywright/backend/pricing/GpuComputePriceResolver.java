@@ -1,5 +1,6 @@
 package de.zorro909.skywright.backend.pricing;
 
+import de.zorro909.skywright.backend.gpuoffering.EligibleGpuOfferingView;
 import jakarta.persistence.EntityManager;
 import java.time.Duration;
 import java.time.Instant;
@@ -17,14 +18,18 @@ public class GpuComputePriceResolver {
 
 	private final OperatorGpuComputePriceSource operatorSchedules;
 
-	GpuComputePriceResolver(EntityManager entities, OperatorGpuComputePriceSource operatorSchedules) {
+	private final SkyPilotGpuComputePriceSource skyPilotCatalogue;
+
+	GpuComputePriceResolver(EntityManager entities, OperatorGpuComputePriceSource operatorSchedules,
+			SkyPilotGpuComputePriceSource skyPilotCatalogue) {
 		this.entities = entities;
 		this.operatorSchedules = operatorSchedules;
+		this.skyPilotCatalogue = skyPilotCatalogue;
 	}
 
-	public BoundGpuComputePrice resolve(String target, UUID offeringId, Instant quoteTime) {
+	public BoundGpuComputePrice resolve(EligibleGpuOfferingView offering, Instant quoteTime) {
 		PriceSourceBindingEntity binding = this.entities.find(PriceSourceBindingEntity.class,
-				"target:" + target + ":resource:gpu-compute");
+				"target:" + offering.target() + ":resource:gpu-compute");
 		if (binding == null) {
 			return unavailable(null, 0, null, null, null);
 		}
@@ -35,14 +40,28 @@ public class GpuComputePriceResolver {
 					maximumAge, null);
 		}
 		PriceSourceAssessmentValue assessment = latestSuccessfulAssessment(source, binding.sourceRevision);
-		if (assessment == null) {
+		if (assessment == null
+				|| "skypilot-catalog".equals(source.kind) && !passed(assessment, offeringCapability(offering))) {
 			return unavailable(binding.sourceId, binding.sourceRevision, source.kind, maximumAge, null);
 		}
-		GpuComputePriceResult result = "operator-schedule".equals(source.kind) ? this.operatorSchedules.price(
-				new GpuComputePriceQuery(binding.sourceId, binding.sourceRevision, offeringId, quoteTime, maximumAge))
-				: GpuComputePriceResult.unavailable();
+		GpuComputePriceQuery query = new GpuComputePriceQuery(binding.sourceId, binding.sourceRevision, offering.id(),
+				offering.target(), offering.region(), offering.instanceType(), offering.gpuModel(), offering.gpuCount(),
+				"spot".equals(offering.purchaseMode().wireValue()), quoteTime, maximumAge);
+		GpuComputePriceResult result = switch (source.kind) {
+			case "operator-schedule" -> this.operatorSchedules.price(query);
+			case "skypilot-catalog" -> this.skyPilotCatalogue.price(query);
+			default -> GpuComputePriceResult.unavailable();
+		};
 		return new BoundGpuComputePrice(result, binding.sourceId, binding.sourceRevision, source.kind, maximumAge,
 				assessment.observedFrom, assessment.observedUntil);
+	}
+
+	private static boolean passed(PriceSourceAssessmentValue assessment, String capability) {
+		return List.of(assessment.capabilityResults.split("\\n")).contains("passed:" + capability);
+	}
+
+	private static String offeringCapability(EligibleGpuOfferingView offering) {
+		return "gpu-offering:" + offering.id() + ":revision:" + offering.revision();
 	}
 
 	private static PriceSourceAssessmentValue latestSuccessfulAssessment(PriceSourceEntity source, long revision) {

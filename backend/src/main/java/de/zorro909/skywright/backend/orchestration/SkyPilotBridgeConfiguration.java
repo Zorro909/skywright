@@ -11,11 +11,15 @@ import org.springframework.scheduling.annotation.Scheduled;
 class SkyPilotBridgeConfiguration {
 
 	@Bean(destroyMethod = "close")
-	Orchestrator skyPilotOrchestrator(SkyPilotBridgeProperties properties) {
+	GraalPySkyPilotClient skyPilotClient(SkyPilotBridgeProperties properties) {
+		return new GraalPySkyPilotClient(properties.externalDirectory(), properties.apiServerEndpoint());
+	}
+
+	@Bean(destroyMethod = "close")
+	Orchestrator skyPilotOrchestrator(SkyPilotBridgeProperties properties, GraalPySkyPilotClient client) {
 		var settings = new SkyPilotBridgeSettings(properties.controlQueueCapacity(), properties.heldQueueCapacity(),
 				properties.shutdownGrace());
-		return new SkyPilotOrchestrator(
-				new GraalPySkyPilotClient(properties.externalDirectory(), properties.apiServerEndpoint()), settings);
+		return new SkyPilotOrchestrator(client, settings);
 	}
 
 	@Bean
