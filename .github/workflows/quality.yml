@@ -413,7 +413,7 @@ jobs:
           retention-days: 90
 
   image:
-    name: Production backend image
+    name: Production control-plane images
     needs: [plan, graalpy]
     if: needs.plan.outputs.image == 'true'
     runs-on: ubuntu-24.04
@@ -468,6 +468,25 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '1'
+      - name: Record SkyPilot API server high and critical image findings
+        if: steps.build_image.outcome == 'success'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: skywright-skypilot-api-server:0.1.0-SNAPSHOT
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: security-results/skypilot-api-server-image.sarif
+          exit-code: '0'
+      - name: Reject fixable SkyPilot API server high and critical findings
+        if: steps.build_image.outcome == 'success'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: skywright-skypilot-api-server:0.1.0-SNAPSHOT
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
       - name: Retain image acceptance and security reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -483,6 +502,7 @@ jobs:
             frontend/test-results/**
             frontend/playwright-report/**
             security-results/backend-image.sarif
+            security-results/skypilot-api-server-image.sarif
           if-no-files-found: ignore
           retention-days: 90
 

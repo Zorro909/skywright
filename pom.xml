@@ -25,6 +25,7 @@
     <module>graalpy-environment</module>
     <module>backend</module>
     <module>backend-deployment</module>
+    <module>skypilot-api-server-deployment</module>
     <module>sdk</module>
   </modules>
 
@@ -43,6 +44,8 @@
     <properties-maven.version>1.3.0</properties-maven.version>
     <postgresql.version>42.7.12</postgresql.version>
     <postgresql.container.image>postgres:18.1-bookworm@sha256:cc9f4143a8d2fa8cf3749d0cb4d26ecf2d53a77a2ac807e9ebd67ae22426221a</postgresql.container.image>
+    <skypilot.container.image>skywright-skypilot-api-server:${project.version}</skypilot.container.image>
+    <skypilot.python.version>3.12.11</skypilot.python.version>
     <spring-javaformat.version>0.0.48</spring-javaformat.version>
     <skypilot.version>0.13.0</skypilot.version>
   </properties>

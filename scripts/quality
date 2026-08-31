@@ -122,6 +122,16 @@ COMMANDS = {
             "-am",
             "verify",
         ),
+        (
+            "./mvnw",
+            "--batch-mode",
+            "-DskipFrontendInstall=true",
+            "-DskipFrontendTests=true",
+            "-DexcludedGroups=real-service",
+            "-pl",
+            "skypilot-api-server-deployment",
+            "verify",
+        ),
     ),
     "java": (
         FRONTEND_INSTALL,
@@ -246,7 +256,9 @@ def category_for(path: str) -> str:
         ".github/workflows/deployment-release.yml",
     }:
         return "deployment"
-    if normalized.startswith(("backend/", "backend-deployment/")):
+    if normalized.startswith(
+        ("backend/", "backend-deployment/", "skypilot-api-server-deployment/")
+    ):
         return "backend"
     if normalized.startswith("frontend/"):
         return "frontend"

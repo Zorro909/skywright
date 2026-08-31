@@ -4,8 +4,10 @@ Skywright is built as a Maven reactor. The repository root is its packaging-only
 shared build parent; `api/skywright-api` publishes the reusable product contract,
 [`frontend`](frontend/README.md) publishes the optimized browser application as classpath resources,
 `backend` is the Spring Boot application module, and `backend-deployment` packages that application
-as its production OCI artifact. The sibling [`sdk`](sdk/README.md) project-part is the independently
-buildable pure-Python runtime SDK for Training Projects.
+as its production OCI artifact. [`skypilot-api-server-deployment`](skypilot-api-server-deployment/README.md)
+packages the separate, version-paired SkyPilot server OCI artifact. The sibling
+[`sdk`](sdk/README.md) project-part is the independently buildable pure-Python runtime SDK for
+Training Projects.
 
 ## Required toolchain
 
@@ -91,6 +93,9 @@ mvn -pl backend-deployment -am package
 
 # Build the executable JAR and production OCI image through verification
 mvn -pl backend-deployment -am verify
+
+# Build and exercise the separate SkyPilot API server image
+mvn -pl skypilot-api-server-deployment verify
 
 # Test the Python SDK through its delegated native uv workflow
 mvn -pl sdk -am test

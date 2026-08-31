@@ -90,6 +90,20 @@ class PlanningTest(unittest.TestCase):
                     "security": True,
                 },
             ),
+            "skypilot-api-server-deployment/src/main/docker/Dockerfile": (
+                ["backend"],
+                {
+                    "application": True,
+                    "deployment": False,
+                    "frontend": False,
+                    "image": True,
+                    "integration": False,
+                    "java": True,
+                    "profile": False,
+                    "sdk": False,
+                    "security": True,
+                },
+            ),
             "frontend/src/app/app.ts": (
                 ["frontend"],
                 {
