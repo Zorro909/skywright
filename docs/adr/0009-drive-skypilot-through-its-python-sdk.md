@@ -18,7 +18,7 @@ The deciding argument is not ergonomics but ownership. Mapping a Run Definition 
 
 In-process under GraalPy, in JVM mode. Native-image is out of scope for this map: nothing in the requirements asks for fast startup or low resident memory, and admitting it would force the arrangement to be proven twice.
 
-Whether GraalPy can carry SkyPilot's client dependency tree is not yet established, so the fallback is fixed in advance: an out-of-process Python service speaking the same SDK. It is explicitly **not** a return to REST or the CLI, because everything that disqualified them concerns speaking HTTP instead of Python and is untouched by where the Python runs. That is what confines the open question to deployment — no other decision here varies with its answer. Under the fallback the service's entry point is a transport shim, not a home for domain logic.
+The completed GraalPy spike and production bridge proved SkyPilot 0.13.0 under GraalPy 25.2.4, including native dependencies, typed calls, concurrent held and control work, and orderly shutdown. The fixed fallback remains an out-of-process Python service speaking the same SDK, but it is selected only if `Context.close(true)` still causes a reproducible native crash after executor quiescence in the packaged production runtime. It is explicitly **not** a return to REST or the CLI. Under the fallback the service's entry point is a transport shim, not a home for domain logic.
 
 ## The seam
 
@@ -32,7 +32,7 @@ An Orchestrator Operation is never durable. SkyPilot retains requests for one da
 
 Control calls share one long-lived GraalPy context served by a dedicated executor. Serializing them costs little, since the API server rather than the context is where the work happens. That executor must use platform threads: GraalPy documents native extension modules as incompatible with Java virtual threads, which a Spring Boot application would otherwise reach for.
 
-The binding rule is that **long-held work must never be able to block a control call**. A followed log stream is the case that matters. The mechanism is deliberately left open, because it is cheaper to measure than to reason about: GraalPy's GIL is per context but is released around blocking socket and SSL reads, so a second platform thread on the *shared* context may already satisfy the rule. A second context is the expensive answer — running native extensions in more than one context is Linux-only, requires the experimental `python.IsolateNativeModules` option on every context in the process, and is documented as still troublesome for many extensions — so it is a fallback rather than the design. Which arrangement holds is settled by the prototype, and this paragraph is amended by its result.
+The binding rule is that **long-held work must never be able to block a control call**. The bridge uses one shared long-lived Context with two independent bounded platform-thread lanes. One serialized lane is reserved for short initiation, availability, and control calls; the other lane holds result streams and other work that may remain open. Queue admission is non-blocking, and saturation is distinct from SkyPilot unavailability. A second Context is neither needed nor supported by this design.
 
 Whether live logs cross this boundary at all is a separate decision. ADR 0018 places the terminal Run Log Archive in the Run Store, which the backend reads directly; ADR 0005 had deliberately deferred that choice.
 
