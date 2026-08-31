@@ -16,7 +16,10 @@ LABEL org.opencontainers.image.base.name="docker.io/library/python:3.12.11-slim-
 COPY maven/graalpy.lock /tmp/graalpy.lock
 COPY startup/launch.py /opt/skywright/runtime/launch.py
 
-RUN python -m pip install \
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes \
+    && rm --recursive --force /var/lib/apt/lists/* \
+    && python -m pip install \
         --disable-pip-version-check \
         --no-cache-dir \
         --no-deps \
