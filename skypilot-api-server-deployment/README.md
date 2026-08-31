@@ -52,6 +52,10 @@ environment variable `SKYPILOT_DB_CONNECTION_URI`. The image has no SQLite fallb
 malformed external database configuration stops startup with exit code 78, and diagnostics never
 print the URI.
 
+An isolated Python bootstrap performs this preflight without reading operator `PYTHONPATH` values,
+then replaces itself with `python -m sky.server.server`. It is not a supervisor. SkyPilot remains
+PID 1 and receives SIGTERM directly.
+
 The image uses these writable paths:
 
 | Path | Contents | Retention |

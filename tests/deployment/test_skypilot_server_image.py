@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -48,6 +49,32 @@ class SkyPilotServerImageContractTest(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn(
             "shared GraalPy lock does not contain skypilot==99.99.99",
+            completed.stdout,
+        )
+
+    def test_version_comparison_treats_metacharacters_literally(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "graalpy.lock"
+            lock.write_text("skypilot==0+13x0\n", encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    str(REPOSITORY / "mvnw"),
+                    "--batch-mode",
+                    "--no-transfer-progress",
+                    "-pl",
+                    "skypilot-api-server-deployment",
+                    f"-Dskypilot.lock.source={lock}",
+                    "validate",
+                ],
+                cwd=REPOSITORY,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "shared GraalPy lock does not contain skypilot==0.13.0",
             completed.stdout,
         )
 

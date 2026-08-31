@@ -86,10 +86,9 @@ final class SkyPilotApiServerImageIT {
 		assertThat(health.path("version").asText()).isEqualTo(skyPilotVersion());
 		assertThat(health.path("version_on_disk").asText()).isEqualTo(skyPilotVersion());
 
-		var processTable = docker("top", serverContainer, "-eo", "user,pid,args");
-		assertThat(processTable.lines().skip(1).map(String::strip).toList())
-			.anyMatch(row -> row.matches("10002\\s+1\\s+python -m sky\\.server\\.server .*--host=0\\.0\\.0\\.0.*")
-					&& row.contains("--port=46580"));
+		var pidOneCommand = docker("exec", serverContainer, "python", "-c",
+				"from pathlib import Path; print(Path('/proc/1/cmdline').read_bytes().replace(b'\\0', b' ').decode())");
+		assertThat(pidOneCommand).contains("python -m sky.server.server", "--host=0.0.0.0", "--port=46580");
 
 		assertThat(inspectImage("{{.Config.User}}").strip()).isEqualTo("10002:10002");
 		assertThat(inspectImage("{{index .Config.Labels \"org.opencontainers.image.revision\"}}").strip())
@@ -112,7 +111,7 @@ final class SkyPilotApiServerImageIT {
 		var container = name("missing-database");
 		try {
 			docker("create", "--name", container, "--read-only", "--tmpfs", "/tmp:rw,exec,nosuid,size=64m", "--volume",
-					stateVolume + ":/var/lib/skypilot", imageName());
+					stateVolume + ":/var/lib/skypilot", "--env", "PYTHONPATH=/tmp/operator-override", imageName());
 			docker("start", container);
 
 			assertThat(awaitContainerExit(container, Duration.ofSeconds(10))).isEqualTo("78");

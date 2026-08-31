@@ -14,7 +14,7 @@ LABEL org.opencontainers.image.base.name="docker.io/library/python:3.12.11-slim-
       io.skywright.skypilot.version="@skypilot.version@"
 
 COPY maven/graalpy.lock /tmp/graalpy.lock
-COPY startup/sitecustomize.py /opt/skywright/runtime/sitecustomize.py
+COPY startup/launch.py /opt/skywright/runtime/launch.py
 
 RUN python -m pip install \
         --disable-pip-version-check \
@@ -41,7 +41,6 @@ WORKDIR /var/lib/skypilot
 ENV HOME=/var/lib/skypilot \
     IS_SKYPILOT_SERVER=true \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/opt/skywright/runtime \
     PYTHONUNBUFFERED=1 \
     SKYPILOT_API_SERVER_STORAGE_ENABLED=true \
     SKYPILOT_DISABLE_USAGE_COLLECTION=true \
@@ -51,5 +50,5 @@ ENV HOME=/var/lib/skypilot \
 EXPOSE 46580
 STOPSIGNAL SIGTERM
 
-ENTRYPOINT ["python", "-m", "sky.server.server"]
+ENTRYPOINT ["python", "-I", "-S", "/opt/skywright/runtime/launch.py"]
 CMD ["--host=0.0.0.0", "--port=46580", "--deploy"]

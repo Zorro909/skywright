@@ -66,8 +66,9 @@
               <target>
                 <loadfile property="skypilot.lock.contents" srcFile="${skypilot.lock.source}"/>
                 <condition property="skypilot.lock.matches">
-                  <matches string="${skypilot.lock.contents}"
-                           pattern="(?m)^skypilot==${skypilot.version}$"/>
+                  <contains string="${line.separator}${skypilot.lock.contents}${line.separator}"
+                            substring="${line.separator}skypilot==${skypilot.version}${line.separator}"
+                            casesensitive="true"/>
                 </condition>
                 <fail unless="skypilot.lock.matches"
                       message="shared GraalPy lock does not contain skypilot==${skypilot.version}"/>
