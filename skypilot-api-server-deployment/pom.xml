@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>de.zorro909.skywright</groupId>
+    <artifactId>skywright-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>skywright-skypilot-api-server-deployment</artifactId>
+  <packaging>pom</packaging>
+  <name>Skywright SkyPilot API server deployment</name>
+  <description>Production OCI packaging for the version-paired SkyPilot API server.</description>
+
+  <properties>
+    <skypilot.lock.source>${maven.multiModuleProjectDirectory}/graalpy-environment/graalpy.lock</skypilot.lock.source>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>tools.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>compile-image-acceptance</id>
+            <phase>test-compile</phase>
+            <goals>
+              <goal>testCompile</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>verify-version-pair</id>
+            <phase>validate</phase>
+            <goals>
+              <goal>run</goal>
+            </goals>
+            <configuration>
+              <target>
+                <loadfile property="skypilot.lock.contents" srcFile="${skypilot.lock.source}"/>
+                <condition property="skypilot.lock.matches">
+                  <matches string="${skypilot.lock.contents}"
+                           pattern="(?m)^skypilot==${skypilot.version}$"/>
+                </condition>
+                <fail unless="skypilot.lock.matches"
+                      message="shared GraalPy lock does not contain skypilot==${skypilot.version}"/>
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>io.fabric8</groupId>
+        <artifactId>docker-maven-plugin</artifactId>
+        <version>${docker-maven.version}</version>
+        <executions>
+          <execution>
+            <id>build-skypilot-api-server-image</id>
+            <phase>package</phase>
+            <goals>
+              <goal>build</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <images>
+            <image>
+              <name>${skypilot.container.image}</name>
+              <build>
+                <args>
+                  <BUILD_CREATED>${maven.build.timestamp}</BUILD_CREATED>
+                </args>
+                <contextDir>${project.basedir}/src/main/docker</contextDir>
+                <dockerFile>${project.basedir}/src/main/docker/Dockerfile</dockerFile>
+                <filter>@</filter>
+                <assembly>
+                  <inline>
+                    <fileSets>
+                      <fileSet>
+                        <directory>${maven.multiModuleProjectDirectory}/graalpy-environment</directory>
+                        <outputDirectory>.</outputDirectory>
+                        <includes>
+                          <include>graalpy.lock</include>
+                        </includes>
+                      </fileSet>
+                    </fileSets>
+                  </inline>
+                </assembly>
+              </build>
+            </image>
+          </images>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <systemPropertyVariables>
+            <image.name>${skypilot.container.image}</image.name>
+            <postgresql.container.image>${postgresql.container.image}</postgresql.container.image>
+            <source.revision>${git.commit.id.full}</source.revision>
+            <skypilot.version>${skypilot.version}</skypilot.version>
+            <python.version>${skypilot.python.version}</python.version>
+          </systemPropertyVariables>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

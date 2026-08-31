@@ -18,3 +18,4 @@ frontend/dist/
 frontend/playwright-report/
 frontend/test-results/
 docs/research/codex-session-*.md
+/skypilot-api-server.env

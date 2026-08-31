@@ -301,6 +301,7 @@ class QualityWorkflowContractTest(unittest.TestCase):
         }
         self.assertIn("-Ppackaged-acceptance", application_arguments)
         self.assertIn("backend-deployment", image_arguments)
+        self.assertIn("skypilot-api-server-deployment", image_arguments)
 
     def test_local_lane_installs_frontend_dependencies_exactly_once(self) -> None:
         commands_for = QUALITY_IMPLEMENTATION["commands_for"]
