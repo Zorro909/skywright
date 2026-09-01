@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from typing import NoReturn
 
@@ -31,6 +32,7 @@ SKYPILOT_IMAGE_PATTERN = re.compile(
     r"^ghcr\.io/zorro909/skywright-skypilot-api-server@sha256:[0-9a-f]{64}$"
 )
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+SKYPILOT_VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+)*(?:[A-Za-z0-9.+-]*)$")
 
 
 def abort(message: str) -> NoReturn:
@@ -60,6 +62,67 @@ def read_json(path: Path):
         abort(f"cannot read {path.name}: {error}")
 
 
+def validate_skypilot_version(version: object) -> str:
+    if not isinstance(version, str) or SKYPILOT_VERSION_PATTERN.fullmatch(version) is None:
+        abort("SkyPilot version is invalid")
+    return version
+
+
+def shared_skypilot_version(pom: Path, lock: Path) -> str:
+    try:
+        root = ElementTree.parse(pom).getroot()
+        namespace = {"m": "http://maven.apache.org/POM/4.0.0"}
+        value = root.findtext("m:properties/m:skypilot.version", namespaces=namespace)
+        version = validate_skypilot_version(value)
+        locked = lock.read_text(encoding="utf-8").splitlines()
+    except (OSError, ElementTree.ParseError, UnicodeDecodeError) as error:
+        abort(f"cannot read the shared SkyPilot pin: {error}")
+    if f"skypilot=={version}" not in locked:
+        abort(f"shared GraalPy lock does not contain skypilot=={version}")
+    return version
+
+
+def image_records(backend_image: str, skypilot_image: str) -> list[dict[str, str]]:
+    return [
+        {"imageName": "skywright-backend", "tag": backend_image},
+        {"imageName": "skywright-skypilot-api-server", "tag": skypilot_image},
+    ]
+
+
+def finalize_build_artifacts(arguments: argparse.Namespace) -> None:
+    if COMMIT_PATTERN.fullmatch(arguments.source_commit) is None:
+        abort("source commit must be a full lowercase Git object ID")
+    version = validate_skypilot_version(arguments.skypilot_version)
+    artifacts = read_json(arguments.input)
+    if not isinstance(artifacts, dict) or not isinstance(artifacts.get("builds"), list):
+        abort("Skaffold build artifacts have no builds")
+    builds = artifacts["builds"]
+    if len(builds) != 2 or not all(isinstance(build, dict) for build in builds):
+        abort("Skaffold did not identify exactly the two control-plane images")
+    by_name = {
+        build.get("imageName"): build.get("tag")
+        for build in builds
+        if isinstance(build, dict)
+    }
+    backend_image = by_name.get("skywright-backend")
+    skypilot_image = by_name.get("skywright-skypilot-api-server")
+    if set(by_name) != {"skywright-backend", "skywright-skypilot-api-server"}:
+        abort("Skaffold did not identify exactly the two control-plane images")
+    if not isinstance(backend_image, str) or BACKEND_IMAGE_PATTERN.fullmatch(backend_image) is None:
+        abort("Skaffold backend image is not digest-pinned")
+    if not isinstance(skypilot_image, str) or SKYPILOT_IMAGE_PATTERN.fullmatch(skypilot_image) is None:
+        abort("Skaffold SkyPilot image is not digest-pinned")
+    result = {
+        "schemaVersion": 3,
+        "sourceRevision": arguments.source_commit,
+        "skypilotVersion": version,
+        "builds": image_records(backend_image, skypilot_image),
+    }
+    arguments.output.write_text(
+        json.dumps(result, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
+
+
 def validate_payload(directory: Path, allow_prerelease: bool) -> dict[str, object]:
     actual = {path.name for path in directory.iterdir() if path.is_file()}
     expected = {*FILES, "SHA256SUMS"}
@@ -78,7 +141,7 @@ def validate_payload(directory: Path, allow_prerelease: bool) -> dict[str, objec
             abort(f"checksum mismatch for {filename}")
 
     metadata = read_json(directory / "release-metadata.json")
-    if not isinstance(metadata, dict) or metadata.get("schemaVersion") not in {1, 2}:
+    if not isinstance(metadata, dict) or metadata.get("schemaVersion") not in {1, 2, 3}:
         abort("release metadata schema is unsupported")
     schema_version = metadata["schemaVersion"]
     version = metadata.get("version")
@@ -134,15 +197,16 @@ def validate_payload(directory: Path, allow_prerelease: bool) -> dict[str, objec
             or SKYPILOT_IMAGE_PATTERN.fullmatch(skypilot_image) is None
         ):
             abort("release metadata SkyPilot image is not digest-pinned")
-        expected_artifacts = {
-            "builds": [
-                {"imageName": "skywright-backend", "tag": backend_image},
-                {
-                    "imageName": "skywright-skypilot-api-server",
-                    "tag": skypilot_image,
-                },
-            ]
+        expected_artifacts: dict[str, object] = {
+            "builds": image_records(backend_image, skypilot_image)
         }
+        if schema_version == 3:
+            skypilot_version = validate_skypilot_version(metadata.get("skypilotVersion"))
+            expected_artifacts |= {
+                "schemaVersion": 3,
+                "sourceRevision": source_commit,
+                "skypilotVersion": skypilot_version,
+            }
         if artifacts != expected_artifacts:
             abort("build artifacts do not identify the release control-plane images exactly")
         if sorted(manifest_images) != sorted([backend_image, skypilot_image]):
@@ -158,6 +222,7 @@ def build_bundle(arguments: argparse.Namespace) -> None:
         abort("backend image must use the production GHCR name and a sha256 digest")
     if SKYPILOT_IMAGE_PATTERN.fullmatch(arguments.skypilot_image) is None:
         abort("SkyPilot image must use the production GHCR name and a sha256 digest")
+    skypilot_version = validate_skypilot_version(arguments.skypilot_version)
     output = arguments.output
     if output.exists() and any(output.iterdir()):
         abort(f"bundle output is not empty: {output}")
@@ -165,12 +230,13 @@ def build_bundle(arguments: argparse.Namespace) -> None:
     shutil.copyfile(arguments.release_yaml, output / "release.yaml")
     shutil.copyfile(arguments.build_artifacts, output / "build-artifacts.json")
     metadata = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "version": arguments.version,
         "prerelease": prerelease,
         "sourceCommit": arguments.source_commit,
         "backendImage": arguments.backend_image,
         "skypilotImage": arguments.skypilot_image,
+        "skypilotVersion": skypilot_version,
         "profile": "production",
         "namespace": "skywright",
         "hostname": "skywright.internal",
@@ -220,8 +286,8 @@ def publish_bundle(arguments: argparse.Namespace) -> None:
                 "--annotation",
                 f"io.skywright.release.classification={classification}",
                 "release.yaml:application/vnd.skywright.deployment.manifest.v1+yaml",
-                "build-artifacts.json:application/vnd.skywright.skaffold.build-artifacts.v1+json",
-                "release-metadata.json:application/vnd.skywright.deployment.metadata.v1+json",
+                "build-artifacts.json:application/vnd.skywright.skaffold.build-artifacts.v3+json",
+                "release-metadata.json:application/vnd.skywright.deployment.metadata.v3+json",
                 "SHA256SUMS:text/plain",
             ],
             directory=arguments.directory,
@@ -231,31 +297,42 @@ def publish_bundle(arguments: argparse.Namespace) -> None:
             directory=arguments.directory,
         ).stdout.strip()
         remote = f"{arguments.repository}:{arguments.version}"
-        existing_result = run_oras(
-            ["resolve", remote], directory=arguments.directory, check=False
-        )
-        existing = existing_result.stdout.strip()
-        if existing_result.returncode == 0:
-            if existing != expected:
-                abort(
-                    f"conflicting content already exists for immutable {arguments.version}"
+        publications = [(remote, expected, f"{layout}:{arguments.version}", True)]
+        if metadata["schemaVersion"] >= 2:
+            for key in ("backendImage", "skypilotImage"):
+                image = str(metadata[key])
+                repository, image_digest = image.split("@", 1)
+                publications.append(
+                    (f"{repository}:{arguments.version}", image_digest, image, False)
                 )
-        else:
-            run_oras(
-                ["cp", "--from-oci-layout", f"{layout}:{arguments.version}", remote],
-                directory=arguments.directory,
+        missing: list[tuple[str, str, str, bool]] = []
+        for target, expected_digest, source, from_layout in publications:
+            existing_result = run_oras(
+                ["resolve", target], directory=arguments.directory, check=False
             )
-        published = run_oras(
-            ["resolve", remote], directory=arguments.directory
-        ).stdout.strip()
-        if published != expected:
-            abort("published bundle digest differs from the staged OCI layout")
+            if existing_result.returncode == 0:
+                if existing_result.stdout.strip() != expected_digest:
+                    abort(f"conflicting content already exists for immutable {target}")
+            else:
+                missing.append((target, expected_digest, source, from_layout))
+        for target, _expected_digest, source, from_layout in missing:
+            copy = ["cp"]
+            if from_layout:
+                copy.append("--from-oci-layout")
+            run_oras([*copy, source, target], directory=arguments.directory)
+        for target, expected_digest, _source, _from_layout in publications:
+            published_digest = run_oras(
+                ["resolve", target], directory=arguments.directory
+            ).stdout.strip()
+            if published_digest != expected_digest:
+                abort(f"published digest differs for immutable {target}")
+        published = expected
     backend_digest = str(metadata["backendImage"]).split("@", 1)[1]
     outputs = (
         f"bundle_digest={published}\n"
         f"backend_digest={backend_digest}\n"
     )
-    if metadata["schemaVersion"] == 2:
+    if metadata["schemaVersion"] >= 2:
         skypilot_digest = str(metadata["skypilotImage"]).split("@", 1)[1]
         outputs += f"skypilot_digest={skypilot_digest}\n"
     if arguments.github_output is not None:
@@ -278,9 +355,20 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--source-commit", required=True)
     build.add_argument("--backend-image", required=True)
     build.add_argument("--skypilot-image", required=True)
+    build.add_argument("--skypilot-version", required=True)
     build.add_argument("--workflow", required=True)
     build.add_argument("--run-id", required=True)
     build.set_defaults(function=build_bundle)
+    pin = commands.add_parser("shared-skypilot-version")
+    pin.add_argument("--pom", type=Path, required=True)
+    pin.add_argument("--lock", type=Path, required=True)
+    pin.set_defaults(function=lambda args: print(shared_skypilot_version(args.pom, args.lock)))
+    artifacts = commands.add_parser("finalize-build-artifacts")
+    artifacts.add_argument("--input", type=Path, required=True)
+    artifacts.add_argument("--output", type=Path, required=True)
+    artifacts.add_argument("--source-commit", required=True)
+    artifacts.add_argument("--skypilot-version", required=True)
+    artifacts.set_defaults(function=finalize_build_artifacts)
     verify = commands.add_parser("verify-bundle")
     verify.add_argument("--directory", type=Path, required=True)
     verify.add_argument("--allow-prerelease", action="store_true")

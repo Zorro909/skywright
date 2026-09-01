@@ -9,7 +9,8 @@ LABEL org.opencontainers.image.created="${BUILD_CREATED}" \
       org.opencontainers.image.revision="@git.commit.id.full@" \
       org.opencontainers.image.source="https://github.com/Zorro909/skywright" \
       org.opencontainers.image.title="Skywright backend" \
-      org.opencontainers.image.version="@project.version@"
+      org.opencontainers.image.version="@project.version@" \
+      io.skywright.skypilot.version="@skypilot.version@"
 
 COPY --from=graalvm /usr/lib64/graalvm/graalvm-community-java25i2 /opt/graalvm
 

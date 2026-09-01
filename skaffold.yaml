@@ -30,6 +30,12 @@ build:
             - backend/src/**
             - backend-deployment/pom.xml
             - backend-deployment/src/**
+            - graalpy-environment/pom.xml
+            - graalpy-environment/graalpy.lock
+            - sdk/pom.xml
+            - sdk/src/skywright/_configuration_resources/**
+            - sdk/src/skywright/_metric_resources/**
+            - sdk/src/skywright/_run_definition_resources/**
             - deployment/scripts/build-backend-image
             - skaffold.yaml
           ignore:
@@ -45,6 +51,7 @@ build:
             - pom.xml
             - .mvn/**
             - mvnw
+            - graalpy-environment/pom.xml
             - graalpy-environment/graalpy.lock
             - skypilot-api-server-deployment/pom.xml
             - skypilot-api-server-deployment/src/**

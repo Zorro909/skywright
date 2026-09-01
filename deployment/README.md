@@ -87,8 +87,14 @@ storage, or Kubernetes launch credential. This child does not yet authorize mana
 Issues #72 and #73 own the Vault-backed credential and authentication path required before real
 managed launches are enabled.
 
-CI publishes release bundles to `ghcr.io/zorro909/skywright-deployment`. Apply or roll back by
-passing an immutable digest through the same command:
+CI builds the backend and SkyPilot API server from one commit and the `skypilot.version` pin in the
+root Maven project. Each release bundle records that commit, the exact SkyPilot version, and both
+image digests. CI also creates separate attestations for the bundle and each image. Publication
+uses collision-checked version aliases in all three GHCR repositories. An interrupted publication
+can fill a missing alias on retry, but it cannot replace different content already recorded for
+that release version.
+
+Apply or roll back by passing an immutable bundle digest through the same command:
 
 ```bash
 scripts/deploy apply \
@@ -96,10 +102,12 @@ scripts/deploy apply \
   --context <production-context>
 ```
 
-The command verifies the GitHub attestation and payload checksums before reading production
-prerequisites or mutating Kubernetes. It reports the prior bundle digest, waits for Skaffold status
-checking, then records the successfully applied digest on the backend Deployment. Prereleases need
-the explicit `--allow-prerelease` option.
+The command verifies the bundle attestation, both image attestations, image identities, and payload
+checksums before reading production prerequisites or mutating Kubernetes. It reports the prior
+bundle digest, applies the supplied `release.yaml` without rebuilding or rendering, and waits for
+Skaffold status checking. Only then does it record the selected digest on both Deployments. A
+failed apply leaves the prior records alone. Reapplying a bundle is idempotent, and rollback uses
+the same path. Prereleases need the explicit `--allow-prerelease` option.
 
 Published bundles, backend images, and SkyPilot API-server images are immutable rollback inputs and
 must remain in GHCR indefinitely. Repository automation does not delete published release

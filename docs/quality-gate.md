@@ -3,10 +3,11 @@
 `scripts/quality` is the versioned Linux definition of repository verification. `scripts/quality
 run` executes the complete current plan. `scripts/quality run application` qualifies the canonical
 API through the independently verified Angular artifact and the packaged Spring/browser boundary;
-`scripts/quality run image` builds and exercises the production backend image. `scripts/quality run
-deployment` verifies the deployment commands, rendered profiles, supervisor, bundle, and release
-workflow. The `java`, `frontend`, and `sdk` selectors provide focused iteration. Every check delegates to the Maven, pnpm,
-and SDK `uv` interfaces documented by its owning project part. The command prints all active checks,
+`scripts/quality run image` builds and exercises the paired production backend and SkyPilot API
+server images. `scripts/quality run deployment` verifies the deployment commands, rendered profiles,
+supervisor, bundle, and release workflow. The `java`, `frontend`, and `sdk` selectors provide
+focused iteration. Every check delegates to the Maven, pnpm, and SDK `uv` interfaces documented by
+its owning project part. The command prints all active checks,
 including deliberately inapplicable work, and fails explicitly when an exact prerequisite is
 missing or has drifted.
 
@@ -83,7 +84,7 @@ budgets change.
 | Real-service integration | 15 minutes | 25 minutes |
 | Frontend | 12 minutes | 25 minutes |
 | Complete application | 20 minutes | 35 minutes |
-| Production backend image and scan | 25 minutes | 40 minutes |
+| Production control-plane images and scan | 25 minutes | 40 minutes |
 | Deployment contracts | 5 minutes | 10 minutes |
 
 Chromium operating-system dependency setup and a cold Chromium download are separately named steps;

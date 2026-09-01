@@ -109,6 +109,9 @@ final class ProductionImageIT {
 	@Test
 	@Order(2)
 	void healthAndApplicationIdentityAreAvailable() throws Exception {
+		assertThat(docker("image", "inspect", "--format", "{{index .Config.Labels \"io.skywright.skypilot.version\"}}",
+				imageName())
+			.strip()).isEqualTo(skypilotVersion());
 		assertThat(get("/livez").body()).contains("\"status\":\"UP\"");
 		assertThat(get("/readyz").body()).contains("\"status\":\"UP\"");
 		assertThat(get("/actuator/health").body()).contains("\"status\":\"UP\"");
@@ -366,6 +369,10 @@ final class ProductionImageIT {
 
 	private static String sourceRevision() {
 		return System.getProperty("source.revision");
+	}
+
+	private static String skypilotVersion() {
+		return System.getProperty("skypilot.version");
 	}
 
 	private static final class HeldSkyPilotServer implements AutoCloseable {
