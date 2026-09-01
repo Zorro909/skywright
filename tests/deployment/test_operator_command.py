@@ -100,8 +100,17 @@ elif name == 'skaffold' and sys.argv[1] == 'version':
 elif name == 'kubectl' and 'namespace' in sys.argv:
     print(json.dumps({'metadata': {'name': 'skywright'}}))
 elif name == 'kubectl' and 'secret' in sys.argv:
-    keys = ['migrationUrl', 'migrationUsername', 'migrationPassword', 'runtimeUrl', 'runtimeUsername', 'runtimePassword']
+    if 'skywright-production-skypilot-database' in sys.argv:
+        if os.environ.get('MISSING_SKYPILOT_SECRET') == 'true':
+            raise SystemExit(1)
+        keys = ['connectionUri']
+    else:
+        keys = ['migrationUrl', 'migrationUsername', 'migrationPassword', 'runtimeUrl', 'runtimeUsername', 'runtimePassword']
     print(json.dumps({'data': {key: 'eA==' for key in keys}}))
+elif name == 'kubectl' and 'persistentvolumeclaim' in sys.argv:
+    if os.environ.get('MISSING_SKYPILOT_VOLUME') == 'true':
+        raise SystemExit(1)
+    print(json.dumps({'metadata': {'name': 'skywright-skypilot-state'}}))
 elif name == 'kubectl' and 'ingressclass' in sys.argv:
     print(json.dumps({'metadata': {'name': 'contour'}}))
 elif name == 'kubectl' and 'jsonpath=' in ' '.join(sys.argv):
@@ -141,17 +150,72 @@ elif name == 'kubectl' and 'jsonpath=' in ' '.join(sys.argv):
                 for index, call in enumerate(calls)
                 if call["name"] == "skaffold" and "apply" in call["args"]
             )
-            for resource in ("namespace", "secret", "ingressclass"):
+            for resource in ("namespace", "secret", "persistentvolumeclaim", "ingressclass"):
                 self.assertTrue(
                     any(
                         call["name"] == "kubectl" and resource in call["args"]
                         for call in calls[:mutation]
                     )
                 )
+            preflight_arguments = [
+                argument
+                for call in calls[:mutation]
+                if call["name"] == "kubectl"
+                for argument in call["args"]
+            ]
+            self.assertIn("skywright-production-database", preflight_arguments)
+            self.assertIn(
+                "skywright-production-skypilot-database", preflight_arguments
+            )
+            self.assertIn("skywright-skypilot-state", preflight_arguments)
             self.assertIn("currently deployed bundle:", completed.stdout)
             annotation = calls[-1]
             self.assertEqual(annotation["name"], "kubectl")
             self.assertIn(f"skywright.io/deployment-bundle={BUNDLE_REF}", annotation["args"])
+
+            for variable, diagnostic in (
+                (
+                    "MISSING_SKYPILOT_SECRET",
+                    "production SkyPilot database Secret does not exist",
+                ),
+                (
+                    "MISSING_SKYPILOT_VOLUME",
+                    "SkyPilot retained-state persistent volume claim does not exist",
+                ),
+            ):
+                with self.subTest(variable=variable):
+                    log.unlink()
+                    failed_environment = environment | {
+                        variable: "true",
+                        "SENSITIVE_DATABASE_VALUE": "must-not-appear",
+                    }
+                    failed = subprocess.run(
+                        [
+                            str(COMMAND),
+                            "apply",
+                            BUNDLE_REF,
+                            "--context",
+                            "production-context",
+                        ],
+                        cwd=REPOSITORY,
+                        env=failed_environment,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+
+                    self.assertNotEqual(failed.returncode, 0)
+                    self.assertIn(diagnostic, failed.stderr)
+                    self.assertNotIn("must-not-appear", failed.stderr)
+                    failed_calls = [
+                        json.loads(line) for line in log.read_text().splitlines()
+                    ]
+                    self.assertFalse(
+                        any(
+                            call["name"] == "skaffold" and "apply" in call["args"]
+                            for call in failed_calls
+                        )
+                    )
 
 
 if __name__ == "__main__":

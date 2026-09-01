@@ -4,3 +4,5 @@ namespace: skywright
 resources:
   - backend-deployment.yaml
   - backend-service.yaml
+  - skypilot-api-server-deployment.yaml
+  - skypilot-api-server-service.yaml

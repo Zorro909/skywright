@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skywright-skypilot-api-server
+  labels:
+    app.kubernetes.io/name: skywright-skypilot-api-server
+    app.kubernetes.io/part-of: skywright
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: skywright-skypilot-api-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: skywright-skypilot-api-server
+        app.kubernetes.io/part-of: skywright
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10002
+        runAsGroup: 10002
+        fsGroup: 10002
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: skypilot-api-server
+          image: skywright-skypilot-api-server
+          ports:
+            - name: http
+              containerPort: 46580
+          env:
+            - name: SKYPILOT_DB_CONNECTION_URI
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-skypilot-database
+                  key: connectionUri
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+          volumeMounts:
+            - name: temporary-files
+              mountPath: /tmp
+            - name: retained-state
+              mountPath: /var/lib/skypilot
+      volumes:
+        - name: temporary-files
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: retained-state
+          persistentVolumeClaim:
+            claimName: skywright-skypilot-state

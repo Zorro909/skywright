@@ -27,7 +27,7 @@ REPOSITORY = Path(
 ).resolve()
 NAMESPACE = "skywright"
 LOCAL_LABEL = "skywright.io/local-retained-data=true"
-RESET_CONFIRMATION = "reset skywright local database"
+RESET_CONFIRMATION = "reset skywright local control-plane state"
 SKAFFOLD_VERSION = "v2.24.0"
 ORAS_VERSION = "1.3.3"
 BUNDLE_PATTERN = re.compile(
@@ -41,6 +41,7 @@ PRODUCTION_SECRET_KEYS = {
     "runtimeUsername",
     "runtimePassword",
 }
+PRODUCTION_SKYPILOT_SECRET_KEYS = {"connectionUri"}
 
 
 def abort(message: str) -> NoReturn:
@@ -243,12 +244,62 @@ stringData:
   runtimePassword: {password()}
 """,
         )
+    existing_skypilot_secret = run(
+        [
+            tool("kubectl"),
+            "--context",
+            local.context,
+            "get",
+            "secret",
+            "skywright-local-skypilot-database",
+            "--namespace",
+            NAMESPACE,
+        ],
+        environment=local.environment,
+        capture=True,
+        check=False,
+    )
+    if existing_skypilot_secret.returncode != 0:
+        skypilot_password = secrets.token_urlsafe(32)
+        kubectl_apply(
+            local,
+            f"""apiVersion: v1
+kind: Secret
+metadata:
+  name: skywright-local-skypilot-database
+  namespace: {NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: skywright
+    skywright.io/local-retained-data: "true"
+type: Opaque
+stringData:
+  password: {skypilot_password}
+  connectionUri: postgresql://skypilot:{skypilot_password}@skywright-postgresql:5432/skypilot
+""",
+        )
     kubectl_apply(
         local,
         f"""apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: skywright-postgresql-data
+  namespace: {NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: skywright
+    skywright.io/local-retained-data: "true"
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 4Gi
+""",
+    )
+    kubectl_apply(
+        local,
+        f"""apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: skywright-skypilot-state
   namespace: {NAMESPACE}
   labels:
     app.kubernetes.io/part-of: skywright
@@ -297,7 +348,7 @@ def local_command(arguments: argparse.Namespace) -> None:
         signal.signal(signal.SIGTERM, previous)
 
 
-def reset_local_database(arguments: argparse.Namespace) -> None:
+def reset_local_state(arguments: argparse.Namespace) -> None:
     local = local_environment(arguments.context)
     require_local_preflight(local)
     namespace_marker = run(
@@ -341,11 +392,13 @@ def reset_local_database(arguments: argparse.Namespace) -> None:
     ).stdout.splitlines()
     expected = {
         "persistentvolumeclaim/skywright-postgresql-data",
+        "persistentvolumeclaim/skywright-skypilot-state",
         "secret/skywright-local-database",
+        "secret/skywright-local-skypilot-database",
     }
     if set(output) != expected:
         abort(
-            "owned local database resources did not match the reset contract; nothing was deleted"
+            "owned local control-plane resources did not match the reset contract; nothing was deleted"
         )
     run(
         [
@@ -602,6 +655,50 @@ def production_preflight(context: str) -> None:
         abort(
             "skywright-production-database must contain exactly the six database configuration keys"
         )
+    skypilot_secret_result = run(
+        [
+            tool("kubectl"),
+            "--context",
+            context,
+            "get",
+            "secret",
+            "skywright-production-skypilot-database",
+            "--namespace",
+            NAMESPACE,
+            "--output",
+            "json",
+        ],
+        capture=True,
+        check=False,
+    )
+    if skypilot_secret_result.returncode != 0:
+        abort("the production SkyPilot database Secret does not exist")
+    skypilot_secret = json.loads(skypilot_secret_result.stdout)
+    if set(skypilot_secret.get("data", {})) != PRODUCTION_SKYPILOT_SECRET_KEYS:
+        abort(
+            "skywright-production-skypilot-database must contain exactly the connectionUri key"
+        )
+    skypilot_state_result = run(
+        [
+            tool("kubectl"),
+            "--context",
+            context,
+            "get",
+            "persistentvolumeclaim",
+            "skywright-skypilot-state",
+            "--namespace",
+            NAMESPACE,
+            "--output",
+            "json",
+        ],
+        capture=True,
+        check=False,
+    )
+    if skypilot_state_result.returncode != 0:
+        abort("the production SkyPilot retained-state persistent volume claim does not exist")
+    skypilot_state = json.loads(skypilot_state_result.stdout)
+    if skypilot_state.get("metadata", {}).get("name") != "skywright-skypilot-state":
+        abort("the production SkyPilot retained-state persistent volume claim is invalid")
     ingress_class = json.loads(
         run(
             [
@@ -710,11 +807,11 @@ def parser() -> argparse.ArgumentParser:
     local.add_argument("--context", required=True)
     local.set_defaults(function=local_command)
     reset = commands.add_parser(
-        "reset-local-database", help="delete only retained local database data"
+        "reset-local-state", help="delete only retained local control-plane state"
     )
     reset.add_argument("--context", required=True)
     reset.add_argument("--confirm")
-    reset.set_defaults(function=reset_local_database)
+    reset.set_defaults(function=reset_local_state)
     follow = commands.add_parser(
         "follow", help="deploy and follow one branch from the fixed origin remote"
     )

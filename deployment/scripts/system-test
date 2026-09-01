@@ -136,6 +136,31 @@ def marker(context: str, statement: str, check: bool = True):
     )
 
 
+def skypilot_state_marker(context: str, operation: str, check: bool = True):
+    script = {
+        "write": (
+            "from pathlib import Path; "
+            "Path('/var/lib/skypilot/system-test-marker').write_text('retained')"
+        ),
+        "read": (
+            "from pathlib import Path; "
+            "print(Path('/var/lib/skypilot/system-test-marker').read_text())"
+        ),
+    }[operation]
+    return kubectl(
+        context,
+        "exec",
+        "--namespace",
+        "skywright",
+        "deployment/skywright-skypilot-api-server",
+        "--",
+        "python",
+        "-c",
+        script,
+        check=check,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--context", required=True)
@@ -159,15 +184,31 @@ def main() -> None:
                 ),
             )
             secret_uid = uid(arguments.context, "secret", "skywright-local-database")
+            skypilot_secret_uid = uid(
+                arguments.context,
+                "secret",
+                "skywright-local-skypilot-database",
+            )
             volume_uid = uid(
                 arguments.context,
                 "persistentvolumeclaim",
                 "skywright-postgresql-data",
             )
+            skypilot_volume_uid = uid(
+                arguments.context,
+                "persistentvolumeclaim",
+                "skywright-skypilot-state",
+            )
             marker(
                 arguments.context,
                 f"CREATE TABLE public.{MARKER} (value integer NOT NULL); "
                 f"INSERT INTO public.{MARKER} VALUES (82);",
+            )
+            skypilot_state_marker(arguments.context, "write")
+            marker(
+                arguments.context,
+                "DROP DATABASE IF EXISTS skypilot WITH (FORCE); "
+                "DROP ROLE IF EXISTS skypilot;",
             )
         finally:
             stop(process)
@@ -180,14 +221,41 @@ def main() -> None:
             check=False,
         ).returncode == 0:
             fail("normal Skaffold cleanup left the backend Deployment running")
+        if kubectl(
+            arguments.context,
+            "get",
+            "deployment/skywright-skypilot-api-server",
+            "--namespace",
+            "skywright",
+            check=False,
+        ).returncode == 0:
+            fail("normal Skaffold cleanup left the SkyPilot Deployment running")
         if uid(arguments.context, "secret", "skywright-local-database") != secret_uid:
             fail("normal cleanup replaced local database credentials")
+        if (
+            uid(
+                arguments.context,
+                "secret",
+                "skywright-local-skypilot-database",
+            )
+            != skypilot_secret_uid
+        ):
+            fail("normal cleanup replaced local SkyPilot database credentials")
         if uid(
             arguments.context,
             "persistentvolumeclaim",
             "skywright-postgresql-data",
         ) != volume_uid:
             fail("normal cleanup replaced the local database volume")
+        if (
+            uid(
+                arguments.context,
+                "persistentvolumeclaim",
+                "skywright-skypilot-state",
+            )
+            != skypilot_volume_uid
+        ):
+            fail("normal cleanup replaced the local SkyPilot retained-state volume")
 
         process = start(arguments.context, log)
         try:
@@ -195,15 +263,24 @@ def main() -> None:
                 arguments.context, f"SELECT value FROM public.{MARKER};"
             ).stdout:
                 fail("database state did not survive cleanup and restart")
+            if "skypilot" not in marker(
+                arguments.context,
+                "SELECT datname FROM pg_database WHERE datname = 'skypilot';",
+            ).stdout:
+                fail("SkyPilot database was not provisioned into retained local PostgreSQL state")
+            if "retained" not in skypilot_state_marker(
+                arguments.context, "read"
+            ).stdout:
+                fail("SkyPilot volume state did not survive cleanup and restart")
         finally:
             stop(process)
         command(
             str(REPOSITORY / "scripts" / "deploy"),
-            "reset-local-database",
+            "reset-local-state",
             "--context",
             arguments.context,
             "--confirm",
-            "reset skywright local database",
+            "reset skywright local control-plane state",
         )
         if kubectl(
             arguments.context,
@@ -214,7 +291,7 @@ def main() -> None:
             "skywright",
             check=False,
         ).returncode != 0:
-            fail("database reset deleted an unrelated resource")
+            fail("local state reset deleted an unrelated resource")
         process = start(arguments.context, log)
         try:
             if marker(
@@ -223,6 +300,10 @@ def main() -> None:
                 check=False,
             ).returncode == 0:
                 fail("database reset retained the old database state")
+            if skypilot_state_marker(
+                arguments.context, "read", check=False
+            ).returncode == 0:
+                fail("local state reset retained the old SkyPilot volume state")
         finally:
             stop(process)
             kubectl(
