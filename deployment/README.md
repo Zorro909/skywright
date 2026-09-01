@@ -20,7 +20,9 @@ scripts/deploy local --context kind-kind-cluster
 The command creates the `skywright` Namespace if needed. It generates the backend database Secret
 `skywright-local-database` and the separate SkyPilot database Secret
 `skywright-local-skypilot-database` once. The pinned PostgreSQL workload initializes distinct
-Skywright and SkyPilot databases and roles. The command also creates
+Skywright and SkyPilot databases and roles. An idempotent local provisioner also adds or repairs
+the SkyPilot role and database when the PostgreSQL volume predates this deployment. The command
+also creates
 `skywright-postgresql-data` and `skywright-skypilot-state` PVCs through the cluster's default
 StorageClass. The latter holds SkyPilot logs and submitted-file staging under
 `/var/lib/skypilot`. All four resources survive normal Skaffold cleanup and redeployment.

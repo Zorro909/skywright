@@ -205,6 +205,11 @@ def main() -> None:
                 f"INSERT INTO public.{MARKER} VALUES (82);",
             )
             skypilot_state_marker(arguments.context, "write")
+            marker(
+                arguments.context,
+                "DROP DATABASE IF EXISTS skypilot WITH (FORCE); "
+                "DROP ROLE IF EXISTS skypilot;",
+            )
         finally:
             stop(process)
         if kubectl(
@@ -258,6 +263,11 @@ def main() -> None:
                 arguments.context, f"SELECT value FROM public.{MARKER};"
             ).stdout:
                 fail("database state did not survive cleanup and restart")
+            if "skypilot" not in marker(
+                arguments.context,
+                "SELECT datname FROM pg_database WHERE datname = 'skypilot';",
+            ).stdout:
+                fail("SkyPilot database was not provisioned into retained local PostgreSQL state")
             if "retained" not in skypilot_state_marker(
                 arguments.context, "read"
             ).stdout:

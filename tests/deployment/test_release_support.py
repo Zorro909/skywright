@@ -88,7 +88,7 @@ class ReleaseSupportTest(unittest.TestCase):
             metadata = json.loads(
                 (bundle / "release-metadata.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(metadata["schemaVersion"], 1)
+            self.assertEqual(metadata["schemaVersion"], 2)
             self.assertEqual(metadata["backendImage"], IMAGE)
             self.assertEqual(metadata["skypilotImage"], SKYPILOT_IMAGE)
             self.assertEqual(metadata["profile"], "production")
@@ -118,6 +118,60 @@ class ReleaseSupportTest(unittest.TestCase):
 
             self.assertNotEqual(completed.returncode, 0)
             self.assertIn("checksum", completed.stderr.lower())
+
+    def test_verification_accepts_a_retained_schema_v1_rollback_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self.build_bundle(Path(directory))
+            manifest = bundle / "release.yaml"
+            manifest.write_text(
+                "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n"
+                "  name: skywright-backend\nspec:\n  template:\n    spec:\n"
+                f"      containers:\n        - image: {IMAGE}\n",
+                encoding="utf-8",
+            )
+            artifacts = bundle / "build-artifacts.json"
+            artifacts.write_text(
+                json.dumps(
+                    {"builds": [{"imageName": "skywright-backend", "tag": IMAGE}]}
+                ),
+                encoding="utf-8",
+            )
+            metadata_path = bundle / "release-metadata.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["schemaVersion"] = 1
+            metadata.pop("skypilotImage")
+            metadata_path.write_text(
+                json.dumps(metadata, sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            checksums = bundle / "SHA256SUMS"
+            checksums.write_text(
+                "".join(
+                    subprocess.run(
+                        ["sha256sum", str(bundle / filename)],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    ).stdout.split()[0]
+                    + f"  {filename}\n"
+                    for filename in (
+                        "release.yaml",
+                        "build-artifacts.json",
+                        "release-metadata.json",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            completed = subprocess.run(
+                [str(SUPPORT), "verify-bundle", "--directory", str(bundle)],
+                cwd=REPOSITORY,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_verification_rejects_a_manifest_with_an_extra_image_reference(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -11,12 +11,9 @@ data:
     set -eu
     psql --set=ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
       --set=migration_password="$SKYWRIGHT_MIGRATION_PASSWORD" \
-      --set=runtime_password="$SKYWRIGHT_RUNTIME_PASSWORD" \
-      --set=skypilot_password="$SKYPILOT_DATABASE_PASSWORD" <<'SQL'
+      --set=runtime_password="$SKYWRIGHT_RUNTIME_PASSWORD" <<'SQL'
     CREATE ROLE skywright_migration LOGIN PASSWORD :'migration_password';
     CREATE ROLE skywright_runtime LOGIN PASSWORD :'runtime_password';
-    CREATE ROLE skypilot LOGIN PASSWORD :'skypilot_password';
-    CREATE DATABASE skypilot OWNER skypilot;
     CREATE SCHEMA skywright AUTHORIZATION skywright_migration;
     GRANT CONNECT ON DATABASE skywright TO skywright_migration, skywright_runtime;
     GRANT USAGE ON SCHEMA skywright TO skywright_runtime;

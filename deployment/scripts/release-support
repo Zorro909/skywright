@@ -78,8 +78,9 @@ def validate_payload(directory: Path, allow_prerelease: bool) -> dict[str, objec
             abort(f"checksum mismatch for {filename}")
 
     metadata = read_json(directory / "release-metadata.json")
-    if not isinstance(metadata, dict) or metadata.get("schemaVersion") != 1:
+    if not isinstance(metadata, dict) or metadata.get("schemaVersion") not in {1, 2}:
         abort("release metadata schema is unsupported")
+    schema_version = metadata["schemaVersion"]
     version = metadata.get("version")
     if not isinstance(version, str):
         abort("release metadata has no version")
@@ -112,30 +113,40 @@ def validate_payload(directory: Path, allow_prerelease: bool) -> dict[str, objec
         or BACKEND_IMAGE_PATTERN.fullmatch(backend_image) is None
     ):
         abort("release metadata backend image is not digest-pinned")
-    skypilot_image = metadata.get("skypilotImage")
-    if (
-        not isinstance(skypilot_image, str)
-        or SKYPILOT_IMAGE_PATTERN.fullmatch(skypilot_image) is None
-    ):
-        abort("release metadata SkyPilot image is not digest-pinned")
     artifacts = read_json(directory / "build-artifacts.json")
-    if artifacts != {
-        "builds": [
-            {"imageName": "skywright-backend", "tag": backend_image},
-            {
-                "imageName": "skywright-skypilot-api-server",
-                "tag": skypilot_image,
-            },
-        ]
-    }:
-        abort("build artifacts do not identify the release control-plane images exactly")
     manifest_images = re.findall(
         r"^\s*(?:-\s*)?image:\s*([^\s#]+)\s*(?:#.*)?$",
         (directory / "release.yaml").read_text(encoding="utf-8"),
         flags=re.MULTILINE,
     )
-    if sorted(manifest_images) != sorted([backend_image, skypilot_image]):
-        abort("release manifest does not identify exactly the release control-plane images")
+    if schema_version == 1:
+        expected_artifacts = {
+            "builds": [{"imageName": "skywright-backend", "tag": backend_image}]
+        }
+        if artifacts != expected_artifacts:
+            abort("schema-v1 build artifacts do not identify the backend image exactly")
+        if manifest_images != [backend_image]:
+            abort("schema-v1 release manifest does not identify exactly the backend image")
+    else:
+        skypilot_image = metadata.get("skypilotImage")
+        if (
+            not isinstance(skypilot_image, str)
+            or SKYPILOT_IMAGE_PATTERN.fullmatch(skypilot_image) is None
+        ):
+            abort("release metadata SkyPilot image is not digest-pinned")
+        expected_artifacts = {
+            "builds": [
+                {"imageName": "skywright-backend", "tag": backend_image},
+                {
+                    "imageName": "skywright-skypilot-api-server",
+                    "tag": skypilot_image,
+                },
+            ]
+        }
+        if artifacts != expected_artifacts:
+            abort("build artifacts do not identify the release control-plane images exactly")
+        if sorted(manifest_images) != sorted([backend_image, skypilot_image]):
+            abort("release manifest does not identify exactly the release control-plane images")
     return metadata
 
 
@@ -154,7 +165,7 @@ def build_bundle(arguments: argparse.Namespace) -> None:
     shutil.copyfile(arguments.release_yaml, output / "release.yaml")
     shutil.copyfile(arguments.build_artifacts, output / "build-artifacts.json")
     metadata = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "version": arguments.version,
         "prerelease": prerelease,
         "sourceCommit": arguments.source_commit,
@@ -240,12 +251,13 @@ def publish_bundle(arguments: argparse.Namespace) -> None:
         if published != expected:
             abort("published bundle digest differs from the staged OCI layout")
     backend_digest = str(metadata["backendImage"]).split("@", 1)[1]
-    skypilot_digest = str(metadata["skypilotImage"]).split("@", 1)[1]
     outputs = (
         f"bundle_digest={published}\n"
         f"backend_digest={backend_digest}\n"
-        f"skypilot_digest={skypilot_digest}\n"
     )
+    if metadata["schemaVersion"] == 2:
+        skypilot_digest = str(metadata["skypilotImage"]).split("@", 1)[1]
+        outputs += f"skypilot_digest={skypilot_digest}\n"
     if arguments.github_output is not None:
         with arguments.github_output.open("a", encoding="utf-8") as destination:
             destination.write(outputs)

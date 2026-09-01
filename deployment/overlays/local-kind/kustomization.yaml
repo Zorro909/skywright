@@ -5,6 +5,7 @@ resources:
   - ../../base
   - postgresql-config.yaml
   - postgresql-deployment.yaml
+  - skypilot-database-provisioner.yaml
 patches:
   - path: backend-patch.yaml
   - path: skypilot-api-server-patch.yaml
