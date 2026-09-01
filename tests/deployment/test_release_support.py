@@ -18,6 +18,48 @@ SOURCE_COMMIT = "a" * 40
 SKYPILOT_VERSION = "0.13.0"
 
 
+def rewrite_as_schema_v1(bundle: Path) -> None:
+    manifest = bundle / "release.yaml"
+    manifest.write_text(
+        "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n"
+        "  name: skywright-backend\nspec:\n  template:\n    spec:\n"
+        f"      containers:\n        - image: {IMAGE}\n",
+        encoding="utf-8",
+    )
+    artifacts = bundle / "build-artifacts.json"
+    artifacts.write_text(
+        json.dumps({"builds": [{"imageName": "skywright-backend", "tag": IMAGE}]}),
+        encoding="utf-8",
+    )
+    metadata_path = bundle / "release-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["schemaVersion"] = 1
+    metadata.pop("skypilotImage")
+    metadata.pop("skypilotVersion")
+    metadata_path.write_text(
+        json.dumps(metadata, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    checksums = bundle / "SHA256SUMS"
+    checksums.write_text(
+        "".join(
+            subprocess.run(
+                ["sha256sum", str(bundle / filename)],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()[0]
+            + f"  {filename}\n"
+            for filename in (
+                "release.yaml",
+                "build-artifacts.json",
+                "release-metadata.json",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+
 class ReleaseSupportTest(unittest.TestCase):
     def build_bundle(self, directory: Path, version: str = "v1.2.3") -> Path:
         release = directory / "release.yaml"
@@ -135,46 +177,7 @@ class ReleaseSupportTest(unittest.TestCase):
     def test_verification_accepts_a_retained_schema_v1_rollback_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             bundle = self.build_bundle(Path(directory))
-            manifest = bundle / "release.yaml"
-            manifest.write_text(
-                "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n"
-                "  name: skywright-backend\nspec:\n  template:\n    spec:\n"
-                f"      containers:\n        - image: {IMAGE}\n",
-                encoding="utf-8",
-            )
-            artifacts = bundle / "build-artifacts.json"
-            artifacts.write_text(
-                json.dumps(
-                    {"builds": [{"imageName": "skywright-backend", "tag": IMAGE}]}
-                ),
-                encoding="utf-8",
-            )
-            metadata_path = bundle / "release-metadata.json"
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            metadata["schemaVersion"] = 1
-            metadata.pop("skypilotImage")
-            metadata_path.write_text(
-                json.dumps(metadata, sort_keys=True, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            checksums = bundle / "SHA256SUMS"
-            checksums.write_text(
-                "".join(
-                    subprocess.run(
-                        ["sha256sum", str(bundle / filename)],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                    ).stdout.split()[0]
-                    + f"  {filename}\n"
-                    for filename in (
-                        "release.yaml",
-                        "build-artifacts.json",
-                        "release-metadata.json",
-                    )
-                ),
-                encoding="utf-8",
-            )
+            rewrite_as_schema_v1(bundle)
 
             completed = subprocess.run(
                 [str(SUPPORT), "verify-bundle", "--directory", str(bundle)],

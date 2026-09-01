@@ -753,6 +753,26 @@ def recorded_bundle(context: str, deployment: str) -> str:
     ).stdout.strip()
 
 
+def deployment_exists(context: str, deployment: str) -> bool:
+    result = run(
+        [
+            tool("kubectl"),
+            "--context",
+            context,
+            "get",
+            "deployment",
+            deployment,
+            "--namespace",
+            NAMESPACE,
+            "--output",
+            "name",
+            "--ignore-not-found",
+        ],
+        capture=True,
+    )
+    return result.stdout.strip() == f"deployment.apps/{deployment}"
+
+
 def apply_bundle(arguments: argparse.Namespace) -> None:
     if BUNDLE_PATTERN.fullmatch(arguments.bundle) is None:
         abort("deployment bundle must use the canonical repository and an OCI sha256 digest")
@@ -804,7 +824,9 @@ def apply_bundle(arguments: argparse.Namespace) -> None:
             ]
         )
         deployments = ["deployment/skywright-backend"]
-        if metadata["schemaVersion"] >= 2:
+        if metadata["schemaVersion"] >= 2 or deployment_exists(
+            arguments.context, "skywright-skypilot-api-server"
+        ):
             deployments.append("deployment/skywright-skypilot-api-server")
         run(
             [

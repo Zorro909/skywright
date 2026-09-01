@@ -125,9 +125,13 @@ elif name == 'kubectl' and 'persistentvolumeclaim' in sys.argv:
     print(json.dumps({'metadata': {'name': 'skywright-skypilot-state'}}))
 elif name == 'kubectl' and 'ingressclass' in sys.argv:
     print(json.dumps({'metadata': {'name': 'contour'}}))
+elif name == 'kubectl' and 'deployment' in sys.argv and '--output' in sys.argv and sys.argv[sys.argv.index('--output') + 1] == 'name':
+    if os.environ.get('MISSING_SKYPILOT_DEPLOYMENT') != 'true':
+        print('deployment.apps/skywright-skypilot-api-server')
 elif name == 'kubectl' and 'jsonpath=' in ' '.join(sys.argv):
-    digest = 'c' if os.environ.get('MISMATCHED_RECORDS') == 'true' and 'skywright-skypilot-api-server' in sys.argv else 'd'
-    print('ghcr.io/zorro909/skywright-deployment@sha256:' + digest * 64)
+    if os.environ.get('MISSING_SKYPILOT_DEPLOYMENT') != 'true' or 'skywright-skypilot-api-server' not in sys.argv:
+        digest = 'c' if os.environ.get('MISMATCHED_RECORDS') == 'true' and 'skywright-skypilot-api-server' in sys.argv else 'd'
+        print('ghcr.io/zorro909/skywright-deployment@sha256:' + digest * 64)
 """,
                 encoding="utf-8",
             )
@@ -344,6 +348,69 @@ elif name == 'kubectl' and 'jsonpath=' in ' '.join(sys.argv):
                             for call in failed_calls
                         )
                     )
+
+            test_release_support.rewrite_as_schema_v1(bundle)
+            log.unlink()
+            legacy_rollback = subprocess.run(
+                [
+                    str(COMMAND),
+                    "apply",
+                    BUNDLE_REF,
+                    "--context",
+                    "production-context",
+                ],
+                cwd=REPOSITORY,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(legacy_rollback.returncode, 0, legacy_rollback.stderr)
+            legacy_calls = [json.loads(line) for line in log.read_text().splitlines()]
+            legacy_annotation = next(
+                call
+                for call in legacy_calls
+                if call["name"] == "kubectl" and "annotate" in call["args"]
+            )
+            self.assertIn("deployment/skywright-backend", legacy_annotation["args"])
+            self.assertIn(
+                "deployment/skywright-skypilot-api-server",
+                legacy_annotation["args"],
+            )
+
+            log.unlink()
+            legacy_without_server = subprocess.run(
+                [
+                    str(COMMAND),
+                    "apply",
+                    BUNDLE_REF,
+                    "--context",
+                    "production-context",
+                ],
+                cwd=REPOSITORY,
+                env=environment | {"MISSING_SKYPILOT_DEPLOYMENT": "true"},
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                legacy_without_server.returncode, 0, legacy_without_server.stderr
+            )
+            no_server_calls = [
+                json.loads(line) for line in log.read_text().splitlines()
+            ]
+            no_server_annotation = next(
+                call
+                for call in no_server_calls
+                if call["name"] == "kubectl" and "annotate" in call["args"]
+            )
+            self.assertIn(
+                "deployment/skywright-backend", no_server_annotation["args"]
+            )
+            self.assertNotIn(
+                "deployment/skywright-skypilot-api-server",
+                no_server_annotation["args"],
+            )
 
 
 if __name__ == "__main__":
