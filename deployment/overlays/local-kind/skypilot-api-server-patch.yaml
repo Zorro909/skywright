@@ -5,6 +5,15 @@ metadata:
 spec:
   template:
     spec:
+      initContainers:
+        - name: wait-for-skypilot-database
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SKYPILOT_DB_CONNECTION_URI
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-local-skypilot-database
+                  key: connectionUri
       containers:
         - name: skypilot-api-server
           imagePullPolicy: IfNotPresent

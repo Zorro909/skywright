@@ -44,6 +44,12 @@ class RenderedProfilesTest(unittest.TestCase):
         self.assertIn("operator-owned", documentation)
         self.assertIn("reset skywright local control-plane state", documentation)
         self.assertIn("does not yet authorize managed launches", documentation)
+        self.assertIn("## Operating the control plane", documentation)
+        self.assertIn("## Deferred dependency loss", documentation)
+        for issue in (41, 46, 53, 57, 60, 61, 70):
+            self.assertIn(f"/issues/{issue}", documentation)
+        self.assertIn("Existing cloud compute may continue", documentation)
+        self.assertIn("cannot promise to stop, observe, recover", documentation)
 
     def test_profiles_render_private_independently_restartable_skypilot_server(self) -> None:
         for profile in (LOCAL, PRODUCTION):
@@ -89,6 +95,22 @@ class RenderedProfilesTest(unittest.TestCase):
                 self.assertIn("mountPath: /var/lib/skypilot", server)
                 self.assertIn("claimName: skywright-skypilot-state", server)
                 self.assertIn("medium: Memory", server)
+                self.assertIn("name: wait-for-skypilot-database", server)
+                self.assertIn(
+                    "connection = psycopg2.connect(",
+                    server,
+                )
+                self.assertIn("connect_timeout=1", server)
+                self.assertGreaterEqual(
+                    server.count("key: connectionUri"), 2
+                )
+                database_secret = (
+                    "skywright-local-skypilot-database"
+                    if profile == LOCAL
+                    else "skywright-production-skypilot-database"
+                )
+                self.assertEqual(server.count(f"name: {database_secret}"), 2)
+                self.assertNotIn("name: skywright-skypilot-database\n", server)
                 self.assertNotIn("resources:", server)
                 self.assertNotIn("hostPort:", server)
                 self.assertNotIn("nodePort:", server)
@@ -108,6 +130,21 @@ class RenderedProfilesTest(unittest.TestCase):
         self.assertIn("image: postgres:18.1-bookworm@sha256:cc9f4143", manifest)
         self.assertIn("claimName: skywright-postgresql-data", manifest)
         self.assertIn("name: skywright-local-skypilot-database", manifest)
+        initialization = resource(
+            manifest, "ConfigMap", "skywright-postgresql-init"
+        )
+        self.assertIn(
+            "GRANT CONNECT, CREATE ON DATABASE skywright TO skywright_migration;",
+            initialization,
+        )
+        self.assertIn(
+            "GRANT CONNECT ON DATABASE skywright TO skywright_runtime;",
+            initialization,
+        )
+        self.assertNotIn(
+            "GRANT CONNECT, CREATE ON DATABASE skywright TO skywright_runtime;",
+            initialization,
+        )
         provisioner = resource(
             manifest, "Job", "skywright-local-skypilot-database-provisioner"
         )
@@ -115,11 +152,21 @@ class RenderedProfilesTest(unittest.TestCase):
         self.assertIn("ALTER ROLE skypilot PASSWORD", provisioner)
         self.assertIn("CREATE DATABASE skypilot OWNER skypilot", provisioner)
         self.assertIn("WHERE NOT EXISTS", provisioner)
+        self.assertIn(
+            "GRANT CONNECT, CREATE ON DATABASE skywright TO skywright_migration;",
+            provisioner,
+        )
+        self.assertIn(
+            "GRANT CONNECT ON DATABASE skywright TO skywright_runtime;",
+            provisioner,
+        )
         self.assertNotIn("migrationPassword", provisioner)
         self.assertNotIn("runtimePassword", provisioner)
         self.assertNotIn("kind: Namespace", manifest)
         self.assertNotIn("kind: Ingress", manifest)
         self.assertIn("SPRING_PROFILES_ACTIVE", manifest)
+        self.assertIn("SKYWRIGHT_SKYPILOT_BRIDGE_AVAILABILITY_PROBE_INTERVAL", manifest)
+        self.assertIn("value: 2s", manifest)
 
     def test_production_profile_has_the_locked_down_backend_and_private_ingress(self) -> None:
         manifest = render(PRODUCTION)

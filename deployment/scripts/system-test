@@ -1,29 +1,43 @@
 #!/usr/bin/env python3
-"""Exercise the public local workflow against an existing Podman kind cluster."""
+"""Qualify the private control plane on an existing rootless-Podman kind cluster."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.error
 import urllib.request
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+NAMESPACE = "skywright"
+BACKEND = "skywright-backend"
+SKYPILOT = "skywright-skypilot-api-server"
+POSTGRESQL = "skywright-postgresql"
 MARKER = "skywright_deployment_system_marker"
+ROLLOUT_TIMEOUT = 600
 
 
 def fail(message: str) -> None:
     raise SystemExit(f"deployment system-test prerequisite or assertion failed: {message}")
 
 
-def command(*arguments: str, check: bool = True, input_text: str | None = None):
+def command(
+    *arguments: str,
+    check: bool = True,
+    input_text: str | None = None,
+    timeout: float | None = None,
+):
     return subprocess.run(
         arguments,
         cwd=REPOSITORY,
@@ -31,11 +45,19 @@ def command(*arguments: str, check: bool = True, input_text: str | None = None):
         input=input_text,
         capture_output=True,
         text=True,
+        timeout=timeout,
     )
 
 
-def kubectl(context: str, *arguments: str, check: bool = True):
-    return command("kubectl", "--context", context, *arguments, check=check)
+def kubectl(context: str, *arguments: str, check: bool = True, input_text: str | None = None):
+    return command(
+        "kubectl",
+        "--context",
+        context,
+        *arguments,
+        check=check,
+        input_text=input_text,
+    )
 
 
 def require_prerequisites(context: str) -> None:
@@ -54,7 +76,72 @@ def require_prerequisites(context: str) -> None:
         fail("the context is not a kind context")
 
 
-def wait_ready(process: subprocess.Popen[str], log: Path, timeout: float = 600) -> None:
+def request(path: str, timeout: float = 10) -> tuple[int, str]:
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:8080{path}", timeout=timeout
+        ) as response:
+            return response.status, response.read().decode("utf-8")
+    except urllib.error.HTTPError as error:
+        return error.code, error.read().decode("utf-8")
+
+
+def wait_http(
+    path: str,
+    expected: int,
+    timeout: float = 120,
+    request_timeout: float = 2,
+) -> str:
+    deadline = time.monotonic() + timeout
+    last_status = None
+    last_body = ""
+    while time.monotonic() < deadline:
+        try:
+            last_status, last_body = request(path, timeout=request_timeout)
+            if last_status == expected:
+                return last_body
+        except (OSError, urllib.error.URLError):
+            pass
+        time.sleep(1)
+    fail(
+        f"{path} did not return {expected} within {timeout}s; "
+        f"last response was {last_status}: {last_body[-1000:]}"
+    )
+
+
+def wait_rollout(context: str, deployment: str, timeout: int = ROLLOUT_TIMEOUT) -> None:
+    result = kubectl(
+        context,
+        "rollout",
+        "status",
+        f"deployment/{deployment}",
+        "--namespace",
+        NAMESPACE,
+        f"--timeout={timeout}s",
+        check=False,
+    )
+    if result.returncode != 0:
+        diagnostics = kubectl(
+            context,
+            "get",
+            "pods",
+            "--namespace",
+            NAMESPACE,
+            "--output",
+            "wide",
+            check=False,
+        ).stdout
+        fail(f"{deployment} did not become ready:\n{result.stderr}\n{diagnostics}")
+
+
+def wait_control_plane(context: str) -> None:
+    for deployment in (POSTGRESQL, SKYPILOT, BACKEND):
+        wait_rollout(context, deployment)
+    wait_http("/readyz", 200)
+    wait_http("/actuator/health", 200)
+
+
+def wait_ready(process: subprocess.Popen[str], log: Path, timeout: float = 900) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process.poll() is not None:
@@ -64,9 +151,8 @@ def wait_ready(process: subprocess.Popen[str], log: Path, timeout: float = 600) 
                 f"last deployment output:\n{diagnostics}"
             )
         try:
-            with urllib.request.urlopen("http://127.0.0.1:8080/readyz", timeout=2) as response:
-                if response.status == 200:
-                    return
+            if request("/readyz", timeout=2)[0] == 200:
+                return
         except (OSError, urllib.error.URLError):
             pass
         time.sleep(2)
@@ -85,21 +171,23 @@ def start(context: str, log: Path) -> subprocess.Popen[str]:
     output.close()
     try:
         wait_ready(process, log)
+        wait_control_plane(context)
     except BaseException:
-        stop(process)
+        stop(process, require_success=False)
         raise
     return process
 
 
-def stop(process: subprocess.Popen[str]) -> None:
-    process.send_signal(signal.SIGTERM)
+def stop(process: subprocess.Popen[str], require_success: bool = True) -> None:
+    if process.poll() is None:
+        process.send_signal(signal.SIGTERM)
     try:
         process.wait(timeout=60)
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
         fail("local deployment did not perform normal Skaffold cleanup after SIGTERM")
-    if process.returncode != 0:
+    if require_success and process.returncode != 0:
         fail(f"local deployment cleanup exited with {process.returncode}")
 
 
@@ -110,10 +198,37 @@ def uid(context: str, kind: str, name: str) -> str:
         kind,
         name,
         "--namespace",
-        "skywright",
+        NAMESPACE,
         "--output",
         "jsonpath={.metadata.uid}",
     ).stdout
+
+
+def pod(context: str, application: str) -> dict:
+    result = kubectl(
+        context,
+        "get",
+        "pods",
+        "--namespace",
+        NAMESPACE,
+        "--selector",
+        f"app.kubernetes.io/name={application}",
+        "--output",
+        "json",
+    )
+    items = json.loads(result.stdout)["items"]
+    ready = [
+        item
+        for item in items
+        if item["status"].get("containerStatuses")
+        and all(
+            status.get("ready")
+            for status in item["status"].get("containerStatuses", [])
+        )
+    ]
+    if len(ready) != 1:
+        fail(f"expected one ready {application} pod, got {len(ready)}")
+    return ready[0]
 
 
 def marker(context: str, statement: str, check: bool = True):
@@ -121,8 +236,8 @@ def marker(context: str, statement: str, check: bool = True):
         context,
         "exec",
         "--namespace",
-        "skywright",
-        "deployment/skywright-postgresql",
+        NAMESPACE,
+        f"deployment/{POSTGRESQL}",
         "--",
         "psql",
         "--username",
@@ -130,29 +245,21 @@ def marker(context: str, statement: str, check: bool = True):
         "--dbname",
         "skywright",
         "--set=ON_ERROR_STOP=1",
+        "--tuples-only",
+        "--no-align",
         "--command",
         statement,
         check=check,
     )
 
 
-def skypilot_state_marker(context: str, operation: str, check: bool = True):
-    script = {
-        "write": (
-            "from pathlib import Path; "
-            "Path('/var/lib/skypilot/system-test-marker').write_text('retained')"
-        ),
-        "read": (
-            "from pathlib import Path; "
-            "print(Path('/var/lib/skypilot/system-test-marker').read_text())"
-        ),
-    }[operation]
+def server_python(context: str, script: str, check: bool = True):
     return kubectl(
         context,
         "exec",
         "--namespace",
-        "skywright",
-        "deployment/skywright-skypilot-api-server",
+        NAMESPACE,
+        f"deployment/{SKYPILOT}",
         "--",
         "python",
         "-c",
@@ -161,119 +268,615 @@ def skypilot_state_marker(context: str, operation: str, check: bool = True):
     )
 
 
+def skypilot_health(context: str) -> dict:
+    result = server_python(
+        context,
+        "import json,urllib.request; "
+        "print(json.dumps(json.load(urllib.request.urlopen("
+        "'http://127.0.0.1:46580/api/health',timeout=5))))",
+    )
+    return json.loads(result.stdout)
+
+
+def write_skypilot_state(context: str) -> tuple[str, str]:
+    username = f"system-{uuid.uuid4()}"
+    password = f"password-{uuid.uuid4()}"
+    payload = json.dumps({"username": username, "password": password, "role": "user"})
+    create = server_python(
+        context,
+        "import urllib.request; "
+        f"payload={payload!r}.encode(); "
+        "request=urllib.request.Request("
+        "'http://127.0.0.1:46580/users/create',data=payload,"
+        "headers={'Content-Type':'application/json'}); "
+        "print(urllib.request.urlopen(request,timeout=10).read().decode())",
+    )
+    if not create.stdout.strip():
+        fail("SkyPilot did not acknowledge database-backed user creation")
+
+    blob_id = uuid.uuid4().hex.ljust(64, "0")
+    upload = server_python(
+        context,
+        "import io,urllib.request,zipfile; data=io.BytesIO(); "
+        "archive=zipfile.ZipFile(data,'w'); "
+        "archive.writestr('retained.txt','survives replacement'); archive.close(); "
+        f"request=urllib.request.Request('http://127.0.0.1:46580/upload_v2?user_hash=system-test&upload_id={blob_id}&chunk_index=0&total_chunks=1',data=data.getvalue(),headers={{'Content-Type':'application/zip'}}); "
+        "print(urllib.request.urlopen(request,timeout=10).read().decode())",
+    )
+    if "completed" not in upload.stdout:
+        fail("SkyPilot did not retain the submitted-file marker")
+    return username, blob_id
+
+
+def assert_skypilot_state(context: str, username: str, blob_id: str) -> None:
+    users = server_python(
+        context,
+        "import urllib.request; print(urllib.request.urlopen("
+        "'http://127.0.0.1:46580/users',timeout=10).read().decode())",
+    )
+    if username not in users.stdout:
+        fail("SkyPilot database-backed state did not survive replacement")
+    blob = server_python(
+        context,
+        "import urllib.request; print(urllib.request.urlopen("
+        f"'http://127.0.0.1:46580/upload_v2/blob?user_hash=system-test&blob_id={blob_id}',timeout=10).read().decode())",
+    )
+    if '"exists":true' not in blob.stdout.replace(" ", ""):
+        fail("SkyPilot volume-backed state did not survive replacement")
+
+
+def log_since(slack_seconds: int = 2) -> str:
+    return (
+        datetime.now(timezone.utc) - timedelta(seconds=slack_seconds)
+    ).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def wait_backend_log(context: str, since: str, text: str, timeout: float = 60) -> str:
+    deadline = time.monotonic() + timeout
+    logs = ""
+    while time.monotonic() < deadline:
+        completed = kubectl(
+            context,
+            "logs",
+            f"deployment/{BACKEND}",
+            "--namespace",
+            NAMESPACE,
+            f"--since-time={since}",
+            check=False,
+        )
+        logs = completed.stdout + completed.stderr
+        if text in logs:
+            return logs
+        time.sleep(1)
+    fail(f"backend logs did not report {text!r}:\n{logs[-4000:]}")
+
+
+def wait_backend_log_after(
+    context: str, earlier: str, later: str, timeout: float = 60
+) -> str:
+    deadline = time.monotonic() + timeout
+    logs = ""
+    while time.monotonic() < deadline:
+        completed = kubectl(
+            context,
+            "logs",
+            f"deployment/{BACKEND}",
+            "--namespace",
+            NAMESPACE,
+            "--since-time=1970-01-01T00:00:00Z",
+            check=False,
+        )
+        logs = completed.stdout + completed.stderr
+        if logs.rfind(later) > logs.rfind(earlier) >= 0:
+            return logs
+        time.sleep(1)
+    fail(f"backend logs did not report {later!r} after {earlier!r}:\n{logs[-4000:]}")
+
+
+def assert_version_pair(context: str) -> None:
+    health = skypilot_health(context)
+    if health.get("status") != "healthy":
+        fail(f"SkyPilot health is not healthy: {health}")
+    server_version = str(health.get("version"))
+    if not server_version or server_version != str(health.get("version_on_disk")):
+        fail(f"SkyPilot health did not report one exact version: {health}")
+
+    backend_image = pod(context, BACKEND)["spec"]["containers"][0]["image"]
+    server_image = pod(context, SKYPILOT)["spec"]["containers"][0]["image"]
+    backend_pin = command(
+        "podman",
+        "image",
+        "inspect",
+        backend_image,
+        "--format",
+        '{{ index .Labels "io.skywright.skypilot.version" }}',
+    ).stdout.strip()
+    server_pin = command(
+        "podman",
+        "image",
+        "inspect",
+        server_image,
+        "--format",
+        '{{ index .Labels "io.skywright.skypilot.version" }}',
+    ).stdout.strip()
+    if backend_pin != server_version or server_pin != server_version:
+        fail(
+            "running images and server health do not share one SkyPilot version: "
+            f"backend={backend_pin!r}, server={server_pin!r}, health={server_version!r}"
+        )
+    wait_backend_log(
+        context, "1970-01-01T00:00:00Z", "SkyPilot capability available"
+    )
+
+
+def assert_private_exposure(context: str) -> None:
+    services = json.loads(
+        kubectl(
+            context,
+            "get",
+            "services",
+            "--namespace",
+            NAMESPACE,
+            "--output",
+            "json",
+        ).stdout
+    )["items"]
+    server = next(item for item in services if item["metadata"]["name"] == SKYPILOT)
+    if server["spec"].get("type", "ClusterIP") != "ClusterIP":
+        fail("the SkyPilot Service is not cluster-internal")
+    if any(port.get("nodePort") for port in server["spec"].get("ports", [])):
+        fail("the SkyPilot Service has a NodePort")
+
+    deployments = json.loads(
+        kubectl(
+            context,
+            "get",
+            "deployments",
+            "--namespace",
+            NAMESPACE,
+            "--output",
+            "json",
+        ).stdout
+    )["items"]
+    for deployment in deployments:
+        pod_spec = deployment["spec"]["template"]["spec"]
+        if pod_spec.get("hostNetwork"):
+            fail(f"{deployment['metadata']['name']} uses host networking")
+        for container in pod_spec.get("containers", []):
+            if any(port.get("hostPort") for port in container.get("ports", [])):
+                fail(f"{deployment['metadata']['name']} declares a host port")
+
+    ingresses = kubectl(
+        context,
+        "get",
+        "ingresses",
+        "--namespace",
+        NAMESPACE,
+        "--output",
+        "json",
+        check=False,
+    )
+    if ingresses.returncode == 0 and SKYPILOT in ingresses.stdout:
+        fail("an Ingress exposes the SkyPilot API server")
+    try:
+        with socket.create_connection(("127.0.0.1", 46580), timeout=1):
+            fail("the SkyPilot API server is reachable through loopback port 46580")
+    except OSError:
+        pass
+    if request("/livez")[0] != 200:
+        fail("the backend loopback port forward is unavailable")
+
+
+def replace_pod(context: str, application: str) -> tuple[dict, float]:
+    previous = pod(context, application)
+    started = time.monotonic()
+    kubectl(
+        context,
+        "delete",
+        "pod",
+        previous["metadata"]["name"],
+        "--namespace",
+        NAMESPACE,
+        f"--timeout={ROLLOUT_TIMEOUT}s",
+    )
+    elapsed = time.monotonic() - started
+    wait_rollout(context, application)
+    deadline = time.monotonic() + ROLLOUT_TIMEOUT
+    while time.monotonic() < deadline:
+        try:
+            replacement = pod(context, application)
+            if replacement["metadata"]["uid"] != previous["metadata"]["uid"]:
+                return replacement, elapsed
+        except SystemExit:
+            pass
+        time.sleep(1)
+    fail(f"{application} did not produce one ready replacement pod")
+
+
+def assert_independent_restarts(
+    context: str, username: str, blob_id: str
+) -> None:
+    server_before = pod(context, SKYPILOT)["metadata"]["uid"]
+    since = log_since()
+    replace_pod(context, BACKEND)
+    if pod(context, SKYPILOT)["metadata"]["uid"] != server_before:
+        fail("replacing the backend also replaced the SkyPilot server")
+    wait_http("/readyz", 200)
+    assert_skypilot_state(context, username, blob_id)
+    wait_backend_log(context, since, "SkyPilot capability available")
+
+    backend_before = pod(context, BACKEND)["metadata"]["uid"]
+    since = log_since()
+    _, elapsed = replace_pod(context, SKYPILOT)
+    if elapsed >= 30:
+        fail(f"SkyPilot shutdown exceeded its 30s Kubernetes grace period: {elapsed:.1f}s")
+    if pod(context, BACKEND)["metadata"]["uid"] != backend_before:
+        fail("replacing SkyPilot also replaced the backend")
+    wait_http("/readyz", 200)
+    assert_skypilot_state(context, username, blob_id)
+    time.sleep(3)
+    recent_logs = kubectl(
+        context,
+        "logs",
+        f"deployment/{BACKEND}",
+        "--namespace",
+        NAMESPACE,
+        f"--since-time={since}",
+    ).stdout
+    unavailable_at = recent_logs.rfind("SkyPilot capability unavailable")
+    available_at = recent_logs.rfind("SkyPilot capability available")
+    if unavailable_at > available_at:
+        wait_backend_log(context, log_since(0), "SkyPilot capability available")
+
+
+def patch_server_selector(context: str, selector: str) -> None:
+    kubectl(
+        context,
+        "patch",
+        "service",
+        SKYPILOT,
+        "--namespace",
+        NAMESPACE,
+        "--type=merge",
+        "--patch",
+        json.dumps(
+            {
+                "spec": {
+                    "selector": {
+                        "app.kubernetes.io/name": None,
+                        "skywright.io/system-test": selector,
+                    }
+                }
+            }
+        ),
+    )
+
+
+def restore_server_selector(context: str) -> None:
+    kubectl(
+        context,
+        "patch",
+        "service",
+        SKYPILOT,
+        "--namespace",
+        NAMESPACE,
+        "--type=merge",
+        "--patch",
+        json.dumps(
+            {
+                "spec": {
+                    "selector": {
+                        "skywright.io/system-test": None,
+                        "app.kubernetes.io/name": SKYPILOT,
+                    }
+                }
+            }
+        ),
+    )
+
+
+def assert_skypilot_reachability_loss(context: str) -> None:
+    backend_before = pod(context, BACKEND)["metadata"]["uid"]
+    since = log_since()
+    patch_server_selector(context, "unreachable")
+    recovery_since = None
+    try:
+        logs = wait_backend_log(context, since, "SkyPilot API server is unreachable")
+        if "REACHABILITY" not in logs:
+            fail("SkyPilot reachability loss did not retain its safe cause")
+        wait_http("/livez", 200)
+        wait_http("/readyz", 200)
+        recovery_since = log_since(0)
+    finally:
+        restore_server_selector(context)
+    wait_backend_log(context, recovery_since, "SkyPilot capability available")
+    if pod(context, BACKEND)["metadata"]["uid"] != backend_before:
+        fail("SkyPilot reachability recovery restarted the backend")
+
+
+def mismatched_server_manifest(image: str) -> str:
+    script = (
+        "import json; from http.server import BaseHTTPRequestHandler,HTTPServer; "
+        "H=type('H',(BaseHTTPRequestHandler,),{"
+        "'do_GET':lambda s:(s.send_response(200),s.send_header('Content-Type','application/json'),"
+        "s.end_headers(),s.wfile.write(json.dumps({'status':'healthy','version':'99.99.99'}).encode())),"
+        "'log_message':lambda *a:None}); HTTPServer(('0.0.0.0',46580),H).serve_forever()"
+    )
+    return f"""apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skywright-system-test-version-mismatch
+  namespace: {NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: skywright
+    skywright.io/system-test: version-mismatch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      skywright.io/system-test: version-mismatch
+  template:
+    metadata:
+      labels:
+        skywright.io/system-test: version-mismatch
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10002
+        runAsGroup: 10002
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mismatched-server
+          image: {image}
+          imagePullPolicy: IfNotPresent
+          command: [python, -c]
+          args:
+            - {json.dumps(script)}
+          ports:
+            - name: http
+              containerPort: 46580
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 1
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+"""
+
+
+def assert_version_mismatch(context: str) -> None:
+    backend_before = pod(context, BACKEND)["metadata"]["uid"]
+    server_image = pod(context, SKYPILOT)["spec"]["containers"][0]["image"]
+    kubectl(
+        context,
+        "apply",
+        "--filename",
+        "-",
+        input_text=mismatched_server_manifest(server_image),
+    )
+    patched = False
+    try:
+        wait_rollout(context, "skywright-system-test-version-mismatch", timeout=120)
+        patch_server_selector(context, "version-mismatch")
+        patched = True
+        logs = wait_backend_log(
+            context, "1970-01-01T00:00:00Z", "do not match"
+        )
+        if "VERSION_MISMATCH" not in logs:
+            fail("version mismatch did not remain capability-local and explicit")
+        wait_http("/livez", 200)
+        wait_http("/readyz", 200)
+    finally:
+        if patched:
+            restore_server_selector(context)
+        kubectl(
+            context,
+            "delete",
+            "deployment",
+            "skywright-system-test-version-mismatch",
+            "--namespace",
+            NAMESPACE,
+            "--ignore-not-found",
+            check=False,
+        )
+    wait_backend_log_after(
+        context,
+        "do not match",
+        "SkyPilot capability available",
+    )
+    if pod(context, BACKEND)["metadata"]["uid"] != backend_before:
+        fail("repairing the SkyPilot version pair restarted the backend")
+
+
+def assert_skypilot_database_loss(
+    context: str, username: str, blob_id: str
+) -> None:
+    marker(
+        context,
+        "ALTER DATABASE skypilot WITH ALLOW_CONNECTIONS false; "
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+        "WHERE datname = 'skypilot';",
+    )
+    try:
+        affected = server_python(
+            context,
+            "import urllib.request; request=urllib.request.Request("
+            "'http://127.0.0.1:46580/users'); "
+            "\ntry:\n print(urllib.request.urlopen(request,timeout=10).status)"
+            "\nexcept Exception as failure:\n print(type(failure).__name__)",
+            check=False,
+        )
+        if affected.returncode == 0 and affected.stdout.strip() == "200":
+            fail("SkyPilot work claimed success while its database rejected connections")
+    finally:
+        marker(context, "ALTER DATABASE skypilot WITH ALLOW_CONNECTIONS true;")
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        try:
+            assert_skypilot_state(context, username, blob_id)
+            return
+        except (subprocess.CalledProcessError, SystemExit):
+            time.sleep(2)
+    fail("SkyPilot did not recover the same retained authority after PostgreSQL returned")
+
+
+def assert_backend_database_behavior(context: str) -> None:
+    checksum = marker(
+        context,
+        "SELECT md5sum FROM skywright.databasechangelog "
+        "WHERE id = 'issue-79-persistence-foundation';",
+    ).stdout.strip()
+    if not checksum:
+        fail("could not read the validated Skywright schema checksum")
+    marker(
+        context,
+        "UPDATE skywright.databasechangelog SET md5sum = '9:system-test-invalid' "
+        "WHERE id = 'issue-79-persistence-foundation';",
+    )
+    try:
+        wait_http("/livez", 200)
+        wait_http("/readyz", 503)
+        wait_http("/actuator/health", 503)
+    finally:
+        marker(
+            context,
+            "UPDATE skywright.databasechangelog SET md5sum = "
+            f"'{checksum}' WHERE id = 'issue-79-persistence-foundation';",
+        )
+    wait_http("/readyz", 200)
+
+    backend_before = pod(context, BACKEND)["metadata"]["uid"]
+    kubectl(
+        context,
+        "scale",
+        f"deployment/{POSTGRESQL}",
+        "--namespace",
+        NAMESPACE,
+        "--replicas=0",
+    )
+    try:
+        wait_http("/livez", 200)
+        wait_http("/readyz", 503, request_timeout=10)
+        wait_http("/actuator/health", 503, request_timeout=10)
+        started = time.monotonic()
+        status, body = request("/api/v1/price-sources", timeout=10)
+        elapsed = time.monotonic() - started
+        if status != 503 or elapsed >= 10:
+            fail(f"database-backed request was not bounded at 503: {status} in {elapsed:.1f}s")
+        problem = json.loads(body)
+        if (
+            problem.get("errorCode") != "SKYWRIGHT_CAPABILITY_UNAVAILABLE"
+            or problem.get("unavailableSource") != "PostgreSQL"
+        ):
+            fail(f"database loss returned an unsafe or unstable problem: {problem}")
+    finally:
+        kubectl(
+            context,
+            "scale",
+            f"deployment/{POSTGRESQL}",
+            "--namespace",
+            NAMESPACE,
+            "--replicas=1",
+        )
+    wait_control_plane(context)
+    if pod(context, BACKEND)["metadata"]["uid"] != backend_before:
+        fail("runtime PostgreSQL recovery replaced the backend")
+
+
+def assert_normal_cleanup(context: str, process: subprocess.Popen[str]) -> None:
+    retained = {
+        "database_secret": uid(context, "secret", "skywright-local-database"),
+        "skypilot_secret": uid(
+            context, "secret", "skywright-local-skypilot-database"
+        ),
+        "database_volume": uid(
+            context, "persistentvolumeclaim", "skywright-postgresql-data"
+        ),
+        "skypilot_volume": uid(
+            context, "persistentvolumeclaim", "skywright-skypilot-state"
+        ),
+    }
+    stop(process)
+    for deployment in (BACKEND, SKYPILOT):
+        if kubectl(
+            context,
+            "get",
+            f"deployment/{deployment}",
+            "--namespace",
+            NAMESPACE,
+            check=False,
+        ).returncode == 0:
+            fail(f"normal Skaffold cleanup left {deployment} running")
+    current = {
+        "database_secret": uid(context, "secret", "skywright-local-database"),
+        "skypilot_secret": uid(
+            context, "secret", "skywright-local-skypilot-database"
+        ),
+        "database_volume": uid(
+            context, "persistentvolumeclaim", "skywright-postgresql-data"
+        ),
+        "skypilot_volume": uid(
+            context, "persistentvolumeclaim", "skywright-skypilot-state"
+        ),
+    }
+    if current != retained:
+        fail(f"normal cleanup replaced retained control-plane resources: {current}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--context", required=True)
     arguments = parser.parse_args()
     require_prerequisites(arguments.context)
+    command(str(REPOSITORY / "scripts" / "quality"), "run", "deployment")
     with tempfile.TemporaryDirectory(prefix="skywright-system-test-") as directory:
         log = Path(directory) / "deployment.log"
         unrelated = "skywright-deployment-system-unrelated"
         process = start(arguments.context, log)
         try:
-            command(
-                "kubectl",
-                "--context",
+            kubectl(
                 arguments.context,
                 "apply",
                 "--filename",
                 "-",
                 input_text=(
                     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n"
-                    f"  name: {unrelated}\n  namespace: skywright\n"
+                    f"  name: {unrelated}\n  namespace: {NAMESPACE}\n"
                 ),
-            )
-            secret_uid = uid(arguments.context, "secret", "skywright-local-database")
-            skypilot_secret_uid = uid(
-                arguments.context,
-                "secret",
-                "skywright-local-skypilot-database",
-            )
-            volume_uid = uid(
-                arguments.context,
-                "persistentvolumeclaim",
-                "skywright-postgresql-data",
-            )
-            skypilot_volume_uid = uid(
-                arguments.context,
-                "persistentvolumeclaim",
-                "skywright-skypilot-state",
             )
             marker(
                 arguments.context,
+                f"DROP TABLE IF EXISTS public.{MARKER}; "
                 f"CREATE TABLE public.{MARKER} (value integer NOT NULL); "
                 f"INSERT INTO public.{MARKER} VALUES (82);",
             )
-            skypilot_state_marker(arguments.context, "write")
-            marker(
-                arguments.context,
-                "DROP DATABASE IF EXISTS skypilot WITH (FORCE); "
-                "DROP ROLE IF EXISTS skypilot;",
-            )
+            username, blob_id = write_skypilot_state(arguments.context)
+            assert_version_pair(arguments.context)
+            assert_private_exposure(arguments.context)
+            assert_independent_restarts(arguments.context, username, blob_id)
+            assert_skypilot_reachability_loss(arguments.context)
+            assert_version_mismatch(arguments.context)
+            assert_skypilot_database_loss(arguments.context, username, blob_id)
+            assert_backend_database_behavior(arguments.context)
         finally:
-            stop(process)
-        if kubectl(
-            arguments.context,
-            "get",
-            "deployment/skywright-backend",
-            "--namespace",
-            "skywright",
-            check=False,
-        ).returncode == 0:
-            fail("normal Skaffold cleanup left the backend Deployment running")
-        if kubectl(
-            arguments.context,
-            "get",
-            "deployment/skywright-skypilot-api-server",
-            "--namespace",
-            "skywright",
-            check=False,
-        ).returncode == 0:
-            fail("normal Skaffold cleanup left the SkyPilot Deployment running")
-        if uid(arguments.context, "secret", "skywright-local-database") != secret_uid:
-            fail("normal cleanup replaced local database credentials")
-        if (
-            uid(
-                arguments.context,
-                "secret",
-                "skywright-local-skypilot-database",
-            )
-            != skypilot_secret_uid
-        ):
-            fail("normal cleanup replaced local SkyPilot database credentials")
-        if uid(
-            arguments.context,
-            "persistentvolumeclaim",
-            "skywright-postgresql-data",
-        ) != volume_uid:
-            fail("normal cleanup replaced the local database volume")
-        if (
-            uid(
-                arguments.context,
-                "persistentvolumeclaim",
-                "skywright-skypilot-state",
-            )
-            != skypilot_volume_uid
-        ):
-            fail("normal cleanup replaced the local SkyPilot retained-state volume")
+            assert_normal_cleanup(arguments.context, process)
 
         process = start(arguments.context, log)
         try:
             if "82" not in marker(
                 arguments.context, f"SELECT value FROM public.{MARKER};"
             ).stdout:
-                fail("database state did not survive cleanup and restart")
-            if "skypilot" not in marker(
-                arguments.context,
-                "SELECT datname FROM pg_database WHERE datname = 'skypilot';",
-            ).stdout:
-                fail("SkyPilot database was not provisioned into retained local PostgreSQL state")
-            if "retained" not in skypilot_state_marker(
-                arguments.context, "read"
-            ).stdout:
-                fail("SkyPilot volume state did not survive cleanup and restart")
+                fail("Skywright database state did not survive cleanup and redeployment")
+            assert_skypilot_state(arguments.context, username, blob_id)
         finally:
             stop(process)
+
         command(
             str(REPOSITORY / "scripts" / "deploy"),
             "reset-local-state",
@@ -288,10 +891,11 @@ def main() -> None:
             "configmap",
             unrelated,
             "--namespace",
-            "skywright",
+            NAMESPACE,
             check=False,
         ).returncode != 0:
             fail("local state reset deleted an unrelated resource")
+
         process = start(arguments.context, log)
         try:
             if marker(
@@ -299,11 +903,21 @@ def main() -> None:
                 f"SELECT value FROM public.{MARKER};",
                 check=False,
             ).returncode == 0:
-                fail("database reset retained the old database state")
-            if skypilot_state_marker(
-                arguments.context, "read", check=False
-            ).returncode == 0:
-                fail("local state reset retained the old SkyPilot volume state")
+                fail("local reset retained old Skywright database state")
+            users = server_python(
+                arguments.context,
+                "import urllib.request; print(urllib.request.urlopen("
+                "'http://127.0.0.1:46580/users',timeout=10).read().decode())",
+            )
+            if username in users.stdout:
+                fail("local reset retained old SkyPilot database state")
+            blob = server_python(
+                arguments.context,
+                "import urllib.request; print(urllib.request.urlopen("
+                f"'http://127.0.0.1:46580/upload_v2/blob?user_hash=system-test&blob_id={blob_id}',timeout=10).read().decode())",
+            )
+            if '"exists":true' in blob.stdout.replace(" ", ""):
+                fail("local reset retained old SkyPilot volume state")
         finally:
             stop(process)
             kubectl(
@@ -312,7 +926,7 @@ def main() -> None:
                 "configmap",
                 unrelated,
                 "--namespace",
-                "skywright",
+                NAMESPACE,
                 check=False,
             )
         print("deployment system test passed")

@@ -27,6 +27,8 @@ spec:
               value: EUR
             - name: SPRING_PROFILES_ACTIVE
               value: local
+            - name: SKYWRIGHT_SKYPILOT_BRIDGE_AVAILABILITY_PROBE_INTERVAL
+              value: 2s
             - name: SKYWRIGHT_DATABASE_MIGRATION_URL
               value: jdbc:postgresql://skywright-postgresql:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true
               valueFrom: null

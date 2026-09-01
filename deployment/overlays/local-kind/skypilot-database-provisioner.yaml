@@ -34,6 +34,8 @@ spec:
                 --username=postgres \
                 --dbname=postgres \
                 --set=skypilot_password="$SKYPILOT_DATABASE_PASSWORD" <<'SQL'
+              GRANT CONNECT, CREATE ON DATABASE skywright TO skywright_migration;
+              GRANT CONNECT ON DATABASE skywright TO skywright_runtime;
               SELECT format('CREATE ROLE skypilot LOGIN PASSWORD %L', :'skypilot_password')
                 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'skypilot')\gexec
               SELECT format('ALTER ROLE skypilot PASSWORD %L', :'skypilot_password')\gexec
