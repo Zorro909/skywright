@@ -60,6 +60,100 @@ prerequisite is absent:
 deployment/scripts/system-test --context kind-kind-cluster
 ```
 
+The system test runs the canonical deployment contract suite first, including the rendered-profile,
+release-support, and operator-command checks. Skaffold then builds both production images through
+their normal custom builders, which run the backend bridge and packaged-process suites. The test
+waits for PostgreSQL, SkyPilot, and the backend. It checks the exact image pairing,
+private exposure, independent pod replacement, retained server authority, graceful shutdown,
+SkyPilot reachability and version failures, both database failure modes, ordinary cleanup, and the
+expanded reset. It creates test records only in the named local control-plane state and finishes by
+resetting that state.
+
+## Operating the control plane
+
+Local startup first creates or reuses the Namespace, database Secrets, and persistent volume
+claims. Skaffold applies PostgreSQL and its SkyPilot database provisioner with the two application
+Deployments. The backend init container waits for PostgreSQL. SkyPilot validates its database and
+retained paths before it starts. Skaffold reports success only after PostgreSQL, the provisioner,
+SkyPilot `/api/health`, and backend `/readyz` are ready.
+
+The two application pods are independent. Use these commands for a routine replacement and wait
+for each command to finish before diagnosing the result:
+
+```bash
+kubectl --context <context> --namespace skywright \
+  rollout restart deployment/skywright-backend
+kubectl --context <context> --namespace skywright \
+  rollout status deployment/skywright-backend --timeout=10m
+
+kubectl --context <context> --namespace skywright \
+  rollout restart deployment/skywright-skypilot-api-server
+kubectl --context <context> --namespace skywright \
+  rollout status deployment/skywright-skypilot-api-server --timeout=10m
+```
+
+Replacing the backend must not replace SkyPilot. Replacing SkyPilot must not replace the backend.
+SkyPilot reconstructs database-backed authority from its separate database and reads submitted-file
+and log state from `skywright-skypilot-state`. Kubernetes gives each application 30 seconds to stop.
+The backend bridge drains for at most 5 seconds, and the SkyPilot server uses a 10-second internal
+grace period.
+
+Use the following signals when diagnosing an outage:
+
+- Backend `/livez` reports whether the Java process can serve diagnostics. Backend `/readyz` and
+  `/actuator/health` also require the validated Skywright PostgreSQL connection and compatible
+  Liquibase history.
+- SkyPilot `/api/health` is cluster-internal. Query it with `kubectl exec` or inspect the pod probes.
+  Its `version` and `version_on_disk` values must equal the `io.skywright.skypilot.version` label on
+  both application images.
+- SkyPilot loss does not change backend liveness or readiness. Backend logs report either the safe
+  reachability diagnostic or the exact-version mismatch. Calls through the internal Orchestrator
+  port return `skypilot-unavailable`. The periodic availability probe reconnects after the paired
+  server returns, without a backend restart.
+- `bridge-busy` means a bounded bridge lane is saturated. It is not a SkyPilot availability failure
+  and does not change backend readiness.
+- Skywright PostgreSQL loss keeps `/livez` up but makes `/readyz` and aggregate health return 503.
+  Database-backed HTTP calls return a bounded `SKYWRIGHT_CAPABILITY_UNAVAILABLE` problem naming
+  PostgreSQL. Readiness returns only after connectivity and schema compatibility both pass.
+- SkyPilot database loss does not transfer authority to the backend. The server may become
+  unavailable or fail affected requests. Restore the same database and role, then confirm retained
+  users or operations through a supported SkyPilot API before replacing any volume.
+
+For production, restore missing operator-owned state before applying a bundle. Use the immutable
+bundle command documented below for both forward apply and rollback. Do not edit one Deployment to
+combine images from different bundles. If pairing fails, apply one previously verified bundle by
+digest. The command validates both image attestations and every state prerequisite before mutation.
+
+The private network remains the only access control in this deployment. The SkyPilot Service has no
+Ingress, NodePort, host port, or loopback forward, but it currently has no API authentication.
+Neither application receives provider or registry credentials yet. Issues #72 and #73 own those
+credential and authentication paths.
+
+## Deferred dependency loss
+
+This release qualifies only dependencies that now exist in the deployed control plane. It does not
+add placeholder endpoints, a fake Run Lifecycle State, or cancellation based on lost visibility.
+The remaining dependency-loss rows stay with their owning work:
+
+- Run Store loss starts with [#41](https://github.com/Zorro909/skywright/issues/41). Its consumers
+  retain their own failure tests, including checkpoint publication in
+  [#46](https://github.com/Zorro909/skywright/issues/46), metric persistence in
+  [#60](https://github.com/Zorro909/skywright/issues/60), repatriation in
+  [#53](https://github.com/Zorro909/skywright/issues/53), Metric Views in
+  [#61](https://github.com/Zorro909/skywright/issues/61), and policy enforcement in
+  [#70](https://github.com/Zorro909/skywright/issues/70).
+- Provider and registry loss belongs to
+  [#57](https://github.com/Zorro909/skywright/issues/57).
+- Transfer Worker loss belongs to [#53](https://github.com/Zorro909/skywright/issues/53).
+- Metric View loss belongs to [#61](https://github.com/Zorro909/skywright/issues/61).
+- Runtime or Cost Ceiling unenforceability belongs to
+  [#70](https://github.com/Zorro909/skywright/issues/70).
+
+The whole AMD host is one accepted failure domain. Losing it removes local execution and every
+co-located control-plane capability, including the backend, SkyPilot, Transfer Workers, and Metric
+Views. Existing cloud compute may continue, but Skywright cannot promise to stop, observe, recover,
+or ceiling-enforce it while the host is absent.
+
 ## Production
 
 Create the `skywright` Namespace, a `contour` IngressClass, and private DNS for
@@ -71,6 +165,11 @@ database and state resources:
 - `skywright-production-skypilot-database` Secret with the `connectionUri` key for a separate
   SkyPilot database and role on the operator-managed PostgreSQL service
 - `skywright-skypilot-state` PVC for SkyPilot logs and submitted-file staging
+
+The Skywright migration role owns the `skywright` schema and needs `CONNECT` and `CREATE` on its
+database so Liquibase can install the pinned `btree_gist` extension. The runtime role needs only
+`CONNECT` on the database plus its schema and object privileges. PostgreSQL must make the extension
+available to the migration role before apply.
 
 The production preflight checks the two Secrets' exact key sets and the PVC before Skaffold can
 apply anything. It never prints Secret values. Kustomize references the SkyPilot Secret and PVC but

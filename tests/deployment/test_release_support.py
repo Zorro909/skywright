@@ -70,7 +70,9 @@ class ReleaseSupportTest(unittest.TestCase):
             f"spec:\n  template:\n    spec:\n      containers:\n        - image: {IMAGE}\n"
             "---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n"
             "  name: skywright-skypilot-api-server\n"
-            "spec:\n  template:\n    spec:\n      containers:\n"
+            "spec:\n  template:\n    spec:\n      initContainers:\n"
+            f"        - image: {SKYPILOT_IMAGE}\n"
+            "      containers:\n"
             f"        - image: {SKYPILOT_IMAGE}\n",
             encoding="utf-8",
         )
@@ -178,6 +180,35 @@ class ReleaseSupportTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             bundle = self.build_bundle(Path(directory))
             rewrite_as_schema_v1(bundle)
+
+            completed = subprocess.run(
+                [str(SUPPORT), "verify-bundle", "--directory", str(bundle)],
+                cwd=REPOSITORY,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_verification_accepts_a_retained_single_server_image_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self.build_bundle(Path(directory))
+            manifest = bundle / "release.yaml"
+            image_line = f"        - image: {SKYPILOT_IMAGE}\n"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(image_line, "", 1),
+                encoding="utf-8",
+            )
+            checksums = bundle / "SHA256SUMS"
+            lines = checksums.read_text(encoding="utf-8").splitlines()
+            lines[0] = subprocess.run(
+                ["sha256sum", str(manifest)],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()[0] + "  release.yaml"
+            checksums.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
             completed = subprocess.run(
                 [str(SUPPORT), "verify-bundle", "--directory", str(bundle)],

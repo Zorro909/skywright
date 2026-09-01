@@ -27,6 +27,40 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: wait-for-skypilot-database
+          image: skywright-skypilot-api-server
+          command:
+            - python
+            - -c
+            - |
+              import os
+              import time
+
+              import psycopg2
+
+              while True:
+                  try:
+                      connection = psycopg2.connect(
+                          os.environ["SKYPILOT_DB_CONNECTION_URI"],
+                          connect_timeout=1,
+                      )
+                      connection.close()
+                      break
+                  except psycopg2.OperationalError:
+                      time.sleep(1)
+          env:
+            - name: SKYPILOT_DB_CONNECTION_URI
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-skypilot-database
+                  key: connectionUri
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
       containers:
         - name: skypilot-api-server
           image: skywright-skypilot-api-server

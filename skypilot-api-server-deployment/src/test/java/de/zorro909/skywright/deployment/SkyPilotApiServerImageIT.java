@@ -101,7 +101,8 @@ final class SkyPilotApiServerImageIT {
 			.isEqualTo(skyPilotVersion());
 		assertThat(inspectImage("{{index .Config.Labels \"org.opencontainers.image.base.digest\"}}").strip())
 			.isEqualTo("sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7");
-		assertThat(inspectImage("{{json .Config.Env}}")).doesNotContain("SKYPILOT_DB_CONNECTION_URI", "postgresql://");
+		assertThat(inspectImage("{{json .Config.Env}}").strip()).contains("OPENBLAS_NUM_THREADS=1")
+			.doesNotContain("SKYPILOT_DB_CONNECTION_URI", "postgresql://");
 		assertThat(docker("logs", serverContainer)).doesNotContain(databasePassword);
 	}
 

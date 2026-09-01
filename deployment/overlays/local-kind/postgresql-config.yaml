@@ -15,7 +15,8 @@ data:
     CREATE ROLE skywright_migration LOGIN PASSWORD :'migration_password';
     CREATE ROLE skywright_runtime LOGIN PASSWORD :'runtime_password';
     CREATE SCHEMA skywright AUTHORIZATION skywright_migration;
-    GRANT CONNECT ON DATABASE skywright TO skywright_migration, skywright_runtime;
+    GRANT CONNECT, CREATE ON DATABASE skywright TO skywright_migration;
+    GRANT CONNECT ON DATABASE skywright TO skywright_runtime;
     GRANT USAGE ON SCHEMA skywright TO skywright_runtime;
     ALTER DEFAULT PRIVILEGES FOR ROLE skywright_migration IN SCHEMA skywright
       GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO skywright_runtime;

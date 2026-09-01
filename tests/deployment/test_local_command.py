@@ -96,6 +96,8 @@ elif name == 'podman' and 'inspect' in sys.argv:
             skaffold = calls[-1]
             self.assertEqual(skaffold["name"], "skaffold")
             self.assertIn("local-kind", skaffold["args"])
+            self.assertIn("--port-forward=user", skaffold["args"])
+            self.assertNotIn("--port-forward", skaffold["args"])
             self.assertEqual(
                 skaffold["docker_host"],
                 "unix://" + str(Path(directory) / "podman" / "podman.sock"),
