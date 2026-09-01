@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   qualify-main:
-    name: Build main deployment image
+    name: Build main deployment images
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     steps:
@@ -116,6 +116,9 @@ jobs:
           REQUESTED_RUN_ID: ${{ inputs.release_run_id }}
         run: |
           classification="$(deployment/scripts/release-support classify-version "$REQUESTED_VERSION")"
+          skypilot_version="$(deployment/scripts/release-support shared-skypilot-version \
+            --pom pom.xml \
+            --lock graalpy-environment/graalpy.lock)"
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
           scripts/quality identity \
@@ -131,6 +134,7 @@ jobs:
           echo "version=$REQUESTED_VERSION" >> "$GITHUB_OUTPUT"
           echo "classification=$classification" >> "$GITHUB_OUTPUT"
           echo "release_run_id=${REQUESTED_RUN_ID:-$GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "skypilot_version=$skypilot_version" >> "$GITHUB_OUTPUT"
       - name: Require the successful main quality gate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -154,55 +158,85 @@ jobs:
       - name: Build, test, and identify the control-plane images
         env:
           BACKEND_TAG: ghcr.io/zorro909/skywright-backend:${{ github.sha }}
+          SKYPILOT_VERSION: ${{ steps.release.outputs.skypilot_version }}
           SKYPILOT_TAG: ghcr.io/zorro909/skywright-skypilot-api-server:${{ github.sha }}
         run: |
-          if backend_digest="$(oras resolve "$BACKEND_TAG" 2>/dev/null)" && \
-              skypilot_digest="$(oras resolve "$SKYPILOT_TAG" 2>/dev/null)"; then
-            docker pull "$BACKEND_TAG"
-            docker pull "$SKYPILOT_TAG"
-            backend_revision="$(docker image inspect \
-              --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
-              "$BACKEND_TAG")"
-            skypilot_revision="$(docker image inspect \
-              --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
-              "$SKYPILOT_TAG")"
-            if [[ "$backend_revision" != "$GITHUB_SHA" || "$skypilot_revision" != "$GITHUB_SHA" ]]; then
-              echo "The existing backend image tag does not identify this source commit." >&2
-              exit 1
-            fi
-            jq --null-input \
-              --arg backend "ghcr.io/zorro909/skywright-backend@$backend_digest" \
-              --arg skypilot "ghcr.io/zorro909/skywright-skypilot-api-server@$skypilot_digest" \
-              '{builds:[{imageName:"skywright-backend",tag:$backend},{imageName:"skywright-skypilot-api-server",tag:$skypilot}]}' \
-              > build-artifacts.json
+          backend_image=""
+          skypilot_image=""
+          missing=()
+          if backend_digest="$(oras resolve "$BACKEND_TAG" 2>/dev/null)"; then
+            backend_image="ghcr.io/zorro909/skywright-backend@$backend_digest"
+          else
+            missing+=(skywright-backend)
+          fi
+          if skypilot_digest="$(oras resolve "$SKYPILOT_TAG" 2>/dev/null)"; then
+            skypilot_image="ghcr.io/zorro909/skywright-skypilot-api-server@$skypilot_digest"
+          else
+            missing+=(skywright-skypilot-api-server)
+          fi
+          if (( ${#missing[@]} == 0 )); then
             scripts/quality run image --frontend-dependencies-ready
           else
-            skaffold build \
+            build=(skaffold build \
               --profile production \
               --default-repo ghcr.io/zorro909 \
               --tag "$GITHUB_SHA" \
-              --file-output build-artifacts.json
+              --file-output newly-built-artifacts.json)
+            for image in "${missing[@]}"; do
+              build+=(--build-image "$image")
+            done
+            "${build[@]}"
+            if [[ -z "$backend_image" ]]; then
+              backend_image="$(jq --raw-output \
+                '.builds[] | select(.imageName == "skywright-backend") | .tag' \
+                newly-built-artifacts.json)"
+            fi
+            if [[ -z "$skypilot_image" ]]; then
+              skypilot_image="$(jq --raw-output \
+                '.builds[] | select(.imageName == "skywright-skypilot-api-server") | .tag' \
+                newly-built-artifacts.json)"
+            fi
           fi
+          for tag in "$BACKEND_TAG" "$SKYPILOT_TAG"; do
+            docker pull "$tag"
+            revision="$(docker image inspect \
+              --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+              "$tag")"
+            image_skypilot_version="$(docker image inspect \
+              --format '{{ index .Config.Labels "io.skywright.skypilot.version" }}' \
+              "$tag")"
+            if [[ "$revision" != "$GITHUB_SHA" ]]; then
+              echo "Existing image $tag does not identify this source commit." >&2
+              exit 1
+            fi
+            if [[ "$image_skypilot_version" != "$SKYPILOT_VERSION" ]]; then
+              echo "Image $tag does not use shared SkyPilot $SKYPILOT_VERSION." >&2
+              exit 1
+            fi
+          done
+          jq --null-input \
+            --arg backend "$backend_image" \
+            --arg skypilot "$skypilot_image" \
+            '{builds:[{imageName:"skywright-backend",tag:$backend},{imageName:"skywright-skypilot-api-server",tag:$skypilot}]}' \
+            > skaffold-build-artifacts.json
       - name: Render the digest-pinned production release
+        env:
+          SKYPILOT_VERSION: ${{ steps.release.outputs.skypilot_version }}
         run: |
           skaffold render \
             --profile production \
-            --build-artifacts build-artifacts.json \
+            --build-artifacts skaffold-build-artifacts.json \
             --output release.yaml
-          backend_image="$(jq --raw-output '.builds[0].tag' build-artifacts.json)"
-          skypilot_image="$(jq --raw-output '.builds[1].tag' build-artifacts.json)"
-          case "$backend_image" in
-            ghcr.io/zorro909/skywright-backend@sha256:*) ;;
-            *) echo "Skaffold did not record a digest-pinned backend image." >&2; exit 1 ;;
-          esac
-          case "$skypilot_image" in
-            ghcr.io/zorro909/skywright-skypilot-api-server@sha256:*) ;;
-            *) echo "Skaffold did not record a digest-pinned SkyPilot image." >&2; exit 1 ;;
-          esac
+          deployment/scripts/release-support finalize-build-artifacts \
+            --input skaffold-build-artifacts.json \
+            --output build-artifacts.json \
+            --source-commit "$GITHUB_SHA" \
+            --skypilot-version "$SKYPILOT_VERSION"
       - name: Build the Deployment Bundle payload
         env:
           VERSION: ${{ steps.release.outputs.version }}
           RELEASE_RUN_ID: ${{ steps.release.outputs.release_run_id }}
+          SKYPILOT_VERSION: ${{ steps.release.outputs.skypilot_version }}
         run: |
           deployment/scripts/release-support build-bundle \
             --release-yaml release.yaml \
@@ -210,8 +244,9 @@ jobs:
             --output deployment-bundle \
             --version "$VERSION" \
             --source-commit "$GITHUB_SHA" \
-            --backend-image "$(jq --raw-output '.builds[0].tag' build-artifacts.json)" \
-            --skypilot-image "$(jq --raw-output '.builds[1].tag' build-artifacts.json)" \
+            --backend-image "$(jq --raw-output '.builds[] | select(.imageName == "skywright-backend") | .tag' build-artifacts.json)" \
+            --skypilot-image "$(jq --raw-output '.builds[] | select(.imageName == "skywright-skypilot-api-server") | .tag' build-artifacts.json)" \
+            --skypilot-version "$SKYPILOT_VERSION" \
             --workflow deployment-release.yml \
             --run-id "$RELEASE_RUN_ID"
       - name: Publish or recover the immutable bundle
@@ -248,6 +283,7 @@ jobs:
           BUNDLE_DIGEST: ${{ steps.publish.outputs.bundle_digest }}
           BACKEND_DIGEST: ${{ steps.publish.outputs.backend_digest }}
           SKYPILOT_DIGEST: ${{ steps.publish.outputs.skypilot_digest }}
+          SKYPILOT_VERSION: ${{ steps.release.outputs.skypilot_version }}
         run: |
           {
             echo "## Deployment release $VERSION"
@@ -257,4 +293,5 @@ jobs:
             echo "- Bundle: \`ghcr.io/zorro909/skywright-deployment@$BUNDLE_DIGEST\`"
             echo "- Backend: \`ghcr.io/zorro909/skywright-backend@$BACKEND_DIGEST\`"
             echo "- SkyPilot API server: \`ghcr.io/zorro909/skywright-skypilot-api-server@$SKYPILOT_DIGEST\`"
+            echo "- Shared SkyPilot version: \`$SKYPILOT_VERSION\`"
           } >> "$GITHUB_STEP_SUMMARY"

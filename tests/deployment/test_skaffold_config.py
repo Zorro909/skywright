@@ -24,10 +24,23 @@ class SkaffoldConfigTest(unittest.TestCase):
         self.assertIn("- name: local-kind", config)
         self.assertIn("- name: production", config)
         self.assertIn("statusCheck: true", config)
+        self.assertIn("push: false", config)
         self.assertIn("address: 127.0.0.1", config)
         self.assertNotIn("resourceName: skywright-skypilot-api-server", config)
         self.assertIn('"**/target/**"', config)
         self.assertIn('"**/node_modules/**"', config)
+        for paired_input in (
+            "graalpy-environment/pom.xml",
+            "graalpy-environment/graalpy.lock",
+        ):
+            self.assertEqual(config.count(f"- {paired_input}"), 2)
+        for backend_input in (
+            "sdk/pom.xml",
+            "sdk/src/skywright/_configuration_resources/**",
+            "sdk/src/skywright/_metric_resources/**",
+            "sdk/src/skywright/_run_definition_resources/**",
+        ):
+            self.assertIn(f"- {backend_input}", config)
 
 
 if __name__ == "__main__":

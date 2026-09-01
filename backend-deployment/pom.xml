@@ -110,6 +110,7 @@
             <image.name>${backend.container.image}</image.name>
             <openapi.document>${maven.multiModuleProjectDirectory}/api/skywright-api/src/main/resources/META-INF/openapi/skywright-api.yaml</openapi.document>
             <source.revision>${git.commit.id.full}</source.revision>
+            <skypilot.version>${skypilot.version}</skypilot.version>
             <postgresql.container.image>${postgresql.container.image}</postgresql.container.image>
           </systemPropertyVariables>
         </configuration>

@@ -718,6 +718,61 @@ def production_preflight(context: str) -> None:
         abort("the contour IngressClass does not exist")
 
 
+def verify_release_attestation(subject: str) -> None:
+    run(
+        [
+            tool("gh"),
+            "attestation",
+            "verify",
+            f"oci://{subject}",
+            "--repo",
+            "Zorro909/skywright",
+            "--signer-workflow",
+            "Zorro909/skywright/.github/workflows/deployment-release.yml",
+            "--deny-self-hosted-runners",
+        ]
+    )
+
+
+def recorded_bundle(context: str, deployment: str) -> str:
+    return run(
+        [
+            tool("kubectl"),
+            "--context",
+            context,
+            "get",
+            "deployment",
+            deployment,
+            "--namespace",
+            NAMESPACE,
+            "--output",
+            "jsonpath={.metadata.annotations.skywright\\.io/deployment-bundle}",
+            "--ignore-not-found",
+        ],
+        capture=True,
+    ).stdout.strip()
+
+
+def deployment_exists(context: str, deployment: str) -> bool:
+    result = run(
+        [
+            tool("kubectl"),
+            "--context",
+            context,
+            "get",
+            "deployment",
+            deployment,
+            "--namespace",
+            NAMESPACE,
+            "--output",
+            "name",
+            "--ignore-not-found",
+        ],
+        capture=True,
+    )
+    return result.stdout.strip() == f"deployment.apps/{deployment}"
+
+
 def apply_bundle(arguments: argparse.Namespace) -> None:
     if BUNDLE_PATTERN.fullmatch(arguments.bundle) is None:
         abort("deployment bundle must use the canonical repository and an OCI sha256 digest")
@@ -729,19 +784,7 @@ def apply_bundle(arguments: argparse.Namespace) -> None:
     ).stdout.strip()
     if skaffold_version != SKAFFOLD_VERSION:
         abort(f"Skaffold {SKAFFOLD_VERSION} is required, got {skaffold_version!r}")
-    run(
-        [
-            tool("gh"),
-            "attestation",
-            "verify",
-            f"oci://{arguments.bundle}",
-            "--repo",
-            "Zorro909/skywright",
-            "--signer-workflow",
-            "Zorro909/skywright/.github/workflows/deployment-release.yml",
-            "--deny-self-hosted-runners",
-        ]
-    )
+    verify_release_attestation(arguments.bundle)
     with tempfile.TemporaryDirectory(prefix="skywright-bundle-") as directory:
         bundle = Path(directory)
         run(
@@ -755,24 +798,20 @@ def apply_bundle(arguments: argparse.Namespace) -> None:
         ]
         if arguments.allow_prerelease:
             verification.append("--allow-prerelease")
-        run(verification, capture=True)
+        metadata = json.loads(run(verification, capture=True).stdout)
+        images = [str(metadata["backendImage"])]
+        if metadata["schemaVersion"] >= 2:
+            images.append(str(metadata["skypilotImage"]))
+        for image in images:
+            verify_release_attestation(image)
         production_preflight(arguments.context)
-        previous = run(
-            [
-                tool("kubectl"),
-                "--context",
-                arguments.context,
-                "get",
-                "deployment",
-                "skywright-backend",
-                "--namespace",
-                NAMESPACE,
-                "--output",
-                "jsonpath={.metadata.annotations.skywright\\.io/deployment-bundle}",
-                "--ignore-not-found",
-            ],
-            capture=True,
-        ).stdout.strip()
+        backend_previous = recorded_bundle(arguments.context, "skywright-backend")
+        skypilot_previous = recorded_bundle(
+            arguments.context, "skywright-skypilot-api-server"
+        )
+        if backend_previous and skypilot_previous and backend_previous != skypilot_previous:
+            abort("the backend and SkyPilot Deployments record different bundle digests")
+        previous = backend_previous or skypilot_previous
         print(f"currently deployed bundle: {previous or '<none>'}")
         run(
             [
@@ -784,13 +823,18 @@ def apply_bundle(arguments: argparse.Namespace) -> None:
                 "--status-check=true",
             ]
         )
+        deployments = ["deployment/skywright-backend"]
+        if metadata["schemaVersion"] >= 2 or deployment_exists(
+            arguments.context, "skywright-skypilot-api-server"
+        ):
+            deployments.append("deployment/skywright-skypilot-api-server")
         run(
             [
                 tool("kubectl"),
                 "--context",
                 arguments.context,
                 "annotate",
-                "deployment/skywright-backend",
+                *deployments,
                 "--namespace",
                 NAMESPACE,
                 f"skywright.io/deployment-bundle={arguments.bundle}",
