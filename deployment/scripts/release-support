@@ -209,7 +209,14 @@ def validate_payload(directory: Path, allow_prerelease: bool) -> dict[str, objec
             }
         if artifacts != expected_artifacts:
             abort("build artifacts do not identify the release control-plane images exactly")
-        if sorted(manifest_images) != sorted([backend_image, skypilot_image]):
+        # Retained bundles have one server reference; current bundles also use the
+        # paired image in the database-wait init container.
+        skypilot_references = manifest_images.count(skypilot_image)
+        if (
+            manifest_images.count(backend_image) != 1
+            or skypilot_references not in {1, 2}
+            or len(manifest_images) != 1 + skypilot_references
+        ):
             abort("release manifest does not identify exactly the release control-plane images")
     return metadata
 
