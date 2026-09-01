@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Skaffold custom builder for the tested SkyPilot API-server image."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+REPOSITORY = Path(__file__).resolve().parents[2]
+MAVEN_PLUGIN = "io.fabric8:docker-maven-plugin:0.49.0"
+
+
+def fail(message: str) -> None:
+    raise SystemExit(message)
+
+
+def main() -> None:
+    image = os.environ.get("IMAGE", "").strip()
+    push = os.environ.get("PUSH_IMAGE", "").strip().lower()
+    platforms = os.environ.get("PLATFORMS", "").strip()
+    if not image:
+        fail("Skaffold did not provide IMAGE")
+    if push not in {"true", "false"}:
+        fail("PUSH_IMAGE must be true or false")
+    if platforms != "linux/amd64":
+        fail(f"unsupported build platform: {platforms or '<missing>'}")
+
+    maven = os.environ.get("SKYWRIGHT_MAVEN", str(REPOSITORY / "mvnw"))
+    common = (
+        maven,
+        "--batch-mode",
+        "--no-transfer-progress",
+        "-DexcludedGroups=real-service",
+        f"-Dskypilot.container.image={image}",
+        "-pl",
+        "skypilot-api-server-deployment",
+        "-am",
+    )
+    subprocess.run((*common, "clean", "verify"), cwd=REPOSITORY, check=True)
+    if push == "true":
+        subprocess.run(
+            (
+                maven,
+                "--batch-mode",
+                f"-Dskypilot.container.image={image}",
+                "-pl",
+                "skypilot-api-server-deployment",
+                f"{MAVEN_PLUGIN}:push",
+            ),
+            cwd=REPOSITORY,
+            check=True,
+        )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.CalledProcessError as error:
+        sys.exit(error.returncode)

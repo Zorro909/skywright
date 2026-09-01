@@ -9,6 +9,9 @@ from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 BUILDER = REPOSITORY / "deployment" / "scripts" / "build-backend-image"
+SKYPILOT_BUILDER = (
+    REPOSITORY / "deployment" / "scripts" / "build-skypilot-api-server-image"
+)
 
 
 class ImageBuilderTest(unittest.TestCase):
@@ -138,6 +141,44 @@ class ImageBuilderTest(unittest.TestCase):
             )
 
             self.assertEqual(completed.returncode, 17)
+
+    def test_builds_and_tests_the_skypilot_server_image_as_its_own_artifact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            log = temporary / "commands.log"
+            fake_maven = temporary / "mvnw"
+            fake_maven.write_text(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COMMAND_LOG\"\n",
+                encoding="utf-8",
+            )
+            fake_maven.chmod(0o755)
+            environment = os.environ | {
+                "COMMAND_LOG": str(log),
+                "IMAGE": "skywright-skypilot-api-server:test",
+                "PLATFORMS": "linux/amd64",
+                "PUSH_IMAGE": "false",
+                "SKYWRIGHT_MAVEN": str(fake_maven),
+            }
+
+            completed = subprocess.run(
+                [str(SKYPILOT_BUILDER)],
+                cwd=REPOSITORY,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            command = log.read_text(encoding="utf-8")
+            self.assertIn("clean verify", command)
+            self.assertIn("-pl skypilot-api-server-deployment", command)
+            self.assertIn(
+                "-Dskypilot.container.image=skywright-skypilot-api-server:test",
+                command,
+            )
 
 
 if __name__ == "__main__":

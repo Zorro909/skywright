@@ -7,3 +7,4 @@ resources:
   - postgresql-deployment.yaml
 patches:
   - path: backend-patch.yaml
+  - path: skypilot-api-server-patch.yaml

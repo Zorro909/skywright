@@ -38,6 +38,11 @@ spec:
                 secretKeyRef:
                   name: skywright-local-database
                   key: runtimePassword
+            - name: SKYPILOT_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-local-skypilot-database
+                  key: password
           ports:
             - name: postgresql
               containerPort: 5432

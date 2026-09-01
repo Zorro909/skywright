@@ -11,6 +11,9 @@ from pathlib import Path
 REPOSITORY = Path(__file__).resolve().parents[2]
 SUPPORT = REPOSITORY / "deployment" / "scripts" / "release-support"
 IMAGE = "ghcr.io/zorro909/skywright-backend@sha256:" + "b" * 64
+SKYPILOT_IMAGE = (
+    "ghcr.io/zorro909/skywright-skypilot-api-server@sha256:" + "c" * 64
+)
 
 
 class ReleaseSupportTest(unittest.TestCase):
@@ -20,11 +23,25 @@ class ReleaseSupportTest(unittest.TestCase):
         output = directory / "bundle"
         release.write_text(
             "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: skywright-backend\n"
-            f"spec:\n  template:\n    spec:\n      containers:\n        - image: {IMAGE}\n",
+            f"spec:\n  template:\n    spec:\n      containers:\n        - image: {IMAGE}\n"
+            "---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n"
+            "  name: skywright-skypilot-api-server\n"
+            "spec:\n  template:\n    spec:\n      containers:\n"
+            f"        - image: {SKYPILOT_IMAGE}\n",
             encoding="utf-8",
         )
         artifacts.write_text(
-            json.dumps({"builds": [{"imageName": "skywright-backend", "tag": IMAGE}]}),
+            json.dumps(
+                {
+                    "builds": [
+                        {"imageName": "skywright-backend", "tag": IMAGE},
+                        {
+                            "imageName": "skywright-skypilot-api-server",
+                            "tag": SKYPILOT_IMAGE,
+                        },
+                    ]
+                }
+            ),
             encoding="utf-8",
         )
         subprocess.run(
@@ -43,6 +60,8 @@ class ReleaseSupportTest(unittest.TestCase):
                 "a" * 40,
                 "--backend-image",
                 IMAGE,
+                "--skypilot-image",
+                SKYPILOT_IMAGE,
                 "--workflow",
                 "deployment-release.yml",
                 "--run-id",
@@ -71,6 +90,7 @@ class ReleaseSupportTest(unittest.TestCase):
             )
             self.assertEqual(metadata["schemaVersion"], 1)
             self.assertEqual(metadata["backendImage"], IMAGE)
+            self.assertEqual(metadata["skypilotImage"], SKYPILOT_IMAGE)
             self.assertEqual(metadata["profile"], "production")
             self.assertEqual(metadata["hostname"], "skywright.internal")
             self.assertFalse(metadata["prerelease"])
@@ -127,7 +147,7 @@ class ReleaseSupportTest(unittest.TestCase):
             )
 
             self.assertNotEqual(completed.returncode, 0)
-            self.assertIn("exactly the release backend image", completed.stderr)
+            self.assertIn("exactly the release control-plane images", completed.stderr)
 
     def test_verification_rejects_invalid_release_provenance_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

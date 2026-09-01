@@ -36,6 +36,22 @@ build:
             - "**/target/**"
             - "**/node_modules/**"
             - "**/.angular/**"
+    - image: skywright-skypilot-api-server
+      context: .
+      custom:
+        buildCommand: deployment/scripts/build-skypilot-api-server-image
+        dependencies:
+          paths:
+            - pom.xml
+            - .mvn/**
+            - mvnw
+            - graalpy-environment/graalpy.lock
+            - skypilot-api-server-deployment/pom.xml
+            - skypilot-api-server-deployment/src/**
+            - deployment/scripts/build-skypilot-api-server-image
+            - skaffold.yaml
+          ignore:
+            - "**/target/**"
 manifests:
   kustomize:
     paths:

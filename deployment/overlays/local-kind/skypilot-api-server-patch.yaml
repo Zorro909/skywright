@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skywright-skypilot-api-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: skypilot-api-server
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SKYPILOT_DB_CONNECTION_URI
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-local-skypilot-database
+                  key: connectionUri

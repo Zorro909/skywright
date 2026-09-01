@@ -35,6 +35,8 @@ spec:
               value: production
             - name: SKYWRIGHT_DEPLOYMENT_REPORTING_CURRENCY
               value: EUR
+            - name: SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT
+              value: http://skywright-skypilot-api-server:46580
             - name: SKYWRIGHT_DATABASE_MIGRATION_URL
               valueFrom:
                 secretKeyRef:
