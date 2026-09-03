@@ -49,7 +49,13 @@ def command(
     )
 
 
-def kubectl(context: str, *arguments: str, check: bool = True, input_text: str | None = None):
+def kubectl(
+    context: str,
+    *arguments: str,
+    check: bool = True,
+    input_text: str | None = None,
+    timeout: float | None = None,
+):
     return command(
         "kubectl",
         "--context",
@@ -57,6 +63,7 @@ def kubectl(context: str, *arguments: str, check: bool = True, input_text: str |
         *arguments,
         check=check,
         input_text=input_text,
+        timeout=timeout,
     )
 
 
@@ -139,6 +146,40 @@ def wait_control_plane(context: str) -> None:
         wait_rollout(context, deployment)
     wait_http("/readyz", 200)
     wait_http("/actuator/health", 200)
+
+
+def qualify_orchestrator(
+    context: str, qualification: str, expected_cause: str
+) -> dict[str, object]:
+    backend_pod = pod(context, BACKEND)["metadata"]["name"]
+    arguments = [qualification]
+    if expected_cause:
+        arguments.append(expected_cause)
+    completed = kubectl(
+        context,
+        "exec",
+        backend_pod,
+        "--namespace",
+        NAMESPACE,
+        "--",
+        "java",
+        "--enable-native-access=ALL-UNNAMED",
+        "--sun-misc-unsafe-memory-access=allow",
+        "-Xss16m",
+        "-Dloader.main=de.zorro909.skywright.backend.orchestration.OrchestratorQualificationMain",
+        "-cp",
+        "/opt/skywright/application.jar",
+        "org.springframework.boot.loader.launch.PropertiesLauncher",
+        *arguments,
+        timeout=180,
+    )
+    try:
+        result = json.loads(completed.stdout.splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as failure:
+        fail(f"orchestrator qualification returned no JSON result: {completed.stdout}")
+    if result.get("cause") != expected_cause:
+        fail(f"orchestrator qualification returned the wrong safe cause: {result}")
+    return result
 
 
 def wait_ready(process: subprocess.Popen[str], log: Path, timeout: float = 900) -> None:
@@ -466,6 +507,99 @@ def assert_private_exposure(context: str) -> None:
     if request("/livez")[0] != 200:
         fail("the backend loopback port forward is unavailable")
 
+    probe_name = "skywright-system-test-network-probe"
+    server_image = pod(context, SKYPILOT)["spec"]["containers"][0]["image"]
+    probe_script = (
+        "import urllib.request; "
+        "url='http://skywright-skypilot-api-server:46580/api/health'; "
+        "\ntry:\n urllib.request.urlopen(url,timeout=3); "
+        "raise SystemExit('SkyPilot Service was reachable from an unauthorized pod')"
+        "\nexcept Exception as failure:\n"
+        " text=repr(failure); print(text); "
+        "raise SystemExit(0 if 'timed out' in text else 1)"
+    )
+    probe_manifest = f"""apiVersion: v1
+kind: Pod
+metadata:
+  name: {probe_name}
+  namespace: {NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: skywright
+    skywright.io/system-test: network-probe
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10002
+    runAsGroup: 10002
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: probe
+      image: {server_image}
+      imagePullPolicy: IfNotPresent
+      command: [python, -c]
+      args:
+        - {json.dumps('import time; time.sleep(300)')}
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        readOnlyRootFilesystem: true
+"""
+    kubectl(context, "apply", "--filename", "-", input_text=probe_manifest)
+    try:
+        kubectl(
+            context,
+            "wait",
+            f"pod/{probe_name}",
+            "--namespace",
+            NAMESPACE,
+            "--for=condition=Ready",
+            "--timeout=120s",
+        )
+        denied = kubectl(
+            context,
+            "exec",
+            probe_name,
+            "--namespace",
+            NAMESPACE,
+            "--",
+            "python",
+            "-c",
+            probe_script,
+            check=False,
+            timeout=15,
+        )
+        if denied.returncode != 0 or "timed out" not in denied.stdout:
+            fail(
+                "a non-backend pod could reach the SkyPilot Service or did not "
+                f"observe policy denial: {denied.stdout}{denied.stderr}"
+            )
+    finally:
+        kubectl(
+            context,
+            "delete",
+            "pod",
+            probe_name,
+            "--namespace",
+            NAMESPACE,
+            "--ignore-not-found",
+            check=False,
+        )
+
+
+def assert_bridge_saturation(context: str) -> None:
+    backend_before = pod(context, BACKEND)["metadata"]["uid"]
+    result = qualify_orchestrator(context, "saturation", "SATURATION")
+    if result.get("code") != "bridge-busy" or result.get("available") is not True:
+        fail(f"bridge saturation changed capability availability: {result}")
+    wait_http("/livez", 200)
+    wait_http("/readyz", 200)
+    if pod(context, BACKEND)["metadata"]["uid"] != backend_before:
+        fail("bridge saturation restarted the backend")
+
 
 def replace_pod(context: str, application: str) -> tuple[dict, float]:
     previous = pod(context, application)
@@ -584,6 +718,9 @@ def assert_skypilot_reachability_loss(context: str) -> None:
         logs = wait_backend_log(context, since, "SkyPilot API server is unreachable")
         if "REACHABILITY" not in logs:
             fail("SkyPilot reachability loss did not retain its safe cause")
+        result = qualify_orchestrator(context, "unavailable", "REACHABILITY")
+        if result.get("code") != "skypilot-unavailable" or result.get("available") is not False:
+            fail(f"SkyPilot reachability loss returned an unsafe result: {result}")
         wait_http("/livez", 200)
         wait_http("/readyz", 200)
         recovery_since = log_since(0)
@@ -618,6 +755,8 @@ spec:
   template:
     metadata:
       labels:
+        app.kubernetes.io/name: {SKYPILOT}
+        app.kubernetes.io/part-of: skywright
         skywright.io/system-test: version-mismatch
     spec:
       automountServiceAccountToken: false
@@ -670,6 +809,9 @@ def assert_version_mismatch(context: str) -> None:
         )
         if "VERSION_MISMATCH" not in logs:
             fail("version mismatch did not remain capability-local and explicit")
+        result = qualify_orchestrator(context, "unavailable", "VERSION_MISMATCH")
+        if result.get("code") != "skypilot-unavailable" or result.get("available") is not False:
+            fail(f"SkyPilot version mismatch returned an unsafe result: {result}")
         wait_http("/livez", 200)
         wait_http("/readyz", 200)
     finally:
@@ -859,6 +1001,7 @@ def main() -> None:
             username, blob_id = write_skypilot_state(arguments.context)
             assert_version_pair(arguments.context)
             assert_private_exposure(arguments.context)
+            assert_bridge_saturation(arguments.context)
             assert_independent_restarts(arguments.context, username, blob_id)
             assert_skypilot_reachability_loss(arguments.context)
             assert_version_mismatch(arguments.context)

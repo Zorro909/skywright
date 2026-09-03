@@ -365,17 +365,23 @@ elif name == 'kubectl' and 'jsonpath=' in ' '.join(sys.argv):
                 capture_output=True,
                 text=True,
             )
-            self.assertEqual(legacy_rollback.returncode, 0, legacy_rollback.stderr)
-            legacy_calls = [json.loads(line) for line in log.read_text().splitlines()]
-            legacy_annotation = next(
-                call
-                for call in legacy_calls
-                if call["name"] == "kubectl" and "annotate" in call["args"]
-            )
-            self.assertIn("deployment/skywright-backend", legacy_annotation["args"])
+            self.assertNotEqual(legacy_rollback.returncode, 0)
             self.assertIn(
-                "deployment/skywright-skypilot-api-server",
-                legacy_annotation["args"],
+                "schema-v1 backend-only bundles cannot be applied",
+                legacy_rollback.stderr,
+            )
+            legacy_calls = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertFalse(
+                any(
+                    call["name"] == "skaffold" and "apply" in call["args"]
+                    for call in legacy_calls
+                )
+            )
+            self.assertFalse(
+                any(
+                    call["name"] == "kubectl" and "annotate" in call["args"]
+                    for call in legacy_calls
+                )
             )
 
             log.unlink()

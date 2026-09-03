@@ -24,6 +24,7 @@ class ControlPlaneSystemTestContractTest(unittest.TestCase):
             {
                 "assert_version_pair",
                 "assert_private_exposure",
+                "assert_bridge_saturation",
                 "assert_independent_restarts",
                 "assert_skypilot_reachability_loss",
                 "assert_version_mismatch",
@@ -37,6 +38,10 @@ class ControlPlaneSystemTestContractTest(unittest.TestCase):
         self.assertIn("SkyPilot capability available", self.source)
         self.assertIn("VERSION_MISMATCH", self.source)
         self.assertIn("REACHABILITY", self.source)
+        self.assertIn("OrchestratorQualificationMain", self.source)
+        self.assertIn('"bridge-busy"', self.source)
+        self.assertIn('"skypilot-unavailable"', self.source)
+        self.assertIn("skywright-system-test-network-probe", self.source)
 
     def test_uses_only_the_public_local_command_and_named_local_reset(self) -> None:
         self.assertIn('"local", "--context"', self.source)

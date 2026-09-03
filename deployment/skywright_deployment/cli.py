@@ -805,6 +805,14 @@ def apply_bundle(arguments: argparse.Namespace) -> None:
         for image in images:
             verify_release_attestation(image)
         production_preflight(arguments.context)
+        skypilot_exists = deployment_exists(
+            arguments.context, "skywright-skypilot-api-server"
+        )
+        if metadata["schemaVersion"] == 1 and skypilot_exists:
+            abort(
+                "schema-v1 backend-only bundles cannot be applied after the "
+                "SkyPilot Deployment exists"
+            )
         backend_previous = recorded_bundle(arguments.context, "skywright-backend")
         skypilot_previous = recorded_bundle(
             arguments.context, "skywright-skypilot-api-server"
@@ -824,9 +832,7 @@ def apply_bundle(arguments: argparse.Namespace) -> None:
             ]
         )
         deployments = ["deployment/skywright-backend"]
-        if metadata["schemaVersion"] >= 2 or deployment_exists(
-            arguments.context, "skywright-skypilot-api-server"
-        ):
+        if metadata["schemaVersion"] >= 2:
             deployments.append("deployment/skywright-skypilot-api-server")
         run(
             [
