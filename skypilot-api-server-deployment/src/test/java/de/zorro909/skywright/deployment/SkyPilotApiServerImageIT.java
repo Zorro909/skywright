@@ -179,9 +179,16 @@ final class SkyPilotApiServerImageIT {
 			.asBoolean()).isTrue();
 
 		var stoppedContainer = serverContainer;
+		var pidOne = Long.parseLong(docker("inspect", "--format", "{{.State.Pid}}", stoppedContainer).strip());
+		var serverProcesses = containerProcesses(stoppedContainer, pidOne);
+		assertThat(serverProcesses).filteredOn(process -> process.hostPid() == pidOne && process.containerPid() == 1)
+			.hasSize(1);
+		assertThat(serverProcesses).filteredOn(process -> process.containerPid() != 1).isNotEmpty();
 		var started = Instant.now();
-		docker("stop", "--time", "25", stoppedContainer);
+		docker("kill", "--signal=TERM", stoppedContainer);
+		awaitProcessExit(serverProcesses, Duration.ofSeconds(25));
 		assertThat(Duration.between(started, Instant.now())).isLessThan(Duration.ofSeconds(25));
+		assertThat(awaitContainerExit(stoppedContainer, Duration.ofSeconds(1))).isIn("0", "143");
 		assertThat(docker("inspect", "--format", "{{.State.ExitCode}}", stoppedContainer).strip()).isIn("0", "143");
 		assertThat(docker("inspect", "--format", "{{.State.Pid}}", stoppedContainer).strip()).isEqualTo("0");
 		docker("rm", stoppedContainer);
@@ -304,6 +311,58 @@ final class SkyPilotApiServerImageIT {
 		throw new AssertionError("Container did not stop within " + timeout);
 	}
 
+	private static List<ContainerProcess> containerProcesses(String container, long pidOne) throws Exception {
+		try {
+			return podmanContainerProcesses(container);
+		}
+		catch (AssertionError unsupportedPodmanDescriptors) {
+			return dockerContainerProcesses(container, pidOne);
+		}
+	}
+
+	private static List<ContainerProcess> podmanContainerProcesses(String container) throws Exception {
+		var processes = parseContainerProcesses(
+				docker("top", container, "hpid", "pid", "ppid").lines().skip(1).toList(), true, -1);
+		if (processes.stream().noneMatch(process -> process.containerPid() == 1)) {
+			throw new AssertionError("container PID 1 was absent from Podman process inventory");
+		}
+		return processes;
+	}
+
+	private static List<ContainerProcess> dockerContainerProcesses(String container, long pidOne) throws Exception {
+		return parseContainerProcesses(docker("top", container, "-eo", "pid,ppid").lines().skip(1).toList(), false,
+				pidOne);
+	}
+
+	private static List<ContainerProcess> parseContainerProcesses(List<String> lines, boolean includesContainerPid,
+			long pidOne) {
+		var processes = new ArrayList<ContainerProcess>();
+		for (var line : lines) {
+			var columns = line.strip().split("\\s+");
+			if (columns.length != (includesContainerPid ? 3 : 2)) {
+				throw new AssertionError("Unexpected docker top row: " + line);
+			}
+			var hostPid = Long.parseLong(columns[0]);
+			var containerPid = includesContainerPid ? Long.parseLong(columns[1]) : hostPid == pidOne ? 1 : -1;
+			var parentPid = Long.parseLong(columns[includesContainerPid ? 2 : 1]);
+			processes.add(new ContainerProcess(hostPid, containerPid, parentPid));
+		}
+		return List.copyOf(processes);
+	}
+
+	private static void awaitProcessExit(List<ContainerProcess> processes, Duration timeout) throws Exception {
+		var deadline = Instant.now().plus(timeout);
+		while (Instant.now().isBefore(deadline)) {
+			var live = processes.stream().filter(ContainerProcess::isAlive).toList();
+			if (live.isEmpty()) {
+				return;
+			}
+			Thread.sleep(Duration.ofMillis(50));
+		}
+		throw new AssertionError("SkyPilot PID 1 or descendants survived SIGTERM: "
+				+ processes.stream().filter(ContainerProcess::isAlive).toList());
+	}
+
 	private static String inspectImage(String format) throws Exception {
 		return docker("image", "inspect", "--format", format, imageName());
 	}
@@ -349,6 +408,14 @@ final class SkyPilotApiServerImageIT {
 
 	private static String name(String purpose) {
 		return "skywright-skypilot-" + purpose + "-" + UUID.randomUUID().toString().substring(0, 8);
+	}
+
+	private record ContainerProcess(long hostPid, long containerPid, long parentPid) {
+
+		boolean isAlive() {
+			return ProcessHandle.of(this.hostPid).map(ProcessHandle::isAlive).orElse(false);
+		}
+
 	}
 
 	private static String imageName() {

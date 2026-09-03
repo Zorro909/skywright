@@ -41,8 +41,9 @@ Use `verify` to build the production image and run its packaged-process tests:
 
 The tests use the repository-pinned PostgreSQL image. They run the server with a read-only root
 filesystem, check `/api/health`, verify fixed non-root PID 1 execution and safe failure output,
-perform a bounded SIGTERM shutdown, replace the container, and read PostgreSQL-backed user state
-and an uploaded file through supported SkyPilot endpoints.
+record PID 1 and its server descendants, send SIGTERM without a force-kill fallback, require every
+recorded process to exit inside 25 seconds, replace the container, and read PostgreSQL-backed user
+state and an uploaded file through supported SkyPilot endpoints.
 
 ## External state
 
@@ -100,8 +101,8 @@ docker stop --time 25 skywright-skypilot-api-server
 Successful health output has `status` set to `healthy` and both `version` and `version_on_disk` set
 to the root `skypilot.version` pin. The image sets SkyPilot's request-drain period to 10 seconds.
 The extra container timeout covers its fixed five-second propagation wait and worker cleanup. The
-packaged test requires the process to exit before 25 seconds and verifies that the container has no
-remaining PID.
+packaged test requires PID 1 and every recorded server descendant to exit before 25 seconds. It
+sends only SIGTERM and verifies that the stopped container has no remaining PID.
 
 Delete `skypilot-api-server.env` when it is no longer needed. Keep the PostgreSQL database and
 `skywright-skypilot-state` volume across image replacement. Kubernetes ownership and release

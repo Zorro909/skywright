@@ -62,6 +62,9 @@ class RenderedProfilesTest(unittest.TestCase):
                 service = resource(
                     manifest, "Service", "skywright-skypilot-api-server"
                 )
+                network_policy = resource(
+                    manifest, "NetworkPolicy", "skywright-skypilot-api-server"
+                )
 
                 self.assertIn("image: skywright-skypilot-api-server", server)
                 self.assertIn("app.kubernetes.io/name: skywright-skypilot-api-server", server)
@@ -76,6 +79,20 @@ class RenderedProfilesTest(unittest.TestCase):
                 self.assertIn("type: ClusterIP", service)
                 self.assertIn("port: 46580", service)
                 self.assertIn("targetPort: http", service)
+                self.assertIn("podSelector:", network_policy)
+                self.assertIn(
+                    "app.kubernetes.io/name: skywright-skypilot-api-server",
+                    network_policy,
+                )
+                self.assertEqual(
+                    network_policy.count(
+                        "app.kubernetes.io/name: skywright-backend"
+                    ),
+                    1,
+                )
+                self.assertIn("policyTypes:\n  - Ingress", network_policy)
+                self.assertIn("protocol: TCP", network_policy)
+                self.assertIn("port: 46580", network_policy)
                 self.assertEqual(server.count("path: /api/health"), 3)
                 self.assertIn("startupProbe:", server)
                 self.assertIn("livenessProbe:", server)

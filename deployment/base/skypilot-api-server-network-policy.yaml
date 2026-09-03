@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: skywright-skypilot-api-server
+  labels:
+    app.kubernetes.io/name: skywright-skypilot-api-server
+    app.kubernetes.io/part-of: skywright
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: skywright-skypilot-api-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: skywright-backend
+      ports:
+        - protocol: TCP
+          port: 46580

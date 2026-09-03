@@ -48,6 +48,7 @@
     <skypilot.python.version>3.12.11</skypilot.python.version>
     <spring-javaformat.version>0.0.48</spring-javaformat.version>
     <skypilot.version>0.13.0</skypilot.version>
+    <tomcat.version>11.0.25</tomcat.version>
   </properties>
 
   <build>

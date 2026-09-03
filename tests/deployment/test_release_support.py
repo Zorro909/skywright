@@ -60,6 +60,60 @@ def rewrite_as_schema_v1(bundle: Path) -> None:
     )
 
 
+def rewrite_as_schema_v2(bundle: Path) -> None:
+    manifest = bundle / "release.yaml"
+    manifest.write_text(
+        "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n"
+        "  name: skywright-backend\nspec:\n  template:\n    spec:\n"
+        f"      containers:\n        - image: {IMAGE}\n"
+        "---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n"
+        "  name: skywright-skypilot-api-server\n"
+        "spec:\n  template:\n    spec:\n"
+        f"      containers:\n        - image: {SKYPILOT_IMAGE}\n",
+        encoding="utf-8",
+    )
+    artifacts = bundle / "build-artifacts.json"
+    artifacts.write_text(
+        json.dumps(
+            {
+                "builds": [
+                    {"imageName": "skywright-backend", "tag": IMAGE},
+                    {
+                        "imageName": "skywright-skypilot-api-server",
+                        "tag": SKYPILOT_IMAGE,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    metadata_path = bundle / "release-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["schemaVersion"] = 2
+    metadata.pop("skypilotVersion")
+    metadata_path.write_text(
+        json.dumps(metadata, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
+    checksums = bundle / "SHA256SUMS"
+    checksums.write_text(
+        "".join(
+            subprocess.run(
+                ["sha256sum", str(bundle / filename)],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()[0]
+            + f"  {filename}\n"
+            for filename in (
+                "release.yaml",
+                "build-artifacts.json",
+                "release-metadata.json",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+
 class ReleaseSupportTest(unittest.TestCase):
     def build_bundle(self, directory: Path, version: str = "v1.2.3") -> Path:
         release = directory / "release.yaml"
@@ -191,7 +245,24 @@ class ReleaseSupportTest(unittest.TestCase):
 
             self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_verification_accepts_a_retained_single_server_image_bundle(self) -> None:
+    def test_verification_accepts_the_explicit_retained_schema_v2_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self.build_bundle(Path(directory))
+            rewrite_as_schema_v2(bundle)
+
+            completed = subprocess.run(
+                [str(SUPPORT), "verify-bundle", "--directory", str(bundle)],
+                cwd=REPOSITORY,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_verification_rejects_a_current_bundle_missing_one_server_image_reference(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             bundle = self.build_bundle(Path(directory))
             manifest = bundle / "release.yaml"
@@ -218,7 +289,8 @@ class ReleaseSupportTest(unittest.TestCase):
                 text=True,
             )
 
-            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("exactly the release control-plane images", completed.stderr)
 
     def test_verification_rejects_a_manifest_with_an_extra_image_reference(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -249,6 +321,77 @@ class ReleaseSupportTest(unittest.TestCase):
 
             self.assertNotEqual(completed.returncode, 0)
             self.assertIn("exactly the release control-plane images", completed.stderr)
+
+    def test_verification_rejects_current_images_outside_the_paired_deployments(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self.build_bundle(Path(directory))
+            manifest = bundle / "release.yaml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "name: skywright-skypilot-api-server",
+                    "name: unrelated-server",
+                ),
+                encoding="utf-8",
+            )
+            checksums = bundle / "SHA256SUMS"
+            lines = checksums.read_text(encoding="utf-8").splitlines()
+            lines[0] = subprocess.run(
+                ["sha256sum", str(manifest)],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()[0] + "  release.yaml"
+            checksums.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            completed = subprocess.run(
+                [str(SUPPORT), "verify-bundle", "--directory", str(bundle)],
+                cwd=REPOSITORY,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("exact paired Deployment image layout", completed.stderr)
+
+    def test_verification_rejects_server_images_only_in_ordinary_containers(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self.build_bundle(Path(directory))
+            manifest = bundle / "release.yaml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "      initContainers:\n"
+                    f"        - image: {SKYPILOT_IMAGE}\n"
+                    "      containers:\n",
+                    "      containers:\n"
+                    f"        - image: {SKYPILOT_IMAGE}\n",
+                ),
+                encoding="utf-8",
+            )
+            checksums = bundle / "SHA256SUMS"
+            lines = checksums.read_text(encoding="utf-8").splitlines()
+            lines[0] = subprocess.run(
+                ["sha256sum", str(manifest)],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()[0] + "  release.yaml"
+            checksums.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            completed = subprocess.run(
+                [str(SUPPORT), "verify-bundle", "--directory", str(bundle)],
+                cwd=REPOSITORY,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("exact paired Deployment image layout", completed.stderr)
 
     def test_verification_rejects_invalid_release_provenance_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

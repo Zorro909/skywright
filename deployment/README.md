@@ -3,8 +3,9 @@
 Skywright uses one `skaffold.yaml` with a shared Kustomize base and two explicit profiles. The
 base deploys the backend and SkyPilot API server as separate Deployments. The backend reaches
 SkyPilot only through the `skywright-skypilot-api-server` ClusterIP Service on port 46580. Only the
-backend receives an Ingress or local loopback port forward. This slice does not provision kind,
-production PostgreSQL, Vault, Contour, DNS, private networking, or cloud-provider credentials.
+backend pod may connect to that Service, enforced by a NetworkPolicy. Only the backend receives an
+Ingress or local loopback port forward. This slice does not provision kind, a NetworkPolicy-capable
+CNI, production PostgreSQL, Vault, Contour, DNS, private networking, or cloud-provider credentials.
 
 ## Local kind
 
@@ -63,11 +64,11 @@ deployment/scripts/system-test --context kind-kind-cluster
 The system test runs the canonical deployment contract suite first, including the rendered-profile,
 release-support, and operator-command checks. Skaffold then builds both production images through
 their normal custom builders, which run the backend bridge and packaged-process suites. The test
-waits for PostgreSQL, SkyPilot, and the backend. It checks the exact image pairing,
-private exposure, independent pod replacement, retained server authority, graceful shutdown,
-SkyPilot reachability and version failures, both database failure modes, ordinary cleanup, and the
-expanded reset. It creates test records only in the named local control-plane state and finishes by
-resetting that state.
+waits for PostgreSQL, SkyPilot, and the backend. It checks the exact image pairing, proves another
+pod cannot reach SkyPilot, invokes the packaged Orchestrator during saturation and dependency loss,
+tests independent pod replacement, retained server authority, both database failure modes, ordinary
+cleanup, and the expanded reset. It creates test records only in the named local control-plane state
+and finishes by resetting that state.
 
 ## Operating the control plane
 
@@ -124,10 +125,11 @@ bundle command documented below for both forward apply and rollback. Do not edit
 combine images from different bundles. If pairing fails, apply one previously verified bundle by
 digest. The command validates both image attestations and every state prerequisite before mutation.
 
-The private network remains the only access control in this deployment. The SkyPilot Service has no
-Ingress, NodePort, host port, or loopback forward, but it currently has no API authentication.
-Neither application receives provider or registry credentials yet. Issues #72 and #73 own those
-credential and authentication paths.
+The SkyPilot NetworkPolicy admits TCP port 46580 only from pods labelled as the backend. The Service
+has no Ingress, NodePort, host port, or loopback forward, but it currently has no API authentication.
+The cluster must use a CNI that enforces Kubernetes NetworkPolicy. Neither application receives
+provider or registry credentials yet. Issues #72 and #73 own those credential and authentication
+paths.
 
 ## Deferred dependency loss
 
@@ -207,6 +209,12 @@ bundle digest, applies the supplied `release.yaml` without rebuilding or renderi
 Skaffold status checking. Only then does it record the selected digest on both Deployments. A
 failed apply leaves the prior records alone. Reapplying a bundle is idempotent, and rollback uses
 the same path. Prereleases need the explicit `--allow-prerelease` option.
+
+Retained schema-v1 bundles contain only the backend image. They may be applied only before the
+SkyPilot Deployment exists, and the operator records their digest only on the backend. Once the
+SkyPilot Deployment exists, the operator rejects schema v1 before apply. Retained schema-v2 bundles
+remain paired rollback inputs. Schema v3 requires the current manifest layout, including the exact
+SkyPilot image in both its database-wait init container and server container.
 
 Published bundles, backend images, and SkyPilot API-server images are immutable rollback inputs and
 must remain in GHCR indefinitely. Repository automation does not delete published release
