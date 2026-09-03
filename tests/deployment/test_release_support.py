@@ -356,6 +356,43 @@ class ReleaseSupportTest(unittest.TestCase):
             self.assertNotEqual(completed.returncode, 0)
             self.assertIn("exact paired Deployment image layout", completed.stderr)
 
+    def test_verification_rejects_server_images_only_in_ordinary_containers(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self.build_bundle(Path(directory))
+            manifest = bundle / "release.yaml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "      initContainers:\n"
+                    f"        - image: {SKYPILOT_IMAGE}\n"
+                    "      containers:\n",
+                    "      containers:\n"
+                    f"        - image: {SKYPILOT_IMAGE}\n",
+                ),
+                encoding="utf-8",
+            )
+            checksums = bundle / "SHA256SUMS"
+            lines = checksums.read_text(encoding="utf-8").splitlines()
+            lines[0] = subprocess.run(
+                ["sha256sum", str(manifest)],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()[0] + "  release.yaml"
+            checksums.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            completed = subprocess.run(
+                [str(SUPPORT), "verify-bundle", "--directory", str(bundle)],
+                cwd=REPOSITORY,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("exact paired Deployment image layout", completed.stderr)
+
     def test_verification_rejects_invalid_release_provenance_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             bundle = self.build_bundle(Path(directory))

@@ -89,6 +89,28 @@ def image_records(backend_image: str, skypilot_image: str) -> list[dict[str, str
     ]
 
 
+def deployment_container_images(document: str) -> dict[str, list[str]]:
+    images: dict[str, list[str]] = {"initContainers": [], "containers": []}
+    active_role: str | None = None
+    role_indent = -1
+    for line in document.splitlines():
+        role = re.match(r"^(\s*)(initContainers|containers):\s*(?:#.*)?$", line)
+        if role is not None:
+            active_role = role.group(2)
+            role_indent = len(role.group(1))
+            continue
+        if active_role is None or not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= role_indent:
+            active_role = None
+            continue
+        image = re.match(r"^\s*(?:-\s*)?image:\s*([^\s#]+)\s*(?:#.*)?$", line)
+        if image is not None:
+            images[active_role].append(image.group(1))
+    return images
+
+
 def finalize_build_artifacts(arguments: argparse.Namespace) -> None:
     if COMMIT_PATTERN.fullmatch(arguments.source_commit) is None:
         abort("source commit must be a full lowercase Git object ID")
@@ -222,23 +244,22 @@ def validate_payload(directory: Path, allow_prerelease: bool) -> dict[str, objec
         ):
             abort("release manifest does not identify exactly the release control-plane images")
         if schema_version == 3:
-            deployment_images: dict[str, list[str]] = {}
+            deployment_images: dict[str, dict[str, list[str]]] = {}
             for document in re.split(r"(?m)^---\s*$", manifest):
                 if re.search(r"(?m)^kind:\s*Deployment\s*$", document) is None:
                     continue
                 name = re.search(r"(?m)^  name:\s*([^\s#]+)\s*(?:#.*)?$", document)
                 if name is not None:
-                    deployment_images[name.group(1)] = re.findall(
-                        r"^\s*(?:-\s*)?image:\s*([^\s#]+)\s*(?:#.*)?$",
-                        document,
-                        flags=re.MULTILINE,
+                    deployment_images[name.group(1)] = deployment_container_images(
+                        document
                     )
-            if deployment_images.get("skywright-backend") != [
-                backend_image
-            ] or deployment_images.get("skywright-skypilot-api-server") != [
-                skypilot_image,
-                skypilot_image,
-            ]:
+            if deployment_images.get("skywright-backend") != {
+                "initContainers": [],
+                "containers": [backend_image],
+            } or deployment_images.get("skywright-skypilot-api-server") != {
+                "initContainers": [skypilot_image],
+                "containers": [skypilot_image],
+            }:
                 abort(
                     "schema-v3 manifest does not contain the exact paired "
                     "Deployment image layout"
