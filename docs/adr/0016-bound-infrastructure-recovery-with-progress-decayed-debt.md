@@ -14,6 +14,14 @@ When refusing a recovery, the gate atomically publishes one immutable, run-level
 
 The gate also fails closed before opening an Execution Attempt when it cannot read or validate the complete history, or when it cannot publish evidence that must be durable. It never permits project code to run from unverified state merely because exhaustion could not be proven. If publication of the exhaustion record itself fails, the process still exits nonzero and the eventual retained SkyPilot terminal fact supplies the lifecycle evidence; Skywright does not manufacture an exhaustion record it failed to persist.
 
+## Recovery admission and previous writers
+
+On 2026-09-04, the owner accepted a fail-closed writer rule for the first local AMD workflow. Before admitting a recovered Execution Attempt, Skywright must establish that the previous Training Process has stopped or has lost storage write authority. An unreachable node, missing heartbeat, absent termination report or new attempt identity does not establish either condition. If neither can be established, recovery remains unavailable and no new Training Project code starts. Record the uncertainty without inventing a termination cause or a Recovery Exhaustion Record.
+
+This deliberately sacrifices recovery availability during an uncertain network partition. Per-object conditional writes do not establish ownership across checkpoints, shared progress and pruning. Automatic recovery while an earlier process may still write requires a separate accepted fencing design and qualification. Tests must suspend an old writer, attempt recovery, and resume that writer to verify that admission and accepted progress respect this rule. Implementation is tracked in [#52](https://github.com/Zorro909/skywright/issues/52), [#56](https://github.com/Zorro909/skywright/issues/56) and [local qualification #235](https://github.com/Zorro909/skywright/issues/235).
+
+Recovery Debt evidence must also survive checkpoint payload retention. Removing a checkpoint's bytes cannot erase the durable publication evidence that reduced debt or change a historical admission result.
+
 ## Lifecycle and continuation
 
 A Recovery Exhaustion Record directly derives the Run Lifecycle State as `failed`, even before SkyPilot reflects the process exit. It records a run-level policy decision, not why an earlier process disappeared. The refused process never becomes an Execution Attempt and writes no Execution Termination Report, so no Execution Termination Cause is invented for it.

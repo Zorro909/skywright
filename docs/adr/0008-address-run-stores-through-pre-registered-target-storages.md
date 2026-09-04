@@ -47,6 +47,14 @@ The order is copy, verify, then delete, and never any other order; per-object ch
 
 A running Metric View is restarted at the new location once migration completes, and its URL resolves against the Run Record rather than an explicit Storage Location, so a human watching a run is not dropped by the move. ADR 0007 already established that an instance holds no state beyond a logdir pointer.
 
+## Output metadata and verification on consumption
+
+On 2026-09-04, the owner accepted metadata-only output listing and download-link generation. The backend validates the requested immutable output identity, Run access, current Storage Location and metadata without downloading the output body. A descriptor exposes the expected size and checksum and distinguishes recorded verification evidence from a fresh verification of the bytes. Issuing a link does not claim that the backend has just read and verified the object.
+
+Skywright consumers verify downloaded bytes against the expected identity, size and checksum before accepting them as valid. This includes checkpoint recovery and application download flows. Raw external downloads receive the expected verification metadata; their successful HTTP response alone is not evidence of content integrity. Actual consumption uses bounded streaming or staged files and retains safe checkpoint decoding. Copy/verify/publish/delete ordering for transfers remains required.
+
+This changes the current implementation's full-body verification before presigning, avoiding a second backend download solely to issue a URL. Implementation and S3 request-count/memory tests are tracked in [#217](https://github.com/Zorro909/skywright/issues/217).
+
 ## The Transfer Worker
 
 Copying between two Storage Locations, verifying against checksums, publishing, and optionally deleting the source is one protocol serving three jobs: repatriation, seeding a resumed run, and ADR 0004's dataset materialization. It is therefore one **Transfer Worker** role rather than three implementations that could drift in their integrity guarantees. What varies is where it runs — the backend host by default, source-side for a workstation-originated dataset upload, since a backend-hosted worker cannot read a workstation's disk — and never the training instance, which must release an expensive accelerator rather than stay alive pushing bytes. Dispatching workers onto other hosts is a separate mechanism outside this map; without it, workers run on the backend host only.
