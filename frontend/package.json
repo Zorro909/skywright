@@ -42,17 +42,17 @@
     "@axe-core/playwright": "4.13.0",
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.62.1",
-    "@vitest/browser-playwright": "4.1.10",
-    "@vitest/coverage-v8": "4.1.10",
-    "angular-eslint": "22.1.0",
+    "@vitest/browser-playwright": "4.1.11",
+    "@vitest/coverage-v8": "4.1.11",
+    "angular-eslint": "22.2.0",
     "axe-core": "4.13.0",
-    "eslint": "10.8.1",
+    "eslint": "10.9.1",
     "eslint-config-prettier": "10.1.8",
     "jsdom": "30.0.1",
     "openapi-typescript": "7.13.0",
     "prettier": "3.9.6",
-    "typescript": "6.0.2",
-    "typescript-eslint": "8.67.0",
-    "vitest": "4.1.10"
+    "typescript": "7.0.2",
+    "typescript-eslint": "8.69.0",
+    "vitest": "4.1.11"
   }
 }
