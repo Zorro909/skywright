@@ -23,6 +23,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   qualify-main:
@@ -34,13 +35,23 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Set up GraalVM Community
-        uses: ./.github/actions/setup-java
+      - name: Plan deployment image qualification
+        id: plan
+        env:
+          BASE_REVISION: ${{ github.event.before }}
+        run: |
+          if [[ -z "$BASE_REVISION" || "$BASE_REVISION" =~ ^0+$ ]]; then BASE_REVISION=HEAD^; fi
+          scripts/quality plan --base "$BASE_REVISION" --github-output "$GITHUB_OUTPUT"
+      - name: Prepare qualified native dependencies
+        if: steps.plan.outputs.image == 'true'
+        uses: ./.github/actions/prepare-graalpy
       - name: Set up frontend prerequisites
+        if: steps.plan.outputs.image == 'true'
         uses: ./.github/actions/setup-frontend
         with:
           install-browser: false
       - name: Install pinned Skaffold
+        if: steps.plan.outputs.image == 'true'
         env:
           SKAFFOLD_SHA256: 702344081860a587c57937cd55dfa2e70f124c05d6fb845319832ee23fd144a8
         run: |
@@ -53,6 +64,7 @@ jobs:
           chmod +x "$install_dir/skaffold"
           echo "$install_dir" >> "$GITHUB_PATH"
       - name: Build and test through the deployment image contract
+        if: steps.plan.outputs.image == 'true'
         run: skaffold build --profile local-kind --tag "$GITHUB_SHA" 2>&1 | tee deployment-image-build.log
       - name: Retain main deployment build diagnostics
         if: always()
@@ -85,8 +97,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Set up GraalVM Community
-        uses: ./.github/actions/setup-java
+      - name: Prepare qualified native dependencies
+        uses: ./.github/actions/prepare-graalpy
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:

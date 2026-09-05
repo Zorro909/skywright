@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.JsonNode;
@@ -27,6 +28,7 @@ final class StructuredLoggingIT {
 	Path runtimeDirectory;
 
 	@Test
+	@Tag("real-service")
 	void correlatedRequestIsRecordedAsSafeStructuredConsoleEvent() throws Exception {
 		var port = BackendProcess.availablePort();
 		var correlationId = "acceptance-correlation";
@@ -66,6 +68,7 @@ final class StructuredLoggingIT {
 	}
 
 	@Test
+	@Tag("real-service")
 	void localProfileUsesReadableConsoleWithoutChangingReadiness() throws Exception {
 		var port = BackendProcess.availablePort();
 		try (var backend = BackendProcess.startWithDatabase(runtimeDirectory, Map.of(), List.of(),

@@ -5,7 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 mkdir -p target/test-results target/coverage
 
-uv run --locked --group ml-test pytest tests/test_run_store_system.py \
+uv run --locked --group ml-test pytest tests/test_run_store_system.py -m real_service \
   --junitxml target/test-results/integration.xml \
   --cov skywright \
   --cov-report xml:target/coverage/integration.xml \

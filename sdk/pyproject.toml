@@ -93,18 +93,10 @@ include = [
 path = "hatch_build.py"
 
 [tool.pytest.ini_options]
-testpaths = [
-  "tests/test_configuration_contract.py",
-  "tests/test_dataset_cli.py",
-  "tests/test_metric_contract.py",
-  "tests/test_package.py",
-  "tests/test_release.py",
-  "tests/test_run_definition.py",
-  "tests/test_run_store.py",
-  "tests/test_run_store_system.py",
-  "tests/test_training_process.py",
-]
+testpaths = ["tests"]
+addopts = "-m 'not system and not real_service'"
 markers = [
+  "real_service: tests requiring actual container services",
   "system: installed-artifact tests that require a built wheel",
 ]
 

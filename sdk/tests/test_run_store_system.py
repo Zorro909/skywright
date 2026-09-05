@@ -43,6 +43,8 @@ from skywright.run_store import (
     TargetStorage,
 )
 
+pytestmark = pytest.mark.real_service
+
 SEAWEEDFS_IMAGE = (
     "docker.io/chrislusf/seaweedfs:4.42@"
     "sha256:f7cbc8bdbbf60a1aaba7d61784a3bdff3ec1e0657f6ad0b26d5b6ab2cd9d0dc6"

@@ -50,8 +50,11 @@ diagnostic metadata for 90 days. `main` and merge-queue runs identify `github.sh
 workflows must call `scripts/quality identity --event tag` with the peeled tag commit as both the
 tested revision and tag commit, so another checkout cannot be described as the released source.
 
-Superseded runs are cancelled only for the same pull request. `main`, merge queue, tag, and
-publication runs use unique concurrency identities and finish independently. Ordinary verification
+Superseded Repository Quality verification jobs are cancelled only for the same pull request.
+The native preparation job has an independent non-cancelling queue and finishes saving reusable
+wheel dependencies. Before expensive verification, jobs reject a superseded PR head.
+The workflow record can remain active while that native preparation finishes. `main`, merge queue,
+tag, and publication runs use unique concurrency identities and finish independently. Ordinary verification
 uses no repository, publication, infrastructure, or cloud credentials and remains runnable for fork
 pull requests.
 
@@ -66,10 +69,18 @@ Third-party actions must use a full commit SHA with a release comment. Dependabo
 weekly grouped pull requests for GitHub Actions, Maven, Python/uv, and pnpm; they pass through the
 normal gate and are never automatically merged.
 
-Caches may contain only downloaded Maven, pnpm, uv, browser, or analysis dependencies managed by
-their tools. Keys include the runner platform, tool version supplied by the setup action, and the
-owning lockfile where applicable. Generated sources, compiled output, distributions, images, test
-results, and publication inputs are never restored as build authority. Pull-request caches are not
+Caches contain downloaded Maven, pnpm, uv, browser, or analysis dependencies managed by their
+tools. Qualified GraalPy native dependencies are the explicit exception: their canonical identity
+includes inherited runtime versions, lock and native build inputs, JDK digest and platform.
+Restores verify the identity and installed package/version metadata; preparation also imports native
+packages using the current Maven-resolved runtime. Prebuilt Maven packaging rejects mismatches. Keys include the runner platform, tool version supplied by the setup action, and the
+owning lockfile where applicable. pnpm may restore compatible downloads by toolchain prefix and
+always performs a frozen install. Browser keys use Ubuntu release, architecture and exact Playwright
+version, independently of unrelated frontend dependency edits. Generated application sources, compiled application output, distributions, images, test results,
+and publication inputs are never restored from a cross-run cache as build authority. CI may hand
+verified backend JARs and reactor artifacts to browser/image consumers within the same workflow run
+and tested revision. Consumers verify source identity, run ID, complete file inventory and SHA-256
+checksums before use. Maven reactor outputs are removed before dependency caches are saved. Pull-request caches are not
 used as trusted release inputs; release workflows build and verify from the exact tag commit.
 
 The expensive pull-request lanes have the following elapsed-time budgets on GitHub-hosted
@@ -93,7 +104,9 @@ limit is a failed job, not an indefinitely stalled setup. The pnpm store caches 
 the Playwright cache contains only browser downloads; `node_modules`, generated sources, compiled
 resources, reports, and images remain uncached build outputs. The setup action installs the locked
 frontend dependencies once; CI passes that fact to `scripts/quality`, and Maven skips its own install
-execution while still generating and packaging a fresh frontend artifact.
+execution. A single backend producer generates and packages the frontend and verifies the backend.
+Browser and image consumers use that producer's verified artifacts; the local component commands
+still build their prerequisites from source. The image consumer does not install Node or pnpm.
 
 Machine-readable test, coverage, security, and failure diagnostics are uploaded with `always()`
 when their job ran. Test, coverage, security, and diagnostic reports are retained for 90 days.
@@ -144,3 +157,27 @@ exclusion, or hidden baseline. If an image suppression is ever required, this po
 versioned suppression validator must first gain an exact finding-and-package scope with the same
 open-issue, owner, decision, and 90-day expiry evidence. This prevents an ad hoc image exception from
 bypassing repository governance.
+
+## CI ownership and measurement
+
+The planner selects real-service integration conservatively for backend changes and all packaged
+Java/Python contract families. Plan runs the quality-tool tests. SDK unit discovery excludes
+installed-artifact tests and the explicitly marked real-service suite. All five supported Python
+versions run unit and installed wheel/sdist scenarios. The primary lane alone runs invariant source
+checks and unit coverage; native contributor verification still runs the complete checks.
+
+Main deployment builds use the same native preparation action as quality and skip image builds
+for irrelevant changes. Tag publication prepares/qualifies native dependencies directly and retains
+exact-tag image tests. Native preparation has a 270-minute limit and progressive wheel caching;
+dependent jobs are queued without occupying a runner until preparation succeeds. Main and tag
+builds also restore and qualify exact native dependencies, with the same bounded cold-build path.
+
+Image scanning restores databases once and retains them in the job for both report and enforcement
+passes. PRs do not save database snapshots. Main saves one daily snapshot and keeps the newest two;
+older cache schema entries expire normally. Reports and fixable-finding enforcement remain required.
+
+Compare all Repository Quality jobs, including native preparation, plus the separate deployment
+workflow for main commits.
+Distinguish initial native-cache misses from warm runs, and record the selected checks and test
+counts. The audit and historical run evidence live in
+`docs/research/ci-tests-and-caching-audit-2026-09-05.md`.

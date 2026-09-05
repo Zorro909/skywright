@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Build once, then verify same-run backend artifacts at browser and image boundaries."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+NS = {"m": "http://maven.apache.org/POM/4.0.0"}
+
+
+def run(*command: str, **kwargs) -> None:
+    subprocess.run(command, cwd=ROOT, check=True, **kwargs)
+
+
+def source_identity() -> dict:
+    return {
+        "revision": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip(),
+        "run_id": os.environ["GITHUB_RUN_ID"],
+    }
+
+
+def version() -> str:
+    return ET.parse(ROOT / "pom.xml").findtext("m:version", namespaces=NS)
+
+
+def validate(directory: Path) -> dict:
+    manifest = json.loads((directory / "manifest.json").read_text())
+    if manifest["source"] != source_identity():
+        raise ValueError(
+            "Backend handoff belongs to a different revision or workflow run"
+        )
+    actual = {
+        p.relative_to(directory).as_posix() for p in directory.rglob("*") if p.is_file()
+    }
+    if actual != set(manifest["files"]) | {"manifest.json"}:
+        raise ValueError("Backend handoff is incomplete or contains unexpected files")
+    for name, digest in manifest["files"].items():
+        path = directory / name
+        if Path(name).is_absolute() or ".." in Path(name).parts or path.is_symlink():
+            raise ValueError("Unsafe backend artifact path")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise ValueError(f"Backend handoff checksum mismatch: {name}")
+    for suffix in (".jar", "-tests.jar"):
+        if f"backend/skywright-backend-{version()}{suffix}" not in manifest["files"]:
+            raise ValueError(
+                "Backend handoff is missing a required application artifact"
+            )
+    return manifest
+
+
+def receive(directory: Path) -> None:
+    manifest = validate(directory)
+    for name in manifest["files"]:
+        prefix, relative = name.split("/", 1)
+        if prefix == "backend":
+            target = ROOT / "backend/target" / relative
+        elif prefix == "maven":
+            target = Path.home() / ".m2/repository/de/zorro909/skywright" / relative
+        else:
+            raise ValueError("Unknown backend artifact destination")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(directory / name, target)
+
+
+def build(directory: Path) -> None:
+    run(
+        "mvn",
+        "--batch-mode",
+        "--no-transfer-progress",
+        "-DskipFrontendInstall=true",
+        "-DskipFrontendTests=true",
+        "-DexcludedGroups=real-service",
+        "-pl",
+        "backend",
+        "-am",
+        "install",
+    )
+    if directory.exists():
+        raise ValueError("Refusing to overwrite an existing backend handoff")
+    directory.mkdir(parents=True)
+    for jar in (ROOT / "backend/target").glob("*.jar"):
+        target = directory / "backend" / jar.name
+        target.parent.mkdir(exist_ok=True)
+        shutil.copyfile(jar, target)
+    repository = Path.home() / ".m2/repository/de/zorro909/skywright"
+    for artifact in repository.glob(f"*/{version()}/*"):
+        if artifact.suffix not in {".jar", ".pom"}:
+            continue
+        target = directory / "maven" / artifact.relative_to(repository)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(artifact, target)
+    manifest = {
+        "source": source_identity(),
+        "files": {
+            p.relative_to(directory).as_posix(): hashlib.sha256(
+                p.read_bytes()
+            ).hexdigest()
+            for p in directory.rglob("*")
+            if p.is_file()
+        },
+    }
+    (directory / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    )
+    validate(directory)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("build", "application", "image"))
+    parser.add_argument("directory", type=Path)
+    args = parser.parse_args()
+    if args.command == "build":
+        build(args.directory)
+        return
+    receive(args.directory)
+    if args.command == "application":
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "SKYWRIGHT_BACKEND_EXECUTABLE": str(
+                    ROOT / f"backend/target/skywright-backend-{version()}.jar"
+                ),
+                "SKYWRIGHT_BACKEND_TEST_FIXTURE": str(
+                    ROOT / f"backend/target/skywright-backend-{version()}-tests.jar"
+                ),
+                "SKYWRIGHT_POSTGRESQL_IMAGE": ET.parse(ROOT / "pom.xml").findtext(
+                    "m:properties/m:postgresql.container.image", namespaces=NS
+                ),
+            }
+        )
+        run("pnpm", "--dir", "frontend", "run", "test:acceptance", env=environment)
+    else:
+        run("scripts/graalpy-environment", "verify")
+        for module in ("backend-deployment", "skypilot-api-server-deployment"):
+            run(
+                "mvn", "--batch-mode", "--no-transfer-progress", "-pl", module, "verify"
+            )
+
+
+if __name__ == "__main__":
+    main()

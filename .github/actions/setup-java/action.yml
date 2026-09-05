@@ -57,10 +57,15 @@ runs:
         jdk-file: ${{ runner.temp }}/graalvm-community.tar.gz
         java-version: ${{ steps.toolchain.outputs.java_version }}
         cache: maven
+    - name: Identify the effective native environment
+      id: environment
+      if: inputs.graalpy-resources == 'true'
+      shell: bash
+      run: echo "key=$(scripts/graalpy-environment identity)" >> "$GITHUB_OUTPUT"
     - name: Restore exact packaged GraalPy environment
       id: graalpy-cache
       if: inputs.graalpy-resources == 'true'
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: .graalpy/resources
-        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu24-graalpy-env-v3-${{ steps.toolchain.outputs.java_archive_sha256 }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml', 'graalpy-environment/build-constraints.txt', 'backend-deployment/src/main/docker/Dockerfile') }}
+        key: ${{ steps.environment.outputs.key }}
