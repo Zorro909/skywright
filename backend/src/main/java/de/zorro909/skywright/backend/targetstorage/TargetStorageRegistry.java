@@ -10,8 +10,16 @@ public class TargetStorageRegistry {
 
 	private final TargetStorageRepository repository;
 
+	private final java.util.function.UnaryOperator<TargetStorageAggregate> observe;
+
 	public TargetStorageRegistry(TargetStorageRepository repository) {
 		this.repository = repository;
+		this.observe = java.util.function.UnaryOperator.identity();
+	}
+
+	public TargetStorageRegistry(TargetStorageRepository repository, TargetStorageBindingReadiness readiness) {
+		this.repository = repository;
+		this.observe = storage -> storage.withBindingReadiness(readiness);
 	}
 
 	public UUID register(String name, TargetStoragePurpose purpose, String bucket,
@@ -28,7 +36,7 @@ public class TargetStorageRegistry {
 
 	@Transactional(readOnly = true)
 	public List<TargetStorageView> list() {
-		return this.repository.findAll().stream().map(TargetStorageAggregate::view).toList();
+		return this.repository.findAll().stream().map(this.observe).map(TargetStorageAggregate::view).toList();
 	}
 
 	@Transactional(readOnly = true)
@@ -182,6 +190,7 @@ public class TargetStorageRegistry {
 	/** Reports whether a Dataset Catalog admission may use the registered storage. */
 	public boolean eligibleDataset(UUID id) {
 		return this.repository.findById(Objects.requireNonNull(id, "storageId"))
+			.map(this.observe)
 			.filter(storage -> storage.purpose() == TargetStoragePurpose.DATASET)
 			.filter(TargetStorageAggregate::eligible)
 			.isPresent();
@@ -216,7 +225,7 @@ public class TargetStorageRegistry {
 	}
 
 	private TargetStorageAggregate storage(UUID id) {
-		return this.repository.findById(id).orElseThrow(() -> new TargetStorageNotFoundException(id));
+		return this.repository.findById(id).map(this.observe).orElseThrow(() -> new TargetStorageNotFoundException(id));
 	}
 
 	private static void requireText(String value, String field) {

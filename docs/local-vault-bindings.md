@@ -103,6 +103,7 @@ the evidence. An externally rejected credential is never replaced with a broader
 | S3 | backend | accessKeyId, secretAccessKey | Observation, archive, control and deletion prefixes |
 | S3 | training-process | accessKeyId, secretAccessKey | Separate bindings for Dataset read and project Run Store read/write/delete |
 | S3 | transfer-worker | accessKeyId, secretAccessKey | Explicit transfer source read/delete and destination read/write scope |
+| S3 | metric-view | accessKeyId, secretAccessKey | Read-only access to the selected Run metric segments |
 | GHCR | backend-resolver | username, token | Exact `ghcr.io/owner/project` resource, read-only packages |
 | GHCR | execution-target-pull | username, token | Separate read-only identity for image pulls |
 | KUBERNETES | skypilot-api-server | kubeconfig | Local cluster and namespace permissions for SkyPilot |
@@ -125,7 +126,8 @@ credential for a repository-scoped pull token, reused only within one registry o
 supply `validUntil`, later than `validatedAt`, and choose validity sufficient for the intended Run and
 recovery window. KV storage never renews provider credentials. This slice supports static operator
 identities; provider renewal, dynamic issuance and hot replacement of running projections are absent.
-Readiness is evaluated at access time, with no stale-secret fallback. Missing, invalid, expired and
+Storage views and admission reevaluate binding readiness without changing registration revisions or
+qualification evidence. Readiness is evaluated at access time, with no stale-secret fallback. Missing, invalid, expired and
 unavailable states affect only the requested binding. An absent Vault configuration preserves the
 existing missing-binding behavior for unconfigured deployments.
 

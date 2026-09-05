@@ -33,7 +33,7 @@ public record CredentialBinding(UUID id, long revision, String path, Kind kind, 
 
 	private static Set<String> roles(Kind kind) {
 		return switch (kind) {
-			case S3 -> Set.of("backend", "training-process", "transfer-worker");
+			case S3 -> Set.of("backend", "training-process", "transfer-worker", "metric-view");
 			case GHCR -> Set.of("backend-resolver", "execution-target-pull");
 			case KUBERNETES -> Set.of("skypilot-api-server");
 			case SKYPILOT -> Set.of("backend");

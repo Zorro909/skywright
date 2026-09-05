@@ -172,6 +172,20 @@ final class TargetStorageAggregate {
 				this.configurations.get(revision), this.bindings);
 	}
 
+	/**
+	 * A read-time observation changes neither configuration revisions nor qualification
+	 * evidence.
+	 */
+	TargetStorageAggregate withBindingReadiness(TargetStorageBindingReadiness readiness) {
+		var currentBindings = this.bindings.stream()
+			.map(binding -> new TargetStorageBinding(binding.role(), binding.bindingId(), binding.bindingRevision(),
+					readiness.readiness(binding.bindingId(), binding.bindingRevision(), binding.role().wireValue())))
+			.toList();
+		return new TargetStorageAggregate(this.id, this.name, this.purpose, this.bucket, this.registrationRevision,
+				this.activated, this.activeRevision, this.candidateRevision, this.configurations, currentBindings,
+				this.assessments, this.availability);
+	}
+
 	TargetStorageView view() {
 		Long visibleRevision = this.activeRevision == null ? this.candidateRevision : this.activeRevision;
 		return new TargetStorageView(this.id, this.name, this.purpose, this.bucket, this.registrationRevision,

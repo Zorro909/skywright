@@ -15,8 +15,9 @@ class TargetStorageConfigurationBeans {
 	}
 
 	@Bean
-	TargetStorageRegistry targetStorageRegistry(TargetStorageRepository repository) {
-		return new TargetStorageRegistry(repository);
+	TargetStorageRegistry targetStorageRegistry(TargetStorageRepository repository,
+			TargetStorageBindingReadiness readiness) {
+		return new TargetStorageRegistry(repository, readiness);
 	}
 
 	@Bean

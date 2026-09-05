@@ -140,10 +140,10 @@ class VaultBindingsTest {
 		server.start();
 		try {
 			var json = JsonMapper.builder().build();
-			for (var role : List.of("backend", "training-process", "backend-resolver", "execution-target-pull",
-					"skypilot-api-server", "backend-service")) {
+			for (var role : List.of("backend", "training-process", "metric-view", "backend-resolver",
+					"execution-target-pull", "skypilot-api-server", "backend-service")) {
 				var kind = switch (role) {
-					case "backend", "training-process" -> CredentialBinding.Kind.S3;
+					case "backend", "training-process", "metric-view" -> CredentialBinding.Kind.S3;
 					case "backend-resolver", "execution-target-pull" -> CredentialBinding.Kind.GHCR;
 					case "skypilot-api-server" -> CredentialBinding.Kind.KUBERNETES;
 					default -> CredentialBinding.Kind.SKYPILOT;
@@ -166,6 +166,10 @@ class VaultBindingsTest {
 				var vault = vault(server, List.of(binding));
 				assertThat(vault.readiness(binding.id(), 2, binding.role()).status()).as(role)
 					.isEqualTo(VaultBindings.Status.READY);
+				if (kind == CredentialBinding.Kind.S3) {
+					assertThat(new VaultRoleAccess(vault).readiness(binding.id(), 2, binding.role()))
+						.isEqualTo(de.zorro909.skywright.backend.targetstorage.BindingReadiness.READY);
+				}
 				secret.put("unexpectedCredential", SECRET);
 				payload.set(json.writeValueAsString(secret));
 				assertThat(vault.readiness(binding.id(), 2, binding.role()).status()).as(role)
