@@ -20,13 +20,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 
 	private final ThreadPoolExecutor controlLane;
 
-	private final ThreadPoolExecutor submissionLane;
-
-	private final ThreadPoolExecutor actionLane;
-
 	private final ThreadPoolExecutor heldLane;
-
-	private final ThreadPoolExecutor probeLane;
 
 	private final AtomicBoolean admitting = new AtomicBoolean(true);
 
@@ -36,10 +30,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		this.client = client;
 		this.settings = settings;
 		this.controlLane = lane("skypilot-control", settings.controlQueueCapacity());
-		this.submissionLane = lane("skypilot-submission", settings.controlQueueCapacity());
-		this.actionLane = lane("skypilot-action", settings.controlQueueCapacity());
 		this.heldLane = lane("skypilot-held", settings.heldQueueCapacity());
-		this.probeLane = lane("skypilot-probe", 1);
 		this.availability = SkyPilotAvailability.unavailable(BridgeFailure
 			.unavailable(FailureCause.CLIENT_INITIALIZATION, "SkyPilot availability check is pending"));
 		refreshAvailability();
@@ -47,13 +38,13 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 
 	@Override
 	public CompletionStage<OrchestratorResult<OrchestratorOperation>> submit(OrchestratorTaskSpecification task) {
-		return submit(() -> this.client.submit(task));
+		return control(() -> this.client.submit(task));
 	}
 
 	@Override
 	public CompletionStage<OrchestratorResult<OrchestratorOperation>> submit(OrchestratorTaskSpecification task,
 			de.zorro909.skywright.backend.credential.TrainingCredentials credentials) {
-		return submit(() -> this.client.submit(task, credentials));
+		return control(() -> this.client.submit(task, credentials));
 	}
 
 	@Override
@@ -63,7 +54,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 
 	@Override
 	public CompletionStage<OrchestratorResult<OrchestratorOperation>> control(ControlRequest request) {
-		return action(() -> this.client.control(request));
+		return control(() -> this.client.control(request));
 	}
 
 	@Override
@@ -100,7 +91,7 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 			return refreshed;
 		}
 		try {
-			this.probeLane.execute(new AvailabilityRefresh(refreshed));
+			this.controlLane.execute(new AvailabilityRefresh(refreshed));
 		}
 		catch (java.util.concurrent.RejectedExecutionException exception) {
 			refreshed.complete(this.availability);
@@ -139,14 +130,6 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 
 	private <T> CompletionStage<OrchestratorResult<T>> control(CheckedSupplier<T> call) {
 		return availableDispatch(this.controlLane, call);
-	}
-
-	private <T> CompletionStage<OrchestratorResult<T>> submit(CheckedSupplier<T> call) {
-		return availableDispatch(this.submissionLane, call);
-	}
-
-	private <T> CompletionStage<OrchestratorResult<T>> action(CheckedSupplier<T> call) {
-		return availableDispatch(this.actionLane, call);
 	}
 
 	private <T> CompletionStage<OrchestratorResult<T>> availableDispatch(ThreadPoolExecutor lane,
@@ -237,21 +220,12 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 			return;
 		}
 		this.controlLane.shutdown();
-		this.submissionLane.shutdown();
-		this.actionLane.shutdown();
 		this.heldLane.shutdown();
-		this.probeLane.shutdown();
 		var deadline = System.nanoTime() + this.settings.shutdownGrace().toNanos();
 		await(this.controlLane, deadline);
-		await(this.submissionLane, deadline);
-		await(this.actionLane, deadline);
 		await(this.heldLane, deadline);
-		await(this.probeLane, deadline);
 		completeDiscarded(this.controlLane.shutdownNow());
-		completeDiscarded(this.submissionLane.shutdownNow());
-		completeDiscarded(this.actionLane.shutdownNow());
 		completeDiscarded(this.heldLane.shutdownNow());
-		completeDiscarded(this.probeLane.shutdownNow());
 		this.client.close();
 	}
 

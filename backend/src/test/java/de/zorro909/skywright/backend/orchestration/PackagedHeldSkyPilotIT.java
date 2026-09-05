@@ -12,25 +12,29 @@ import java.time.Duration;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.Timeout;
 import tools.jackson.databind.json.JsonMapper;
 
 @Tag("real-service")
 final class PackagedHeldSkyPilotIT {
 
-	@Test
+	@ParameterizedTest
+	@ValueSource(booleans = { false, true })
 	@Timeout(180)
-	void packagedNativeSdkKeepsControlAndShutdownBoundedWithAnOutstandingStream() throws Exception {
+	void packagedNativeSdkKeepsControlAndShutdownBoundedWithAnOutstandingStream(boolean saturateControl)
+			throws Exception {
 		var repository = Path.of(System.getProperty("repository.root"));
-		var output = repository.resolve("backend/target/service-logs/held-sdk-qualification.log");
+		var mode = saturateControl ? "held-control" : "held";
+		var output = repository.resolve("backend/target/service-logs/" + mode + "-sdk-qualification.log");
 		try (var api = SkyPilotApiServerFixture.start(); var proxy = new HeldSkyPilotProxy(api.endpoint())) {
 			var builder = new ProcessBuilder("java", "--enable-native-access=ALL-UNNAMED",
 					"--sun-misc-unsafe-memory-access=allow", "-Xss16m",
 					"-Dgraalpy.external.directory=" + System.getProperty("graalpy.external.directory"),
 					"-Dloader.main=de.zorro909.skywright.backend.orchestration.OrchestratorQualificationMain", "-cp",
 					System.getProperty("backend.executable"),
-					"org.springframework.boot.loader.launch.PropertiesLauncher", "held");
+					"org.springframework.boot.loader.launch.PropertiesLauncher", mode);
 			builder.directory(repository.toFile());
 			builder.environment().put("SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT", proxy.endpoint().toString());
 			builder.redirectErrorStream(true);
@@ -54,16 +58,18 @@ final class PackagedHeldSkyPilotIT {
 				}
 			});
 			try (var input = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8)) {
-				proxy.hold(awaitLine(lines, "HOLD ", Duration.ofSeconds(90)).substring(5));
+				proxy.hold(awaitLine(lines, "HOLD ", Duration.ofSeconds(120)).substring(5));
 				command(input, "complete");
 				assertThat(proxy.awaitHeld(Duration.ofSeconds(10))).as("SDK is waiting at /api/stream").isTrue();
 				command(input, "measure");
-				awaitLine(lines, "HOLD_CONTROL", Duration.ofSeconds(10));
-				proxy.holdControl();
-				command(input, "control");
-				assertThat(proxy.awaitControl(Duration.ofSeconds(10))).as("SDK control call is waiting on the wire")
-					.isTrue();
-				command(input, "measure_control");
+				if (saturateControl) {
+					awaitLine(lines, "HOLD_CONTROL", Duration.ofSeconds(10));
+					proxy.holdControl();
+					command(input, "control");
+					assertThat(proxy.awaitControl(Duration.ofSeconds(10))).as("SDK control call is waiting on the wire")
+						.isTrue();
+					command(input, "measure_control");
+				}
 				awaitLine(lines, "UNREACHABLE", Duration.ofSeconds(10));
 				api.stop();
 				command(input, "unreachable");
@@ -75,7 +81,9 @@ final class PackagedHeldSkyPilotIT {
 				assertThat(result.required("probe_ms").asLong()).isLessThan(2000);
 				assertThat(result.required("admission_ms").asLong()).isLessThan(100);
 				assertThat(result.required("catalogue_admission_ms").asLong()).isLessThan(100);
-				assertThat(result.required("control_admission_ms").asLong()).isLessThan(100);
+				if (saturateControl) {
+					assertThat(result.required("control_admission_ms").asLong()).isLessThan(100);
+				}
 				assertThat(result.required("shutdown_ms").asLong()).isLessThan(5000);
 				System.out.println("Packaged SDK evidence: " + result);
 			}

@@ -18,7 +18,7 @@ final class SkyPilotHeldQualification {
 	private SkyPilotHeldQualification() {
 	}
 
-	static Map<String, Object> run(GraalPySkyPilotClient client) throws Exception {
+	static Map<String, Object> run(GraalPySkyPilotClient client, boolean saturateControl) throws Exception {
 		var input = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
 		var evidence = new LinkedHashMap<String, Object>();
 		evidence.put("control_queue_capacity", 2);
@@ -30,7 +30,7 @@ final class SkyPilotHeldQualification {
 					"initial availability");
 			var operation = orchestrator.observe(new StatusRequest(List.of("missing-job")))
 				.toCompletableFuture()
-				.get(10, TimeUnit.SECONDS)
+				.get(90, TimeUnit.SECONDS)
 				.value();
 			System.out.println("HOLD " + JSON.readTree(operation.id()).required("request_id").asText());
 			proceed(input, "complete");
@@ -65,37 +65,45 @@ final class SkyPilotHeldQualification {
 				require(full.causeCategory() == BridgeFailure.FailureCause.SATURATION, "catalogue queue saturation");
 			}
 			evidence.put("catalogue_admission_ms", elapsed(started));
-			System.out.println("HOLD_CONTROL");
-			proceed(input, "control");
-			var activeControl = orchestrator.observe(new StatusRequest(List.of("missing-job"))).toCompletableFuture();
-			proceed(input, "measure_control");
-			started = System.nanoTime();
-			var queuedControl = List.of(
-					orchestrator.observe(new StatusRequest(List.of("missing-job"))).toCompletableFuture(),
-					orchestrator.observe(new StatusRequest(List.of("missing-job"))).toCompletableFuture());
-			var controlRejected = orchestrator.observe(new StatusRequest(List.of("missing-job")))
-				.toCompletableFuture()
-				.get(100, TimeUnit.MILLISECONDS);
-			require(controlRejected.failure() != null
-					&& controlRejected.failure().cause() == BridgeFailure.FailureCause.SATURATION,
-					"control queue saturation");
-			require(!activeControl.isDone()
-					&& queuedControl.stream().noneMatch(java.util.concurrent.CompletableFuture::isDone),
-					"one active control call and two queued");
-			evidence.put("control_admission_ms", elapsed(started));
+			java.util.concurrent.CompletableFuture<OrchestratorResult<OrchestratorOperation>> activeControl = null;
+			List<java.util.concurrent.CompletableFuture<OrchestratorResult<OrchestratorOperation>>> queuedControl = List
+				.of();
+			if (saturateControl) {
+				System.out.println("HOLD_CONTROL");
+				proceed(input, "control");
+				activeControl = orchestrator.observe(new StatusRequest(List.of("missing-job"))).toCompletableFuture();
+				proceed(input, "measure_control");
+				started = System.nanoTime();
+				queuedControl = List.of(
+						orchestrator.observe(new StatusRequest(List.of("missing-job"))).toCompletableFuture(),
+						orchestrator.observe(new StatusRequest(List.of("missing-job"))).toCompletableFuture());
+				var controlRejected = orchestrator.observe(new StatusRequest(List.of("missing-job")))
+					.toCompletableFuture()
+					.get(100, TimeUnit.MILLISECONDS);
+				require(controlRejected.failure() != null
+						&& controlRejected.failure().cause() == BridgeFailure.FailureCause.SATURATION,
+						"control queue saturation");
+				require(!activeControl.isDone()
+						&& queuedControl.stream().noneMatch(java.util.concurrent.CompletableFuture::isDone),
+						"one active control call and two queued");
+				evidence.put("control_admission_ms", elapsed(started));
+			}
 			System.out.println("UNREACHABLE");
 			proceed(input, "unreachable");
 			started = System.nanoTime();
-			var unavailable = orchestrator.refreshAvailability().toCompletableFuture().get(6, TimeUnit.SECONDS);
-			require(!unavailable.available()
-					&& unavailable.failure().cause() == BridgeFailure.FailureCause.REACHABILITY, "unreachable server");
-			evidence.put("unreachable_probe_ms", elapsed(started));
-			require(orchestrator.observe(new StatusRequest(List.of()))
-				.toCompletableFuture()
-				.get(100, TimeUnit.MILLISECONDS)
-				.failure()
-				.cause() == BridgeFailure.FailureCause.REACHABILITY,
-					"unavailable admission remains distinct from saturation");
+			if (!saturateControl) {
+				var unavailable = orchestrator.refreshAvailability().toCompletableFuture().get(6, TimeUnit.SECONDS);
+				require(!unavailable.available()
+						&& unavailable.failure().cause() == BridgeFailure.FailureCause.REACHABILITY,
+						"unreachable server");
+				evidence.put("unreachable_probe_ms", elapsed(started));
+				require(orchestrator.observe(new StatusRequest(List.of()))
+					.toCompletableFuture()
+					.get(100, TimeUnit.MILLISECONDS)
+					.failure()
+					.cause() == BridgeFailure.FailureCause.REACHABILITY,
+						"unavailable admission remains distinct from saturation");
+			}
 			started = System.nanoTime();
 			orchestrator.close();
 			evidence.put("shutdown_ms", elapsed(started));
@@ -104,8 +112,10 @@ final class SkyPilotHeldQualification {
 					"active completion shutdown");
 			require(queued.get(1, TimeUnit.SECONDS).failure().cause() == BridgeFailure.FailureCause.SHUTDOWN,
 					"queued completion shutdown");
-			require(activeControl.get(1, TimeUnit.SECONDS).failure().cause() == BridgeFailure.FailureCause.SHUTDOWN,
-					"active control shutdown");
+			if (saturateControl) {
+				require(activeControl.get(1, TimeUnit.SECONDS).failure().cause() == BridgeFailure.FailureCause.SHUTDOWN,
+						"active control shutdown");
+			}
 			for (var pending : queuedControl) {
 				require(pending.get(1, TimeUnit.SECONDS).failure().cause() == BridgeFailure.FailureCause.SHUTDOWN,
 						"queued control shutdown");

@@ -22,7 +22,7 @@ public final class OrchestratorQualificationMain {
 
 	public static void main(String[] arguments) throws Exception {
 		if (arguments.length < 1 || arguments.length > 2) {
-			throw new IllegalArgumentException("expected unavailable <cause> or saturation");
+			throw new IllegalArgumentException("expected unavailable <cause>, saturation, held or held-control");
 		}
 		var endpoint = URI.create(requiredEnvironment("SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT"));
 		try (var client = new GraalPySkyPilotClient(
@@ -30,7 +30,8 @@ public final class OrchestratorQualificationMain {
 			var result = switch (arguments[0]) {
 				case "unavailable" -> unavailable(client, expectedCause(arguments));
 				case "saturation" -> saturation(client);
-				case "held" -> SkyPilotHeldQualification.run(client);
+				case "held" -> SkyPilotHeldQualification.run(client, false);
+				case "held-control" -> SkyPilotHeldQualification.run(client, true);
 				default -> throw new IllegalArgumentException("unsupported qualification: " + arguments[0]);
 			};
 			System.out.println(JSON.writeValueAsString(result));
