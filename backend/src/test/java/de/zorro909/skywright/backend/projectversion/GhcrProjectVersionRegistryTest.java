@@ -22,20 +22,26 @@ final class GhcrProjectVersionRegistryTest {
 		String manifestDigest = "sha256:" + "9".repeat(64);
 		String blobDigest = "sha256:" + "8".repeat(64);
 		List<String> requests = new ArrayList<>();
+		var authorizationCalls = new java.util.concurrent.atomic.AtomicInteger();
 		HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
 		try {
 			server.createContext("/", exchange -> respond(exchange, requests, label, manifestDigest, blobDigest));
 			server.start();
 			URI endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
-			var registry = new GhcrProjectVersionRegistry(HttpClient.newHttpClient(), endpoint,
-					repository -> Optional.of("Bearer test-token"));
+			var registry = new GhcrProjectVersionRegistry(HttpClient.newHttpClient(), endpoint, repository -> {
+				authorizationCalls.incrementAndGet();
+				return Optional.of("Bearer test-token");
+			});
 
 			assertThat(registry.listVersions("ghcr.io/example/project"))
 				.containsExactly(new ProjectVersionReference(label, manifestDigest));
+			assertThat(authorizationCalls).hasValue(1);
 			assertThat(registry.pullArtifact("ghcr.io/example/project", manifestDigest))
 				.contains(new RegistryArtifact(manifestDigest, "artifact-content"));
+			assertThat(authorizationCalls).hasValue(2);
 			assertThat(registry.imageAvailable("ghcr.io/example/project", manifestDigest)).isTrue();
 			assertThat(registry.imageAvailable("ghcr.io/example/project", "sha256:" + "7".repeat(64))).isFalse();
+			assertThat(authorizationCalls).hasValue(4);
 		}
 		finally {
 			server.stop(0);

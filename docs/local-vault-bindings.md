@@ -102,6 +102,7 @@ the evidence. An externally rejected credential is never replaced with a broader
 | --- | --- | --- | --- |
 | S3 | backend | accessKeyId, secretAccessKey | Observation, archive, control and deletion prefixes |
 | S3 | training-process | accessKeyId, secretAccessKey | Separate bindings for Dataset read and project Run Store read/write/delete |
+| S3 | transfer-worker | accessKeyId, secretAccessKey | Explicit transfer source read/delete and destination read/write scope |
 | GHCR | backend-resolver | username, token | Exact `ghcr.io/owner/project` resource, read-only packages |
 | GHCR | execution-target-pull | username, token | Separate read-only identity for image pulls |
 | KUBERNETES | skypilot-api-server | kubeconfig | Local cluster and namespace permissions for SkyPilot |
@@ -115,9 +116,10 @@ that transient handoff is not itself a Run projection. The managed projection wo
 ADR 0025's direct Vault-to-SkyPilot boundary and keep Vault tokens out of Training Processes.
 
 The backend's existing storage readiness and credential interfaces use Vault when configured. Backend
-storage access refuses Training Process identities. Registry readiness checks both separate bindings;
+storage access refuses Training Process identities. Transfer operations can resolve only their exact
+Transfer Worker binding, never a backend binding. Registry readiness checks both separate bindings;
 private GHCR resolution uses the registered resolver ID and exact repository, then exchanges its
-credential for a repository-scoped pull token. No token or provider error body enters diagnostics.
+credential for a repository-scoped pull token, reused only within one registry operation. No token or provider error body enters diagnostics.
 
 `nonExpiring=true` is an operator assertion about the external identity, not a Vault property. Otherwise
 supply `validUntil`, later than `validatedAt`, and choose validity sufficient for the intended Run and

@@ -47,7 +47,8 @@ public class TrainingProjects {
 		UUID id = UUID.randomUUID();
 		RegistryBinding binding = new RegistryBinding(1, canonicalRepository, accessMode, resolverCredentialBindingId,
 				executionCredentialBindingId,
-				readiness(accessMode, resolverCredentialBindingId, executionCredentialBindingId), "active");
+				readiness(canonicalRepository, accessMode, resolverCredentialBindingId, executionCredentialBindingId),
+				"active");
 		this.repository.create(TrainingProjectEntity.create(id, name, binding));
 		return id;
 	}
@@ -84,9 +85,11 @@ public class TrainingProjects {
 		}
 		RegistryBinding active = project.view().activeBinding();
 		requireBindingShape(active.accessMode(), resolverCredentialBindingId, executionCredentialBindingId);
-		project.replaceActiveBinding(new RegistryBinding(active.revision() + 1, active.repository(),
-				active.accessMode(), resolverCredentialBindingId, executionCredentialBindingId,
-				readiness(active.accessMode(), resolverCredentialBindingId, executionCredentialBindingId), "active"));
+		project.replaceActiveBinding(
+				new RegistryBinding(active.revision() + 1, active.repository(), active.accessMode(),
+						resolverCredentialBindingId, executionCredentialBindingId, readiness(active.repository(),
+								active.accessMode(), resolverCredentialBindingId, executionCredentialBindingId),
+						"active"));
 		project.revision++;
 	}
 
@@ -121,15 +124,18 @@ public class TrainingProjects {
 		}
 	}
 
-	private RegistryReadiness readiness(RegistryAccessMode accessMode, UUID resolver, UUID execution) {
+	private RegistryReadiness readiness(String repository, RegistryAccessMode accessMode, UUID resolver,
+			UUID execution) {
 		if (accessMode == RegistryAccessMode.PUBLIC) {
 			return RegistryReadiness.READY;
 		}
 		if (resolver == null || execution == null) {
 			return RegistryReadiness.MISSING;
 		}
-		RegistryReadiness resolverReadiness = this.credentialReadiness.readiness(resolver, "backend-resolver");
-		RegistryReadiness executionReadiness = this.credentialReadiness.readiness(execution, "execution-target-pull");
+		RegistryReadiness resolverReadiness = this.credentialReadiness.readiness(resolver, "backend-resolver",
+				repository);
+		RegistryReadiness executionReadiness = this.credentialReadiness.readiness(execution, "execution-target-pull",
+				repository);
 		return resolverReadiness == RegistryReadiness.READY ? executionReadiness : resolverReadiness;
 	}
 
@@ -141,7 +147,7 @@ public class TrainingProjects {
 			}
 			return new RegistryBinding(binding.revision(), binding.repository(), binding.accessMode(),
 					binding.resolverCredentialBindingId(), binding.executionCredentialBindingId(),
-					readiness(binding.accessMode(), binding.resolverCredentialBindingId(),
+					readiness(binding.repository(), binding.accessMode(), binding.resolverCredentialBindingId(),
 							binding.executionCredentialBindingId()),
 					binding.state());
 		}).toList();

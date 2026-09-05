@@ -31,20 +31,21 @@ public final class VaultRoleAccess
 	}
 
 	@Override
-	public RegistryReadiness readiness(UUID id, String role) {
+	public RegistryReadiness readiness(UUID id, String role, String repository) {
 		var binding = this.bindings.definitions()
 			.stream()
 			.filter(b -> b.id().equals(id) && b.kind() == CredentialBinding.Kind.GHCR)
 			.findFirst();
 		return binding
-			.map(b -> RegistryReadiness.valueOf(this.bindings.readiness(id, b.revision(), role).status().name()))
+			.map(b -> !b.resource().equals(repository) ? RegistryReadiness.INVALID
+					: RegistryReadiness.valueOf(this.bindings.readiness(id, b.revision(), role).status().name()))
 			.orElse(RegistryReadiness.MISSING);
 	}
 
 	@Override
 	public Optional<AwsCredentialsProvider> credentials(UUID id, long revision, String role) {
 		// Backend storage operations may never borrow a Training Process identity.
-		if (!"backend".equals(role) || !kind(id, CredentialBinding.Kind.S3)) {
+		if (!("backend".equals(role) || "transfer-worker".equals(role)) || !kind(id, CredentialBinding.Kind.S3)) {
 			return Optional.empty();
 		}
 		return this.bindings.<AwsCredentialsProvider>resolve(id, revision, role, secret -> {

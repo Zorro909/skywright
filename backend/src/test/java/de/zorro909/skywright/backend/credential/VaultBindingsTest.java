@@ -50,7 +50,8 @@ class VaultBindingsTest {
 		try {
 			var ready = binding(UUID.randomUUID(), CredentialBinding.Kind.S3, "backend", null);
 			var expired = binding(UUID.randomUUID(), CredentialBinding.Kind.S3, "training-process", NOW);
-			var vault = vault(server, List.of(ready, expired));
+			var transfer = binding(UUID.randomUUID(), CredentialBinding.Kind.S3, "transfer-worker", null);
+			var vault = vault(server, List.of(ready, expired, transfer));
 			assertThat(vault.readiness(ready.id(), 1, "backend").status()).isEqualTo(VaultBindings.Status.INVALID);
 			assertThat(vault.readiness(ready.id(), 2, "training-process").status())
 				.isEqualTo(VaultBindings.Status.INVALID);
@@ -64,6 +65,12 @@ class VaultBindingsTest {
 				.orElseThrow()
 				.resolveCredentials()
 				.secretAccessKey()).isEqualTo(SECRET);
+			var roles = new VaultRoleAccess(vault);
+			assertThat(roles.credentials(transfer.id(), 2, "transfer-worker")).isPresent();
+			assertThat(roles.credentials(transfer.id(), 2, "backend")).isEmpty();
+			assertThat(roles.credentials(ready.id(), 2, "transfer-worker")).isEmpty();
+			assertThat(roles.credentials(transfer.id(), 1, "transfer-worker")).isEmpty();
+
 			var resolution = vault.resolve(ready.id(), 2, "backend", value -> {
 				throw new IllegalStateException(SECRET);
 			});

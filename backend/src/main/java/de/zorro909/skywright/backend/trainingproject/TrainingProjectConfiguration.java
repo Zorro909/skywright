@@ -26,7 +26,7 @@ class TrainingProjectConfiguration {
 	@ConditionalOnMissingBean(TrainingProjectCredentialReadiness.class)
 	TrainingProjectCredentialReadiness missingTrainingProjectCredentialReadiness(ObjectProvider<VaultBindings> vault) {
 		var bindings = vault.getIfAvailable();
-		return bindings == null ? (bindingId, consumingRole) -> RegistryReadiness.MISSING
+		return bindings == null ? (bindingId, consumingRole, repository) -> RegistryReadiness.MISSING
 				: new VaultRoleAccess(bindings)::readiness;
 	}
 

@@ -69,6 +69,12 @@ class VaultBindingApiIT {
 				assertThat(created.body()).contains("\"readiness\":\"ready\"")
 					.doesNotContain("secret-sentinel", "vault-sentinel");
 				String id = json.readTree(created.body()).path("id").asText();
+				var mismatched = request(port, "POST", "/api/v1/training-projects",
+						body.replace("Private", "Wrong resource")
+							.replace("ghcr.io/example/private", "ghcr.io/example/other"));
+				assertThat(mismatched.statusCode()).isEqualTo(201);
+				assertThat(mismatched.body()).contains("\"readiness\":\"invalid\"");
+
 				status.set(503);
 				var unavailable = request(port, "GET", "/api/v1/training-projects/" + id, "");
 				assertThat(unavailable.statusCode()).isEqualTo(200);
