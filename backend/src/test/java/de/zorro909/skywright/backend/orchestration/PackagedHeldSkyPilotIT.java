@@ -29,7 +29,7 @@ final class PackagedHeldSkyPilotIT {
 					"--sun-misc-unsafe-memory-access=allow", "-Xss16m",
 					"-Dgraalpy.external.directory=" + System.getProperty("graalpy.external.directory"),
 					"-Dloader.main=de.zorro909.skywright.backend.orchestration.OrchestratorQualificationMain", "-cp",
-					repository.resolve("backend/target/skywright-backend-0.1.0-SNAPSHOT.jar").toString(),
+					System.getProperty("backend.executable"),
 					"org.springframework.boot.loader.launch.PropertiesLauncher", "held");
 			builder.directory(repository.toFile());
 			builder.environment().put("SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT", proxy.endpoint().toString());
@@ -74,6 +74,7 @@ final class PackagedHeldSkyPilotIT {
 				assertThat(result.required("cancellation_ms").asLong()).isLessThan(2000);
 				assertThat(result.required("probe_ms").asLong()).isLessThan(2000);
 				assertThat(result.required("admission_ms").asLong()).isLessThan(100);
+				assertThat(result.required("catalogue_admission_ms").asLong()).isLessThan(100);
 				assertThat(result.required("control_admission_ms").asLong()).isLessThan(100);
 				assertThat(result.required("shutdown_ms").asLong()).isLessThan(5000);
 				System.out.println("Packaged SDK evidence: " + result);

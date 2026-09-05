@@ -75,6 +75,39 @@ final class SkyPilotOrchestratorTest {
 	}
 
 	@Test
+	void catalogueAndCompletionsShareBoundedHeldAdmission() throws Exception {
+		var client = new ControllableSkyPilotClient();
+		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
+		awaitInitialProbe();
+		var entered = new CountDownLatch(1);
+		var release = new CountDownLatch(1);
+		var catalogue = this.orchestrator.catalogue(query -> {
+			entered.countDown();
+			release.await();
+			return java.util.Optional.empty();
+		});
+		var query = new de.zorro909.skywright.backend.pricing.SkyPilotCatalogueQuery("aws", "us-east-1", "p5.48xlarge",
+				"H100", 8, false, java.time.Instant.now());
+		try (var caller = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+			var price = caller.submit(() -> catalogue.price(query));
+			try {
+				assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+				var completion = this.orchestrator.complete(new OrchestratorOperation("held-1", OperationKind.STATUS));
+				assertThat(completion).isNotDone();
+				org.assertj.core.api.Assertions.assertThatThrownBy(() -> catalogue.price(query))
+					.isInstanceOfSatisfying(SkyPilotClientFailure.class, failure -> assertThat(failure.causeCategory())
+						.isEqualTo(BridgeFailure.FailureCause.SATURATION));
+				assertThat(client.heldStarted.getCount()).isEqualTo(1);
+			}
+			finally {
+				release.countDown();
+				client.releaseHeld.countDown();
+			}
+			assertThat(price.get(1, TimeUnit.SECONDS)).isEmpty();
+		}
+	}
+
+	@Test
 	void dependencyDiagnosticsDoNotExposeGuestFailureText() throws Exception {
 		var client = new ControllableSkyPilotClient();
 		client.submitFailure = new SkyPilotClientFailure(BridgeFailure.FailureCause.AUTHENTICATION,

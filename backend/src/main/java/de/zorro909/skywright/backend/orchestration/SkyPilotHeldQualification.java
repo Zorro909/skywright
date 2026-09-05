@@ -18,7 +18,7 @@ final class SkyPilotHeldQualification {
 	private SkyPilotHeldQualification() {
 	}
 
-	static Map<String, Object> run(SkyPilotClient client) throws Exception {
+	static Map<String, Object> run(GraalPySkyPilotClient client) throws Exception {
 		var input = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
 		var evidence = new LinkedHashMap<String, Object>();
 		evidence.put("control_queue_capacity", 2);
@@ -54,6 +54,17 @@ final class SkyPilotHeldQualification {
 					"held queue saturation");
 			require(!queued.isDone(), "one completion queued");
 			evidence.put("admission_ms", elapsed(started));
+			started = System.nanoTime();
+			try {
+				orchestrator.catalogue(client::price)
+					.price(new de.zorro909.skywright.backend.pricing.SkyPilotCatalogueQuery("aws", "us-east-1",
+							"p5.48xlarge", "H100", 8, false, java.time.Instant.now()));
+				throw new IllegalStateException("catalogue bypassed the full held queue");
+			}
+			catch (SkyPilotClientFailure full) {
+				require(full.causeCategory() == BridgeFailure.FailureCause.SATURATION, "catalogue queue saturation");
+			}
+			evidence.put("catalogue_admission_ms", elapsed(started));
 			System.out.println("HOLD_CONTROL");
 			proceed(input, "control");
 			var activeControl = orchestrator.observe(new StatusRequest(List.of("missing-job"))).toCompletableFuture();

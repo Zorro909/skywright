@@ -1,6 +1,5 @@
 package de.zorro909.skywright.backend.orchestration;
 
-import de.zorro909.skywright.backend.pricing.SkyPilotCatalogue;
 import de.zorro909.skywright.backend.pricing.SkyPilotCatalogueObservation;
 import de.zorro909.skywright.backend.pricing.SkyPilotCatalogueQuery;
 import java.io.InputStreamReader;
@@ -25,7 +24,7 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-final class GraalPySkyPilotClient implements SkyPilotClient, SkyPilotCatalogue {
+final class GraalPySkyPilotClient implements SkyPilotClient {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -87,7 +86,6 @@ final class GraalPySkyPilotClient implements SkyPilotClient, SkyPilotCatalogue {
 		}
 	}
 
-	@Override
 	public Optional<SkyPilotCatalogueObservation> price(SkyPilotCatalogueQuery query) throws Exception {
 		var result = invoke("bridge_catalog_price", JSON.writeValueAsString(query));
 		if ("missing".equals(requiredText(result, "outcome"))) {

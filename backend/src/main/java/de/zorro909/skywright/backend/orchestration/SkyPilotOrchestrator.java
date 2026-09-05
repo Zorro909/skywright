@@ -76,6 +76,17 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 		return dispatch(this.heldLane, () -> this.client.complete(operation));
 	}
 
+	de.zorro909.skywright.backend.pricing.SkyPilotCatalogue catalogue(
+			de.zorro909.skywright.backend.pricing.SkyPilotCatalogue source) {
+		return query -> {
+			var result = availableDispatch(this.heldLane, () -> source.price(query)).toCompletableFuture().get();
+			if (result.failure() != null) {
+				throw new SkyPilotClientFailure(result.failure().cause(), result.failure().diagnostic());
+			}
+			return result.value();
+		};
+	}
+
 	@Override
 	public SkyPilotAvailability availability() {
 		return this.availability;
