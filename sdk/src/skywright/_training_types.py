@@ -203,15 +203,24 @@ class CheckpointSnapshot:
 
     def with_reference(self, reference: str) -> CheckpointSnapshot:
         """Return the published form without exposing stored mutable state."""
-        return CheckpointSnapshot(
-            step=self.step,
-            state=self._state,
-            runtime_state=self._runtime_state,
-            dataset_cursor=self.dataset_cursor,
-            reference=reference,
-            run_id=self.run_id,
-            project_version=self.project_version,
-        )
+        published = copy.copy(self)
+        object.__setattr__(published, "reference", reference)
+        return published
+
+
+def checkpoint_payload(
+    snapshot: CheckpointSnapshot,
+) -> tuple[Mapping[str, object], Mapping[str, object]]:
+    """Borrow owned state for trusted internal readers; never mutate or expose it."""
+    return snapshot._state, snapshot._runtime_state  # pyright: ignore[reportPrivateUsage]
+
+
+@dataclass(frozen=True)
+class CheckpointConfirmation:
+    """Published Durable Safe Point identity without its tensor payload."""
+
+    step: int
+    reference: str
 
 
 @dataclass(frozen=True)
@@ -269,7 +278,7 @@ class TrainingProcessResult:
     outcome: TrainingProcessOutcome
     attempt: ExecutionAttemptRecord
     report: ExecutionTerminationReport
-    final_checkpoint: CheckpointSnapshot | None
+    final_checkpoint: CheckpointConfirmation | None
     metric_observations: tuple[MetricObservation, ...]
     artifacts: tuple[ArtifactRecord, ...]
     samples: tuple[SampleRecord, ...]

@@ -679,3 +679,35 @@ print(json.dumps(dict(result.report.diagnostics)))
         monkeypatch.delenv("SKYWRIGHT_RUN_STORE_ACCESS_KEY_ID")
         with pytest.raises(CredentialProjectionError, match="unavailable"):
             RunStoreReader(target)
+
+
+def test_model_optimizer_checkpoint_memory_scenario_uses_real_s3() -> None:
+    with seaweedfs() as (endpoint, client):
+        client.create_bucket(Bucket="checkpoint-memory")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(
+                    Path(__file__).parent / "support" / "checkpoint_memory_scenario.py"
+                ),
+                "--endpoint",
+                endpoint,
+                "--bucket",
+                "checkpoint-memory",
+                "--device",
+                "cpu",
+                "--width",
+                "32",
+                "--layers",
+                "2",
+                "--expect-bounded",
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+            timeout=90,
+        )
+        evidence = json.loads(result.stdout)
+        assert evidence["whole_state_resume_verified"] is True
+        assert len(evidence["capture_ms"]) == 3
+        assert evidence["upload_held_during_training_and_capture_ms"] > 0

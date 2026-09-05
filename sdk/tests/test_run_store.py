@@ -1346,3 +1346,211 @@ def test_operations_honor_cancellation_and_retain_non_secret_measurements(
                 None,
             )
         )
+
+
+def test_capture_and_publication_use_one_owned_copy(tmp_path) -> None:
+    from skywright._training_checkpoints import capture_checkpoint
+
+    copies = []
+
+    class CountingArray(np.ndarray):
+        def __deepcopy__(self, memo):
+            copies.append(1)
+            return self.copy()
+
+    source = np.array([1.0, 2.0], dtype=np.float32).view(CountingArray)
+
+    class State:
+        def state_dict(self):
+            return {"weights": source}
+
+        def load_state_dict(self, state):
+            raise AssertionError("capture does not restore project state")
+
+    state = State()
+    snapshot = capture_checkpoint(
+        1, {"model": state}, DatasetCursor(), "run", "version"
+    )
+    assert len(copies) == 1
+    source[:] = 99
+    with CheckpointCodec(staging_directory=tmp_path).serialize(snapshot) as staged:
+        assert len(copies) == 1
+        restored = CheckpointCodec().deserialize(
+            staged.path, expected_digest=staged.digest
+        )
+    published = snapshot.with_reference("checkpoint:1")
+    assert len(copies) == 1
+
+    def weights(checkpoint):
+        model_state = checkpoint.state["model"]
+        assert isinstance(model_state, dict)
+        return model_state["weights"]
+
+    exposed = weights(published)
+    exposed[:] = 100
+    np.testing.assert_array_equal(weights(snapshot), [1, 2])
+    np.testing.assert_array_equal(weights(published), [1, 2])
+    np.testing.assert_array_equal(weights(restored), [1, 2])
+
+
+@pytest.mark.parametrize(
+    "outcome", ["success", "cancel", "failure", "confirmation-failure"]
+)
+def test_coordinator_releases_owned_payloads_after_publication(
+    tmp_path, outcome
+) -> None:
+    import weakref
+    from concurrent.futures import ThreadPoolExecutor
+
+    from skywright._training_checkpoint_coordinator import CheckpointCoordinator
+    from skywright._training_types import checkpoint_payload
+
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    class HeldS3(MemoryS3):
+        def put_object(self, **request):
+            if "/checkpoints/" in request["Key"]:
+                entered.set()
+                assert release.wait(3)
+                if outcome == "failure":
+                    raise ValueError("checkpoint write failed")
+            return super().put_object(**request)
+
+    memory = HeldS3()
+
+    class Progress(ProgressRecorder):
+        def confirm_checkpoint(self, step, reference):
+            if outcome == "confirmation-failure":
+                raise ValueError("checkpoint confirmation failed")
+            super().confirm_checkpoint(step, reference)
+
+    progress = Progress()
+    store = recorder(memory, tmp_path, progress)
+    store.publish_attempt(
+        ExecutionAttemptRecord(
+            "00000000-0000-0000-0000-000000000001", "run", "version", None
+        )
+    )
+    original_cancel = store.cancel_checkpoint_publication
+
+    def cancel():
+        original_cancel()
+        cancelled.set()
+
+    store.cancel_checkpoint_publication = cancel
+    coordinator = CheckpointCoordinator(store, None, 2)
+    references = []
+
+    def capture(step):
+        snapshot = CheckpointSnapshot(step, {"weights": torch.ones(32)}, run_id="run")
+        references.append(weakref.ref(checkpoint_payload(snapshot)[0]["weights"]))
+        return snapshot
+
+    try:
+        coordinator.schedule(capture(1))
+        assert entered.wait(2)
+        coordinator.schedule(capture(2))
+        assert references[1]() is not None
+        coordinator.schedule(capture(3))
+        assert references[1]() is None
+        assert coordinator.durable_state() == (None, None)
+        assert not progress.steps
+        if outcome == "cancel":
+            with ThreadPoolExecutor(max_workers=1) as stopping:
+                future = stopping.submit(coordinator.stop)
+                assert cancelled.wait(1)
+                release.set()
+                shutdown = future.result(timeout=3)
+        else:
+            release.set()
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                try:
+                    coordinator.raise_if_failed()
+                except Exception:
+                    break
+                if coordinator.durable_state()[0] == 3:
+                    break
+                time.sleep(0.001)
+            shutdown = coordinator.stop()
+        assert shutdown.stopped
+        assert all(reference() is None for reference in references)
+        if outcome == "success":
+            assert shutdown.failure is None
+            assert coordinator.durable_state()[0] == 3
+            assert all(event[0] == "confirmation" for event in progress.steps)
+        elif outcome == "cancel":
+            assert shutdown.failure is None
+            assert coordinator.durable_state() == (None, None)
+        else:
+            import traceback
+
+            assert shutdown.failure is not None
+            locations = traceback.extract_tb(shutdown.failure.__traceback__)
+            assert "_publish_and_confirm" in [frame.name for frame in locations]
+            assert coordinator.durable_state() == (None, None)
+            with pytest.raises(type(shutdown.failure)) as rejected:
+                coordinator.schedule(capture(4))
+            assert rejected.value is shutdown.failure
+            assert all(reference() is None for reference in references)
+    finally:
+        release.set()
+        coordinator.stop()
+
+
+@pytest.mark.parametrize(
+    "value", [torch.tensor(1.0), torch.tensor(3, dtype=torch.int64)]
+)
+def test_checkpoint_codec_round_trips_scalar_optimizer_tensors(tmp_path, value) -> None:
+    codec = CheckpointCodec(staging_directory=tmp_path)
+    with codec.serialize(CheckpointSnapshot(1, {"step": value})) as staged:
+        restored = codec.deserialize(staged.path, expected_digest=staged.digest)
+    restored_step = restored.state["step"]
+    assert isinstance(restored_step, torch.Tensor)
+    assert torch.equal(restored_step, value)
+
+
+def test_terminal_confirmation_retains_only_identity_and_reuses_durable_step(
+    tmp_path,
+) -> None:
+    import weakref
+
+    from skywright import CheckpointConfirmation
+    from skywright._training_checkpoint_coordinator import CheckpointCoordinator
+    from skywright._training_types import checkpoint_payload
+
+    memory = MemoryS3()
+    progress = ProgressRecorder()
+    store = recorder(memory, tmp_path, progress)
+    store.publish_attempt(
+        ExecutionAttemptRecord(
+            "00000000-0000-0000-0000-000000000001", "run", "version", None
+        )
+    )
+    coordinator = CheckpointCoordinator(store, None, 2)
+    references = []
+
+    def capture():
+        snapshot = CheckpointSnapshot(1, {"weights": torch.ones(32)}, run_id="run")
+        references.append(weakref.ref(checkpoint_payload(snapshot)[0]["weights"]))
+        return snapshot
+
+    try:
+        confirmation = coordinator.publish_terminal(1, capture)
+        assert isinstance(confirmation, CheckpointConfirmation)
+        assert set(vars(confirmation)) == {"step", "reference"}
+        assert confirmation.step == 1
+        assert references[0]() is None
+        assert coordinator.publish_terminal(1, capture) == confirmation
+        assert len(references) == 1
+        assert progress.steps == [("confirmation", 1, confirmation.reference)]
+        loaded = RunStoreReader(store.target, client=memory).read_exact(
+            confirmation.reference
+        )
+        weights = loaded.state["weights"]
+        assert isinstance(weights, torch.Tensor)
+        assert torch.equal(weights, torch.ones(32))
+    finally:
+        coordinator.stop()

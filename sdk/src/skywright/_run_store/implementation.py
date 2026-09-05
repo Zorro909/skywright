@@ -46,6 +46,7 @@ from skywright._training_types import (
     ExecutionTerminationReport,
     MetricObservation,
     SampleRecord,
+    checkpoint_payload,
 )
 
 _MAX_COUNTER = (1 << 63) - 1
@@ -316,7 +317,7 @@ class _PortableTree:
         if dtype is None:
             self._violate(f"unsupported PyTorch dtype {value.dtype}")
         portable = value.detach().cpu().contiguous()
-        raw = portable.view(torch.uint8).numpy().tobytes()
+        raw = portable.reshape(-1).view(torch.uint8).numpy().tobytes()
         return self._entry("torch-tensor", dtype, tuple(value.shape), raw)
 
     def _entry(
@@ -351,6 +352,7 @@ class CheckpointCodec:
     def serialize(self, checkpoint: CheckpointSnapshot) -> SerializedCheckpoint:
         _step(checkpoint.step)
         tree = _PortableTree()
+        state, runtime_state = checkpoint_payload(checkpoint)
         manifest = {
             "schemaVersion": 1,
             "runId": checkpoint.run_id,
@@ -362,8 +364,8 @@ class CheckpointCodec:
                 "epochStep": checkpoint.dataset_cursor.epoch_step,
                 "orderingFingerprint": checkpoint.dataset_cursor.ordering_fingerprint,
             },
-            "state": tree.encode(checkpoint.state),
-            "runtimeState": tree.encode(checkpoint.runtime_state),
+            "state": tree.encode(state),
+            "runtimeState": tree.encode(runtime_state),
         }
         manifest_json = _canonical_json(manifest)
         if len(manifest_json.encode("utf-8")) > _MAX_MANIFEST:
