@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import importlib
 import json
 import threading
 from bisect import bisect_right
@@ -18,10 +17,10 @@ from skywright._dataset_read_types import (
     DatasetCacheLimits,
     DatasetDefinition,
     DatasetItem,
-    DatasetLocation,
     DatasetObject,
     DatasetReadError,
     DatasetReadStats,
+    StorageLocation,
     digest,
     safe_key,
 )
@@ -62,7 +61,7 @@ class MdsDatasetAccess:
     def __init__(
         self,
         definition: DatasetDefinition,
-        location: DatasetLocation,
+        location: StorageLocation,
         *,
         cache_directory: Path,
         limits: DatasetCacheLimits | None = None,
@@ -74,14 +73,9 @@ class MdsDatasetAccess:
             raise ValueError(
                 "Dataset seed must be an integer and batch size must be positive"
             )
-        try:
-            self._reader_type: Any = importlib.import_module(
-                "streaming.base.format.mds.reader"
-            ).MDSReader
-        except ImportError:
-            raise DatasetReadError(
-                "MDS access requires skywright[dataset] on Python 3.10 through 3.13"
-            ) from None
+        from skywright._vendor.mosaicml_streaming.reader import MDSReader
+
+        self._reader_type: Any = MDSReader
         self._definition = definition
         self._batch_size = batch_size
         self._mutex = threading.RLock()

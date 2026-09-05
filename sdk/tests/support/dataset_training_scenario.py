@@ -17,9 +17,9 @@ from skywright import run_training_process
 from skywright.dataset import (
     DatasetCacheLimits,
     DatasetDefinition,
-    DatasetLocation,
     DatasetObject,
     MdsDatasetAccess,
+    StorageLocation,
 )
 from skywright.run_store import CheckpointCodec, RunStoreRecorder, TargetStorage
 
@@ -31,7 +31,7 @@ definition = DatasetDefinition(
     value["manifest_identity"],
     tuple(DatasetObject(**entry) for entry in value["objects"]),
 )
-location = DatasetLocation(**inputs["location"])
+location = StorageLocation(**inputs["location"])
 cache = Path(inputs["cache"])
 cache.mkdir()
 

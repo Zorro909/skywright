@@ -29,21 +29,15 @@ dependencies = [
   "boto3>=1.40,<2",
   "brotli>=1.1,<2",
   "jsonschema[format]>=4.25,<5",
-  "numpy>=2.1,<3; python_version < '3.14'",
-  "numpy>=2.2,<3; python_version >= '3.14'",
+  "numpy>=2.2,<3",
   "pillow>=11,<13",
   "protobuf==7.36.0",
   "python-snappy>=0.7,<1",
   "safetensors>=0.6,<1",
   "tensorboard==2.21.0",
+  "typing-extensions>=4.12,<5",
   "xxhash>=3.5,<4",
   "zstandard>=0.23,<1",
-]
-
-[project.optional-dependencies]
-dataset = [
-  "mosaicml-streaming==0.13.0; python_version < '3.14'",
-  "torchvision==0.27.0; python_version < '3.14'",
 ]
 
 [project.scripts]
@@ -67,8 +61,7 @@ dev = [
   "twine>=6.1,<8",
 ]
 ml-test = [
-  "numpy>=2.1,<3; python_version < '3.14'",
-  "numpy>=2.2,<3; python_version >= '3.14'",
+  "numpy>=2.2,<3",
   "torch>=2.8,<3",
 ]
 
@@ -80,7 +73,6 @@ ml-test = { requires-python = ">=3.10,<3.15" }
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
-torchvision = { index = "pytorch-cpu" }
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
@@ -121,11 +113,13 @@ markers = [
 
 [tool.ruff]
 target-version = "py310"
+extend-exclude = ["src/skywright/_vendor"]
 
 [tool.ruff.lint]
 select = ["B", "E4", "E7", "E9", "F", "I", "RUF", "SIM", "UP"]
 
 [tool.pyright]
 include = ["src", "tests", "hatch_build.py", "release_support.py"]
+ignore = ["src/skywright/_vendor"]
 pythonVersion = "3.10"
 typeCheckingMode = "strict"

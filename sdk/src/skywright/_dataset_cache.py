@@ -15,17 +15,17 @@ from typing import Any
 
 from skywright._dataset_read_types import (
     DatasetCacheLimits,
-    DatasetLocation,
     DatasetObject,
     DatasetReadError,
     DatasetReadStats,
+    StorageLocation,
 )
 from skywright.credentials import s3_credentials
 
 
 class DatasetCache:
     def __init__(
-        self, directory: Path, location: DatasetLocation, limits: DatasetCacheLimits
+        self, directory: Path, location: StorageLocation, limits: DatasetCacheLimits
     ) -> None:
         self.directory = directory
         self.location = location

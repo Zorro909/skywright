@@ -258,6 +258,8 @@ class PlanningTest(unittest.TestCase):
             "sdk/src/skywright/_run_store/implementation.py",
             "sdk/tests/support/run_store_training_scenario.py",
             "sdk/src/skywright/dataset.py",
+            "sdk/src/skywright/_vendor/mosaicml_streaming/reader.py",
+            "sdk/tests/fixtures/mds-reader/raw/index.json",
             "sdk/tests/test_dataset_access_system.py",
         ):
             with self.subTest(path=path):

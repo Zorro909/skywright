@@ -1447,6 +1447,7 @@ dependencies = [
     { name = "python-snappy" },
     { name = "safetensors" },
     { name = "tensorboard" },
+    { name = "typing-extensions" },
     { name = "xxhash" },
     { name = "zstandard" },
 ]
@@ -1462,6 +1463,7 @@ requires-dist = [
     { name = "python-snappy", specifier = ">=0.7,<1" },
     { name = "safetensors", specifier = ">=0.6,<1" },
     { name = "tensorboard", specifier = "==2.21.0" },
+    { name = "typing-extensions", specifier = ">=4.12,<5" },
     { name = "xxhash", specifier = ">=3.5,<4" },
     { name = "zstandard", specifier = ">=0.23,<1" },
 ]

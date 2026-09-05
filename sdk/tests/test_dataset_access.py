@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import io
+import json
 from pathlib import Path
 from typing import Any
 
@@ -12,14 +14,14 @@ from skywright._dataset_publication import inspect_mds_corpus
 from skywright.dataset import (
     DatasetCacheLimits,
     DatasetDefinition,
-    DatasetLocation,
     DatasetObject,
     DatasetReadError,
+    StorageLocation,
 )
 
 
-def location(prefix: str = "corpus") -> DatasetLocation:
-    return DatasetLocation(
+def location(prefix: str = "corpus") -> StorageLocation:
+    return StorageLocation(
         "storage", "http://127.0.0.1:8333", "dataset", "us-east-1", prefix, "copy", 1
     )
 
@@ -31,7 +33,7 @@ def test_definition_rejects_changed_manifest_and_unsafe_paths() -> None:
     with pytest.raises(ValueError, match="normalized"):
         DatasetObject("../escape", 1, entry.sha256)
     with pytest.raises(ValueError, match="credentials"):
-        DatasetLocation(
+        StorageLocation(
             "storage",
             "https://key:secret@host",
             "bucket",
@@ -141,3 +143,14 @@ def published_definition(directory: Path) -> DatasetDefinition:
             for entry in corpus.entries
         ),
     )
+
+
+def test_upstream_fixture_identity_and_removed_executable_codec() -> None:
+    root = Path(__file__).parent / "fixtures" / "mds-reader"
+    provenance = json.loads((root / "provenance.json").read_text())
+    for relative, expected in provenance["files"].items():
+        assert hashlib.sha256((root / relative).read_bytes()).hexdigest() == expected
+    codecs = importlib.import_module("skywright._vendor.mosaicml_streaming.encodings")
+    assert not codecs.is_mds_encoding_safe("pkl")
+    with pytest.raises(ValueError):
+        codecs.mds_decode("pkl", b"executable codecs are not distributed")

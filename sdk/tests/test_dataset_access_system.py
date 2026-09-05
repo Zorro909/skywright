@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 import shutil
 import subprocess
@@ -23,12 +22,10 @@ from skywright import DatasetCursor
 from skywright.dataset import (
     DatasetCacheLimits,
     DatasetItem,
-    DatasetLocation,
     DatasetReadError,
     MdsDatasetAccess,
+    StorageLocation,
 )
-
-MDSWriter = importlib.import_module("streaming").MDSWriter
 
 
 @pytest.mark.system
@@ -37,15 +34,10 @@ def test_real_s3_cache_lifecycle_location_changes_and_direct_process(
     tmp_path, monkeypatch, compression
 ) -> None:
     source = tmp_path / "source"
-    with MDSWriter(
-        out=str(source),
-        columns={"number": "int", "text": "str"},
-        compression=compression,
-        hashes=["sha256"],
-        size_limit=512,
-    ) as writer:
-        for i in range(24):
-            writer.write({"number": i, "text": f"item-{i:02}-" + "x" * 24})
+    shutil.copytree(
+        Path(__file__).parent / "fixtures" / "mds-reader" / (compression or "raw"),
+        source,
+    )
     definition = published_definition(source)
     cache = tmp_path / "cache"
     limits = DatasetCacheLimits(
@@ -72,7 +64,7 @@ def test_real_s3_cache_lifecycle_location_changes_and_direct_process(
                 )
         monkeypatch.setenv("SKYWRIGHT_DATASET_ACCESS_KEY_ID", "test-access-key")
         monkeypatch.setenv("SKYWRIGHT_DATASET_SECRET_ACCESS_KEY", "test-secret-key")
-        selected = DatasetLocation(
+        selected = StorageLocation(
             "storage",
             endpoint,
             "datasets",
@@ -136,7 +128,7 @@ def test_real_s3_cache_lifecycle_location_changes_and_direct_process(
                 byte_limited.read_item(ordinal)
             assert byte_limited.statistics.evictions > 0
             assert byte_limited.statistics.peak_cache_bytes <= index_bytes
-        replica = DatasetLocation(
+        replica = StorageLocation(
             "storage",
             endpoint,
             "datasets",

@@ -5,19 +5,19 @@ from skywright._dataset_read_types import (
     DatasetCacheLimits,
     DatasetDefinition,
     DatasetItem,
-    DatasetLocation,
     DatasetObject,
     DatasetReadError,
     DatasetReadStats,
+    StorageLocation,
 )
 
 __all__ = [
     "DatasetCacheLimits",
     "DatasetDefinition",
     "DatasetItem",
-    "DatasetLocation",
     "DatasetObject",
     "DatasetReadError",
     "DatasetReadStats",
     "MdsDatasetAccess",
+    "StorageLocation",
 ]

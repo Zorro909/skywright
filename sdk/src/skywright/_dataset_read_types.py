@@ -96,7 +96,7 @@ class DatasetDefinition:
 
 
 @dataclass(frozen=True)
-class DatasetLocation:
+class StorageLocation:
     storage_id: str
     endpoint: str
     bucket: str
