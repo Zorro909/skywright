@@ -48,19 +48,22 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 	@Override
 	public List<ProjectVersionReference> listVersions(String repository) {
 		String name = name(repository);
+		Optional<String> authorization = this.authorization.authorization(repository);
 		List<ProjectVersionReference> versions = new ArrayList<>();
 		URI page = this.endpoint.resolve("/v2/" + name + "/tags/list?n=100");
 		while (page != null) {
-			HttpResponse<String> tags = send(request(page, repository).GET().build(), 200);
+			HttpResponse<String> tags = send(request(page, repository, authorization).GET().build(), 200);
 			for (JsonNode tagNode : json(tags.body()).path("tags")) {
 				String tag = tagNode.asText();
 				if (!VERSION_LABEL.matcher(tag).matches()) {
 					continue;
 				}
-				HttpResponse<String> manifest = send(request("/v2/" + name + "/manifests/" + tag, repository)
-					.method("HEAD", HttpRequest.BodyPublishers.noBody())
-					.header("Accept", MANIFEST_ACCEPT)
-					.build(), 200);
+				HttpResponse<String> manifest = send(
+						request("/v2/" + name + "/manifests/" + tag, repository, authorization)
+							.method("HEAD", HttpRequest.BodyPublishers.noBody())
+							.header("Accept", MANIFEST_ACCEPT)
+							.build(),
+						200);
 				String digest = requireDigest(manifest.headers()
 					.firstValue("Docker-Content-Digest")
 					.orElseThrow(() -> new ProjectVersionException(
@@ -75,8 +78,9 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 	@Override
 	public Optional<RegistryArtifact> pullArtifact(String repository, String reference) {
 		String name = name(repository);
+		Optional<String> authorization = this.authorization.authorization(repository);
 		HttpResponse<String> manifest = sendAllowMissing(
-				request("/v2/" + name + "/manifests/" + reference, repository).GET()
+				request("/v2/" + name + "/manifests/" + reference, repository, authorization).GET()
 					.header("Accept", MANIFEST_ACCEPT)
 					.build());
 		if (manifest.statusCode() == 404) {
@@ -89,18 +93,20 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 					new ProjectVersionFailure("PROJECT_REGISTRY_RESPONSE_INVALID", ""))));
 		JsonNode descriptor = contentDescriptor(json(manifest.body()));
 		String blobDigest = requireDigest(descriptor.path("digest").asText());
-		HttpResponse<String> blob = send(request("/v2/" + name + "/blobs/" + blobDigest, repository).GET().build(),
-				200);
+		HttpResponse<String> blob = send(
+				request("/v2/" + name + "/blobs/" + blobDigest, repository, authorization).GET().build(), 200);
 		return Optional.of(new RegistryArtifact(digest, blob.body()));
 	}
 
 	@Override
 	public boolean imageAvailable(String repository, String digest) {
 		String name = name(repository);
-		HttpResponse<String> response = sendAllowMissing(request("/v2/" + name + "/manifests/" + digest, repository)
-			.method("HEAD", HttpRequest.BodyPublishers.noBody())
-			.header("Accept", MANIFEST_ACCEPT)
-			.build());
+		Optional<String> authorization = this.authorization.authorization(repository);
+		HttpResponse<String> response = sendAllowMissing(
+				request("/v2/" + name + "/manifests/" + digest, repository, authorization)
+					.method("HEAD", HttpRequest.BodyPublishers.noBody())
+					.header("Accept", MANIFEST_ACCEPT)
+					.build());
 		if (response.statusCode() == 404) {
 			return false;
 		}
@@ -111,13 +117,18 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 					new ProjectVersionFailure("PROJECT_REGISTRY_RESPONSE_INVALID", "")))));
 	}
 
-	private HttpRequest.Builder request(String path, String repository) {
-		return request(this.endpoint.resolve(path), repository);
+	private HttpRequest.Builder request(String path, String repository, Optional<String> authorization) {
+		return request(this.endpoint.resolve(path), repository, authorization);
 	}
 
-	private HttpRequest.Builder request(URI uri, String repository) {
+	private HttpRequest.Builder request(URI uri, String repository, Optional<String> authorization) {
+		if (!java.util.Objects.equals(uri.getScheme(), this.endpoint.getScheme())
+				|| !java.util.Objects.equals(uri.getAuthority(), this.endpoint.getAuthority())
+				|| !uri.normalize().getPath().startsWith("/v2/" + name(repository) + "/")) {
+			throw new ProjectVersionException(new ProjectVersionFailure("PROJECT_REGISTRY_RESPONSE_INVALID", ""));
+		}
 		HttpRequest.Builder request = HttpRequest.newBuilder(uri);
-		this.authorization.authorization(repository).ifPresent(value -> request.header("Authorization", value));
+		authorization.ifPresent(value -> request.header("Authorization", value));
 		return request;
 	}
 

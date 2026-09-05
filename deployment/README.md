@@ -220,3 +220,5 @@ Published bundles, backend images, and SkyPilot API-server images are immutable 
 must remain in GHCR indefinitely. Repository automation does not delete published release
 artifacts. Failed, untagged intermediates may be removed after 30 days only after proving no
 published bundle references them.
+
+Operator-prepopulated managed credentials use the [local Vault binding guide](../docs/local-vault-bindings.md), including persistent storage, unseal and recovery.

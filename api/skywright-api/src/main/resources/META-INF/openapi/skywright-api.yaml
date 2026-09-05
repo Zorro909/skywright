@@ -1680,7 +1680,7 @@ components:
       enum: [training-process, backend, transfer-worker, metric-view]
     BindingReadiness:
       type: string
-      enum: [ready, missing, invalid, expired]
+      enum: [ready, missing, invalid, expired, unavailable]
     CapabilityAvailability:
       type: string
       enum: [available, transiently-unavailable, incompatible]

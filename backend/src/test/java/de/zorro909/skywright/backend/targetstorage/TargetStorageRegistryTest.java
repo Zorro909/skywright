@@ -332,6 +332,42 @@ final class TargetStorageRegistryTest {
 	}
 
 	@Test
+	void viewsAndAdmissionObserveCredentialFailuresWithoutMutatingQualificationOrFallingBack() {
+		UUID id = eligibleRunOutput();
+		UUID other = eligibleRunOutput("Other", "other-runs", "http://other.example");
+		var affected = this.registry.get(id).bindings().getFirst().bindingId();
+		var status = new java.util.concurrent.atomic.AtomicReference<>(BindingReadiness.READY);
+		var live = new TargetStorageRegistry(this.repository,
+				(bindingId, revision, role) -> bindingId.equals(affected) ? status.get() : BindingReadiness.READY);
+		live.assignDefaults(TargetClass.LOCAL_SINGLE_GPU, id, false, id);
+		var before = live.get(id);
+		for (var failure : List.of(BindingReadiness.MISSING, BindingReadiness.INVALID, BindingReadiness.EXPIRED,
+				BindingReadiness.UNAVAILABLE)) {
+			status.set(failure);
+			assertThat(live.get(id).eligible()).isFalse();
+			assertThat(live.get(id).bindings().getFirst().readiness()).isEqualTo(failure);
+			assertThat(live.get(id).registrationRevision()).isEqualTo(before.registrationRevision());
+			assertThat(live.get(id).assessments()).isEqualTo(before.assessments());
+			assertThat(live.list()).filteredOn(view -> view.id().equals(id)).allMatch(view -> !view.eligible());
+			assertThat(live.get(other).eligible()).isTrue();
+			assertThatThrownBy(() -> live.resolve(TargetClass.LOCAL_SINGLE_GPU, null, null))
+				.isInstanceOf(TargetStorageIneligibleException.class);
+			assertThatThrownBy(() -> live.resolveForRunDefinition(TargetClass.LOCAL_SINGLE_GPU,
+					RunDefinitionStorageOverrides.none()))
+				.isInstanceOf(TargetStorageIneligibleException.class);
+			assertThatThrownBy(() -> live.assignDefaults(TargetClass.LOCAL_SINGLE_GPU, id, false, id))
+				.isInstanceOf(TargetStorageIneligibleException.class);
+			// The repository still contains the original qualification-time observation.
+			assertThat(this.repository.findById(id).orElseThrow().bindings().getFirst().readiness())
+				.isEqualTo(BindingReadiness.READY);
+		}
+		status.set(BindingReadiness.READY);
+		assertThat(live.get(id).eligible()).isTrue();
+		assertThat(live.resolveForRunDefinition(TargetClass.LOCAL_SINGLE_GPU, RunDefinitionStorageOverrides.none()))
+			.isNotNull();
+	}
+
+	@Test
 	void failureConstructionCannotCarryCredentialValues() {
 		assertThatThrownBy(() -> TargetStorageCapabilityResult.failure("put-object", "access-denied",
 				"The binding cannot perform PutObject", Map.of("provider-detail", "do-not-store")))

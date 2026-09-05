@@ -52,7 +52,8 @@ public class RegistryRebindings {
 			throw new TrainingProjectException("TRAINING_PROJECT_REPOSITORY_CONFLICT",
 					"The repository is already bound to a Training Project.");
 		}
-		RegistryReadiness readiness = readiness(accessMode, resolverCredentialBindingId, executionCredentialBindingId);
+		RegistryReadiness readiness = readiness(canonicalRepository, accessMode, resolverCredentialBindingId,
+				executionCredentialBindingId);
 		long candidateRevision = view.activeBinding().revision() + 1;
 		project.stageCandidate(new RegistryBinding(candidateRevision, canonicalRepository, accessMode,
 				resolverCredentialBindingId, executionCredentialBindingId, readiness, "candidate"));
@@ -105,7 +106,7 @@ public class RegistryRebindings {
 			.filter(binding -> binding.revision() == operation.candidateBindingRevision)
 			.findFirst()
 			.orElseThrow();
-		if (readiness(candidate.accessMode(), candidate.resolverCredentialBindingId(),
+		if (readiness(candidate.repository(), candidate.accessMode(), candidate.resolverCredentialBindingId(),
 				candidate.executionCredentialBindingId()) != RegistryReadiness.READY) {
 			operation.record(List.of(), List.of("REGISTRY_CREDENTIALS_UNAVAILABLE"), "failed", null);
 			return;
@@ -162,16 +163,17 @@ public class RegistryRebindings {
 		}
 	}
 
-	private RegistryReadiness readiness(RegistryAccessMode accessMode, UUID resolver, UUID execution) {
+	private RegistryReadiness readiness(String repository, RegistryAccessMode accessMode, UUID resolver,
+			UUID execution) {
 		if (accessMode == RegistryAccessMode.PUBLIC) {
 			return RegistryReadiness.READY;
 		}
 		if (resolver == null || execution == null) {
 			return RegistryReadiness.MISSING;
 		}
-		RegistryReadiness first = this.credentialReadiness.readiness(resolver, "backend-resolver");
-		return first == RegistryReadiness.READY ? this.credentialReadiness.readiness(execution, "execution-target-pull")
-				: first;
+		RegistryReadiness first = this.credentialReadiness.readiness(resolver, "backend-resolver", repository);
+		return first == RegistryReadiness.READY
+				? this.credentialReadiness.readiness(execution, "execution-target-pull", repository) : first;
 	}
 
 	private TrainingProjectEntity project(UUID id) {
