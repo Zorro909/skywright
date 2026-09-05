@@ -191,12 +191,13 @@ def test_checkpoint_ordering_reset_preserves_other_state(tmp_path: Path) -> None
         restored, new, run_id="clone", source_run_id="source", ordering_reset=True
     )
     assert reset is not None
-    assert reset.step == 42
-    assert reset.dataset_cursor == DatasetCursor(3, 0, 0, new.fingerprint)
-    assert reset.state == checkpoint.state
-    assert reset.runtime_state["other"] == (1, 2, 3)
-    assert checkpoint.dataset_cursor.item_offset == 17
-    assert reset.run_id == "source"
+    assert reset == DatasetCursor(3, 0, 0, new.fingerprint)
+    assert restored.step == 42
+    assert restored.state == checkpoint.state
+    assert restored.runtime_state["other"] == (1, 2, 3)
+    assert restored.dataset_cursor == checkpoint.dataset_cursor
+    assert restored.runtime_state["dataset_ordering"] == old.to_document()
+    assert restored.run_id == "source"
 
 
 @pytest.mark.parametrize(

@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from typing import NoReturn, cast
 
 from skywright._training_errors import TrainingContractViolation
-from skywright._training_types import CheckpointSnapshot
+from skywright._training_types import CheckpointSnapshot, DatasetCursor
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ def prepare_continuation(
     run_id: str,
     source_run_id: str | None,
     ordering_reset: bool,
-) -> CheckpointSnapshot | None:
+) -> DatasetCursor | None:
     """Validate seed provenance before allowing project construction or restoration."""
 
     def reject(field: str, problem: str) -> NoReturn:
@@ -90,7 +90,7 @@ def prepare_continuation(
     if ordering is None:
         if ordering_reset:
             reject("inputs", "Ordering Reset requires explicit Dataset ordering inputs")
-        return checkpoint
+        return checkpoint.dataset_cursor
     saved = checkpoint.runtime_state.get("dataset_ordering")
     if not isinstance(saved, Mapping):
         # Older checkpoints still support exact fingerprint equality, never reset.
@@ -102,7 +102,7 @@ def prepare_continuation(
                 "inputs",
                 "Checkpoint lacks the ordering inputs needed to diagnose or reset continuation",
             )
-        return checkpoint
+        return checkpoint.dataset_cursor
     saved = cast(Mapping[str, object], saved)
     current = ordering.to_document()
     if set(saved) != set(current):
@@ -139,20 +139,12 @@ def prepare_continuation(
     if ordering_reset and not changed:
         reject("reset", "Ordering Reset requires a changed Dataset Definition")
     if not ordering_reset:
-        return checkpoint
-    return CheckpointSnapshot(
-        step=checkpoint.step,
-        state=checkpoint.state,
-        runtime_state={**checkpoint.runtime_state, "dataset_ordering": current},
-        dataset_cursor=replace(
-            checkpoint.dataset_cursor,
-            item_offset=0,
-            epoch_step=0,
-            ordering_fingerprint=ordering.fingerprint,
-        ),
-        reference=checkpoint.reference,
-        run_id=checkpoint.run_id,
-        project_version=checkpoint.project_version,
+        return checkpoint.dataset_cursor
+    return replace(
+        checkpoint.dataset_cursor,
+        item_offset=0,
+        epoch_step=0,
+        ordering_fingerprint=ordering.fingerprint,
     )
 
 

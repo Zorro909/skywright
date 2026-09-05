@@ -97,7 +97,7 @@ class DefaultRunContext:
         )
         validate_system_metric_definitions(metric_catalog.system_definitions)
         self._ordering = validate_ordering(dataset, configuration, seed, self._violate)
-        resume_from = prepare_continuation(
+        resume_cursor = prepare_continuation(
             resume_from,
             self._ordering,
             run_id=run_id,
@@ -135,8 +135,8 @@ class DefaultRunContext:
                 "identify the Dataset Definition, seed, ordering policy, and policy version",
             )
         self._dataset_cursor: DatasetCursor = (
-            resume_from.dataset_cursor
-            if resume_from is not None
+            resume_cursor
+            if resume_cursor is not None
             else DatasetCursor(ordering_fingerprint=fingerprint)
         )
         validate_cursor_shape(self._dataset_cursor, self._violate)
