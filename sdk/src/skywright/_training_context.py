@@ -5,6 +5,7 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import NoReturn, cast
 
+from skywright._dataset_ordering import prepare_continuation, validate_ordering
 from skywright._training_checkpoint_coordinator import (
     CheckpointCoordinator,
     CheckpointShutdown,
@@ -69,6 +70,9 @@ class DefaultRunContext:
         monotonic_clock: Callable[[], float],
         cgroup_memory_reader: Callable[[], int | None],
         system_sampler_wait: SamplerWait,
+        seed: int,
+        source_run_id: str | None = None,
+        ordering_reset: bool = False,
     ) -> None:
         self._started = False
         self._violated: TrainingContractViolation | None = None
@@ -92,6 +96,15 @@ class DefaultRunContext:
             metric_catalog, project_version, skywright_metric_schema
         )
         validate_system_metric_definitions(metric_catalog.system_definitions)
+        self._ordering = validate_ordering(dataset, configuration, seed, self._violate)
+        resume_from = prepare_continuation(
+            resume_from,
+            self._ordering,
+            run_id=run_id,
+            source_run_id=source_run_id,
+            ordering_reset=ordering_reset,
+        )
+        self._source_run_id = source_run_id
         self._resume_state = ResumeState(resume_from)
         if resume_from is not None and (
             type(resume_from.step) is not int or resume_from.step < 0
@@ -265,7 +278,7 @@ class DefaultRunContext:
         restore_checkpoint(
             self._resume_state.checkpoint,
             self._states,
-            self._run_id,
+            self._source_run_id or self._run_id,
             self._project_version,
             self._violate,
         )
@@ -364,6 +377,7 @@ class DefaultRunContext:
             self._dataset_cursor,
             self._run_id,
             self._project_version,
+            self._ordering,
         )
 
     def durable_state(self) -> tuple[int | None, str | None]:

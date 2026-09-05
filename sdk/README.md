@@ -498,3 +498,42 @@ SPDX JSON SBOMs, build-provenance and SBOM attestation bundles, and verification
 files, tags, checksums, SBOMs, attestations, and GitHub Releases are permanent records: do not delete,
 replace, or apply an expiration policy to them. Routine CI distributions remain diagnostic artifacts
 with seven-day retention and are never inputs to the release workflow.
+
+### Exact Dataset Item continuation
+
+`MdsDatasetAccess` pins `DatasetOrdering`, including the Dataset Definition, content
+fingerprint, seed, policy and `feistel-sha256-v1` algorithm version. Configuration
+resolution materializes `reproducibility.seed`, `dataset.ordering.policy` and
+`dataset.ordering.version`. The Training Process checks these against Dataset access
+before calling the project. Checkpoints retain the ordering inputs and Dataset Cursor.
+
+A Step may combine batches from one epoch. Commit its final issued batch after all its
+work succeeds. The cursor then advances to the next uncommitted item. Retrieving items
+does not commit them. Recovery discards uncommitted work and replays from the confirmed
+checkpoint, including prefetched items. Final batches are never dropped or padded;
+committing the last item advances to offset zero of the next epoch. Empty Datasets
+are rejected when opening access.
+
+`loader_workers` selects zero to 64 bounded retrieval workers. A reader submits at most
+one batch at a time and reassembles results in sequence order. Its cache lock serializes
+shard access; worker count is not a promise of decoding throughput. For single-node
+accelerator execution, `batch.partition_items(count)` returns contiguous slices in
+accelerator-index order. Concatenating those slices reconstructs the batch. The owning
+Training Process commits the original global batch only after every slice has finished.
+Empty slices are allowed. Multi-node execution is outside this contract.
+
+The direct embedding boundary accepts `source_run_id` for an explicitly checkpoint-seeded
+Run. The checkpoint must belong to that source and use the same Training Project Version.
+Changing seed, ordering policy or policy version is rejected. A changed Dataset Definition
+also requires `ordering_reset=True`. Reset preserves global epoch, global Step, RNG and
+project state, but resets item offset and epoch-local Step count. It is invalid for
+same-Run recovery or an unchanged Dataset Definition. Checkpoints predating explicit
+ordering metadata permit exact fingerprint continuation, but cannot perform a reset.
+Managed runtime integration is tracked in #231; checkpoint transfer and clone UI remain
+in their respective issues.
+
+The guarantee covers the flattened committed Dataset Item identities. Worker count,
+cache loss, Storage Location, batch grouping and single-node accelerator count can change.
+Decoded tensors, augmentation and numerical training results need not match. RNG states
+for surviving accelerator indices restore normally; additional devices retain the
+library-established seed.

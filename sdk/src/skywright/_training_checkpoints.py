@@ -4,6 +4,7 @@ import copy
 from collections.abc import Callable, Mapping
 from typing import NoReturn, cast
 
+from skywright._dataset_ordering import DatasetOrdering
 from skywright._training_errors import SkywrightFailure
 from skywright._training_protocols import CheckpointState
 from skywright._training_state import capture_runtime_state, restore_runtime_state
@@ -61,15 +62,19 @@ def capture_checkpoint(
     dataset_cursor: DatasetCursor,
     run_id: str,
     project_version: str,
+    ordering: DatasetOrdering | None = None,
 ) -> CheckpointSnapshot:
     state = {
         name: copy.deepcopy(dict(checkpoint_state.state_dict()))
         for name, checkpoint_state in states.items()
     }
+    runtime_state = capture_runtime_state()
+    if ordering is not None:
+        runtime_state["dataset_ordering"] = ordering.to_document()
     return CheckpointSnapshot(
         step=step,
         state=state,
-        runtime_state=capture_runtime_state(),
+        runtime_state=runtime_state,
         dataset_cursor=dataset_cursor,
         run_id=run_id,
         project_version=project_version,

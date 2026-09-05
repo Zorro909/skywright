@@ -3766,3 +3766,44 @@ run_training_process(
     )
 
     assert completed.returncode == 1
+
+
+@pytest.mark.parametrize(
+    ("seed", "configuration", "field"),
+    [
+        (20, {}, "seed"),
+        (19, {"reproducibility": {"seed": 20}}, "seed"),
+        (19, {"dataset": {"ordering": {"policy": "replacement"}}}, "policy"),
+        (19, {"dataset": {"ordering": {"version": "v2"}}}, "version"),
+    ],
+)
+def test_ordering_inputs_rejected_before_project_construction(
+    seed: int, configuration: dict[str, object], field: str
+) -> None:
+    completed = run_project(
+        f"""
+import json
+from skywright import run_training_process
+from skywright.dataset import DatasetOrdering
+
+class OrderedDataset(TestDataset):
+    ordering = DatasetOrdering("definition", "content", 19)
+    @property
+    def ordering_fingerprint(self): return self.ordering.fingerprint
+
+def train(context):
+    raise AssertionError("project must not run with mismatched ordering inputs")
+
+result = run_training_process(
+    train, run_id="run", project_version="project", configuration={configuration!r},
+    dataset=OrderedDataset(), metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1", recorder=TestRecorder(), seed={seed},
+)
+print(json.dumps({{"cause": result.report.cause.value, "rule": result.report.diagnostics["rule"]}}))
+"""
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "contract_violation",
+        "rule": "dataset-ordering/" + field,
+    }

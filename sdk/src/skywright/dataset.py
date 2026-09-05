@@ -1,6 +1,7 @@
 """Portable Dataset reads; storage and cache configuration belong to runtime assembly."""
 
 from skywright._dataset_access import MdsDatasetAccess
+from skywright._dataset_ordering import DatasetOrdering
 from skywright._dataset_read_types import (
     DatasetCacheLimits,
     DatasetDefinition,
@@ -16,6 +17,7 @@ __all__ = [
     "DatasetDefinition",
     "DatasetItem",
     "DatasetObject",
+    "DatasetOrdering",
     "DatasetReadError",
     "DatasetReadStats",
     "MdsDatasetAccess",

@@ -32,7 +32,11 @@ def restore_runtime_state(state: Mapping[str, object]) -> None:
         torch = importlib.import_module("torch")
         torch.set_rng_state(state["torch_cpu_random"])
         if "torch_accelerator_random" in state and torch.cuda.is_available():
-            torch.cuda.set_rng_state_all(state["torch_accelerator_random"])
+            # Restore surviving local device indices. Additional devices retain
+            # their library-established seed; numerical equivalence is not promised.
+            saved = cast(list[object], state["torch_accelerator_random"])
+            for index, device_state in enumerate(saved[: torch.cuda.device_count()]):
+                torch.cuda.set_rng_state(device_state, index)
 
 
 def freeze(value: object) -> object:

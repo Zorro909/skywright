@@ -115,6 +115,24 @@ class DatasetBatch:
     next_cursor: DatasetCursor
     epoch: int = 0
 
+    def partition_items(self, accelerator_count: int) -> tuple[tuple[object, ...], ...]:
+        """Split one global batch into contiguous single-node accelerator slices.
+
+        Concatenating slices in accelerator-index order reconstructs the logical
+        sequence. Empty slices are allowed; no item is padded or dropped. The
+        Training Process commits this global batch only after every slice finishes.
+        """
+        if type(accelerator_count) is not int or accelerator_count < 1:
+            raise ValueError("Accelerator count must be a positive integer")
+        quotient, remainder = divmod(len(self.items), accelerator_count)
+        return tuple(
+            self.items[
+                rank * quotient + min(rank, remainder) : (rank + 1) * quotient
+                + min(rank + 1, remainder)
+            ]
+            for rank in range(accelerator_count)
+        )
+
 
 @dataclass(frozen=True)
 class ArtifactRecord:

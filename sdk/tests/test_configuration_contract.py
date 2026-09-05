@@ -98,7 +98,12 @@ def test_submission_resolves_with_the_normative_structural_overlay() -> None:
 
     assert resolved == {
         "reproducibility": {"seed": 0},
-        "dataset": {"ordering": {"policy": "deterministic-shuffle"}},
+        "dataset": {
+            "ordering": {
+                "policy": "deterministic-shuffle",
+                "version": "feistel-sha256-v1",
+            }
+        },
         "checkpoint": {"cadence": 100, "retention": 3, "keepEveryNth": None},
         "metrics": {
             "flushInterval": Decimal("10"),
