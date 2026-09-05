@@ -31,11 +31,11 @@ dependencies = [
   "jsonschema[format]>=4.25,<5",
   "numpy>=2.2,<3",
   "pillow>=11,<13",
-  "protobuf==7.36.0",
+  "protobuf==7.36.1",
   "python-snappy>=0.7,<1",
   "safetensors>=0.6,<1",
   "tensorboard==2.21.0",
-  "xxhash>=3.5,<4",
+  "xxhash>=3.5,<5",
   "zstandard>=0.23,<1",
 ]
 
