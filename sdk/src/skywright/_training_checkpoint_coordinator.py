@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import threading
 import time
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from skywright._training_errors import CheckpointPublicationCancelled
 from skywright._training_protocols import TrainingProcessRecorder
-from skywright._training_types import CheckpointSnapshot
+from skywright._training_types import CheckpointConfirmation, CheckpointSnapshot
 
 
 @dataclass(frozen=True)
@@ -36,7 +37,11 @@ class CheckpointCoordinator:
         self._active: CheckpointSnapshot | None = None
         self._pending: CheckpointSnapshot | None = None
         self._failure: Exception | None = None
-        self._confirmed = resume_from
+        self._confirmed = (
+            CheckpointConfirmation(resume_from.step, resume_from.reference)
+            if resume_from is not None and resume_from.reference is not None
+            else None
+        )
         self._cancelling_active = False
         self._shutdown_deadline: float | None = None
 
@@ -56,6 +61,8 @@ class CheckpointCoordinator:
     def schedule(self, snapshot: CheckpointSnapshot) -> None:
         with self._condition:
             if self._failure is not None:
+                # The latched exception retains this frame after it is raised.
+                del snapshot
                 raise self._failure
             if self._active is None:
                 self._active = snapshot
@@ -70,9 +77,10 @@ class CheckpointCoordinator:
 
     def publish_terminal(
         self,
+        step: int,
         capture: Callable[[], CheckpointSnapshot],
         cancellation_requested: Callable[[], bool] | None = None,
-    ) -> CheckpointSnapshot | None:
+    ) -> CheckpointConfirmation | None:
         self._begin_shutdown()
         self._discard_pending()
         if self._wait_for_active(cancellation_requested):
@@ -81,17 +89,16 @@ class CheckpointCoordinator:
         self.raise_if_failed()
         with self._confirmation_lock:
             confirmed = self._confirmed
-        snapshot = capture()
-        if confirmed is not None and confirmed.step == snapshot.step:
+        if confirmed is not None and confirmed.step == step:
             return confirmed
-        self.schedule(snapshot)
+        self.schedule(capture())
         if self._wait_for_active(cancellation_requested):
             self._resume_after_cancellation()
             return None
         self.raise_if_failed()
         with self._confirmation_lock:
             confirmed = self._confirmed
-        if confirmed is None or confirmed.step != snapshot.step:
+        if confirmed is None or confirmed.step != step:
             raise RuntimeError("terminal checkpoint publication was not confirmed")
         return confirmed
 
@@ -152,10 +159,13 @@ class CheckpointCoordinator:
                     )
                     if self._failure is None and not expected_cancellation:
                         self._failure = failure
+                        _release_failure_frames(failure)
                     self._pending = None
+                    snapshot = None
                     self._active = None
                     self._condition.notify_all()
                 return
+            snapshot = None
             with self._condition:
                 if self._pending is None:
                     self._active = None
@@ -164,11 +174,13 @@ class CheckpointCoordinator:
                 self._active = self._pending
                 self._pending = None
 
-    def _publish_and_confirm(self, snapshot: CheckpointSnapshot) -> CheckpointSnapshot:
+    def _publish_and_confirm(
+        self, snapshot: CheckpointSnapshot
+    ) -> CheckpointConfirmation:
         reference = self._recorder.publish_checkpoint(snapshot)
         if not reference:
             raise ValueError("checkpoint publisher returned an empty reference")
-        published = snapshot.with_reference(reference)
+        published = CheckpointConfirmation(snapshot.step, reference)
         with self._confirmation_lock:
             current = self._confirmed
             if current is not None:
@@ -231,3 +243,20 @@ class CheckpointCoordinator:
         with self._condition:
             if self._failure is None:
                 self._failure = failure
+
+
+def _release_failure_frames(failure: BaseException) -> None:
+    """Keep traceback locations and causes without retaining completed call locals."""
+    pending = [failure]
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in visited:
+            continue
+        visited.add(id(current))
+        if current.__traceback__ is not None:
+            traceback.clear_frames(current.__traceback__)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING as _TYPE_CHECKING
 from skywright._training import (
     Accelerator,
     ArtifactRecord,
+    CheckpointConfirmation,
     CheckpointRejectionEvidence,
     CheckpointSnapshot,
     CheckpointState,
@@ -51,6 +52,7 @@ def __getattr__(name: str) -> object:
 __all__ = (
     "Accelerator",
     "ArtifactRecord",
+    "CheckpointConfirmation",
     "CheckpointRejectionEvidence",
     "CheckpointSnapshot",
     "CheckpointState",

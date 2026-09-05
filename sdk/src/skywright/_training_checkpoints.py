@@ -66,7 +66,7 @@ def capture_checkpoint(
     determinism: Mapping[str, object] | None = None,
 ) -> CheckpointSnapshot:
     state = {
-        name: copy.deepcopy(dict(checkpoint_state.state_dict()))
+        name: dict(checkpoint_state.state_dict())
         for name, checkpoint_state in states.items()
     }
     runtime_state = capture_runtime_state()

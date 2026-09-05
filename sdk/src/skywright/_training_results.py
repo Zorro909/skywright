@@ -15,6 +15,7 @@ from skywright._training_protocols import (
     finalize_recorder_observability,
 )
 from skywright._training_types import (
+    CheckpointConfirmation,
     CheckpointSnapshot,
     ExecutionAttemptRecord,
     ExecutionTerminationCause,
@@ -231,7 +232,7 @@ def _result(
     last_committed_step: int,
     latest_durable_step: int | None,
     latest_durable_checkpoint: str | None,
-    final_checkpoint: CheckpointSnapshot | None,
+    final_checkpoint: CheckpointConfirmation | None,
     context: DefaultRunContext | None,
     diagnostics: Mapping[str, object],
 ) -> TrainingProcessResult:
