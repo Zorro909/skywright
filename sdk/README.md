@@ -209,12 +209,24 @@ TensorBoard event segments and maintains the Run's current Progress Record.
 
 ## Read a pinned Dataset
 
-Skywright bundles MosaicML Streaming 0.13's MDS reader and codec modules, with
-upstream provenance and Apache-2.0 licensing in
-[`_vendor/mosaicml_streaming/NOTICE.md`](src/skywright/_vendor/mosaicml_streaming/NOTICE.md).
-The Pickle codec is removed. The base SDK's NumPy and Pillow dependencies supply
-numerical and image decoding on Python 3.10 through 3.14. MosaicML's model-loading
-and cloud-provider packages are not runtime dependencies.
+Dataset reads use the external MosaicML Streaming package. Its published 0.13 release
+restricts Transformers to versions below the security fixes. This implementation pins
+upstream development version 0.14.0.dev0 at commit
+[`d99bf9c7`](https://github.com/mosaicml/streaming/commit/d99bf9c7cdf2dd4ed62a4960ed35270b93337a5f)
+and requires Transformers 5.10 or newer. The repository's uv lockfile selects this
+revision with the `dataset` extra. No upstream source is copied into the SDK.
+
+Until MosaicML publishes that version, installing Dataset support outside this
+repository requires supplying the pinned source alongside the SDK extra:
+
+```sh
+pip install 'skywright[dataset]' \
+  'mosaicml-streaming @ git+https://github.com/mosaicml/streaming.git@d99bf9c7cdf2dd4ed62a4960ed35270b93337a5f'
+```
+
+The base SDK installs from PyPI normally. Dataset support pins torchvision 0.27,
+which selects PyTorch 2.12. The repository tests use their CPU wheels; Environment
+Profile assembly and GPU qualification remain in #231 and #235.
 
 Runtime assembly creates `skywright.dataset.MdsDatasetAccess` from a pinned
 `DatasetDefinition` and a selected `StorageLocation`, then passes it to

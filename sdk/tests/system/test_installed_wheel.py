@@ -46,15 +46,13 @@ assert metadata("skywright").get_all("Requires-Dist") == [
     "python-snappy<1,>=0.7",
     "safetensors<1,>=0.6",
     "tensorboard==2.21.0",
-    "typing-extensions<5,>=4.12",
     "xxhash<4,>=3.5",
     "zstandard<1,>=0.23",
+    "mosaicml-streaming==0.14.0.dev0; extra == 'dataset'",
+    "torchvision==0.27.0; extra == 'dataset'",
+    "transformers<6,>=5.10; extra == 'dataset'",
 ]
 assert files(skywright).joinpath("py.typed").is_file()
-mds = files(skywright).joinpath("_vendor", "mosaicml_streaming")
-assert "Apache License" in mds.joinpath("LICENSE").read_text()
-assert "adeeeebe8f5d42cb429c05bd4e62df2176ef20ab" in mds.joinpath("provenance.json").read_text()
-assert "class Pickle" not in mds.joinpath("encodings.py").read_text()
 assert importlib.util.find_spec("boto3") is None
 assert importlib.util.find_spec("brotli") is None
 assert importlib.util.find_spec("jsonschema") is None

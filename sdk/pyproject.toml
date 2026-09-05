@@ -35,9 +35,15 @@ dependencies = [
   "python-snappy>=0.7,<1",
   "safetensors>=0.6,<1",
   "tensorboard==2.21.0",
-  "typing-extensions>=4.12,<5",
   "xxhash>=3.5,<4",
   "zstandard>=0.23,<1",
+]
+
+[project.optional-dependencies]
+dataset = [
+  "mosaicml-streaming==0.14.0.dev0",
+  "transformers>=5.10,<6",
+  "torchvision==0.27.0",
 ]
 
 [project.scripts]
@@ -73,6 +79,8 @@ ml-test = { requires-python = ">=3.10,<3.15" }
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+mosaicml-streaming = { git = "https://github.com/mosaicml/streaming.git", rev = "d99bf9c7cdf2dd4ed62a4960ed35270b93337a5f" }
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
@@ -113,13 +121,11 @@ markers = [
 
 [tool.ruff]
 target-version = "py310"
-extend-exclude = ["src/skywright/_vendor"]
 
 [tool.ruff.lint]
 select = ["B", "E4", "E7", "E9", "F", "I", "RUF", "SIM", "UP"]
 
 [tool.pyright]
 include = ["src", "tests", "hatch_build.py", "release_support.py"]
-ignore = ["src/skywright/_vendor"]
 pythonVersion = "3.10"
 typeCheckingMode = "strict"

@@ -305,7 +305,6 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         "sdk/src/skywright/_dataset_",
         "sdk/src/skywright/run_store.py",
         "sdk/src/skywright/dataset.py",
-        "sdk/src/skywright/_vendor/mosaicml_streaming/",
         "sdk/tests/fixtures/mds-reader/",
         "sdk/src/skywright/_training_process.py",
         "sdk/tests/test_run_store",

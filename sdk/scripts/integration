@@ -11,5 +11,5 @@ uv run --locked --group ml-test pytest tests/test_run_store_system.py \
   --cov-report xml:target/coverage/integration.xml \
   --cov-report html:target/coverage/integration-html
 
-uv run --locked --group ml-test pytest tests/test_dataset_access_system.py \
+uv run --locked --extra dataset --group ml-test pytest tests/test_dataset_access_system.py \
   --junitxml target/test-results/dataset-integration.xml

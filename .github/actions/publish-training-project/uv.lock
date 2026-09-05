@@ -1447,7 +1447,6 @@ dependencies = [
     { name = "python-snappy" },
     { name = "safetensors" },
     { name = "tensorboard" },
-    { name = "typing-extensions" },
     { name = "xxhash" },
     { name = "zstandard" },
 ]
@@ -1457,16 +1456,19 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.40,<2" },
     { name = "brotli", specifier = ">=1.1,<2" },
     { name = "jsonschema", extras = ["format"], specifier = ">=4.25,<5" },
+    { name = "mosaicml-streaming", marker = "extra == 'dataset'", git = "https://github.com/mosaicml/streaming.git?rev=d99bf9c7cdf2dd4ed62a4960ed35270b93337a5f" },
     { name = "numpy", specifier = ">=2.2,<3" },
     { name = "pillow", specifier = ">=11,<13" },
     { name = "protobuf", specifier = "==7.36.0" },
     { name = "python-snappy", specifier = ">=0.7,<1" },
     { name = "safetensors", specifier = ">=0.6,<1" },
     { name = "tensorboard", specifier = "==2.21.0" },
-    { name = "typing-extensions", specifier = ">=4.12,<5" },
+    { name = "torchvision", marker = "extra == 'dataset'", specifier = "==0.27.0", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "transformers", marker = "extra == 'dataset'", specifier = ">=5.10,<6" },
     { name = "xxhash", specifier = ">=3.5,<4" },
     { name = "zstandard", specifier = ">=0.23,<1" },
 ]
+provides-extras = ["dataset"]
 
 [package.metadata.requires-dev]
 dev = [

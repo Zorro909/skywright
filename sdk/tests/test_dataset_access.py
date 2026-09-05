@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import io
 import json
 from pathlib import Path
@@ -145,12 +144,8 @@ def published_definition(directory: Path) -> DatasetDefinition:
     )
 
 
-def test_upstream_fixture_identity_and_removed_executable_codec() -> None:
+def test_upstream_fixture_identity() -> None:
     root = Path(__file__).parent / "fixtures" / "mds-reader"
     provenance = json.loads((root / "provenance.json").read_text())
     for relative, expected in provenance["files"].items():
         assert hashlib.sha256((root / relative).read_bytes()).hexdigest() == expected
-    codecs = importlib.import_module("skywright._vendor.mosaicml_streaming.encodings")
-    assert not codecs.is_mds_encoding_safe("pkl")
-    with pytest.raises(ValueError):
-        codecs.mds_decode("pkl", b"executable codecs are not distributed")

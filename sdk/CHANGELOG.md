@@ -3,9 +3,9 @@
 ## Next
 
 - Adds MosaicML MDS Dataset reads with a verified, bounded S3 cache, canonical item
-  ordinals and cumulative I/O statistics. Bundles the upstream MDS reader and safe
-  codecs with source provenance and licensing; direct execution uses role-specific
-  environment or protected file credentials on Python 3.10 through 3.14.
+  ordinals and cumulative I/O statistics. The `dataset` extra uses a pinned upstream
+  MosaicML Streaming development revision with patched Transformers dependencies.
+  Direct execution uses role-specific environment or protected file credentials.
 
 - Adds the Training Process Boundary and typed Run Context authoring interface, including
   deterministic runtime setup, one-context process ownership, Checkpoint State and resume,
