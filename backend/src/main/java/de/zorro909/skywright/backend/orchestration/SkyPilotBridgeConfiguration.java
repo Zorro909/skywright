@@ -12,18 +12,19 @@ class SkyPilotBridgeConfiguration {
 
 	@Bean(destroyMethod = "close")
 	GraalPySkyPilotClient skyPilotClient(SkyPilotBridgeProperties properties,
+			de.zorro909.skywright.backend.credential.LocalProjectionFacts facts,
 			org.springframework.beans.factory.ObjectProvider<de.zorro909.skywright.backend.credential.VaultBindings> vault,
 			@org.springframework.beans.factory.annotation.Value("${skywright.credentials.skypilot-binding:}") String binding) {
 		var client = new GraalPySkyPilotClient(properties.externalDirectory(), properties.apiServerEndpoint());
 		if (vault.getIfAvailable() != null) {
 			if (binding.isBlank()) {
 				client.authorization(new de.zorro909.skywright.backend.credential.BackendSkyPilotAuthorization(
-						vault.getObject(), new java.util.UUID(0, 0), properties.apiServerEndpoint().toString()));
+						vault.getObject(), new java.util.UUID(0, 0), properties.apiServerEndpoint().toString(), facts));
 			}
 			else {
 				client.authorization(
 						new de.zorro909.skywright.backend.credential.BackendSkyPilotAuthorization(vault.getObject(),
-								java.util.UUID.fromString(binding), properties.apiServerEndpoint().toString()));
+								java.util.UUID.fromString(binding), properties.apiServerEndpoint().toString(), facts));
 			}
 		}
 		return client;

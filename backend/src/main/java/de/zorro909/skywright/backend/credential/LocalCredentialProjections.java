@@ -37,9 +37,14 @@ public class LocalCredentialProjections {
 			throw new IllegalArgumentException(
 					"Training storage profiles must isolate Dataset read and Run Store writes");
 		}
+		var datasetBinding = trainingBinding(dataset);
+		var runStoreBinding = trainingBinding(runStore);
+		if (datasetBinding.identity().equals(runStoreBinding.identity())) {
+			throw new IllegalArgumentException("Dataset and Run Store require distinct external identities");
+		}
 		var values = new LinkedHashMap<String, String>();
-		project(runId, "dataset", dataset, "SKYWRIGHT_DATASET", requiredUntil, values);
-		project(runId, "run-store", runStore, "SKYWRIGHT_RUN_STORE", requiredUntil, values);
+		project(runId, "dataset", datasetBinding, "SKYWRIGHT_DATASET", requiredUntil, values);
+		project(runId, "run-store", runStoreBinding, "SKYWRIGHT_RUN_STORE", requiredUntil, values);
 		return new TrainingCredentials(values);
 	}
 
@@ -51,10 +56,10 @@ public class LocalCredentialProjections {
 			.stream()
 			.filter(b -> b.id().equals(registry.bindingId()) && b.kind() == CredentialBinding.Kind.GHCR
 					&& b.role().equals("execution-target-pull") && b.resource().equals(registry.resource())
-					&& b.accessProfile().equals(registry.accessProfile()))
+					&& b.accessProfile().equals("read-only") && b.accessProfile().equals(registry.accessProfile()))
 			.findFirst()
 			.orElseThrow(() -> new IllegalStateException("Runtime pull binding is unavailable"));
-		if (requiredUntil == null || binding.validUntil() != null && binding.validUntil().isBefore(requiredUntil)) {
+		if (requiredUntil == null || binding.validUntil() != null && !binding.validUntil().isAfter(requiredUntil)) {
 			throw new IllegalStateException("Credential validity does not cover the Run recovery window");
 		}
 		this.facts.begin(runId, "runtime-pull", binding);
@@ -78,16 +83,19 @@ public class LocalCredentialProjections {
 		return projection;
 	}
 
-	private void project(UUID runId, String slot, Selection selection, String prefix, Instant requiredUntil,
-			LinkedHashMap<String, String> values) {
-		var binding = this.vault.definitions()
+	private CredentialBinding trainingBinding(Selection selection) {
+		return this.vault.definitions()
 			.stream()
 			.filter(b -> b.id().equals(selection.bindingId()) && b.kind() == CredentialBinding.Kind.S3
 					&& b.role().equals("training-process") && b.resource().equals(selection.resource())
 					&& b.accessProfile().equals(selection.accessProfile()))
 			.findFirst()
 			.orElseThrow(() -> new IllegalStateException("Training Credential Binding is unavailable"));
-		if (requiredUntil == null || binding.validUntil() != null && binding.validUntil().isBefore(requiredUntil)) {
+	}
+
+	private void project(UUID runId, String slot, CredentialBinding binding, String prefix, Instant requiredUntil,
+			LinkedHashMap<String, String> values) {
+		if (requiredUntil == null || binding.validUntil() != null && !binding.validUntil().isAfter(requiredUntil)) {
 			throw new IllegalStateException("Credential validity does not cover the Run recovery window");
 		}
 		this.facts.begin(runId, slot, binding);

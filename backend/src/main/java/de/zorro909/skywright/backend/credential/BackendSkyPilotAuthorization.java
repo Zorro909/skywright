@@ -12,10 +12,14 @@ public final class BackendSkyPilotAuthorization {
 
 	private final String endpoint;
 
-	public BackendSkyPilotAuthorization(VaultBindings vault, UUID bindingId, String endpoint) {
+	private final LocalProjectionFacts facts;
+
+	public BackendSkyPilotAuthorization(VaultBindings vault, UUID bindingId, String endpoint,
+			LocalProjectionFacts facts) {
 		this.vault = vault;
 		this.bindingId = bindingId;
 		this.endpoint = endpoint;
+		this.facts = facts;
 	}
 
 	public <T> T use(Function<String, T> request) {
@@ -25,11 +29,16 @@ public final class BackendSkyPilotAuthorization {
 					&& b.role().equals("backend") && b.resource().equals(this.endpoint))
 			.findFirst()
 			.orElseThrow(() -> new IllegalStateException("Backend SkyPilot binding is unavailable"));
-		return this.vault
-			.resolve(binding.id(), binding.revision(), "backend",
-					secret -> request.apply(secret.path("token").asText()))
-			.value()
-			.orElseThrow(() -> new IllegalStateException("Backend SkyPilot authorization failed"));
+		return this.vault.resolve(binding.id(), binding.revision(), "backend", secret -> {
+			var operationId = UUID.randomUUID();
+			this.facts.begin(operationId, "backend", binding);
+			try {
+				return request.apply(secret.path("token").asText());
+			}
+			finally {
+				this.facts.release(operationId);
+			}
+		}).value().orElseThrow(() -> new IllegalStateException("Backend SkyPilot authorization failed"));
 	}
 
 }

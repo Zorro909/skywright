@@ -14,12 +14,13 @@ for #231 and #56; API admission and the complete local AMD workflow remain in #2
 | SkyPilot API server | `KUBECONFIG` naming a mode-0400 JSON file | KUBERNETES/skypilot-api-server, delivered directly by Vault Agent |
 | Training Process Dataset access | `SKYWRIGHT_DATASET_*` secret variables | S3/training-process, `read-only`, selected Dataset Target Storage |
 | Training Process Run Store access | `SKYWRIGHT_RUN_STORE_*` secret variables | Separate S3/training-process binding, `read-write-delete`, selected output Target Storage |
-| Local container runtime | Immutable Kubernetes dockerconfigjson Secret | GHCR/execution-target-pull, exact project repository; separate from backend-resolver |
+| Local container runtime | Immutable Kubernetes dockerconfigjson Secret | GHCR/execution-target-pull, `read-only`, exact project repository; separate from backend-resolver |
 
 Set `skywright.credentials.skypilot-binding` to the backend service-account binding UUID.
 When Vault is configured, omission or a wrong role/resource fails the SkyPilot capability closed.
 The backend resolves its own token for each call, injects it into the client context, and clears
-it in a `finally` block. It never uses a Training Process binding to authorize those calls.
+it in a `finally` block. Each call appends a non-secret projection fact and a release fact
+after the call finishes, including when the operation fails. It never uses a Training Process binding to authorize those calls.
 Existing backend storage and registry consumers retain their separate bindings from #228.
 
 The deployment fixture in `deployment/examples/local-credentials/` shows a one-shot Vault Agent
@@ -42,9 +43,10 @@ and [template delivery](https://developer.hashicorp.com/vault/docs/agent-and-pro
 
 `LocalCredentialProjections.training(runId, dataset, runStore, requiredUntil)` resolves the
 current registered revisions for a new Run. Each selection supplies its exact binding ID,
-resource and access profile. Dataset and Run Store identities must differ. `requiredUntil`
+resource and access profile. Dataset and Run Store bindings must declare different external identities as well as distinct
+binding IDs and resources. `requiredUntil`
 is the caller's latest supported end of execution plus recovery; finite credentials must
-remain valid through that instant. Use `Instant.MAX` for an unbounded Run; it requires operator-declared non-expiring
+expire strictly after that instant. Use `Instant.MAX` for an unbounded Run; it requires operator-declared non-expiring
 external credentials. The caller must not turn an unknown lifetime into an arbitrary short
 validity window.
 
