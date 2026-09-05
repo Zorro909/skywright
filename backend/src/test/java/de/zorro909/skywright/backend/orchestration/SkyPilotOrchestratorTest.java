@@ -75,6 +75,39 @@ final class SkyPilotOrchestratorTest {
 	}
 
 	@Test
+	void catalogueAndCompletionsShareBoundedHeldAdmission() throws Exception {
+		var client = new ControllableSkyPilotClient();
+		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
+		awaitInitialProbe();
+		var entered = new CountDownLatch(1);
+		var release = new CountDownLatch(1);
+		var catalogue = this.orchestrator.catalogue(query -> {
+			entered.countDown();
+			release.await();
+			return java.util.Optional.empty();
+		});
+		var query = new de.zorro909.skywright.backend.pricing.SkyPilotCatalogueQuery("aws", "us-east-1", "p5.48xlarge",
+				"H100", 8, false, java.time.Instant.now());
+		try (var caller = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+			var price = caller.submit(() -> catalogue.price(query));
+			try {
+				assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+				var completion = this.orchestrator.complete(new OrchestratorOperation("held-1", OperationKind.STATUS));
+				assertThat(completion).isNotDone();
+				org.assertj.core.api.Assertions.assertThatThrownBy(() -> catalogue.price(query))
+					.isInstanceOfSatisfying(SkyPilotClientFailure.class, failure -> assertThat(failure.causeCategory())
+						.isEqualTo(BridgeFailure.FailureCause.SATURATION));
+				assertThat(client.heldStarted.getCount()).isEqualTo(1);
+			}
+			finally {
+				release.countDown();
+				client.releaseHeld.countDown();
+			}
+			assertThat(price.get(1, TimeUnit.SECONDS)).isEmpty();
+		}
+	}
+
+	@Test
 	void dependencyDiagnosticsDoNotExposeGuestFailureText() throws Exception {
 		var client = new ControllableSkyPilotClient();
 		client.submitFailure = new SkyPilotClientFailure(BridgeFailure.FailureCause.AUTHENTICATION,
@@ -149,7 +182,7 @@ final class SkyPilotOrchestratorTest {
 	}
 
 	@Test
-	void stalledAvailabilityRefreshDoesNotBlockControlWork() throws Exception {
+	void stalledAvailabilityRefreshSharesBoundedControlAdmission() throws Exception {
 		var client = new ControllableSkyPilotClient();
 		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
 		awaitInitialProbe();
@@ -157,14 +190,20 @@ final class SkyPilotOrchestratorTest {
 
 		var refresh = this.orchestrator.refreshAvailability();
 		assertThat(client.heldProbeStarted.await(1, TimeUnit.SECONDS)).isTrue();
-		var status = this.orchestrator.observe(new StatusRequest(List.of("job")))
-			.toCompletableFuture()
-			.get(1, TimeUnit.SECONDS);
-
-		assertThat(status)
-			.isEqualTo(OrchestratorResult.accepted(new OrchestratorOperation("status-1", OperationKind.STATUS)));
-		assertThat(refresh).isNotDone();
-		client.releaseProbe.countDown();
+		var status = this.orchestrator.observe(new StatusRequest(List.of("job"))).toCompletableFuture();
+		try {
+			assertThat(status).isNotDone();
+			assertThat(this.orchestrator.cleanup(new CleanupRequest("job"))
+				.toCompletableFuture()
+				.get(1, TimeUnit.SECONDS)
+				.failure()
+				.cause()).isEqualTo(BridgeFailure.FailureCause.SATURATION);
+			assertThat(refresh).isNotDone();
+		}
+		finally {
+			client.releaseProbe.countDown();
+		}
+		assertThat(status.get(1, TimeUnit.SECONDS).value().kind()).isEqualTo(OperationKind.STATUS);
 	}
 
 	@Test
@@ -183,7 +222,7 @@ final class SkyPilotOrchestratorTest {
 	}
 
 	@Test
-	void submissionPreflightDoesNotBlockControlWork() throws Exception {
+	void submissionPreflightSerializesWithStatus() throws Exception {
 		var client = new ControllableSkyPilotClient();
 		client.holdSubmit.set(true);
 		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
@@ -194,17 +233,24 @@ final class SkyPilotOrchestratorTest {
 				java.util.Map.of()));
 		assertThat(client.submitStarted.await(1, TimeUnit.SECONDS)).isTrue();
 
-		assertThat(this.orchestrator.observe(new StatusRequest(List.of("job")))
-			.toCompletableFuture()
-			.get(1, TimeUnit.SECONDS)
-			.value()
-			.kind()).isEqualTo(OperationKind.STATUS);
-		assertThat(submission).isNotDone();
-		client.releaseSubmit.countDown();
+		var status = this.orchestrator.observe(new StatusRequest(List.of("job"))).toCompletableFuture();
+		try {
+			assertThat(status).isNotDone();
+			assertThat(submission).isNotDone();
+			assertThat(this.orchestrator.control(new ControlRequest("job", ControlRequest.Action.CANCEL))
+				.toCompletableFuture()
+				.get(1, TimeUnit.SECONDS)
+				.failure()
+				.cause()).isEqualTo(BridgeFailure.FailureCause.SATURATION);
+		}
+		finally {
+			client.releaseSubmit.countDown();
+		}
+		assertThat(status.get(1, TimeUnit.SECONDS).value().kind()).isEqualTo(OperationKind.STATUS);
 	}
 
 	@Test
-	void actionPreflightDoesNotBlockObservation() throws Exception {
+	void actionPreflightSerializesWithStatus() throws Exception {
 		var client = new ControllableSkyPilotClient();
 		client.holdControl.set(true);
 		this.orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(1, 1, Duration.ofSeconds(1)));
@@ -213,13 +259,20 @@ final class SkyPilotOrchestratorTest {
 		var action = this.orchestrator.control(new ControlRequest("job", ControlRequest.Action.CANCEL));
 		assertThat(client.controlStarted.await(1, TimeUnit.SECONDS)).isTrue();
 
-		assertThat(this.orchestrator.observe(new StatusRequest(List.of("job")))
-			.toCompletableFuture()
-			.get(1, TimeUnit.SECONDS)
-			.value()
-			.kind()).isEqualTo(OperationKind.STATUS);
-		assertThat(action).isNotDone();
-		client.releaseControl.countDown();
+		var status = this.orchestrator.observe(new StatusRequest(List.of("job"))).toCompletableFuture();
+		try {
+			assertThat(status).isNotDone();
+			assertThat(action).isNotDone();
+			assertThat(this.orchestrator.control(new ControlRequest("job", ControlRequest.Action.CANCEL))
+				.toCompletableFuture()
+				.get(1, TimeUnit.SECONDS)
+				.failure()
+				.cause()).isEqualTo(BridgeFailure.FailureCause.SATURATION);
+		}
+		finally {
+			client.releaseControl.countDown();
+		}
+		assertThat(status.get(1, TimeUnit.SECONDS).value().kind()).isEqualTo(OperationKind.STATUS);
 	}
 
 	@Test

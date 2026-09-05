@@ -21,6 +21,7 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
         ca-certificates libpq5 libcrypt1 \
     && rm --recursive --force /var/lib/apt/lists/* \
+    && ln --symbolic "$(ldconfig -p | awk '$1 == "libcrypt.so.1" {print $NF; exit}')" /usr/lib/libcrypt.so \
     && groupadd --gid 10001 skywright \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent \
         --shell /usr/sbin/nologin skywright \

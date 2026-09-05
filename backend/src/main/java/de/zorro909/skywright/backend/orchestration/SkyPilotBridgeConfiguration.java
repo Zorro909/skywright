@@ -31,10 +31,16 @@ class SkyPilotBridgeConfiguration {
 	}
 
 	@Bean(destroyMethod = "close")
-	Orchestrator skyPilotOrchestrator(SkyPilotBridgeProperties properties, GraalPySkyPilotClient client) {
+	SkyPilotOrchestrator skyPilotOrchestrator(SkyPilotBridgeProperties properties, GraalPySkyPilotClient client) {
 		var settings = new SkyPilotBridgeSettings(properties.controlQueueCapacity(), properties.heldQueueCapacity(),
 				properties.shutdownGrace());
 		return new SkyPilotOrchestrator(client, settings);
+	}
+
+	@Bean
+	de.zorro909.skywright.backend.pricing.SkyPilotCatalogue skyPilotCatalogue(GraalPySkyPilotClient client,
+			SkyPilotOrchestrator orchestrator) {
+		return orchestrator.catalogue(client::price);
 	}
 
 	@Bean
