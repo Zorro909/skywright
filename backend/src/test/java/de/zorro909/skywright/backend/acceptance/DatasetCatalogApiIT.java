@@ -69,8 +69,15 @@ final class DatasetCatalogApiIT {
 				catalog.promote(definitionId, replicaId, 2);
 				catalog.reportCache(definitionId, new DatasetCacheReport(UUID.randomUUID(), DatasetCacheOwnerType.HOST,
 						"trainer-01", 512, now, now), 3);
-				catalog.acquireLease(definitionId, copyId, 1, 4, runRecordId);
+				var selection = catalog.selectForRun(definitionId, "sha256:content", runRecordId, copyId);
+				assertThat(selection.location()).isEqualTo("datasets/release-1");
+				assertThat(selection.lease().generation()).isEqualTo(1);
 				catalog.startRefresh(definitionId, copyId, 1, 5);
+				backend.restart();
+				assertThat(backend.bean(DatasetCatalog.class)
+					.selectForRun(definitionId, "sha256:content", runRecordId, null)).usingRecursiveComparison()
+					.ignoringFields("lease.acquiredAt")
+					.isEqualTo(selection);
 
 				var record = backend.get("/api/v1/dataset-catalog/" + definitionId);
 				var page = backend.get("/api/v1/dataset-catalog?limit=1&datasetId=" + datasetId + "&definitionId="

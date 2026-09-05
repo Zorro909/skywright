@@ -205,8 +205,97 @@ The Run Context also sends cgroup memory observations through the recorder at
 checkpoint, metric/progress, output, and termination-report publication. Completion and
 recoverable interruption are returned only after a checkpoint reference and the final report are
 durable. The production Run Store recorder writes accepted observations to attempt-scoped
-TensorBoard event segments and maintains the Run's current Progress Record. The SDK does not
-implement MosaicML Streaming transport.
+TensorBoard event segments and maintains the Run's current Progress Record.
+
+## Read a pinned Dataset
+
+Install `skywright[dataset]` in a Python 3.10 through 3.13 environment. MosaicML Streaming 0.13
+requires NumPy below 2.2; this extra pins torchvision 0.27, matching PyTorch 2.12.
+The base SDK still supports Python 3.14, but Dataset reads require the older Python
+range until MosaicML supports a compatible NumPy release. Environment Profile
+assembly and GPU qualification remain in #231 and #235.
+
+Runtime assembly creates `skywright.dataset.MdsDatasetAccess` from a pinned
+`DatasetDefinition` and a selected `DatasetLocation`, then passes it to
+`run_training_process(dataset=...)`. A definition contains the published manifest's
+`DatasetObject` entries, manifest identity and content fingerprint. Convert the
+catalog's base64 `checksumSha256` values to `sha256:` plus lowercase hexadecimal
+when constructing these entries. Construction
+recomputes both identities and rejects changed metadata. Managed assembly obtains
+these inputs from `DatasetCatalog.selectForRun`, which atomically leases the selected
+authority or explicit verified replica. The catalog persists the Run identity, lease,
+copy and generation; generation history retains its exact location. Retrying selection
+returns that lease even after deprecation, while new Runs cannot lease a deprecated
+copy. Terminal lease release continues through the catalog's existing lifecycle.
+
+The Training Project uses only `context.dataset.batches(context.dataset_cursor)`.
+Each batch contains `DatasetItem` values with `definition_id`, `ordinal` and `payload`.
+The ordinal is the zero-based position across the pinned root index's shards and each
+shard's items. MosaicML's `MDSReader` decodes the columns into `payload`; project
+transformations do not affect identity. Runtime consumers can also read an exact
+ordinal with `read_item()`.
+
+```python
+from pathlib import Path
+from skywright.dataset import DatasetCacheLimits, MdsDatasetAccess
+
+# definition and location come from runtime assembly, outside Training Project code.
+with MdsDatasetAccess(
+    definition,
+    location,
+    cache_directory=Path("/var/cache/skywright/dataset"),
+    limits=DatasetCacheLimits(byte_limit=256 * 1024 * 1024, file_limit=128),
+    seed=7,
+    batch_size=16,
+) as dataset:
+    # Supply dataset to the Training Process Boundary here.
+    item = dataset.read_item(0)
+```
+
+Dataset credentials use `SKYWRIGHT_DATASET_ACCESS_KEY_ID`,
+`SKYWRIGHT_DATASET_SECRET_ACCESS_KEY` and optional `SKYWRIGHT_DATASET_SESSION_TOKEN`,
+or the protected JSON file named by `SKYWRIGHT_DATASET_CREDENTIAL_FILE`. The reader
+never falls back to ambient AWS or Run Store credentials. The client fixes these
+values at construction. Credentials are separate from the definition and location.
+
+Each reader exclusively owns a dedicated cache directory until `close()` or context
+manager exit. A process lock prevents concurrent owners and a thread lock serializes
+reads. The default byte budget is 256 MiB, including the cached index, shards,
+in-progress download and compressed-shard decoding scratch. The 128-file limit
+bounds retained entries and eviction work per read; the lock and at most one scratch
+file are additional. A shard that cannot fit together with its decoding scratch fails
+before downloading. The index also has a 16 MiB metadata cap. Downloads use one
+request at a time, no retries, 1 MiB read chunks, 30-second connect/read timeouts and
+a 30-second elapsed deadline checked between reads. A blocked socket can extend the
+elapsed deadline by at most its configured read timeout.
+
+The cache verifies SHA-256 and byte count against the manifest on every reuse.
+Corrupt local entries are discarded and rebuilt; wrong remote content fails before
+payload decoding. Startup removes incomplete downloads and decoding scratch and
+trims the retained inventory to the configured budget. Content-addressed entries can
+survive a same-host restart or location change. Loss of the directory only requires
+new downloads. Compressed shards remain compressed in the cache and use bounded
+scratch during each decode.
+
+`statistics` returns cumulative S3 request/read-byte counts, cache hits, misses,
+evictions, rejected local entries, current cache bytes and peak reserved cache bytes.
+It retains no per-request history. Counts reset for each reader and local verification
+reads are excluded from S3 read bytes. Managed cache reporting can publish the byte
+count through the existing catalog cache-report contract.
+
+The initial `deterministic-shuffle` ordering uses six balanced SHA-256 Feistel rounds
+with cycle walking, versioned as `feistel-sha256-v1`. Its fingerprint includes the
+Dataset Definition identity, content fingerprint, seed and policy version. Epochs
+use separate keys; location, cache and batch size are absent. `ordinal_at()` exposes
+the sequence input to #45 without materializing an epoch in memory. Batches end at
+epoch boundaries. This initial batch cursor assumes one batch per committed Step;
+#45 owns exact continuation across arbitrary Step regrouping and recovery.
+
+`tests/test_dataset_access_system.py` writes real MDS corpora and reads them through
+S3 against pinned SeaweedFS. It checks hits, eviction, restart, location change,
+cache loss, digest rejection and direct Training Process execution with file
+credentials. `scripts/integration` runs this suite in an isolated Python 3.13
+environment and writes I/O evidence under `target/dataset-read-measurements/`.
 
 ## Publish a Dataset
 

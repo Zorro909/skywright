@@ -19,6 +19,46 @@ final class DatasetCatalogTest {
 	private final DatasetCatalog catalog = new DatasetCatalog(this.repository, Clock.fixed(NOW, ZoneOffset.UTC));
 
 	@Test
+	void readSelectionPinsTheManifestAndRetainsTheLeasedLocationAfterDeprecation() {
+		DatasetPublication publication = publication();
+		this.catalog.publish(publication);
+		UUID runId = UUID.randomUUID();
+		DatasetReadSelection selected = this.catalog.selectForRun(publication.definitionId(),
+				publication.contentFingerprint(), runId, null);
+		assertThat(selected.location()).isEqualTo(publication.location());
+		assertThat(selected.manifest()).isEqualTo(publication.manifestEntries());
+		assertThat(selected.lease().runRecordId()).isEqualTo(runId);
+		assertThat(selected.lease().generation()).isEqualTo(1);
+		this.catalog.deprecateGeneration(publication.definitionId(), publication.copyId(), 1, 2);
+		assertThat(this.catalog.selectForRun(publication.definitionId(), publication.contentFingerprint(), runId, null))
+			.isEqualTo(selected);
+		assertThatThrownBy(() -> this.catalog.selectForRun(publication.definitionId(), publication.contentFingerprint(),
+				UUID.randomUUID(), null))
+			.hasMessageContaining("DATASET_COPY_INELIGIBLE");
+		assertThatThrownBy(() -> this.catalog.selectForRun(publication.definitionId(), "wrong", runId, null))
+			.hasMessageContaining("DATASET_DEFINITION_MISMATCH");
+	}
+
+	@Test
+	void readSelectionLeasesAnExplicitReplicaWithoutSilentlyChangingAnExistingRun() {
+		DatasetPublication publication = publication();
+		this.catalog.publish(publication);
+		UUID replicaId = UUID.randomUUID();
+		this.catalog.addReplica(publication.definitionId(),
+				new DatasetReplicaPublication(replicaId, publication.targetStorageId(), "datasets/replica", 42, NOW),
+				1);
+		UUID runId = UUID.randomUUID();
+		DatasetReadSelection selected = this.catalog.selectForRun(publication.definitionId(),
+				publication.contentFingerprint(), runId, replicaId);
+		assertThat(selected.location()).isEqualTo("datasets/replica");
+		assertThat(selected.lease().copyId()).isEqualTo(replicaId);
+		assertThat(this.catalog.get(publication.definitionId()).leases()).containsExactly(selected.lease());
+		assertThatThrownBy(() -> this.catalog.selectForRun(publication.definitionId(), publication.contentFingerprint(),
+				runId, publication.copyId()))
+			.hasMessageContaining("DATASET_LEASE_CONFLICT");
+	}
+
+	@Test
 	void publicationInstallsOneDefinitionAndAuthorityAtomicallyAndRetriesIdempotently() {
 		DatasetPublication publication = publication();
 

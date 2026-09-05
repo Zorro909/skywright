@@ -35,12 +35,13 @@ from skywright._training import (
 if _TYPE_CHECKING:
     from skywright import configuration as configuration
     from skywright import credentials as credentials
+    from skywright import dataset as dataset
     from skywright import metrics as metrics
     from skywright import run_store as run_store
 
 
 def __getattr__(name: str) -> object:
-    if name in {"configuration", "credentials", "metrics", "run_store"}:
+    if name in {"configuration", "credentials", "dataset", "metrics", "run_store"}:
         module = _import_module(f"skywright.{name}")
         globals()[name] = module
         return module
@@ -75,6 +76,7 @@ __all__ = (
     "__version__",
     "configuration",
     "credentials",
+    "dataset",
     "metrics",
     "run_store",
     "run_training_process",

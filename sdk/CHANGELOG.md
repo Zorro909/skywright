@@ -2,6 +2,11 @@
 
 ## Next
 
+- Adds optional MosaicML MDS Dataset reads with a verified, bounded S3 cache,
+  canonical item ordinals and cumulative I/O statistics. Direct execution supports
+  role-specific environment or protected file credentials on Python 3.10 through
+  3.13 with the `dataset` extra.
+
 - Adds the Training Process Boundary and typed Run Context authoring interface, including
   deterministic runtime setup, one-context process ownership, Checkpoint State and resume,
   batch-issued Dataset Cursor commits, runtime Metric Catalog composition, atomic durable

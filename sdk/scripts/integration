@@ -10,3 +10,8 @@ uv run --locked --group ml-test pytest tests/test_run_store_system.py \
   --cov skywright \
   --cov-report xml:target/coverage/integration.xml \
   --cov-report html:target/coverage/integration-html
+
+# MosaicML 0.13 requires NumPy <2.2, whose wheels stop at Python 3.13.
+UV_PROJECT_ENVIRONMENT=target/dataset-environment uv run --locked --python 3.13 \
+  --extra dataset --group ml-test pytest tests/test_dataset_access_system.py \
+  --junitxml target/test-results/dataset-integration.xml

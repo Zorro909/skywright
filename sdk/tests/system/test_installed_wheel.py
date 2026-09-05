@@ -40,7 +40,8 @@ assert metadata("skywright").get_all("Requires-Dist") == [
     "boto3<2,>=1.40",
     "brotli<2,>=1.1",
     "jsonschema[format]<5,>=4.25",
-    "numpy<3,>=2.2",
+    "numpy<3,>=2.1; python_version < '3.14'",
+    "numpy<3,>=2.2; python_version >= '3.14'",
     "pillow<13,>=11",
     "protobuf==7.36.0",
     "python-snappy<1,>=0.7",
@@ -48,6 +49,8 @@ assert metadata("skywright").get_all("Requires-Dist") == [
     "tensorboard==2.21.0",
     "xxhash<4,>=3.5",
     "zstandard<1,>=0.23",
+    "mosaicml-streaming==0.13.0; (python_version < '3.14') and extra == 'dataset'",
+    "torchvision==0.27.0; (python_version < '3.14') and extra == 'dataset'",
 ]
 assert files(skywright).joinpath("py.typed").is_file()
 assert importlib.util.find_spec("boto3") is None

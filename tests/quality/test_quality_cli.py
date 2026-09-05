@@ -257,6 +257,8 @@ class PlanningTest(unittest.TestCase):
             "sdk/src/skywright/_dataset_cli.py",
             "sdk/src/skywright/_run_store/implementation.py",
             "sdk/tests/support/run_store_training_scenario.py",
+            "sdk/src/skywright/dataset.py",
+            "sdk/tests/test_dataset_access_system.py",
         ):
             with self.subTest(path=path):
                 plan = self.plan(path)
