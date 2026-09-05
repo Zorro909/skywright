@@ -1510,7 +1510,6 @@ def test_checkpoint_codec_round_trips_scalar_optimizer_tensors(tmp_path, value) 
     restored_step = restored.state["step"]
     assert isinstance(restored_step, torch.Tensor)
     assert torch.equal(restored_step, value)
-    assert restored_step.shape == torch.Size([])
 
 
 def test_terminal_confirmation_retains_only_identity_and_reuses_durable_step(
