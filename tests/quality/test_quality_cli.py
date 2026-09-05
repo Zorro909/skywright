@@ -251,6 +251,9 @@ class PlanningTest(unittest.TestCase):
 
     def test_dependency_backed_implementation_paths_select_integration(self) -> None:
         for path in (
+            "backend/src/main/java/de/zorro909/skywright/backend/orchestration/GraalPySkyPilotClient.java",
+            "backend/src/main/resources/META-INF/skywright/skypilot_bridge.py",
+            "backend/src/test/java/de/zorro909/skywright/backend/orchestration/PackagedHeldSkyPilotIT.java",
             "backend/src/main/java/de/zorro909/skywright/backend/persistence/Store.java",
             "backend/src/main/java/de/zorro909/skywright/backend/datasetpublication/Service.java",
             "backend/src/main/resources/application.properties",

@@ -293,12 +293,14 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         else frozenset().union(*(CATEGORY_CHECKS[category] for category in categories))
     )
     integration_prefixes = (
+        "backend/src/main/java/de/zorro909/skywright/backend/orchestration/",
         "backend/src/main/java/de/zorro909/skywright/backend/availability/",
         "backend/src/main/java/de/zorro909/skywright/backend/datasetpublication/",
         "backend/src/main/java/de/zorro909/skywright/backend/persistence/",
         "backend/src/main/java/de/zorro909/skywright/backend/runstore/",
         "backend/src/main/resources/db/",
         "backend/src/test/java/de/zorro909/skywright/backend/acceptance/",
+        "backend/src/test/java/de/zorro909/skywright/backend/orchestration/",
         "backend/src/test/java/de/zorro909/skywright/backend/runstore/",
         "protocol/run-store/",
         "sdk/src/skywright/_run_store/",
@@ -314,6 +316,7 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
     )
     integration_files = {
         "backend/pom.xml",
+        "backend/src/main/resources/META-INF/skywright/skypilot_bridge.py",
         "backend/src/main/resources/application.properties",
         "sdk/pyproject.toml",
         "sdk/uv.lock",
