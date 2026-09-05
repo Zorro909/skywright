@@ -241,3 +241,7 @@ assembled environment and may reuse compatible progressive wheels; compare it se
 exact warm restore. Post-change measurements will be added after the PR jobs complete.
 
 Review found and corrected CI Maven wrapper selection, scanner pruning after failed image checks, and cancellation while replacement jobs are skipped or blocked. A PR-head supervisor stops obsolete verification process groups while native preparation remains independent. All 20 installed wheel/source-distribution cases also passed locally.
+
+The native import qualifier also passed against a previously built CI environment inside an Ubuntu 24.04 container using the pinned Maven runtime. This verifies current-runtime imports and relocation, not a fresh native build or exact-cache restore. The check caught missing native POSIX configuration and Python argv, both now matched to the application. Fedora cannot load the Ubuntu cryptography artifact because its OpenSSL ABI differs; the Ubuntu check used the matching OS and required system libraries.
+
+Security now enters its PR concurrency group even when scans are inapplicable, allowing a docs-only replacement to cancel obsolete CodeQL. Scans remain conditional on the plan and a successful source checkout/check. This costs a short empty job on inapplicable changes.

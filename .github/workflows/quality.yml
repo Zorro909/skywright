@@ -661,30 +661,34 @@ jobs:
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: Security
     needs: plan
-    if: needs.plan.outputs.security == 'true'
+    # Always enter concurrency, including when replacement work is inapplicable.
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       security-events: write
     steps:
       - name: Check out the tested revision
+        id: security-checkout
+        if: needs.plan.outputs.security == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Reject superseded PR source
-        if: github.event_name == 'pull_request'
+        id: security-source
+        if: needs.plan.outputs.security == 'true' && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Validate security suppressions
+        if: needs.plan.outputs.security == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/quality security-policy --verify-issues
       - name: Review dependency changes
         id: dependency-review
-        if: github.event_name == 'pull_request'
+        if: needs.plan.outputs.security == 'true' && github.event_name == 'pull_request'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
@@ -692,7 +696,7 @@ jobs:
           show-patched-versions: true
           comment-summary-in-pr: never
       - name: Enforce fixable dependency findings
-        if: github.event_name == 'pull_request'
+        if: needs.plan.outputs.security == 'true' && github.event_name == 'pull_request'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           VULNERABLE_CHANGES: ${{ steps.dependency-review.outputs.vulnerable-changes }}
@@ -702,7 +706,7 @@ jobs:
             --report security-results/dependency-review.json
       - name: Initialize CodeQL
         id: codeql-init
-        if: always()
+        if: always() && needs.plan.outputs.security == 'true' && steps.security-checkout.outcome == 'success' && steps.security-source.outcome != 'failure'
         uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           languages: java-kotlin,javascript-typescript,python
@@ -724,7 +728,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/quality github-dismissal-policy --scanner codeql
       - name: Retain security reports
-        if: always()
+        if: always() && needs.plan.outputs.security == 'true' && steps.security-checkout.outcome == 'success' && steps.security-source.outcome != 'failure'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: security-reports

@@ -7,7 +7,9 @@ class QualifyGraalPy {
     public static void main(String[] args) {
         try (var context = Context.newBuilder("python")
                 .apply(GraalPyResources.forExternalDirectory(Path.of(args[0])))
-                .allowAllAccess(true).build()) {
+                .allowAllAccess(true)
+                .option("python.PosixModuleBackend", "native")
+                .arguments("python", new String[] {"qualify-native-imports"}).build()) {
             context.eval("python", "import aiohttp, cryptography, numpy, pandas, psutil, sky, uvloop, watchfiles");
             String version = context.eval("python", "sky.__version__").asString();
             if (!args[1].equals(version)) {

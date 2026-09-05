@@ -51,6 +51,7 @@ workflows must call `scripts/quality identity --event tag` with the peeled tag c
 tested revision and tag commit, so another checkout cannot be described as the released source.
 
 Superseded Repository Quality verification jobs are cancelled only for the same pull request.
+The security job enters its concurrency group even when its scans are inapplicable, so a docs-only update cancels obsolete CodeQL work. Its scan steps remain conditional on the plan and source check.
 The native preparation job has an independent non-cancelling queue and finishes saving reusable
 wheel dependencies. The `scripts/ci-verify` supervisor checks the PR head before each expensive command and every
 60 seconds while it runs, terminating obsolete process groups with bounded grace. This also stops
