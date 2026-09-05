@@ -68,7 +68,8 @@ class VaultPersistenceIT {
 			assertThat(container.execInContainer("sh", "-c", "cp -a /vault/file /tmp/vault-backup").getExitCode())
 				.isZero();
 			container.getDockerClient().restartContainerCmd(container.getContainerId()).exec();
-			awaitSealed(endpoint);
+			endpoint = awaitSealed(container);
+			vault = new VaultBindings(endpoint, "skywright", tokenFile, List.of(binding), Clock.systemUTC());
 			assertThat(vault.readiness(binding.id(), 2, "backend").status())
 				.isEqualTo(VaultBindings.Status.UNAVAILABLE);
 			unseal(endpoint, key);
@@ -80,10 +81,10 @@ class VaultPersistenceIT {
 				.execInContainer("sh", "-c", "rm -rf /vault/file/* && cp -a /tmp/vault-backup/. /vault/file/")
 				.getExitCode()).isZero();
 			container.getDockerClient().restartContainerCmd(container.getContainerId()).exec();
-			awaitSealed(endpoint);
+			endpoint = awaitSealed(container);
+			vault = new VaultBindings(endpoint, "skywright", tokenFile, List.of(binding), Clock.systemUTC());
 			unseal(endpoint, key);
-			assertReady(new VaultBindings(endpoint, "skywright", tokenFile, List.of(binding), Clock.systemUTC()),
-					binding);
+			assertReady(vault, binding);
 		}
 	}
 
@@ -97,12 +98,24 @@ class VaultPersistenceIT {
 		request(endpoint, "PUT", "/v1/sys/unseal", "", JSON.writeValueAsString(java.util.Map.of("key", key)));
 	}
 
-	private void awaitSealed(URI endpoint) throws Exception {
+	private URI awaitSealed(GenericContainer<?> container) throws Exception {
 		long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
 		while (System.nanoTime() < deadline) {
 			try {
+				// Docker may allocate a different random host port on restart.
+				// GenericContainer caches its initial inspection.
+				var mapping = container.getCurrentContainerInfo()
+					.getNetworkSettings()
+					.getPorts()
+					.getBindings()
+					.get(com.github.dockerjava.api.model.ExposedPort.tcp(8200));
+				if (mapping == null || mapping.length == 0 || mapping[0] == null) {
+					Thread.sleep(100);
+					continue;
+				}
+				URI endpoint = URI.create("http://" + container.getHost() + ":" + mapping[0].getHostPortSpec());
 				if (request(endpoint, "GET", "/v1/sys/seal-status", "", "").path("sealed").asBoolean()) {
-					return;
+					return endpoint;
 				}
 			}
 			catch (java.io.IOException ignored) {
