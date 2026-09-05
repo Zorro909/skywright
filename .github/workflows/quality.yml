@@ -128,7 +128,7 @@ jobs:
       - name: Restore progressive GraalPy pip cache
         id: graalpy-pip-cache
         if: steps.java.outputs.graalpy-cache-hit != 'true'
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PIP_CACHE_DIR }}
           key: ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml', 'graalpy-environment/build-constraints.txt', 'scripts/retag-wheel') }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -174,7 +174,7 @@ jobs:
           always() &&
           steps.java.outputs.graalpy-cache-hit != 'true' &&
           steps.graalpy-pip-cache.outcome == 'success'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PIP_CACHE_DIR }}
           key: ${{ steps.graalpy-pip-cache.outputs.cache-primary-key }}
@@ -211,7 +211,7 @@ jobs:
         if: >-
           steps.java.outputs.graalpy-cache-hit != 'true' &&
           steps.smoke-graalpy.outcome == 'success'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .graalpy/resources
           key: ${{ steps.java.outputs.graalpy-cache-primary-key }}
@@ -673,14 +673,14 @@ jobs:
       - name: Initialize CodeQL
         id: codeql-init
         if: always()
-        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           languages: java-kotlin,javascript-typescript,python
           build-mode: none
       - name: Analyze supported source languages
         id: codeql-analyze
         if: always() && steps.codeql-init.outcome == 'success'
-        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           category: /language:multi-language
           output: security-results/codeql
