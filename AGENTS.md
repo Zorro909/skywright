@@ -8,6 +8,8 @@ Issues live in GitHub Issues on `Zorro909/skywright`, managed via the `gh` CLI. 
 
 When creating a pull request, use `.github/pull_request_template.md` for its description.
 
+Do not request additional reviews on GitHub.
+
 ### Triage labels
 
 The five canonical triage roles map to labels of the same name (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
