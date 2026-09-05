@@ -14,12 +14,19 @@ updates:
     schedule:
       interval: weekly
     groups:
+      graalpy-runtime:
+        patterns:
+          - 'org.graalvm*'
+      spring:
+        patterns:
+          - 'org.springframework*'
       maven:
         patterns:
           - '*'
         exclude-patterns:
           - 'org.springframework*'
           - 'org.springframework.boot*'
+          - 'org.graalvm*'
 
   - package-ecosystem: pip
     directory: /sdk
@@ -35,9 +42,19 @@ updates:
     schedule:
       interval: weekly
     groups:
+      angular-toolchain:
+        patterns:
+          - '@angular/*'
+          - '@angular-devkit/*'
+          - 'typescript'
+          - 'rxjs'
+          - 'ng-openapi-gen'
       pnpm:
         patterns:
           - '*'
         exclude-patterns:
           - '@angular/*'
+          - '@angular-devkit/*'
+          - 'typescript'
           - 'rxjs'
+          - 'ng-openapi-gen'

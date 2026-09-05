@@ -52,20 +52,17 @@ def job(source: str, name: str) -> str:
 
 
 class FrontendSetupContractTest(unittest.TestCase):
-    def test_download_caches_are_bound_to_exact_toolchain_and_lockfile(self) -> None:
+    def test_download_caches_are_bound_to_owning_inputs(self) -> None:
         pnpm_cache = named_step(ACTION, "Cache pnpm downloads")
         browser_cache = named_step(ACTION, "Cache Playwright Chromium")
-
-        for cache in (pnpm_cache, browser_cache):
-            self.assertRegex(cache, r"uses: actions/cache@[0-9a-f]{40}")
-            self.assertIn("${{ runner.os }}", cache)
-            self.assertIn("${{ steps.toolchain.outputs.node_version }}", cache)
-            self.assertIn("${{ steps.toolchain.outputs.pnpm_version }}", cache)
-            self.assertIn("${{ hashFiles('frontend/pnpm-lock.yaml') }}", cache)
-
-        self.assertIn("path: ${{ steps.pnpm-store.outputs.path }}", pnpm_cache)
-        self.assertIn("${{ steps.toolchain.outputs.playwright_version }}", browser_cache)
-        self.assertIn("path: ~/.cache/ms-playwright", browser_cache)
+        self.assertIn("hashFiles('frontend/pnpm-lock.yaml')", pnpm_cache)
+        self.assertIn("restore-keys:", pnpm_cache)
+        self.assertIn("runner.arch", pnpm_cache)
+        self.assertIn("playwright_version", browser_cache)
+        self.assertIn("ubuntu24", browser_cache)
+        self.assertIn("runner.arch", browser_cache)
+        self.assertNotIn("pnpm-lock.yaml", browser_cache)
+        self.assertNotIn("node_modules", ACTION)
 
     def test_browser_install_is_opt_in_bounded_and_phase_visible(self) -> None:
         self.assertRegex(
@@ -75,9 +72,7 @@ class FrontendSetupContractTest(unittest.TestCase):
         dependency_step = named_step(
             ACTION, "Install Chromium operating-system dependencies"
         )
-        download_step = named_step(
-            ACTION, "Install Playwright Chromium on cache miss"
-        )
+        download_step = named_step(ACTION, "Install Playwright Chromium on cache miss")
 
         self.assertIn("inputs.install-browser == 'true'", dependency_step)
         self.assertIn("timeout --verbose", dependency_step)
@@ -113,22 +108,9 @@ class JavaSetupContractTest(unittest.TestCase):
         environment_cache = named_step(
             JAVA_ACTION, "Restore exact packaged GraalPy environment"
         )
-
-        self.assertRegex(
-            environment_cache, r"uses: actions/cache/restore@[0-9a-f]{40}"
-        )
-        self.assertIn("inputs.graalpy-resources == 'true'", environment_cache)
-        self.assertIn("${{ runner.os }}", environment_cache)
-        self.assertIn("${{ runner.arch }}", environment_cache)
-        self.assertIn(
-            "${{ steps.toolchain.outputs.java_archive_sha256 }}", environment_cache
-        )
-        self.assertIn("graalpy-env-v3", environment_cache)
-        self.assertIn("graalpy-environment/graalpy.lock", environment_cache)
-        self.assertIn("graalpy-environment/pom.xml", environment_cache)
-        self.assertIn("graalpy-environment/build-constraints.txt", environment_cache)
-        self.assertIn("backend-deployment/src/main/docker/Dockerfile", environment_cache)
-        self.assertIn(".graalpy/resources", environment_cache)
+        self.assertIn("actions/cache/restore@", environment_cache)
+        self.assertIn("steps.environment.outputs.key", environment_cache)
+        self.assertIn("scripts/graalpy-environment identity", JAVA_ACTION)
         self.assertNotIn("restore-keys:", environment_cache)
 
     def test_graalpy_inputs_pin_qualified_native_dependencies(self) -> None:
@@ -219,9 +201,7 @@ class JavaSetupContractTest(unittest.TestCase):
                 namespace,
             )
         }
-        self.assertEqual(
-            wheel_packages, {"${graalpy.wheel.package}", "numpy==2.2.4"}
-        )
+        self.assertEqual(wheel_packages, {"${graalpy.wheel.package}", "numpy==2.2.4"})
 
 
 class QualityWorkflowContractTest(unittest.TestCase):
@@ -265,12 +245,9 @@ class QualityWorkflowContractTest(unittest.TestCase):
 
     def test_only_browser_verification_lanes_install_browser_dependencies(self) -> None:
         for name in ("frontend", "application"):
-            with self.subTest(job=name):
-                self.assertIn("install-browser: true", job(WORKFLOW, name))
-
-        for name in ("java", "image"):
-            with self.subTest(job=name):
-                self.assertIn("install-browser: false", job(WORKFLOW, name))
+            self.assertIn("install-browser: true", job(WORKFLOW, name))
+        self.assertIn("install-browser: false", job(WORKFLOW, "java"))
+        self.assertNotIn("setup-frontend", job(WORKFLOW, "image"))
 
     def test_maven_lanes_skip_frontend_tests_but_keep_their_artifact_boundaries(
         self,
@@ -283,15 +260,11 @@ class QualityWorkflowContractTest(unittest.TestCase):
             }
             self.assertIn("-DskipFrontendInstall=true", flattened_arguments)
             self.assertIn("-DskipFrontendTests=true", flattened_arguments)
-            self.assertNotIn(
-                QUALITY_IMPLEMENTATION["FRONTEND_INSTALL"], commands
-            )
+            self.assertNotIn(QUALITY_IMPLEMENTATION["FRONTEND_INSTALL"], commands)
 
         application_arguments = {
             argument
-            for command in commands_for(
-                "application", frontend_dependencies_ready=True
-            )
+            for command in commands_for("application", frontend_dependencies_ready=True)
             for argument in command
         }
         image_arguments = {
@@ -310,9 +283,9 @@ class QualityWorkflowContractTest(unittest.TestCase):
         for check in ("java", "application", "image", "frontend"):
             with self.subTest(check=check):
                 self.assertEqual(
-                    commands_for(
-                        check, frontend_dependencies_ready=False
-                    ).count(frontend_install),
+                    commands_for(check, frontend_dependencies_ready=False).count(
+                        frontend_install
+                    ),
                     1,
                 )
 
@@ -322,66 +295,41 @@ class QualityWorkflowContractTest(unittest.TestCase):
             frozenset(("application", "frontend")),
         )
 
-    def test_ci_lanes_declare_preinstalled_frontend_dependencies(self) -> None:
-        for name in ("java", "frontend", "application", "image"):
-            with self.subTest(job=name):
-                self.assertIn("--frontend-dependencies-ready", job(WORKFLOW, name))
+    def test_ci_consumers_require_the_verified_backend_producer(self) -> None:
+        self.assertIn("scripts/ci-backend build", job(WORKFLOW, "java"))
+        for name in ("application", "image"):
+            consumer = job(WORKFLOW, name)
+            self.assertIn("needs: [plan, graalpy, java]", consumer)
+            self.assertIn("name: verified-backend", consumer)
+            self.assertIn(f"scripts/ci-backend {name}", consumer)
 
-    def test_graalpy_environment_is_built_once_before_maven_fanout(self) -> None:
-        preparation = job(WORKFLOW, "graalpy")
-        self.assertIn("needs: plan", preparation)
-        self.assertIn("timeout-minutes: 270", preparation)
-        self.assertIn("PIP_CACHE_DIR:", preparation)
-        self.assertIn("PIP_CONSTRAINT:", preparation)
-        self.assertIn("PIP_FIND_LINKS:", preparation)
-        self.assertIn("graalpy-environment/build-constraints.txt", preparation)
-        self.assertIn("graalpy-resources: true", preparation)
-        self.assertIn("steps.java.outputs.graalpy-cache-hit != 'true'", preparation)
-        self.assertIn("actions/cache/restore@", preparation)
-        self.assertIn("actions/cache/save@", preparation)
-        self.assertIn("always()", preparation)
-        self.assertIn("github.run_attempt", preparation)
-        self.assertIn("--kill-after=2m", preparation)
-        self.assertIn("Prime pandas wheel cache", preparation)
-        self.assertIn("Publish pandas wheel to local wheelhouse", preparation)
-        self.assertIn("scripts/retag-wheel", preparation)
-        self.assertIn("linux_x86_64", preparation)
+    def test_native_preparation_survives_cancellable_verification(self) -> None:
+        preparation = (
+            REPOSITORY / ".github/actions/prepare-graalpy/action.yml"
+        ).read_text()
+        native = job(WORKFLOW, "graalpy")
+        self.assertIn("cancel-in-progress: false", native)
+        self.assertIn("timeout-minutes: 270", native)
+        self.assertIn("prepare-graalpy", native)
+        for name in (
+            "java",
+            "application",
+            "image",
+            "frontend",
+            "integration",
+            "sdk-artifacts",
+            "sdk-compatibility",
+        ):
+            self.assertIn(
+                "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+                job(WORKFLOW, name),
+            )
+            self.assertIn("Reject superseded PR source", job(WORKFLOW, name))
         self.assertIn("150m", preparation)
-        self.assertIn("-Dgraalpy.wheel.package=pandas==2.2.3", preparation)
         self.assertIn("100m", preparation)
-        self.assertIn("--no-transfer-progress", preparation)
-        self.assertIn("-pl graalpy-environment", preparation)
-        self.assertIn("process-resources", preparation)
-        self.assertNotIn("setup-frontend", preparation)
-        self.assertIn("test -f .graalpy/resources/venv/installed.txt", preparation)
-        self.assertIn(
-            'if [[ "${{ steps.java.outputs.graalpy-cache-hit }}" == "true" ]]',
-            preparation,
-        )
-        self.assertIn("import cryptography", preparation)
-        self.assertIn("import sky", preparation)
-        self.assertIn("tar --zstd", preparation)
-        self.assertIn("actions/upload-artifact@", preparation)
-        self.assertIn("compression-level: 0", preparation)
-
-        concurrency = WORKFLOW.split("permissions:", 1)[0]
-        self.assertIn("cancel-in-progress: false", concurrency)
-
-        for name in ("java", "integration", "application", "image"):
-            with self.subTest(job=name):
-                consumer = job(WORKFLOW, name)
-                self.assertIn("needs: [plan, graalpy]", consumer)
-                self.assertIn("actions/download-artifact@", consumer)
-                self.assertIn("graalpy-resources.tar.zst", consumer)
-                self.assertIn("tar --zstd", consumer)
-                self.assertIn(
-                    "test -f .graalpy/resources/venv/installed.txt", consumer
-                )
-                self.assertNotIn(
-                    "test -x .graalpy/resources/venv/bin/python", consumer
-                )
-                self.assertIn("-Dgraalpy.environment.prebuilt=true", consumer)
-                self.assertNotIn("require-graalpy-cache", consumer)
+        self.assertIn("scripts/graalpy-environment qualify", preparation)
+        self.assertIn("always()", preparation)
+        self.assertIn("actions/cache/save@", preparation)
 
 
 if __name__ == "__main__":

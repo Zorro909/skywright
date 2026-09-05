@@ -7,19 +7,20 @@ on:
       - main
   merge_group:
 
-concurrency:
-  group: >-
-    ${{ github.workflow }}-${{
-      github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id
-    }}
-  # A canceled native build cannot save its progressive wheel cache.
-  cancel-in-progress: false
-
+# Verification jobs cancel independently. Native preparation must finish saving wheels.
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
   plan:
+    concurrency:
+      group: quality-plan-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: Plan
     runs-on: ubuntu-24.04
     outputs:
@@ -38,6 +39,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Test quality planning and orchestration
+        run: python3 -m unittest discover -s tests/quality
       - name: Record source identity
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -78,6 +81,9 @@ jobs:
           retention-days: 90
 
   deployment:
+    concurrency:
+      group: quality-deployment-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: Deployment contracts
     needs: plan
     if: needs.plan.outputs.deployment == 'true'
@@ -87,8 +93,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Reject superseded PR source
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Run deployment command and render tests
-        run: scripts/quality run deployment 2>&1 | tee deployment-contracts.log
+        run: scripts/ci-verify -- scripts/quality run deployment 2>&1 | tee deployment-contracts.log
       - name: Retain deployment test diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -101,6 +114,9 @@ jobs:
           retention-days: 90
 
   graalpy:
+    concurrency:
+      group: quality-graalpy-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: false
     name: Prepare packaged GraalPy environment
     needs: plan
     if: >-
@@ -110,113 +126,12 @@ jobs:
       needs.plan.outputs.image == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 270
-    env:
-      PIP_CACHE_DIR: ${{ github.workspace }}/.ci-cache/graalpy-pip
-      PIP_CONSTRAINT: ${{ github.workspace }}/graalpy-environment/build-constraints.txt
-      PIP_FIND_LINKS: ${{ github.workspace }}/.ci-cache/graalpy-pip/wheelhouse
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up GraalVM Community and packaged GraalPy cache
-        id: java
-        uses: ./.github/actions/setup-java
-        with:
-          graalpy-resources: true
-      - name: Prepare progressive GraalPy pip cache directory
-        if: steps.java.outputs.graalpy-cache-hit != 'true'
-        run: mkdir --parents "$PIP_CACHE_DIR" "$PIP_FIND_LINKS"
-      - name: Restore progressive GraalPy pip cache
-        id: graalpy-pip-cache
-        if: steps.java.outputs.graalpy-cache-hit != 'true'
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ${{ env.PIP_CACHE_DIR }}
-          key: ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml', 'graalpy-environment/build-constraints.txt', 'scripts/retag-wheel') }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml', 'graalpy-environment/build-constraints.txt', 'scripts/retag-wheel') }}-
-            ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-
-      - name: Prime pandas wheel cache
-        if: steps.java.outputs.graalpy-cache-hit != 'true'
-        run: |
-          timeout \
-            --verbose \
-            --kill-after=2m \
-            150m \
-            ./mvnw \
-              --batch-mode \
-              --no-transfer-progress \
-              -Dgraalpy.environment.prebuilt=true \
-              -Dgraalpy.wheel.package=pandas==2.2.3 \
-              -Dgraalpy.wheel.id=pandas \
-              -pl graalpy-environment \
-              process-resources
-      - name: Publish pandas wheel to local wheelhouse
-        if: steps.java.outputs.graalpy-cache-hit != 'true'
-        run: |
-          pandas_wheel=$(find "$PIP_CACHE_DIR/wheels" -type f -name 'pandas-2.2.3-graalpy312-graalpy250_312_native-*.whl' -print -quit)
-          test -n "$pandas_wheel"
-          scripts/retag-wheel "$pandas_wheel" "$PIP_FIND_LINKS" linux_x86_64
-      - name: Build packaged GraalPy environment on cache miss
-        id: build-graalpy
-        if: steps.java.outputs.graalpy-cache-hit != 'true'
-        run: |
-          timeout \
-            --verbose \
-            --kill-after=2m \
-            100m \
-            ./mvnw \
-              --batch-mode \
-              --no-transfer-progress \
-              -pl graalpy-environment \
-              process-resources
-      - name: Save progressive GraalPy pip cache
-        if: >-
-          always() &&
-          steps.java.outputs.graalpy-cache-hit != 'true' &&
-          steps.graalpy-pip-cache.outcome == 'success'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ${{ env.PIP_CACHE_DIR }}
-          key: ${{ steps.graalpy-pip-cache.outputs.cache-primary-key }}
-      - name: Smoke-test packaged GraalPy environment
-        id: smoke-graalpy
-        if: >-
-          always() &&
-          (steps.java.outputs.graalpy-cache-hit == 'true' ||
-          steps.build-graalpy.outcome == 'success')
-        run: |
-          test -f .graalpy/resources/venv/installed.txt
-          if [[ "${{ steps.java.outputs.graalpy-cache-hit }}" == "true" ]]; then
-            exit 0
-          fi
-          test -x .graalpy/resources/venv/bin/python
-          .graalpy/resources/venv/bin/python - <<'PY'
-          import aiohttp
-          import cryptography
-          import numpy
-          import os
-          import pandas
-          import psutil
-          import sky
-          import uvloop
-          import watchfiles
-
-          print("SkyPilot:", sky.__version__)
-          print("NumPy:", numpy.__version__)
-          print("Pandas:", pandas.__version__, flush=True)
-          # The embedded runtime owns orderly shutdown; this process only qualifies imports.
-          os._exit(0)
-          PY
-      - name: Save exact packaged GraalPy environment
-        if: >-
-          steps.java.outputs.graalpy-cache-hit != 'true' &&
-          steps.smoke-graalpy.outcome == 'success'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: .graalpy/resources
-          key: ${{ steps.java.outputs.graalpy-cache-primary-key }}
+      - name: Prepare qualified native dependencies
+        uses: ./.github/actions/prepare-graalpy
       - name: Archive packaged GraalPy environment
-        if: steps.smoke-graalpy.outcome == 'success'
         run: |
           tar --zstd \
             --create \
@@ -224,7 +139,6 @@ jobs:
             --directory=.graalpy \
             resources
       - name: Hand GraalPy environment to dependent jobs
-        if: steps.smoke-graalpy.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: graalpy-resources
@@ -234,9 +148,12 @@ jobs:
           compression-level: 0
 
   java:
+    concurrency:
+      group: quality-java-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: Java and backend
     needs: [plan, graalpy]
-    if: needs.plan.outputs.java == 'true'
+    if: needs.plan.outputs.java == 'true' || needs.plan.outputs.application == 'true' || needs.plan.outputs.image == 'true'
     runs-on: ubuntu-24.04
     env:
       MAVEN_ARGS: -Dgraalpy.environment.prebuilt=true
@@ -245,6 +162,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Reject superseded PR source
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Set up GraalVM Community
         uses: ./.github/actions/setup-java
       - name: Receive packaged GraalPy environment
@@ -265,7 +189,14 @@ jobs:
         with:
           install-browser: false
       - name: Run Java verification
-        run: scripts/quality run java --frontend-dependencies-ready
+        run: scripts/ci-verify -- scripts/ci-backend build "$RUNNER_TEMP/backend-handoff"
+      - name: Hand off verified backend artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verified-backend
+          path: ${{ runner.temp }}/backend-handoff
+          retention-days: 1
+          if-no-files-found: error
       - name: Retain Java test and diagnostic reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -282,8 +213,14 @@ jobs:
             frontend/playwright-report/**
           if-no-files-found: ignore
           retention-days: 90
+      - name: Remove reactor outputs from the dependency cache
+        if: always()
+        run: rm -rf "$HOME/.m2/repository/de/zorro909/skywright"
 
   integration:
+    concurrency:
+      group: quality-integration-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: Real-service integration
     needs: [plan, graalpy]
     if: needs.plan.outputs.integration == 'true'
@@ -295,6 +232,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Reject superseded PR source
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Set up GraalVM Community
         uses: ./.github/actions/setup-java
       - name: Receive packaged GraalPy environment
@@ -319,7 +263,7 @@ jobs:
         with:
           python-version: '3.14'
       - name: Qualify PostgreSQL and S3-compatible behavior
-        run: scripts/quality run integration --frontend-dependencies-ready
+        run: scripts/ci-verify -- scripts/quality run integration --frontend-dependencies-ready
       - name: Retain integration test and service diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -334,8 +278,14 @@ jobs:
             sdk/target/coverage/**
           if-no-files-found: ignore
           retention-days: 90
+      - name: Remove reactor outputs from the dependency cache
+        if: always()
+        run: rm -rf "$HOME/.m2/repository/de/zorro909/skywright"
 
   frontend:
+    concurrency:
+      group: quality-frontend-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: Frontend
     needs: plan
     if: needs.plan.outputs.frontend == 'true'
@@ -343,12 +293,19 @@ jobs:
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Reject superseded PR source
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
           install-browser: true
       - name: Run frontend verification
-        run: scripts/quality run frontend --frontend-dependencies-ready
+        run: scripts/ci-verify -- scripts/quality run frontend --frontend-dependencies-ready
       - name: Retain frontend test and diagnostic reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -363,8 +320,11 @@ jobs:
           retention-days: 90
 
   application:
+    concurrency:
+      group: quality-application-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: Complete application
-    needs: [plan, graalpy]
+    needs: [plan, graalpy, java]
     if: needs.plan.outputs.application == 'true'
     runs-on: ubuntu-24.04
     env:
@@ -374,6 +334,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Reject superseded PR source
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Set up GraalVM Community
         uses: ./.github/actions/setup-java
       - name: Receive packaged GraalPy environment
@@ -393,8 +360,13 @@ jobs:
         uses: ./.github/actions/setup-frontend
         with:
           install-browser: true
+      - name: Receive verified backend artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: verified-backend
+          path: ${{ runner.temp }}/backend-handoff
       - name: Qualify the complete application
-        run: scripts/quality run application --frontend-dependencies-ready
+        run: scripts/ci-verify -- scripts/ci-backend application "$RUNNER_TEMP/backend-handoff"
       - name: Retain application test, coverage, and diagnostic reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -411,10 +383,16 @@ jobs:
             frontend/playwright-report/**
           if-no-files-found: ignore
           retention-days: 90
+      - name: Remove reactor outputs from the dependency cache
+        if: always()
+        run: rm -rf "$HOME/.m2/repository/de/zorro909/skywright"
 
   image:
+    concurrency:
+      group: quality-image-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: Production control-plane images
-    needs: [plan, graalpy]
+    needs: [plan, graalpy, java]
     if: needs.plan.outputs.image == 'true'
     runs-on: ubuntu-24.04
     env:
@@ -424,6 +402,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Reject superseded PR source
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Set up GraalVM Community
         uses: ./.github/actions/setup-java
       - name: Receive packaged GraalPy environment
@@ -439,54 +424,57 @@ jobs:
             --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
             --directory=.graalpy
           test -f .graalpy/resources/venv/installed.txt
-      - name: Set up frontend prerequisites
-        uses: ./.github/actions/setup-frontend
+      - name: Receive verified backend artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          install-browser: false
+          name: verified-backend
+          path: ${{ runner.temp }}/backend-handoff
       - name: Build and exercise the production image
         id: build_image
-        run: scripts/quality run image --frontend-dependencies-ready
+        run: scripts/ci-verify -- scripts/ci-backend image "$RUNNER_TEMP/backend-handoff"
       - name: Prepare image security reports
         if: steps.build_image.outcome == 'success'
         run: mkdir --parents security-results
+      - name: Identify scanner cache generation
+        if: always() && steps.build_image.outcome == 'success'
+        id: trivy-date
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Set up Trivy once
+        if: always() && steps.build_image.outcome == 'success'
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: v0.70.0
+          cache: true
+      - name: Restore scanner databases once
+        if: always() && steps.build_image.outcome == 'success'
+        id: trivy-db
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            .cache/trivy/db
+            .cache/trivy/java-db
+          key: trivy-db-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.trivy-date.outputs.day }}
+          restore-keys: trivy-db-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Record all high and critical image findings
-        if: steps.build_image.outcome == 'success'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: skywright-backend:0.1.0-SNAPSHOT
-          severity: HIGH,CRITICAL
-          format: sarif
-          output: security-results/backend-image.sarif
-          exit-code: '0'
+        if: always() && steps.build_image.outcome == 'success'
+        run: scripts/ci-verify -- trivy image --cache-dir .cache/trivy --severity HIGH,CRITICAL --format sarif --output security-results/backend-image.sarif --exit-code 0 skywright-backend:0.1.0-SNAPSHOT
       - name: Reject fixable high and critical image findings
-        if: steps.build_image.outcome == 'success'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: skywright-backend:0.1.0-SNAPSHOT
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
+        if: always() && steps.build_image.outcome == 'success'
+        run: scripts/ci-verify -- trivy image --cache-dir .cache/trivy --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 skywright-backend:0.1.0-SNAPSHOT
       - name: Record SkyPilot API server high and critical image findings
-        if: steps.build_image.outcome == 'success'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: skywright-skypilot-api-server:0.1.0-SNAPSHOT
-          severity: HIGH,CRITICAL
-          format: sarif
-          output: security-results/skypilot-api-server-image.sarif
-          exit-code: '0'
+        if: always() && steps.build_image.outcome == 'success'
+        run: scripts/ci-verify -- trivy image --cache-dir .cache/trivy --severity HIGH,CRITICAL --format sarif --output security-results/skypilot-api-server-image.sarif --exit-code 0 skywright-skypilot-api-server:0.1.0-SNAPSHOT
       - name: Reject fixable SkyPilot API server high and critical findings
-        if: steps.build_image.outcome == 'success'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        if: always() && steps.build_image.outcome == 'success'
+        run: scripts/ci-verify -- trivy image --cache-dir .cache/trivy --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 skywright-skypilot-api-server:0.1.0-SNAPSHOT
+      - name: Save scanner databases once on main
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.trivy-db.outcome == 'success' && steps.trivy-db.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          scan-type: image
-          image-ref: skywright-skypilot-api-server:0.1.0-SNAPSHOT
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
+          path: |
+            .cache/trivy/db
+            .cache/trivy/java-db
+          key: ${{ steps.trivy-db.outputs.cache-primary-key }}
       - name: Retain image acceptance and security reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -505,8 +493,14 @@ jobs:
             security-results/skypilot-api-server-image.sarif
           if-no-files-found: ignore
           retention-days: 90
+      - name: Remove reactor outputs from the dependency cache
+        if: always()
+        run: rm -rf "$HOME/.m2/repository/de/zorro909/skywright"
 
   profile:
+    concurrency:
+      group: quality-profile-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: Environment Profiles
     needs: plan
     if: needs.plan.outputs.profile == 'true'
@@ -516,8 +510,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Reject superseded PR source
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Build and qualify CUDA and ROCm without accelerator hardware
-        run: scripts/quality run profile
+        run: scripts/ci-verify -- scripts/quality run profile
       - name: Retain profile qualification facts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -528,6 +529,9 @@ jobs:
           retention-days: 90
 
   sdk-compatibility:
+    concurrency:
+      group: quality-sdk-compatibility-${{ github.event.pull_request.number || github.run_id }}-${{ matrix.python-version }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: Python SDK / Python ${{ matrix.python-version }}
     needs:
       - plan
@@ -547,6 +551,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Reject superseded PR source
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Set up Python
         uses: ./.github/actions/setup-python-toolchain
         with:
@@ -558,8 +569,8 @@ jobs:
           path: sdk-dist
       - name: Qualify the installed SDK and contributor checks
         run: |
-          sdk/scripts/check
-          uv run --project sdk --locked pytest sdk/tests/system -m system \
+          scripts/ci-verify -- sdk/scripts/test-unit
+          scripts/ci-verify -- uv run --project sdk --locked pytest sdk/tests/system -m system \
             --junitxml sdk/target/test-results/system-${{ matrix.python-version }}.xml \
             --artifact-dir sdk-dist
       - name: Retain SDK test and diagnostic reports
@@ -574,6 +585,9 @@ jobs:
           retention-days: 90
 
   sdk-artifacts:
+    concurrency:
+      group: quality-sdk-artifacts-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: Python SDK / Primary artifacts
     needs: plan
     if: needs.plan.outputs.sdk == 'true'
@@ -583,14 +597,21 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Reject superseded PR source
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Set up primary Python
         uses: ./.github/actions/setup-python-toolchain
         with:
           python-version: '3.14'
       - name: Build each distribution once and run complete SDK and project-action verification
         run: |
-          sdk/scripts/verify target/ci-dist
-          .github/actions/publish-training-project/scripts/check
+          scripts/ci-verify -- sdk/scripts/verify target/ci-dist
+          scripts/ci-verify -- .github/actions/publish-training-project/scripts/check
       - name: Hand verified distributions to compatibility lanes
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -635,25 +656,39 @@ jobs:
           echo "SDK qualification passed on Python 3.10 through 3.14."
 
   security:
+    concurrency:
+      group: quality-security-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: Security
     needs: plan
-    if: needs.plan.outputs.security == 'true'
+    # Always enter concurrency, including when replacement work is inapplicable.
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       security-events: write
     steps:
       - name: Check out the tested revision
+        id: security-checkout
+        if: needs.plan.outputs.security == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Reject superseded PR source
+        id: security-source
+        if: needs.plan.outputs.security == 'true' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Validate security suppressions
+        if: needs.plan.outputs.security == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/quality security-policy --verify-issues
       - name: Review dependency changes
         id: dependency-review
-        if: github.event_name == 'pull_request'
+        if: needs.plan.outputs.security == 'true' && github.event_name == 'pull_request'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
@@ -661,7 +696,7 @@ jobs:
           show-patched-versions: true
           comment-summary-in-pr: never
       - name: Enforce fixable dependency findings
-        if: github.event_name == 'pull_request'
+        if: needs.plan.outputs.security == 'true' && github.event_name == 'pull_request'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           VULNERABLE_CHANGES: ${{ steps.dependency-review.outputs.vulnerable-changes }}
@@ -671,7 +706,7 @@ jobs:
             --report security-results/dependency-review.json
       - name: Initialize CodeQL
         id: codeql-init
-        if: always()
+        if: always() && needs.plan.outputs.security == 'true' && steps.security-checkout.outcome == 'success' && steps.security-source.outcome != 'failure'
         uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           languages: java-kotlin,javascript-typescript,python
@@ -693,7 +728,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/quality github-dismissal-policy --scanner codeql
       - name: Retain security reports
-        if: always()
+        if: always() && needs.plan.outputs.security == 'true' && steps.security-checkout.outcome == 'success' && steps.security-source.outcome != 'failure'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: security-reports
@@ -751,3 +786,29 @@ jobs:
             --result "profile=$PROFILE_RESULT" \
             --result "sdk=$SDK_RESULT" \
             --result "security=$SECURITY_RESULT"
+
+  cache-maintenance:
+    name: Bound scanner database retention
+    needs: image
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.image.result != 'skipped'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - name: Retain the two newest main database snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, subprocess
+          repository = os.environ["GITHUB_REPOSITORY"]
+          pages = json.loads(subprocess.check_output([
+              "gh", "api", "--paginate", "--slurp",
+              f"repos/{repository}/actions/caches?per_page=100",
+          ], text=True))
+          caches = [entry for page in pages for entry in page["actions_caches"]
+                    if entry["key"].startswith("trivy-db-v1-") and entry["ref"] == "refs/heads/main"]
+          for entry in sorted(caches, key=lambda entry: entry["created_at"], reverse=True)[2:]:
+              subprocess.run(["gh", "api", "--method", "DELETE",
+                              f"repos/{repository}/actions/caches/{entry['id']}"], check=True)
+          PYTHON

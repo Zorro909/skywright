@@ -22,13 +22,14 @@ def isolated_process_environment() -> dict[str, str]:
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     system = pytest.mark.system
     for item in items:
-        item.add_marker(system)
+        if Path(__file__).parent in Path(str(item.path)).parents:
+            item.add_marker(system)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--artifact-dir",
-        required=True,
+        default=None,
         type=Path,
         help="Directory containing one direct wheel and one source distribution",
     )
@@ -38,7 +39,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def distribution_wheels(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
 ) -> tuple[Path, Path]:
-    artifact_directory = cast(Path, request.config.getoption("--artifact-dir"))
+    artifact_directory = cast(Path | None, request.config.getoption("--artifact-dir"))
+    if artifact_directory is None:
+        pytest.fail("installed-artifact tests require --artifact-dir")
     artifact_directory = artifact_directory.resolve(strict=True)
     wheels = tuple(artifact_directory.glob("skywright-*.whl"))
     if len(wheels) != 1:

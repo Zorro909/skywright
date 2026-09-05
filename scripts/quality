@@ -70,11 +70,11 @@ CATEGORY_CHECKS = {
     "api": frozenset(
         ("application", "image", "integration", "java", "frontend", "sdk", "security")
     ),
-    "backend": frozenset(("application", "image", "java", "security")),
+    "backend": frozenset(("application", "image", "integration", "java", "security")),
     "deployment": ALL_CHECKS,
     "documentation": frozenset(),
-    "fixture": frozenset(("application", "image", "java", "sdk", "security")),
-    "frontend": frozenset(("application", "image", "frontend", "security")),
+    "fixture": frozenset(("application", "image", "integration", "java", "sdk", "security")),
+    "frontend": frozenset(("application", "image", "java", "frontend", "security")),
     "profile": frozenset(("profile", "security")),
     "project-action": frozenset(("sdk", "security")),
     "sdk": frozenset(("profile", "sdk", "security")),
@@ -236,7 +236,11 @@ class QualityPlan:
 
 def category_for(path: str) -> str:
     normalized = path.removeprefix("./")
-    if normalized == "sdk/src/skywright/_configuration_resources/corpus.json":
+    if normalized.startswith((
+        "sdk/src/skywright/_configuration_resources/",
+        "sdk/src/skywright/_metric_resources/",
+        "sdk/src/skywright/_run_definition_resources/",
+    )):
         return "fixture"
     if (
         normalized.startswith(("docs/", ".github/ISSUE_TEMPLATE/"))

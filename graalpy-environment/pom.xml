@@ -15,6 +15,8 @@
   <name>Skywright GraalPy environment</name>
   <description>Builds the locked, platform-specific Python environment embedded by Skywright.</description>
 
+  <properties><graalpy.wheel.primer>false</graalpy.wheel.primer></properties>
+
   <dependencies>
     <dependency>
       <groupId>org.graalvm.polyglot</groupId>
@@ -30,6 +32,27 @@
   </dependencies>
 
   <profiles>
+    <profile>
+      <id>validate-prebuilt-graalpy-environment</id>
+      <activation><property><name>graalpy.environment.prebuilt</name></property></activation>
+      <build><plugins><plugin>
+        <groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId>
+        <version>${exec-maven.version}</version>
+        <executions><execution><id>verify-native-identity</id><phase>validate</phase>
+          <goals><goal>exec</goal></goals>
+          <configuration>
+            <skip>${graalpy.wheel.primer}</skip>
+            <executable>python3</executable>
+            <arguments>
+              <argument>${maven.multiModuleProjectDirectory}/scripts/graalpy-environment</argument>
+              <argument>verify</argument>
+              <argument>--runtime-version</argument><argument>${graalpy.version}</argument>
+              <argument>--skypilot-version</argument><argument>${skypilot.version}</argument>
+            </arguments>
+          </configuration>
+        </execution></executions>
+      </plugin></plugins></build>
+    </profile>
     <profile>
       <id>build-graalpy-environment</id>
       <activation>

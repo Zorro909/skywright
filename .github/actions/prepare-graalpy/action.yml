@@ -1,0 +1,95 @@
+name: Prepare GraalPy dependencies
+description: Restore, build and qualify the exact native dependency environment.
+runs:
+  using: composite
+  steps:
+    - name: Configure native build caches
+      shell: bash
+      run: |
+        echo "PIP_CACHE_DIR=$GITHUB_WORKSPACE/.ci-cache/graalpy-pip" >> "$GITHUB_ENV"
+        echo "PIP_CONSTRAINT=$GITHUB_WORKSPACE/graalpy-environment/build-constraints.txt" >> "$GITHUB_ENV"
+        echo "PIP_FIND_LINKS=$GITHUB_WORKSPACE/.ci-cache/graalpy-pip/wheelhouse" >> "$GITHUB_ENV"
+    - name: Set up GraalVM Community and packaged GraalPy cache
+      id: java
+      uses: ./.github/actions/setup-java
+      with:
+        graalpy-resources: true
+    - name: Prepare progressive GraalPy pip cache directory
+      if: steps.java.outputs.graalpy-cache-hit != 'true'
+      shell: bash
+      run: mkdir --parents "$PIP_CACHE_DIR" "$PIP_FIND_LINKS"
+    - name: Restore progressive GraalPy pip cache
+      id: graalpy-pip-cache
+      if: steps.java.outputs.graalpy-cache-hit != 'true'
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ${{ env.PIP_CACHE_DIR }}
+        key: ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ steps.java.outputs.graalpy-cache-primary-key }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ steps.java.outputs.graalpy-cache-primary-key }}-
+          ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-
+    - name: Prime pandas wheel cache
+      if: steps.java.outputs.graalpy-cache-hit != 'true'
+      shell: bash
+      run: |
+        timeout \
+          --verbose \
+          --kill-after=2m \
+          150m \
+          ./mvnw \
+            --batch-mode \
+            --no-transfer-progress \
+            -Dgraalpy.environment.prebuilt=true \
+            -Dgraalpy.wheel.primer=true \
+            -Dgraalpy.wheel.package=pandas==2.2.3 \
+            -Dgraalpy.wheel.id=pandas \
+            -pl graalpy-environment \
+            process-resources
+    - name: Publish pandas wheel to local wheelhouse
+      if: steps.java.outputs.graalpy-cache-hit != 'true'
+      shell: bash
+      run: |
+        pandas_wheel=$(find "$PIP_CACHE_DIR/wheels" -type f -name 'pandas-2.2.3-graalpy312-graalpy250_312_native-*.whl' -print -quit)
+        test -n "$pandas_wheel"
+        scripts/retag-wheel "$pandas_wheel" "$PIP_FIND_LINKS" linux_x86_64
+    - name: Build packaged GraalPy environment on cache miss
+      id: build-graalpy
+      if: steps.java.outputs.graalpy-cache-hit != 'true'
+      shell: bash
+      run: |
+        timeout \
+          --verbose \
+          --kill-after=2m \
+          100m \
+          ./mvnw \
+            --batch-mode \
+            --no-transfer-progress \
+            -pl graalpy-environment \
+            process-resources
+    - name: Save progressive GraalPy pip cache
+      if: >-
+        always() &&
+        steps.java.outputs.graalpy-cache-hit != 'true' &&
+        steps.graalpy-pip-cache.outcome == 'success'
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ${{ env.PIP_CACHE_DIR }}
+        key: ${{ steps.graalpy-pip-cache.outputs.cache-primary-key }}
+    - name: Smoke-test packaged GraalPy environment
+      id: smoke-graalpy
+      if: >-
+        always() &&
+        (steps.java.outputs.graalpy-cache-hit == 'true' || steps.build-graalpy.outcome == 'success')
+      shell: bash
+      run: scripts/graalpy-environment qualify
+    - name: Save exact packaged GraalPy environment
+      if: >-
+        steps.java.outputs.graalpy-cache-hit != 'true' &&
+        steps.smoke-graalpy.outcome == 'success'
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: .graalpy/resources
+        key: ${{ steps.java.outputs.graalpy-cache-primary-key }}
+    - name: Use the verified environment for subsequent Maven builds
+      shell: bash
+      run: echo "MAVEN_ARGS=${MAVEN_ARGS:-} -Dgraalpy.environment.prebuilt=true" >> "$GITHUB_ENV"

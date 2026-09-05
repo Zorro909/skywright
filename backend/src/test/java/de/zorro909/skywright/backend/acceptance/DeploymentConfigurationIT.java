@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.jar.JarFile;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -18,6 +19,7 @@ final class DeploymentConfigurationIT {
 	Path temporaryDirectory;
 
 	@Test
+	@Tag("real-service")
 	void commandLineConfigurationOverridesSystemEnvironmentAndFileSources() throws Exception {
 		var configurationFile = temporaryDirectory.resolve("application.properties");
 		Files.writeString(configurationFile, "skywright.deployment.environment=invalid_file!\n");
@@ -46,6 +48,7 @@ final class DeploymentConfigurationIT {
 	}
 
 	@Test
+	@Tag("real-service")
 	void unrelatedConfigurationFailuresUseTheirOwnDiagnostics() throws Exception {
 		try (var backend = BackendProcess.startWithDatabase("--skywright.deployment.environment=test",
 				"--skywright.deployment.reporting-currency=EUR", "--server.port=not-a-port")) {
@@ -57,6 +60,7 @@ final class DeploymentConfigurationIT {
 	}
 
 	@Test
+	@Tag("real-service")
 	void missingReportingCurrencyStopsStartup() throws Exception {
 		try (var backend = BackendProcess.startWithDatabase("--server.port=0",
 				"--skywright.deployment.environment=test")) {
@@ -69,6 +73,7 @@ final class DeploymentConfigurationIT {
 	}
 
 	@Test
+	@Tag("real-service")
 	void invalidReportingCurrencyStopsStartup() throws Exception {
 		try (var backend = BackendProcess.startWithDatabase("--server.port=0",
 				"--skywright.deployment.environment=test", "--skywright.deployment.reporting-currency=ZZZ")) {
@@ -81,6 +86,7 @@ final class DeploymentConfigurationIT {
 	}
 
 	@Test
+	@Tag("real-service")
 	void reportingCurrencyWithoutAMinorUnitStopsStartup() throws Exception {
 		try (var backend = BackendProcess.startWithDatabase("--server.port=0",
 				"--skywright.deployment.environment=test", "--skywright.deployment.reporting-currency=XAU")) {
@@ -93,6 +99,7 @@ final class DeploymentConfigurationIT {
 	}
 
 	@Test
+	@Tag("real-service")
 	void missingRequiredDeploymentConfigurationStopsStartupBeforeReadiness() throws Exception {
 		try (var backend = BackendProcess.startWithDatabase("--server.port=0")) {
 			var exitCode = backend.awaitExit(Duration.ofSeconds(20));
@@ -104,6 +111,7 @@ final class DeploymentConfigurationIT {
 	}
 
 	@Test
+	@Tag("real-service")
 	void invalidDeploymentConfigurationIsDiagnosedWithoutEchoingItsValue() throws Exception {
 		var sensitiveValue = "production-private-token!";
 		try (var backend = BackendProcess.startWithDatabase("--debug", "--server.port=0",
@@ -120,6 +128,7 @@ final class DeploymentConfigurationIT {
 	}
 
 	@Test
+	@Tag("real-service")
 	void unknownDeploymentConfigurationIsRejectedWithoutEchoingItsValue() throws Exception {
 		var sensitiveValue = "unknown-private-token";
 		try (var backend = BackendProcess.startWithDatabase("--server.port=0",

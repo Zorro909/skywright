@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""Identify and validate the native dependency environment independently of app builds."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import platform
+import re
+import subprocess
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+NS = {"m": "http://maven.apache.org/POM/4.0.0"}
+INPUTS = (
+    "graalpy-environment/pom.xml",
+    "graalpy-environment/graalpy.lock",
+    "graalpy-environment/build-constraints.txt",
+    "scripts/retag-wheel",
+    "scripts/graalpy-environment",
+    "scripts/QualifyGraalPy.java",
+    ".github/actions/prepare-graalpy/action.yml",
+)
+
+
+def identity(root: Path = ROOT) -> dict:
+    pom = ET.parse(root / "pom.xml")
+    versions = {
+        name: pom.findtext(f"m:properties/m:{name}", namespaces=NS)
+        for name in ("graalpy.version", "skypilot.version")
+    }
+    if not all(versions.values()):
+        raise ValueError("Missing inherited GraalPy or SkyPilot version")
+    toolchain = json.loads((root / "quality/toolchain.json").read_text())
+    return {
+        "version": 1,
+        "platform": f"{platform.system()}-{platform.machine()}",
+        "os": platform.freedesktop_os_release().get("VERSION_ID", "unknown"),
+        "java_archive_sha256": toolchain["java_archive_sha256"],
+        "runtime": versions,
+        "inputs": {
+            name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+            for name in INPUTS
+        },
+    }
+
+
+def key(value: dict) -> str:
+    return (
+        "graalpy-env-v4-"
+        + hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+    )
+
+
+def packages(text: str) -> set[str]:
+    return {
+        "==".join(
+            (
+                re.sub(r"[-_.]+", "-", line.split("==", 1)[0].strip().lower()),
+                line.split("==", 1)[1].strip().lower(),
+            )
+        )
+        for line in text.splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+
+
+def verify(root: Path = ROOT, *, require_identity: bool = True) -> dict:
+    expected = identity(root)
+    resources = root / ".graalpy/resources"
+    if (
+        require_identity
+        and json.loads((resources / "identity.json").read_text()) != expected
+    ):
+        raise ValueError("Packaged GraalPy environment identity mismatch")
+    contents = dict(
+        line.split("=", 1)
+        for line in (resources / "venv/contents").read_text().splitlines()
+    )
+    if contents.get("version") != expected["runtime"]["graalpy.version"]:
+        raise ValueError("Packaged GraalPy runtime version mismatch")
+    locked = packages((root / "graalpy-environment/graalpy.lock").read_text())
+    installed = packages((resources / "venv/installed.txt").read_text())
+    if (
+        locked != installed
+        or f"skypilot=={expected['runtime']['skypilot.version']}" not in installed
+    ):
+        raise ValueError("Packaged GraalPy packages differ from the effective lock")
+    return expected
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("identity", "verify", "qualify"))
+    parser.add_argument("--runtime-version")
+    parser.add_argument("--skypilot-version")
+    args = parser.parse_args()
+    expected = identity()
+    for argument, name in (
+        (args.runtime_version, "graalpy.version"),
+        (args.skypilot_version, "skypilot.version"),
+    ):
+        if argument is not None and argument != expected["runtime"][name]:
+            raise ValueError(
+                f"Maven override differs from packaged environment: {name}"
+            )
+    if args.command == "identity":
+        print(key(expected))
+        return
+    verify(
+        require_identity=args.command != "qualify"
+        or (ROOT / ".graalpy/resources/identity.json").exists()
+    )
+    if args.command == "qualify":
+        subprocess.run(
+            [
+                str(ROOT / "mvnw"),
+                "--batch-mode",
+                "--no-transfer-progress",
+                "-pl",
+                "graalpy-environment",
+                "dependency:build-classpath",
+                "-Dmdep.outputFile=target/qualification-classpath",
+            ],
+            cwd=ROOT,
+            check=True,
+            timeout=300,
+        )
+        classpath = (
+            (ROOT / "graalpy-environment/target/qualification-classpath")
+            .read_text()
+            .strip()
+        )
+        subprocess.run(
+            [
+                "java",
+                "--enable-native-access=ALL-UNNAMED",
+                "-Xss16m",
+                "--class-path",
+                classpath,
+                "scripts/QualifyGraalPy.java",
+                str(ROOT / ".graalpy/resources"),
+                expected["runtime"]["skypilot.version"],
+            ],
+            cwd=ROOT,
+            check=True,
+            timeout=180,
+        )
+        (ROOT / ".graalpy/resources/identity.json").write_text(
+            json.dumps(expected, sort_keys=True) + "\n"
+        )
+    print(f"Verified {key(expected)}")
+
+
+if __name__ == "__main__":
+    main()

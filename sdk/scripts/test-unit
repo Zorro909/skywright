@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+mkdir -p target/test-results
+coverage=()
+if [[ "${1:-}" == --coverage ]]; then
+  mkdir -p target/coverage
+  coverage=(--cov skywright --cov-report xml:target/coverage/coverage.xml --cov-report html:target/coverage/html)
+  shift
+fi
+uv run --locked --group ml-test pytest tests --ignore=tests/system -m 'not real_service' \
+  --junitxml target/test-results/unit.xml "${coverage[@]}" "$@"

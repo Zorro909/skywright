@@ -36,7 +36,9 @@ runs:
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: ${{ steps.pnpm-store.outputs.path }}
-        key: ${{ runner.os }}-node-${{ steps.toolchain.outputs.node_version }}-pnpm-${{ steps.toolchain.outputs.pnpm_version }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-node-${{ steps.toolchain.outputs.node_version }}-pnpm-${{ steps.toolchain.outputs.pnpm_version }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-node-${{ steps.toolchain.outputs.node_version }}-pnpm-${{ steps.toolchain.outputs.pnpm_version }}-
     - name: Install frontend dependencies
       shell: bash
       run: pnpm --dir frontend install --frozen-lockfile
@@ -46,7 +48,7 @@ runs:
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-node-${{ steps.toolchain.outputs.node_version }}-pnpm-${{ steps.toolchain.outputs.pnpm_version }}-playwright-${{ steps.toolchain.outputs.playwright_version }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+        key: ubuntu24-${{ runner.arch }}-playwright-${{ steps.toolchain.outputs.playwright_version }}
     - name: Prefer the HTTPS Ubuntu package mirror
       if: inputs.install-browser == 'true'
       shell: bash

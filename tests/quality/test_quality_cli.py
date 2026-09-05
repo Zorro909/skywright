@@ -41,6 +41,38 @@ class PlanningTest(unittest.TestCase):
             arguments.extend(("--changed-file", path))
         return json.loads(run_quality(*arguments).stdout)
 
+    def test_backend_adapters_and_packaged_contract_families_select_their_consumers(
+        self,
+    ) -> None:
+        adapters = (
+            "orchestration/GraalPySkyPilotClient.java",
+            "datasetpublication/S3DatasetCopyStorage.java",
+            "targetstorage/S3TargetStorageQualificationProbe.java",
+            "pricing/SkyPilotPriceSource.java",
+            "trainingproject/TrainingProjectService.java",
+        )
+        paths = [
+            "backend/src/main/java/de/zorro909/skywright/backend/" + adapter
+            for adapter in adapters
+        ]
+        paths.append("backend/src/main/resources/META-INF/skywright/skypilot_bridge.py")
+        paths += [
+            f"sdk/src/skywright/{family}/{name}"
+            for family in (
+                "_configuration_resources",
+                "_metric_resources",
+                "_run_definition_resources",
+            )
+            for name in ("schema.json", "corpus.json", "future.json")
+        ]
+        for path in paths:
+            with self.subTest(path=path):
+                checks = self.plan(path)["checks"]
+                for check in ("java", "application", "image", "integration"):
+                    self.assertTrue(checks[check]["applicable"])
+                if path.startswith("sdk/"):
+                    self.assertTrue(checks["sdk"]["applicable"])
+
     def test_root_tooling_change_fans_out_to_every_active_check(self) -> None:
         plan = self.plan("pom.xml")
 
@@ -83,7 +115,7 @@ class PlanningTest(unittest.TestCase):
                     "deployment": False,
                     "frontend": False,
                     "image": True,
-                    "integration": False,
+                    "integration": True,
                     "java": True,
                     "profile": False,
                     "sdk": False,
@@ -97,7 +129,7 @@ class PlanningTest(unittest.TestCase):
                     "deployment": False,
                     "frontend": False,
                     "image": True,
-                    "integration": False,
+                    "integration": True,
                     "java": True,
                     "profile": False,
                     "sdk": False,
@@ -112,7 +144,7 @@ class PlanningTest(unittest.TestCase):
                     "frontend": True,
                     "image": True,
                     "integration": False,
-                    "java": False,
+                    "java": True,
                     "profile": False,
                     "sdk": False,
                     "security": True,
@@ -139,7 +171,7 @@ class PlanningTest(unittest.TestCase):
                     "deployment": False,
                     "frontend": False,
                     "image": True,
-                    "integration": False,
+                    "integration": True,
                     "java": True,
                     "profile": False,
                     "sdk": True,
@@ -241,7 +273,7 @@ class PlanningTest(unittest.TestCase):
                 "deployment": False,
                 "frontend": False,
                 "image": True,
-                "integration": False,
+                "integration": True,
                 "java": True,
                 "profile": False,
                 "sdk": True,
