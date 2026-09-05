@@ -52,7 +52,11 @@ tested revision and tag commit, so another checkout cannot be described as the r
 
 Superseded Repository Quality verification jobs are cancelled only for the same pull request.
 The native preparation job has an independent non-cancelling queue and finishes saving reusable
-wheel dependencies. Before expensive verification, jobs reject a superseded PR head.
+wheel dependencies. The `scripts/ci-verify` supervisor checks the PR head before each expensive command and every
+60 seconds while it runs, terminating obsolete process groups with bounded grace. This also stops
+old work when replacement jobs are skipped or waiting for native preparation. Such a cooperative
+stop records a failed old job when GitHub job concurrency has not already cancelled it; the current
+revision still needs its successful aggregate. API failures are retried and fail explicitly.
 The workflow record can remain active while that native preparation finishes. `main`, merge queue,
 tag, and publication runs use unique concurrency identities and finish independently. Ordinary verification
 uses no repository, publication, infrastructure, or cloud credentials and remains runnable for fork

@@ -74,7 +74,7 @@ def receive(directory: Path) -> None:
 
 def build(directory: Path) -> None:
     run(
-        "mvn",
+        str(ROOT / "mvnw"),
         "--batch-mode",
         "--no-transfer-progress",
         "-DskipFrontendInstall=true",
@@ -144,7 +144,12 @@ def main() -> None:
         run("scripts/graalpy-environment", "verify")
         for module in ("backend-deployment", "skypilot-api-server-deployment"):
             run(
-                "mvn", "--batch-mode", "--no-transfer-progress", "-pl", module, "verify"
+                str(ROOT / "mvnw"),
+                "--batch-mode",
+                "--no-transfer-progress",
+                "-pl",
+                module,
+                "verify",
             )
 
 

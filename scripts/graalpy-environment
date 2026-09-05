@@ -116,7 +116,7 @@ def main() -> None:
     if args.command == "qualify":
         subprocess.run(
             [
-                "mvn",
+                str(ROOT / "mvnw"),
                 "--batch-mode",
                 "--no-transfer-progress",
                 "-pl",

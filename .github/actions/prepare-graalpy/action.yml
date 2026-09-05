@@ -24,9 +24,9 @@ runs:
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: ${{ env.PIP_CACHE_DIR }}
-        key: ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ steps.java.outputs.graalpy-cache-primary-key }}-${{ github.run_id }}-${{ github.run_attempt }}
+        key: ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ steps.java.outputs.graalpy-cache-primary-key }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
-          ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ steps.java.outputs.graalpy-cache-primary-key }}-
+          ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-${{ steps.java.outputs.graalpy-cache-primary-key }}-
           ubuntu24-${{ runner.arch }}-graalpy-pip-v2-${{ hashFiles('quality/toolchain.json') }}-
     - name: Prime pandas wheel cache
       if: steps.java.outputs.graalpy-cache-hit != 'true'

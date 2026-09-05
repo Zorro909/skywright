@@ -220,7 +220,7 @@ This keeps dependent work queued without occupying an idle waiting runner. Appli
 jobs consume a checksum-verified backend handoff from the same run and tested revision. Main
 Skaffold qualification uses the shared preparation action and skips documentation-only changes.
 
-Local validation passed 41 quality-tool tests, 42 deployment tests and 248 SDK unit cases, including
+Local validation passed 44 quality-tool tests, 42 deployment tests and 248 SDK unit cases, including
 29 newly discovered MDS cases. Backend reactor packaging and unit tests passed with native
 preparation bypassed for that compile-only check; no local native or image qualification is claimed.
 The original `mvn ... test` attempt failed because the reactor's API unpacking requires packaging;
@@ -239,3 +239,5 @@ These elapsed figures include scheduling, unlike the first table's first-job-to-
 Cold-native runs still had some warm tool downloads. The new cache schema initially misses the
 assembled environment and may reuse compatible progressive wheels; compare it separately from an
 exact warm restore. Post-change measurements will be added after the PR jobs complete.
+
+Review found and corrected CI Maven wrapper selection, scanner pruning after failed image checks, and cancellation while replacement jobs are skipped or blocked. A PR-head supervisor stops obsolete verification process groups while native preparation remains independent. All 20 installed wheel/source-distribution cases also passed locally.

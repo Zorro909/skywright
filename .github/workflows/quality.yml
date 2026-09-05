@@ -13,6 +13,9 @@ permissions:
   actions: read
   pull-requests: read
 
+env:
+  GH_TOKEN: ${{ github.token }}
+
 jobs:
   plan:
     concurrency:
@@ -98,7 +101,7 @@ jobs:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Run deployment command and render tests
-        run: scripts/quality run deployment 2>&1 | tee deployment-contracts.log
+        run: scripts/ci-verify -- scripts/quality run deployment 2>&1 | tee deployment-contracts.log
       - name: Retain deployment test diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -186,7 +189,7 @@ jobs:
         with:
           install-browser: false
       - name: Run Java verification
-        run: scripts/ci-backend build "$RUNNER_TEMP/backend-handoff"
+        run: scripts/ci-verify -- scripts/ci-backend build "$RUNNER_TEMP/backend-handoff"
       - name: Hand off verified backend artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -260,7 +263,7 @@ jobs:
         with:
           python-version: '3.14'
       - name: Qualify PostgreSQL and S3-compatible behavior
-        run: scripts/quality run integration --frontend-dependencies-ready
+        run: scripts/ci-verify -- scripts/quality run integration --frontend-dependencies-ready
       - name: Retain integration test and service diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -302,7 +305,7 @@ jobs:
         with:
           install-browser: true
       - name: Run frontend verification
-        run: scripts/quality run frontend --frontend-dependencies-ready
+        run: scripts/ci-verify -- scripts/quality run frontend --frontend-dependencies-ready
       - name: Retain frontend test and diagnostic reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -363,7 +366,7 @@ jobs:
           name: verified-backend
           path: ${{ runner.temp }}/backend-handoff
       - name: Qualify the complete application
-        run: scripts/ci-backend application "$RUNNER_TEMP/backend-handoff"
+        run: scripts/ci-verify -- scripts/ci-backend application "$RUNNER_TEMP/backend-handoff"
       - name: Retain application test, coverage, and diagnostic reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -428,7 +431,7 @@ jobs:
           path: ${{ runner.temp }}/backend-handoff
       - name: Build and exercise the production image
         id: build_image
-        run: scripts/ci-backend image "$RUNNER_TEMP/backend-handoff"
+        run: scripts/ci-verify -- scripts/ci-backend image "$RUNNER_TEMP/backend-handoff"
       - name: Prepare image security reports
         if: steps.build_image.outcome == 'success'
         run: mkdir --parents security-results
@@ -454,50 +457,16 @@ jobs:
           restore-keys: trivy-db-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Record all high and critical image findings
         if: always() && steps.build_image.outcome == 'success'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          cache: false
-          skip-setup-trivy: true
-          scan-type: image
-          image-ref: skywright-backend:0.1.0-SNAPSHOT
-          severity: HIGH,CRITICAL
-          format: sarif
-          output: security-results/backend-image.sarif
-          exit-code: '0'
+        run: scripts/ci-verify -- trivy image --cache-dir .cache/trivy --severity HIGH,CRITICAL --format sarif --output security-results/backend-image.sarif --exit-code 0 skywright-backend:0.1.0-SNAPSHOT
       - name: Reject fixable high and critical image findings
         if: always() && steps.build_image.outcome == 'success'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          cache: false
-          skip-setup-trivy: true
-          scan-type: image
-          image-ref: skywright-backend:0.1.0-SNAPSHOT
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
+        run: scripts/ci-verify -- trivy image --cache-dir .cache/trivy --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 skywright-backend:0.1.0-SNAPSHOT
       - name: Record SkyPilot API server high and critical image findings
         if: always() && steps.build_image.outcome == 'success'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          cache: false
-          skip-setup-trivy: true
-          scan-type: image
-          image-ref: skywright-skypilot-api-server:0.1.0-SNAPSHOT
-          severity: HIGH,CRITICAL
-          format: sarif
-          output: security-results/skypilot-api-server-image.sarif
-          exit-code: '0'
+        run: scripts/ci-verify -- trivy image --cache-dir .cache/trivy --severity HIGH,CRITICAL --format sarif --output security-results/skypilot-api-server-image.sarif --exit-code 0 skywright-skypilot-api-server:0.1.0-SNAPSHOT
       - name: Reject fixable SkyPilot API server high and critical findings
         if: always() && steps.build_image.outcome == 'success'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          cache: false
-          skip-setup-trivy: true
-          scan-type: image
-          image-ref: skywright-skypilot-api-server:0.1.0-SNAPSHOT
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
+        run: scripts/ci-verify -- trivy image --cache-dir .cache/trivy --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 skywright-skypilot-api-server:0.1.0-SNAPSHOT
       - name: Save scanner databases once on main
         if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.trivy-db.outcome == 'success' && steps.trivy-db.outputs.cache-hit != 'true'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -549,7 +518,7 @@ jobs:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$EXPECTED_HEAD"
       - name: Build and qualify CUDA and ROCm without accelerator hardware
-        run: scripts/quality run profile
+        run: scripts/ci-verify -- scripts/quality run profile
       - name: Retain profile qualification facts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -600,8 +569,8 @@ jobs:
           path: sdk-dist
       - name: Qualify the installed SDK and contributor checks
         run: |
-          sdk/scripts/test-unit
-          uv run --project sdk --locked pytest sdk/tests/system -m system \
+          scripts/ci-verify -- sdk/scripts/test-unit
+          scripts/ci-verify -- uv run --project sdk --locked pytest sdk/tests/system -m system \
             --junitxml sdk/target/test-results/system-${{ matrix.python-version }}.xml \
             --artifact-dir sdk-dist
       - name: Retain SDK test and diagnostic reports
@@ -641,8 +610,8 @@ jobs:
           python-version: '3.14'
       - name: Build each distribution once and run complete SDK and project-action verification
         run: |
-          sdk/scripts/verify target/ci-dist
-          .github/actions/publish-training-project/scripts/check
+          scripts/ci-verify -- sdk/scripts/verify target/ci-dist
+          scripts/ci-verify -- .github/actions/publish-training-project/scripts/check
       - name: Hand verified distributions to compatibility lanes
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -817,7 +786,7 @@ jobs:
   cache-maintenance:
     name: Bound scanner database retention
     needs: image
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.image.result != 'skipped'
     runs-on: ubuntu-24.04
     permissions:
       actions: write
