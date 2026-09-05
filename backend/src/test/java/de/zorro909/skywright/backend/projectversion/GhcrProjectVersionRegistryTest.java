@@ -95,6 +95,37 @@ final class GhcrProjectVersionRegistryTest {
 		}
 	}
 
+	@Test
+	void rejectsPaginationOutsideTheRegisteredRepositoryBeforeSendingAuthorization() throws Exception {
+		var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		var target = new java.util.concurrent.atomic.AtomicReference<String>("https://example.invalid/steal");
+		try {
+			server.createContext("/", exchange -> {
+				exchange.getResponseHeaders().add("Link", "<" + target.get() + ">; rel=\"next\"");
+				body(exchange, 200, "{\"tags\":[]}");
+			});
+			server.start();
+			var endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+			var calls = new java.util.concurrent.atomic.AtomicInteger();
+			var registry = new GhcrProjectVersionRegistry(HttpClient.newHttpClient(), endpoint, repository -> {
+				calls.incrementAndGet();
+				return Optional.of("Bearer test-token");
+			});
+			for (var link : List.of("https://example.invalid/steal", "/v2/other/project/tags/list",
+					"/v2/example/project/../../other/tags/list")) {
+				target.set(link);
+				calls.set(0);
+				assertThatThrownBy(() -> registry.listVersions("ghcr.io/example/project"))
+					.isInstanceOf(ProjectVersionException.class)
+					.hasMessage("PROJECT_REGISTRY_RESPONSE_INVALID");
+				assertThat(calls).hasValue(1);
+			}
+		}
+		finally {
+			server.stop(0);
+		}
+	}
+
 	private static void respond(HttpExchange exchange, List<String> requests, String label, String manifestDigest,
 			String blobDigest) throws java.io.IOException {
 		String authorization = exchange.getRequestHeaders().getFirst("Authorization");

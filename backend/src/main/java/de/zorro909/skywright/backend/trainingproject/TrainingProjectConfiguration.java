@@ -1,5 +1,8 @@
 package de.zorro909.skywright.backend.trainingproject;
 
+import de.zorro909.skywright.backend.credential.VaultBindings;
+import de.zorro909.skywright.backend.credential.VaultRoleAccess;
+import org.springframework.beans.factory.ObjectProvider;
 import de.zorro909.skywright.backend.configurationcontract.ConfigurationContracts;
 import de.zorro909.skywright.backend.metriccontract.MetricContracts;
 import de.zorro909.skywright.backend.projectversion.GhcrProjectVersionRegistry;
@@ -21,8 +24,10 @@ class TrainingProjectConfiguration {
 
 	@Bean
 	@ConditionalOnMissingBean(TrainingProjectCredentialReadiness.class)
-	TrainingProjectCredentialReadiness missingTrainingProjectCredentialReadiness() {
-		return (bindingId, consumingRole) -> RegistryReadiness.MISSING;
+	TrainingProjectCredentialReadiness missingTrainingProjectCredentialReadiness(ObjectProvider<VaultBindings> vault) {
+		var bindings = vault.getIfAvailable();
+		return bindings == null ? (bindingId, consumingRole) -> RegistryReadiness.MISSING
+				: new VaultRoleAccess(bindings)::readiness;
 	}
 
 	@Bean
@@ -39,8 +44,11 @@ class TrainingProjectConfiguration {
 
 	@Bean
 	@ConditionalOnMissingBean(RegistryAuthorization.class)
-	RegistryAuthorization publicRegistryAuthorization() {
-		return repository -> java.util.Optional.empty();
+	RegistryAuthorization publicRegistryAuthorization(TrainingProjectRepository projects,
+			ObjectProvider<VaultBindings> vault) {
+		var bindings = vault.getIfAvailable();
+		return bindings == null ? repository -> java.util.Optional.empty()
+				: new VaultRegistryAuthorization(projects, bindings);
 	}
 
 	@Bean

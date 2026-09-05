@@ -116,6 +116,11 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 	}
 
 	private HttpRequest.Builder request(URI uri, String repository) {
+		if (!java.util.Objects.equals(uri.getScheme(), this.endpoint.getScheme())
+				|| !java.util.Objects.equals(uri.getAuthority(), this.endpoint.getAuthority())
+				|| !uri.normalize().getPath().startsWith("/v2/" + name(repository) + "/")) {
+			throw new ProjectVersionException(new ProjectVersionFailure("PROJECT_REGISTRY_RESPONSE_INVALID", ""));
+		}
 		HttpRequest.Builder request = HttpRequest.newBuilder(uri);
 		this.authorization.authorization(repository).ifPresent(value -> request.header("Authorization", value));
 		return request;
