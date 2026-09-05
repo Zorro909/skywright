@@ -5,12 +5,18 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import NoReturn, cast
 
+from skywright._dataset_ordering import (
+    continuation_cursor,
+    prepare_continuation,
+    validate_determinism,
+    validate_ordering,
+)
 from skywright._training_checkpoint_coordinator import (
     CheckpointCoordinator,
     CheckpointShutdown,
 )
 from skywright._training_checkpoints import capture_checkpoint, restore_checkpoint
-from skywright._training_dataset import TrackedDatasetAccess, validate_cursor_shape
+from skywright._training_dataset import TrackedDatasetAccess
 from skywright._training_errors import (
     CooperativeStop,
     SkywrightFailure,
@@ -69,6 +75,9 @@ class DefaultRunContext:
         monotonic_clock: Callable[[], float],
         cgroup_memory_reader: Callable[[], int | None],
         system_sampler_wait: SamplerWait,
+        seed: int,
+        source_run_id: str | None = None,
+        ordering_reset: bool = False,
     ) -> None:
         self._started = False
         self._violated: TrainingContractViolation | None = None
@@ -92,6 +101,16 @@ class DefaultRunContext:
             metric_catalog, project_version, skywright_metric_schema
         )
         validate_system_metric_definitions(metric_catalog.system_definitions)
+        self._ordering = validate_ordering(dataset, seed, self._violate)
+        self._determinism = validate_determinism(configuration, seed, resume_from)
+        resume_cursor = prepare_continuation(
+            resume_from,
+            self._ordering,
+            run_id=run_id,
+            source_run_id=source_run_id,
+            ordering_reset=ordering_reset,
+        )
+        self._source_run_id = source_run_id
         self._resume_state = ResumeState(resume_from)
         if resume_from is not None and (
             type(resume_from.step) is not int or resume_from.step < 0
@@ -114,25 +133,9 @@ class DefaultRunContext:
         self._samples: list[SampleRecord] = []
         self._step = resume_from.step if resume_from is not None else 0
         self._initial_step = self._step
-        fingerprint = dataset.ordering_fingerprint
-        if not fingerprint:
-            raise TrainingContractViolation(
-                "dataset-ordering/fingerprint",
-                "the Dataset ordering fingerprint is empty",
-                "identify the Dataset Definition, seed, ordering policy, and policy version",
-            )
-        self._dataset_cursor: DatasetCursor = (
-            resume_from.dataset_cursor
-            if resume_from is not None
-            else DatasetCursor(ordering_fingerprint=fingerprint)
+        self._dataset_cursor: DatasetCursor = continuation_cursor(
+            dataset.ordering_fingerprint, resume_cursor, self._violate
         )
-        validate_cursor_shape(self._dataset_cursor, self._violate)
-        if self._dataset_cursor.ordering_fingerprint != fingerprint:
-            raise TrainingContractViolation(
-                "dataset-ordering/fingerprint",
-                "the checkpoint and configured Dataset ordering fingerprints differ",
-                "resume with identical ordering inputs or an explicit Ordering Reset",
-            )
         self._step_system_metrics = StepSystemMetrics(
             metric_catalog.system_definitions, monotonic_clock
         )
@@ -154,7 +157,9 @@ class DefaultRunContext:
         )
         self._shutdown_grace_seconds = shutdown_grace_seconds
         self._checkpoints = CheckpointCoordinator(
-            recorder, resume_from, shutdown_grace_seconds
+            recorder,
+            resume_from if source_run_id is None else None,
+            shutdown_grace_seconds,
         )
 
     @property
@@ -265,7 +270,7 @@ class DefaultRunContext:
         restore_checkpoint(
             self._resume_state.checkpoint,
             self._states,
-            self._run_id,
+            self._source_run_id or self._run_id,
             self._project_version,
             self._violate,
         )
@@ -364,6 +369,8 @@ class DefaultRunContext:
             self._dataset_cursor,
             self._run_id,
             self._project_version,
+            self._ordering,
+            self._determinism,
         )
 
     def durable_state(self) -> tuple[int | None, str | None]:

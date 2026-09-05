@@ -149,3 +149,157 @@ def test_upstream_fixture_identity() -> None:
     provenance = json.loads((root / "provenance.json").read_text())
     for relative, expected in provenance["files"].items():
         assert hashlib.sha256((root / relative).read_bytes()).hexdigest() == expected
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 8])
+@pytest.mark.parametrize("size", [0, 1, 2, 7, 24])
+def test_single_node_partition_reassembles_without_padding(
+    size: int, count: int
+) -> None:
+    from skywright import DatasetBatch, DatasetCursor
+
+    batch = DatasetBatch(tuple(range(size)), DatasetCursor())
+    partitions = batch.partition_items(count)
+    assert len(partitions) == count
+    assert tuple(item for partition in partitions for item in partition) == batch.items
+    assert max(map(len, partitions)) - min(map(len, partitions)) <= 1
+
+
+def test_checkpoint_ordering_reset_preserves_other_state(tmp_path: Path) -> None:
+    from skywright import CheckpointSnapshot, DatasetCursor
+    from skywright._dataset_ordering import DatasetOrdering, prepare_continuation
+    from skywright.run_store import CheckpointCodec
+
+    old = DatasetOrdering("old", "sha256:old", 19)
+    new = DatasetOrdering("new", "sha256:new", 19)
+    checkpoint = CheckpointSnapshot(
+        42,
+        {"model": {"weight": 9}},
+        {"dataset_ordering": old.to_document(), "other": (1, 2, 3)},
+        DatasetCursor(3, 17, 4, old.fingerprint),
+        "durable",
+        "source",
+        "project@digest",
+    )
+    codec = CheckpointCodec(staging_directory=tmp_path)
+    serialized = codec.serialize(checkpoint)
+    try:
+        restored = codec.deserialize(serialized.path, expected_digest=serialized.digest)
+    finally:
+        serialized.path.unlink()
+    reset = prepare_continuation(
+        restored, new, run_id="clone", source_run_id="source", ordering_reset=True
+    )
+    assert reset is not None
+    assert reset == DatasetCursor(3, 0, 0, new.fingerprint)
+    assert restored.step == 42
+    assert restored.state == checkpoint.state
+    assert restored.runtime_state["other"] == (1, 2, 3)
+    assert restored.dataset_cursor == checkpoint.dataset_cursor
+    assert restored.runtime_state["dataset_ordering"] == old.to_document()
+    assert restored.run_id == "source"
+
+
+@pytest.mark.parametrize(
+    ("change", "reset", "source", "rule"),
+    [
+        ({"seed": 20}, False, None, "seed"),
+        ({"seed": 20}, True, "source", "seed"),
+        ({"definition_id": "different"}, False, "source", "definitionId"),
+        ({"content_fingerprint": "different"}, False, None, "contentFingerprint"),
+        ({}, True, None, "reset"),
+        ({}, True, "source", "reset"),
+        ({}, False, "wrong-source", "source-run"),
+    ],
+)
+def test_continuation_rejects_mismatched_inputs(
+    change: dict[str, Any], reset: bool, source: str | None, rule: str
+) -> None:
+    from dataclasses import replace
+
+    from skywright import CheckpointSnapshot, DatasetCursor, TrainingContractViolation
+    from skywright._dataset_ordering import DatasetOrdering, prepare_continuation
+
+    old = DatasetOrdering("definition", "sha256:content", 19)
+    checkpoint = CheckpointSnapshot(
+        3,
+        {},
+        {"dataset_ordering": old.to_document()},
+        DatasetCursor(1, 7, 2, old.fingerprint),
+        "durable",
+        "source",
+        "project",
+    )
+    with pytest.raises(TrainingContractViolation, match=rule):
+        prepare_continuation(
+            checkpoint,
+            replace(old, **change),
+            run_id="clone" if source else "source",
+            source_run_id=source,
+            ordering_reset=reset,
+        )
+
+
+def test_continuation_rejects_tampered_inputs_and_unknown_policy() -> None:
+    from skywright import CheckpointSnapshot, DatasetCursor, TrainingContractViolation
+    from skywright._dataset_ordering import DatasetOrdering, prepare_continuation
+
+    ordering = DatasetOrdering("definition", "content", 19)
+    checkpoint = CheckpointSnapshot(
+        1,
+        {},
+        {"dataset_ordering": {**ordering.to_document(), "seed": 20}},
+        DatasetCursor(0, 5, 1, ordering.fingerprint),
+        "durable",
+        "run",
+    )
+    with pytest.raises(TrainingContractViolation, match="fingerprint"):
+        prepare_continuation(
+            checkpoint, ordering, run_id="run", source_run_id=None, ordering_reset=False
+        )
+    with pytest.raises(ValueError, match="policy"):
+        DatasetOrdering("definition", "content", 19, policy="replacement")
+    with pytest.raises(ValueError, match="version"):
+        DatasetOrdering("definition", "content", 19, version="v2")
+
+
+@pytest.mark.parametrize("count", [1, 2, 4])
+def test_runtime_rng_restores_only_surviving_accelerator_indices(
+    count: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from skywright import _training_state
+
+    restored: list[tuple[object, int]] = []
+
+    def set_rng_state(value: object, index: int) -> None:
+        assert index < count
+        restored.append((value, index))
+
+    def set_cpu_rng_state(value: object) -> None:
+        pass
+
+    def find_spec(name: str) -> object:
+        return object()
+
+    torch = SimpleNamespace(
+        set_rng_state=set_cpu_rng_state,
+        cuda=SimpleNamespace(
+            is_available=lambda: True,
+            device_count=lambda: count,
+            set_rng_state=set_rng_state,
+        ),
+    )
+
+    def import_module(name: str) -> SimpleNamespace:
+        return torch
+
+    monkeypatch.setattr(_training_state.importlib.util, "find_spec", find_spec)
+    monkeypatch.setattr(_training_state.importlib, "import_module", import_module)
+    _training_state.restore_runtime_state(
+        {"torch_cpu_random": b"cpu", "torch_accelerator_random": [b"first", b"second"]}
+    )
+    assert restored == [
+        (value, index) for index, value in enumerate([b"first", b"second"][:count])
+    ]

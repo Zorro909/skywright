@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:skywright:configuration-schema:0.3.0",
+  "$id": "urn:skywright:configuration-schema:0.4.0",
   "title": "Skywright Configuration Schema",
   "description": "The library-owned part of a Skywright Run Configuration.",
   "type": "object",
@@ -18,7 +18,9 @@
           "x-resume-compatibility": "must-match"
         }
       },
-      "required": ["seed"],
+      "required": [
+        "seed"
+      ],
       "additionalProperties": false
     },
     "dataset": {
@@ -30,17 +32,34 @@
             "policy": {
               "description": "Selects the library-owned Dataset Item Sequence ordering policy.",
               "type": "string",
-              "enum": ["deterministic-shuffle"],
+              "enum": [
+                "deterministic-shuffle"
+              ],
               "default": "deterministic-shuffle",
               "x-unit": "policy name",
               "x-resume-compatibility": "must-match"
+            },
+            "version": {
+              "description": "Pins the permutation algorithm version used for exact Dataset Item continuation.",
+              "type": "string",
+              "enum": [
+                "feistel-sha256-v1"
+              ],
+              "default": "feistel-sha256-v1",
+              "x-unit": "policy version",
+              "x-resume-compatibility": "must-match"
             }
           },
-          "required": ["policy"],
+          "required": [
+            "policy",
+            "version"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["ordering"],
+      "required": [
+        "ordering"
+      ],
       "additionalProperties": false
     },
     "checkpoint": {
@@ -64,14 +83,21 @@
         },
         "keepEveryNth": {
           "description": "Optional Step divisor whose Checkpoints remain protected in addition to newest retention.",
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1,
           "default": null,
           "x-unit": "Steps",
           "x-resume-compatibility": "may-change"
         }
       },
-      "required": ["cadence", "retention", "keepEveryNth"],
+      "required": [
+        "cadence",
+        "retention",
+        "keepEveryNth"
+      ],
       "additionalProperties": false
     },
     "metrics": {
@@ -102,10 +128,19 @@
           "x-resume-compatibility": "may-change"
         }
       },
-      "required": ["flushInterval", "segmentRoll", "systemSamplingInterval"],
+      "required": [
+        "flushInterval",
+        "segmentRoll",
+        "systemSamplingInterval"
+      ],
       "additionalProperties": false
     }
   },
-  "required": ["reproducibility", "dataset", "checkpoint", "metrics"],
+  "required": [
+    "reproducibility",
+    "dataset",
+    "checkpoint",
+    "metrics"
+  ],
   "additionalProperties": false
 }

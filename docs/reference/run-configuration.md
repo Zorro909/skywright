@@ -6,6 +6,7 @@ Generated from the content-addressed Skywright Configuration Schema. Do not edit
 | --- | --- | --- | --- | --- | --- |
 | `reproducibility.seed` | `"integer"` | default `0`; minimum `0`; maximum `9223372036854775807` | integer seed | must-match | Seeds library-managed deterministic random number generators before project code runs. |
 | `dataset.ordering.policy` | `"string"` | default `"deterministic-shuffle"`; enum `["deterministic-shuffle"]` | policy name | must-match | Selects the library-owned Dataset Item Sequence ordering policy. |
+| `dataset.ordering.version` | `"string"` | default `"feistel-sha256-v1"`; enum `["feistel-sha256-v1"]` | policy version | must-match | Pins the permutation algorithm version used for exact Dataset Item continuation. |
 | `checkpoint.cadence` | `"integer"` | default `100`; minimum `1` | Steps | may-change | Absolute-Step cadence for scheduling immutable checkpoint snapshots; asynchronous publication may make Durable Safe Points lag behind it. |
 | `checkpoint.retention` | `"integer"` | default `3`; minimum `1` | checkpoints | may-change | Minimum number of newest periodic checkpoints retained by the library. |
 | `checkpoint.keepEveryNth` | `["integer","null"]` | default `null`; minimum `1` | Steps | may-change | Optional Step divisor whose Checkpoints remain protected in addition to newest retention. |

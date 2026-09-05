@@ -6,6 +6,16 @@ guidance. Published schema bytes are immutable; a change always creates a new sc
 digest. The backend retains an explicit trusted copy of every supported historical identity and
 reports an unlisted identity as not runnable.
 
+## 0.4.0
+
+- Added `dataset.ordering.version`, fixed to `feistel-sha256-v1`. Configuration
+  resolution now materializes the version alongside policy and seed. Checkpoints
+  retain these inputs for exact continuation diagnostics and explicit Ordering Reset.
+
+Migration: rebuild Training Project contracts against this schema identity. Newly
+resolved configurations receive the version default. Older checkpoints with matching
+fingerprints can continue exactly; reset requires checkpointed ordering inputs.
+
 ## 0.3.0
 
 - Corrected `checkpoint.cadence` to describe absolute-Step snapshot scheduling and

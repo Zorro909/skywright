@@ -9,10 +9,12 @@ import json
 import threading
 from bisect import bisect_right
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
 from skywright._dataset_cache import DatasetCache
+from skywright._dataset_ordering import DatasetOrdering
 from skywright._dataset_publication import shard_metadata
 from skywright._dataset_read_types import (
     DatasetCacheLimits,
@@ -22,7 +24,6 @@ from skywright._dataset_read_types import (
     DatasetReadError,
     DatasetReadStats,
     StorageLocation,
-    digest,
     safe_key,
 )
 from skywright._mds_validation import decompress, validate_binary
@@ -68,12 +69,26 @@ class MdsDatasetAccess:
         limits: DatasetCacheLimits | None = None,
         seed: int = 0,
         batch_size: int = 1,
+        loader_workers: int = 0,
+        ordering_policy: str = "deterministic-shuffle",
+        ordering_version: str = "feistel-sha256-v1",
     ) -> None:
         limits = limits or DatasetCacheLimits()
         if type(seed) is not int or type(batch_size) is not int or batch_size < 1:
             raise ValueError(
                 "Dataset seed must be an integer and batch size must be positive"
             )
+        if type(loader_workers) is not int or not 0 <= loader_workers <= 64:
+            raise ValueError("Dataset loader workers must be between zero and 64")
+        self._loader_workers = loader_workers
+        self._ordering = DatasetOrdering(
+            definition.definition_id,
+            definition.content_fingerprint,
+            seed,
+            ordering_policy,
+            ordering_version,
+        )
+        self._ordering_fingerprint = self._ordering.fingerprint
         try:
             self._reader_type: Any = importlib.import_module(
                 "streaming.base.format.mds.reader"
@@ -123,19 +138,6 @@ class MdsDatasetAccess:
             if count == 0:
                 raise DatasetReadError("Dataset must contain at least one item")
             self._size = count
-            self._ordering_fingerprint = digest(
-                json.dumps(
-                    {
-                        "definitionId": definition.definition_id,
-                        "contentFingerprint": definition.content_fingerprint,
-                        "seed": seed,
-                        "policy": "deterministic-shuffle",
-                        "version": "feistel-sha256-v1",
-                    },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode()
-            )
         except BaseException:
             self._cache.close()
             raise
@@ -143,6 +145,10 @@ class MdsDatasetAccess:
     @property
     def ordering_fingerprint(self) -> str:
         return self._ordering_fingerprint
+
+    @property
+    def ordering(self) -> DatasetOrdering:
+        return self._ordering
 
     @property
     def item_count(self) -> int:
@@ -249,12 +255,28 @@ class MdsDatasetAccess:
             or cursor.item_offset >= self._size
         ):
             raise DatasetReadError("Dataset Cursor is outside the epoch")
+        # Only one global batch is submitted at a time. map preserves sequence
+        # position even if workers finish out of order; closing discards prefetch.
+        if self._loader_workers:
+            with ThreadPoolExecutor(max_workers=self._loader_workers) as executor:
+                yield from self._batches(cursor, executor)
+        else:
+            yield from self._batches(cursor, None)
+
+    def _batches(
+        self, cursor: DatasetCursor, executor: ThreadPoolExecutor | None
+    ) -> Iterable[DatasetBatch]:
         step = cursor.epoch_step
         for start in range(cursor.item_offset, self._size, self._batch_size):
             end = min(start + self._batch_size, self._size)
-            items = tuple(
-                self.read_item(self.ordinal_at(cursor.epoch, position))
+            ordinals = tuple(
+                self.ordinal_at(cursor.epoch, position)
                 for position in range(start, end)
+            )
+            items = tuple(
+                executor.map(self.read_item, ordinals)
+                if executor is not None
+                else map(self.read_item, ordinals)
             )
             step += 1
             next_cursor = (

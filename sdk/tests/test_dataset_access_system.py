@@ -225,3 +225,169 @@ def test_real_s3_cache_lifecycle_location_changes_and_direct_process(
         ):
             for ordinal in range(24):
                 changed.read_item(ordinal)
+
+
+@pytest.mark.system
+def test_exact_committed_sequence_across_process_recovery_and_clone(
+    tmp_path, monkeypatch
+) -> None:
+    source = Path(__file__).parent / "fixtures" / "mds-reader" / "raw"
+    definition = published_definition(source)
+    with seaweedfs() as (endpoint, client):
+        client.create_bucket(Bucket="datasets")
+        client.create_bucket(Bucket="outputs")
+        for slot in ("DATASET", "RUN_STORE"):
+            monkeypatch.setenv(f"SKYWRIGHT_{slot}_ACCESS_KEY_ID", "test-access-key")
+            monkeypatch.setenv(f"SKYWRIGHT_{slot}_SECRET_ACCESS_KEY", "test-secret-key")
+        for prefix in ("authority", "replica"):
+            for entry in definition.objects:
+                client.put_object(
+                    Bucket="datasets",
+                    Key=f"{prefix}/{entry.object_key}",
+                    Body=(source / entry.object_key).read_bytes(),
+                )
+        selected = StorageLocation(
+            "storage", endpoint, "datasets", "us-east-1", "authority", "authority", 1
+        )
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        (empty / "index.json").write_text('{"version":2,"shards":[]}')
+        empty_definition = published_definition(empty)
+        client.put_object(
+            Bucket="datasets",
+            Key="empty/index.json",
+            Body=(empty / "index.json").read_bytes(),
+        )
+        empty_location = StorageLocation(
+            "storage", endpoint, "datasets", "us-east-1", "empty", "empty", 1
+        )
+        with pytest.raises(DatasetReadError, match="at least one item"):
+            MdsDatasetAccess(
+                empty_definition,
+                empty_location,
+                cache_directory=tmp_path / "empty-cache",
+            )
+        counter = 0
+
+        def execute(**options):
+            nonlocal counter
+            counter += 1
+            inputs = {
+                "definition": asdict(definition),
+                "location": asdict(selected),
+                "cache": str(tmp_path / f"cache-{counter}"),
+                "limits": {"byte_limit": 5000, "file_limit": 3},
+                "batch_size": 5,
+                **options,
+            }
+            document = tmp_path / f"input-{counter}.json"
+            document.write_text(json.dumps(inputs))
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(
+                        Path(__file__).parent
+                        / "support"
+                        / "dataset_continuation_scenario.py"
+                    ),
+                    str(document),
+                ],
+                text=True,
+                capture_output=True,
+                timeout=90,
+                check=True,
+            )
+            return json.loads(process.stdout.strip().splitlines()[-1])
+
+        baseline = execute(run_id="baseline")
+        assert baseline["outcome"] == "completed"
+        assert len(baseline["ordinals"]) == 72
+        for epoch in range(3):
+            assert sorted(baseline["ordinals"][epoch * 24 : (epoch + 1) * 24]) == list(
+                range(24)
+            )
+        from dataclasses import replace
+
+        replica = asdict(
+            replace(selected, prefix="replica", copy_id="replica", generation=2)
+        )
+        # Interruption after an ordinary commit and exactly at the epoch end.
+        first_reference = None
+        for boundary in (2, 5):
+            run_id = f"recover-{boundary}"
+            stopped = execute(run_id=run_id, stop_after_step=boundary)
+            assert stopped["outcome"] == "interrupted"
+            if boundary == 2:
+                first_reference = stopped["reference"]
+            resumed = execute(
+                run_id=run_id,
+                reference=stopped["reference"],
+                location=replica,
+                batch_size=7,
+                workers=3,
+                accelerators=4,
+            )
+            assert resumed["outcome"] == "completed"
+            assert resumed["ordinals"] == baseline["ordinals"]
+            assert resumed["initial_step"] == boundary
+            assert resumed["initial_cursor"] == (
+                [0, 10, 2] if boundary == 2 else [1, 0, 0]
+            )
+            clone = execute(
+                run_id=f"clone-{boundary}",
+                source_run_id=run_id,
+                reference=stopped["reference"],
+                location=replica,
+                batch_size=64,
+                workers=2,
+                accelerators=3,
+            )
+            assert clone["outcome"] == "completed"
+            assert clone["ordinals"] == baseline["ordinals"]
+        failure_seed = execute(run_id="failure", stop_after_step=2)
+        failed = execute(
+            run_id="failure", reference=failure_seed["reference"], fail_before_step=3
+        )
+        assert failed["outcome"] == "failed"
+        assert failed["reference"] is not None
+        resumed = execute(
+            run_id="failure",
+            reference=failed["reference"],
+            location=replica,
+            batch_size=4,
+            workers=2,
+            accelerators=2,
+        )
+        assert resumed["outcome"] == "completed"
+        assert resumed["ordinals"] == baseline["ordinals"]
+        reset_definition = {**asdict(definition), "definition_id": "definition-2"}
+        new_baseline = execute(
+            run_id="new-baseline", definition=reset_definition, epochs=1
+        )
+        reset = execute(
+            run_id="reset",
+            source_run_id="recover-2",
+            reference=first_reference,
+            definition=reset_definition,
+            ordering_reset=True,
+            epochs=1,
+            batch_size=64,
+            workers=2,
+            accelerators=4,
+        )
+        assert reset["outcome"] == "completed"
+        assert reset["initial_cursor"] == [0, 0, 0]
+        assert reset["initial_step"] == 2
+        assert reset["ordinals"] == baseline["ordinals"][:10] + new_baseline["ordinals"]
+
+        for reset_mode in (False, True):
+            early_failure = execute(
+                run_id=f"early-failure-{reset_mode}",
+                source_run_id="recover-2",
+                reference=first_reference,
+                fail_before_step=3,
+                definition=reset_definition if reset_mode else asdict(definition),
+                ordering_reset=reset_mode,
+            )
+            assert early_failure["outcome"] == "failed"
+            assert early_failure["reference"] is None

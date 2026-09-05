@@ -35,7 +35,7 @@ public final class ConfigurationContracts {
 
 	private static final String DIALECT = "https://json-schema.org/draft/2020-12/schema";
 
-	private static final String SCHEMA_VERSION = "0.3.0";
+	private static final String SCHEMA_VERSION = "0.4.0";
 
 	private static final Pattern DUPLICATE = Pattern.compile("(?i)duplicate.*?['\"]([^'\"]+)['\"]");
 

@@ -67,6 +67,8 @@ def run_training_process(
     recorder: TrainingProcessRecorder | str,
     seed: int,
     resume_from: CheckpointSnapshot | str | None = None,
+    source_run_id: str | None = None,
+    ordering_reset: bool = False,
     accelerator: Accelerator = CPU_ACCELERATOR,
     cancellation_requested: Callable[[], bool] = _never_requested,
     interruption_requested: Callable[[], bool] = _never_requested,
@@ -189,6 +191,9 @@ def run_training_process(
             monotonic_clock=monotonic_clock,
             cgroup_memory_reader=cgroup_memory_reader,
             system_sampler_wait=system_sampler_wait,
+            seed=seed,
+            source_run_id=source_run_id,
+            ordering_reset=ordering_reset,
         )
     except TrainingContractViolation as violation:
         return finish(
