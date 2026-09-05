@@ -55,8 +55,8 @@ class MdsDatasetAccess:
 
     One reader owns one dedicated cache directory until close(). Batches contain
     DatasetItems, each with its canonical ordinal and separately decoded payload.
-    The initial batching adapter assumes one batch per Step; exact Step regrouping
-    belongs to the Dataset continuation contract.
+    The Run Context assigns epoch-local Step counts from committed work, allowing
+    a project to accumulate multiple batches in one Step.
     """
 
     def __init__(

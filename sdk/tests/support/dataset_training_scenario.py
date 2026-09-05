@@ -60,7 +60,15 @@ def train(context):
             assert item.payload["number"] == item.ordinal
             seen.append(item.ordinal)
         state.value += len(batch.items)
-        context.commit_step(batch)
+        if len(seen) in (10, 20, 24):
+            context.commit_step(batch)
+            if len(seen) < 24:
+                assert context.dataset_cursor.epoch_step == len(seen) // 10
+                assert context.dataset_cursor.item_offset == len(seen)
+            else:
+                assert context.dataset_cursor.epoch == 1
+                assert context.dataset_cursor.epoch_step == 0
+                assert context.dataset_cursor.item_offset == 0
 
 
 with MdsDatasetAccess(
@@ -82,5 +90,6 @@ with MdsDatasetAccess(
         seed=0,
     )
 assert result.outcome.value == "completed", result.report
+assert result.report.last_committed_step == 3
 assert sorted(seen) == list(range(24))
 print(f"completed:{len(seen)}")
