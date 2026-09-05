@@ -218,7 +218,7 @@ def _read_index(path: Path) -> tuple[dict[str, object], SourceIdentity]:
     return cast(dict[str, object], value), before
 
 
-def _shard(value: object) -> dict[str, object]:
+def shard_metadata(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise _metadata("Every MDS shard descriptor must be an object")
     shard = cast(dict[str, object], value)
@@ -251,7 +251,7 @@ def _shard(value: object) -> dict[str, object]:
 def _inspect_shard(
     root: Path, value: object
 ) -> tuple[dict[str, object], str, SourceIdentity, frozenset[str]]:
-    shard = _shard(value)
+    shard = shard_metadata(value)
     object_key, identity, declared_paths = _validate_shard(root, shard)
     return shard, object_key, identity, declared_paths
 
@@ -308,7 +308,7 @@ def _validate_shard(
 def _qualify_partition(partition: str, shards: list[object]) -> list[dict[str, object]]:
     result: list[dict[str, object]] = []
     for value in shards:
-        shard = _shard(value)
+        shard = shard_metadata(value)
         qualified = cast(dict[str, object], json.loads(json.dumps(shard)))
         for name in ("raw_data", "zip_data"):
             descriptor = qualified.get(name)

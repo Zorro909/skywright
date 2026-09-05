@@ -48,6 +48,9 @@ assert metadata("skywright").get_all("Requires-Dist") == [
     "tensorboard==2.21.0",
     "xxhash<4,>=3.5",
     "zstandard<1,>=0.23",
+    "mosaicml-streaming==0.14.0.dev0; extra == 'dataset'",
+    "torchvision==0.27.0; extra == 'dataset'",
+    "transformers<6,>=5.10; extra == 'dataset'",
 ]
 assert files(skywright).joinpath("py.typed").is_file()
 assert importlib.util.find_spec("boto3") is None

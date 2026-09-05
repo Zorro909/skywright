@@ -332,6 +332,7 @@ jobs:
             **/target/service-logs/**
             sdk/target/test-results/**
             sdk/target/coverage/**
+            sdk/target/dataset-read-measurements/**
           if-no-files-found: ignore
           retention-days: 90
 

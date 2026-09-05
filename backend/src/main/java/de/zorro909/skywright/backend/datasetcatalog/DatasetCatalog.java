@@ -76,6 +76,65 @@ public class DatasetCatalog {
 		return lease;
 	}
 
+	/** Selects and durably leases an exact location for a pinned Run Definition. */
+	public DatasetReadSelection selectForRun(UUID definitionId, String contentFingerprint, UUID runRecordId,
+			UUID preferredCopyId) {
+		java.util.Objects.requireNonNull(runRecordId, "runRecordId");
+		DatasetCatalogAggregate catalog = this.catalog(definitionId);
+		DatasetCatalogView view = catalog.view();
+		if (!view.definition().contentFingerprint().equals(contentFingerprint)) {
+			throw new DatasetCatalogConflictException("DATASET_DEFINITION_MISMATCH",
+					"Dataset access must use the Run Definition's pinned content fingerprint");
+		}
+		DatasetLeaseView lease = view.leases()
+			.stream()
+			.filter(value -> value.runRecordId().equals(runRecordId) && value.active())
+			.findFirst()
+			.orElse(null);
+		if (lease != null) {
+			if (preferredCopyId != null && !lease.copyId().equals(preferredCopyId)) {
+				throw new DatasetCatalogConflictException("DATASET_LEASE_CONFLICT",
+						"Run Record already holds a different active Dataset Lease");
+			}
+			return readSelection(catalog, lease);
+		}
+		DatasetCopyView selected = view.copies()
+			.stream()
+			.filter(copy -> preferredCopyId == null ? copy.role() == DatasetCopyRole.AUTHORITY
+					: copy.id().equals(preferredCopyId))
+			.filter(this::eligible)
+			.findFirst()
+			.orElseThrow(() -> new DatasetCatalogConflictException("DATASET_COPY_INELIGIBLE",
+					"No eligible selected Dataset Copy exists for the pinned definition"));
+		DatasetCopyGenerationView generation = selected.currentGeneration();
+		if (generation.verifiedAt() == null
+				|| !generation.manifestIdentity().equals(view.definition().manifestIdentity())
+				|| !generation.contentFingerprint().equals(contentFingerprint)) {
+			throw new DatasetCatalogConflictException("DATASET_COPY_MANIFEST_MISMATCH",
+					"Selected Dataset Copy lacks verification for the pinned definition");
+		}
+		lease = catalog.acquireLease(selected.id(), generation.number(), view.revision(), runRecordId,
+				this.clock.instant());
+		this.repository.save(catalog);
+		return readSelection(catalog, lease);
+	}
+
+	private static DatasetReadSelection readSelection(DatasetCatalogAggregate catalog, DatasetLeaseView lease) {
+		DatasetCopyView copy = catalog.view()
+			.copies()
+			.stream()
+			.filter(value -> value.id().equals(lease.copyId()))
+			.findFirst()
+			.orElseThrow();
+		DatasetCopyGenerationView generation = copy.generationHistory()
+			.stream()
+			.filter(value -> value.number() == lease.generation())
+			.findFirst()
+			.orElseThrow();
+		return new DatasetReadSelection(catalog.view().definition(), catalog.manifest(), copy.targetStorageId(),
+				generation.location(), lease);
+	}
+
 	public DatasetCatalogView deprecateGeneration(UUID definitionId, UUID copyId, long generation,
 			long expectedRevision) {
 		DatasetCatalogAggregate catalog = this.catalog(definitionId);

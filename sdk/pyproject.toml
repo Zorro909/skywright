@@ -39,6 +39,13 @@ dependencies = [
   "zstandard>=0.23,<1",
 ]
 
+[project.optional-dependencies]
+dataset = [
+  "mosaicml-streaming==0.14.0.dev0",
+  "transformers>=5.10,<6",
+  "torchvision==0.27.0",
+]
+
 [project.scripts]
 skywright-config = "skywright.configuration:main"
 skywright-datasets = "skywright._dataset_cli:main"
@@ -72,6 +79,8 @@ ml-test = { requires-python = ">=3.10,<3.15" }
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+mosaicml-streaming = { git = "https://github.com/mosaicml/streaming.git", rev = "d99bf9c7cdf2dd4ed62a4960ed35270b93337a5f" }
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
@@ -97,6 +106,7 @@ testpaths = [
   "tests/test_credentials.py",
   "tests/test_configuration_contract.py",
   "tests/test_dataset_cli.py",
+  "tests/test_dataset_access.py",
   "tests/test_metric_contract.py",
   "tests/test_package.py",
   "tests/test_release.py",

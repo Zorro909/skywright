@@ -1,7 +1,7 @@
 """Dataset cursor enforcement for one Training Process."""
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import NoReturn
 
 from skywright._training_clock import read_monotonic
@@ -113,11 +113,24 @@ class TrackedDatasetAccess:
                         "the pending Step spans a Dataset epoch boundary",
                         "commit the final batch from one epoch before requesting the next epoch",
                     )
+                previous = batch.next_cursor
+                # Retrieval advances item positions; only this boundary knows how
+                # many retrieved batches the project commits as one Step.
+                batch = replace(
+                    batch,
+                    next_cursor=replace(
+                        batch.next_cursor,
+                        epoch_step=(
+                            self._cursor.epoch_step + 1
+                            if batch.next_cursor.epoch == self._cursor.epoch
+                            else 0
+                        ),
+                    ),
+                )
                 self._issued_batches[id(batch)] = _IssuedDatasetBatch(
                     batch, wait_elapsed
                 )
                 self._latest_issued = batch
-                previous = batch.next_cursor
                 yield batch
         except (TrainingContractViolation, SkywrightFailure):
             raise
