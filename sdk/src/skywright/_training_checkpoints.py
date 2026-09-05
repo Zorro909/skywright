@@ -63,12 +63,15 @@ def capture_checkpoint(
     run_id: str,
     project_version: str,
     ordering: DatasetOrdering | None = None,
+    determinism: Mapping[str, object] | None = None,
 ) -> CheckpointSnapshot:
     state = {
         name: copy.deepcopy(dict(checkpoint_state.state_dict()))
         for name, checkpoint_state in states.items()
     }
     runtime_state = capture_runtime_state()
+    if determinism is not None:
+        runtime_state["training_determinism"] = dict(determinism)
     if ordering is not None:
         runtime_state["dataset_ordering"] = ordering.to_document()
     return CheckpointSnapshot(

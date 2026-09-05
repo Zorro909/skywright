@@ -379,3 +379,15 @@ def test_exact_committed_sequence_across_process_recovery_and_clone(
         assert reset["initial_cursor"] == [0, 0, 0]
         assert reset["initial_step"] == 2
         assert reset["ordinals"] == baseline["ordinals"][:10] + new_baseline["ordinals"]
+
+        for reset_mode in (False, True):
+            early_failure = execute(
+                run_id=f"early-failure-{reset_mode}",
+                source_run_id="recover-2",
+                reference=first_reference,
+                fail_before_step=3,
+                definition=reset_definition if reset_mode else asdict(definition),
+                ordering_reset=reset_mode,
+            )
+            assert early_failure["outcome"] == "failed"
+            assert early_failure["reference"] is None

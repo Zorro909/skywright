@@ -506,6 +506,9 @@ fingerprint, seed, policy and `feistel-sha256-v1` algorithm version. Configurati
 resolution materializes `reproducibility.seed`, `dataset.ordering.policy` and
 `dataset.ordering.version`. The Training Process checks these against Dataset access
 before calling the project. Checkpoints retain the ordering inputs and Dataset Cursor.
+Every new checkpoint also records the library seed, policy and version independently
+of the adapter, so injected adapters with opaque fingerprints cannot change those inputs
+on recovery or cloning.
 
 A Step may combine batches from one epoch. Commit its final issued batch after all its
 work succeeds. The cursor then advances to the next uncommitted item. Retrieving items
@@ -527,7 +530,10 @@ Run. The checkpoint must belong to that source and use the same Training Project
 Changing seed, ordering policy or policy version is rejected. A changed Dataset Definition
 also requires `ordering_reset=True`. Reset preserves global epoch, global Step, RNG and
 project state, but resets item offset and epoch-local Step count. It is invalid for
-same-Run recovery or an unchanged Dataset Definition. Checkpoints predating explicit
+same-Run recovery or an unchanged Dataset Definition. The seed checkpoint stays immutable;
+reset affects the new Run Context cursor. A cross-Run seed is provenance, and is not
+advertised as a Durable Safe Point in the destination Run Store before that Run confirms
+its own checkpoint. Checkpoints predating explicit
 ordering metadata permit exact fingerprint continuation, but cannot perform a reset.
 Managed runtime integration is tracked in #231; checkpoint transfer and clone UI remain
 in their respective issues.

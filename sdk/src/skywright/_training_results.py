@@ -169,6 +169,8 @@ def failure_result(
     if context is not None:
         durable_step, durable_checkpoint = context.durable_state()
     else:
+        if resume_from is not None and resume_from.run_id not in ("", attempt.run_id):
+            resume_from = None
         durable_step = resume_from.step if resume_from is not None else None
         durable_checkpoint = resume_from.reference if resume_from is not None else None
     result = _result(

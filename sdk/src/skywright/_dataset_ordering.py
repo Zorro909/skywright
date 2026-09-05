@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import NoReturn, cast
 
+from skywright._training_dataset import validate_cursor_shape
 from skywright._training_errors import TrainingContractViolation
 from skywright._training_types import CheckpointSnapshot, DatasetCursor
 
@@ -150,45 +151,102 @@ def prepare_continuation(
 
 def validate_ordering(
     dataset: object,
-    configuration: Mapping[str, object],
     seed: int,
     violate: Callable[[str, str, str], NoReturn],
 ) -> DatasetOrdering | None:
     """Check production ordering against materialized configuration before project code."""
     candidate = getattr(dataset, "ordering", None)
     ordering = candidate if isinstance(candidate, DatasetOrdering) else None
-    if ordering is not None:
-        if ordering.seed != seed:
-            violate(
-                "dataset-ordering/seed",
-                "Dataset ordering seed differs from the Training Process seed",
-                "assemble Dataset access from the library-owned Run Configuration seed",
-            )
-        reproducibility = configuration.get("reproducibility", {})
-        if (
-            isinstance(reproducibility, Mapping)
-            and cast(Mapping[str, object], reproducibility).get("seed", seed) != seed
-        ):
-            violate(
+    if ordering is not None and ordering.seed != seed:
+        violate(
+            "dataset-ordering/seed",
+            "Dataset ordering seed differs from the Training Process seed",
+            "assemble Dataset access from the library-owned Run Configuration seed",
+        )
+    return ordering
+
+
+def validate_determinism(
+    configuration: Mapping[str, object],
+    seed: int,
+    checkpoint: CheckpointSnapshot | None,
+) -> dict[str, object]:
+    """Retain library inputs even for injected adapters with opaque fingerprints."""
+    if type(seed) is not int:
+        raise TrainingContractViolation(
+            "dataset-ordering/seed",
+            "Training Process seed must be an integer",
+            "use the resolved library seed",
+        )
+    inputs: dict[str, object] = {
+        "seed": seed,
+        "policy": "deterministic-shuffle",
+        "version": "feistel-sha256-v1",
+    }
+    dataset = configuration.get("dataset", {})
+    if isinstance(dataset, Mapping):
+        ordering = cast(Mapping[str, object], dataset).get("ordering", {})
+        if isinstance(ordering, Mapping):
+            for field in ("policy", "version"):
+                value = cast(Mapping[str, object], ordering).get(field, inputs[field])
+                if value != inputs[field]:
+                    raise TrainingContractViolation(
+                        "dataset-ordering/" + field,
+                        f"Unsupported ordering {field}",
+                        "use the pinned library ordering policy and version",
+                    )
+    reproducibility = configuration.get("reproducibility", {})
+    if isinstance(reproducibility, Mapping):
+        value = cast(Mapping[str, object], reproducibility).get("seed", seed)
+        if type(value) is not int or value != seed:
+            raise TrainingContractViolation(
                 "dataset-ordering/seed",
                 "Run Configuration seed differs from the Training Process seed",
-                "use the same materialized seed for determinism and Dataset ordering",
+                "use the resolved library seed",
             )
-        dataset_configuration = configuration.get("dataset", {})
-        if isinstance(dataset_configuration, Mapping):
-            configured = cast(Mapping[str, object], dataset_configuration).get(
-                "ordering", {}
-            )
-            if isinstance(configured, Mapping):
-                configured = cast(Mapping[str, object], configured)
-                for field, actual in (
-                    ("policy", ordering.policy),
-                    ("version", ordering.version),
-                ):
-                    if configured.get(field, actual) != actual:
-                        violate(
-                            "dataset-ordering/" + field,
-                            f"Run Configuration ordering {field} differs from Dataset access",
-                            "assemble Dataset access from the pinned Run Configuration ordering inputs",
-                        )
-    return ordering
+    if checkpoint is not None:
+        saved = checkpoint.runtime_state.get("training_determinism")
+        if saved is not None:
+            if not isinstance(saved, Mapping) or set(
+                cast(Mapping[str, object], saved)
+            ) != set(inputs):
+                raise TrainingContractViolation(
+                    "dataset-ordering/inputs",
+                    "Checkpoint library ordering inputs are malformed",
+                    "restore complete library Checkpoint State",
+                )
+            saved = cast(Mapping[str, object], saved)
+            for field, value in inputs.items():
+                if type(saved[field]) is not type(value) or saved[field] != value:
+                    raise TrainingContractViolation(
+                        "dataset-ordering/" + field,
+                        f"Checkpoint library {field} differs from this Training Process",
+                        "keep library seed, ordering policy and version fixed",
+                    )
+    return inputs
+
+
+def continuation_cursor(
+    fingerprint: str,
+    cursor: DatasetCursor | None,
+    violate: Callable[[str, str, str], NoReturn],
+) -> DatasetCursor:
+    if not fingerprint:
+        violate(
+            "dataset-ordering/fingerprint",
+            "The Dataset ordering fingerprint is empty",
+            "identify the Dataset Definition, seed, ordering policy and version",
+        )
+    result = (
+        cursor
+        if cursor is not None
+        else DatasetCursor(ordering_fingerprint=fingerprint)
+    )
+    validate_cursor_shape(result, violate)
+    if result.ordering_fingerprint != fingerprint:
+        violate(
+            "dataset-ordering/fingerprint",
+            "The checkpoint and configured Dataset ordering fingerprints differ",
+            "resume with identical ordering inputs or an explicit Ordering Reset",
+        )
+    return result

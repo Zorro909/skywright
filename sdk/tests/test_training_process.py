@@ -3807,3 +3807,65 @@ print(json.dumps({{"cause": result.report.cause.value, "rule": result.report.dia
         "cause": "contract_violation",
         "rule": "dataset-ordering/" + field,
     }
+
+
+@pytest.mark.parametrize("clone", [False, True])
+def test_injected_adapter_cannot_change_checkpointed_library_seed(
+    tmp_path: Path, clone: bool
+) -> None:
+    checkpoint_path = tmp_path / "checkpoint.safetensors"
+    first = run_project(
+        f"""
+import json
+import shutil
+from skywright import run_training_process
+from skywright.run_store import CheckpointCodec
+
+class State:
+    def state_dict(self): return {{}}
+    def load_state_dict(self, state): pass
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+
+result = run_training_process(
+    train, run_id="source", project_version="project", configuration={{}},
+    dataset=TestDataset(), metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1", recorder=TestRecorder(), seed=17,
+)
+assert result.final_checkpoint.runtime_state["training_determinism"]["seed"] == 17
+encoded = CheckpointCodec().serialize(result.final_checkpoint)
+shutil.move(encoded.path, {str(checkpoint_path)!r})
+print(json.dumps({{"digest": encoded.digest}}))
+"""
+    )
+    assert first.returncode == 0, first.stderr
+    digest = json.loads(first.stdout)["digest"]
+    second = run_project(
+        f"""
+import json
+from pathlib import Path
+from skywright import run_training_process
+from skywright.run_store import CheckpointCodec
+
+checkpoint = CheckpointCodec().deserialize(Path({str(checkpoint_path)!r}), expected_digest={digest!r})
+def train(context):
+    raise AssertionError("project must not run with a changed library seed")
+
+result = run_training_process(
+    train, run_id={"clone" if clone else "source"!r}, project_version="project", configuration={{}},
+    dataset=TestDataset(), metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1", recorder=TestRecorder(), seed=18,
+    resume_from=checkpoint, source_run_id={"source" if clone else None!r},
+)
+print(json.dumps({{"cause": result.report.cause.value, "rule": result.report.diagnostics["rule"], "durable": result.report.latest_durable_checkpoint}}))
+"""
+    )
+    assert second.returncode == 0, second.stderr
+    observed = json.loads(second.stdout)
+    assert observed["cause"] == "contract_violation"
+    assert observed["rule"] == "dataset-ordering/seed"
+    if clone:
+        assert observed["durable"] is None
