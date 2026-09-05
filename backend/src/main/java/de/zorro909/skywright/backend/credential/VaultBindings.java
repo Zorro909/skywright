@@ -146,10 +146,17 @@ public final class VaultBindings {
 		catch (RuntimeException exception) {
 			return new Resolution<>(Status.INVALID, Optional.empty());
 		}
+		if (binding.validUntil() != null && !binding.validUntil().isAfter(this.clock.instant())) {
+			return new Resolution<>(Status.EXPIRED, Optional.empty());
+		}
 		// Do not attach provider or parser exceptions, which can contain submitted
 		// values.
 		try {
-			return new Resolution<>(Status.READY, Optional.ofNullable(consumer.apply(secret)));
+			var value = consumer.apply(secret);
+			if (binding.validUntil() != null && !binding.validUntil().isAfter(this.clock.instant())) {
+				return new Resolution<>(Status.EXPIRED, Optional.empty());
+			}
+			return new Resolution<>(Status.READY, Optional.ofNullable(value));
 		}
 		catch (RuntimeException exception) {
 			return new Resolution<>(Status.INVALID, Optional.empty());

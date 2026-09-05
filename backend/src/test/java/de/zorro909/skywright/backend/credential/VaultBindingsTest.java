@@ -184,6 +184,67 @@ class VaultBindingsTest {
 		}
 	}
 
+	@Test
+	void expiryDuringVaultReadPreventsConsumerHandoffAndExpiredConsumerResultsAreDiscarded() throws Exception {
+		var now = new java.util.concurrent.atomic.AtomicReference<>(NOW);
+		var expiry = NOW.plusSeconds(1);
+		var expireDuringRead = new java.util.concurrent.atomic.AtomicBoolean(true);
+		Clock clock = new Clock() {
+			@Override
+			public java.time.ZoneId getZone() {
+				return ZoneOffset.UTC;
+			}
+
+			@Override
+			public Clock withZone(java.time.ZoneId zone) {
+				return this;
+			}
+
+			@Override
+			public Instant instant() {
+				return now.get();
+			}
+		};
+		var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		server.createContext("/", exchange -> {
+			if (expireDuringRead.get()) {
+				now.set(expiry);
+			}
+			byte[] body = "{\"data\":{\"metadata\":{\"version\":2},\"data\":{\"token\":\"secret\"}}}".getBytes();
+			exchange.sendResponseHeaders(200, body.length);
+			exchange.getResponseBody().write(body);
+			exchange.close();
+		});
+		server.start();
+		try {
+			var binding = binding(UUID.randomUUID(), CredentialBinding.Kind.SKYPILOT, "backend", expiry);
+			var token = directory.resolve("token");
+			Files.writeString(token, "vault-token");
+			var vault = new VaultBindings(URI.create("http://127.0.0.1:" + server.getAddress().getPort()), "skywright",
+					token, List.of(binding), clock);
+			var calls = new AtomicInteger();
+			var result = vault.resolve(binding.id(), 2, "backend", secret -> calls.incrementAndGet());
+			assertThat(result.status()).isEqualTo(VaultBindings.Status.EXPIRED);
+			assertThat(result.value()).isEmpty();
+			assertThat(calls).hasValue(0);
+			now.set(NOW);
+			var readiness = vault.readiness(binding.id(), 2, "backend");
+			assertThat(readiness.status()).isEqualTo(VaultBindings.Status.EXPIRED);
+			assertThat(readiness.checkedAt()).isEqualTo(expiry);
+			now.set(NOW);
+			expireDuringRead.set(false);
+			var expiredResult = vault.resolve(binding.id(), 2, "backend", secret -> {
+				now.set(expiry);
+				return "value";
+			});
+			assertThat(expiredResult.status()).isEqualTo(VaultBindings.Status.EXPIRED);
+			assertThat(expiredResult.value()).isEmpty();
+		}
+		finally {
+			server.stop(0);
+		}
+	}
+
 	private VaultBindings vault(HttpServer server, List<CredentialBinding> bindings) throws Exception {
 		var token = directory.resolve("token");
 		Files.writeString(token, "test-token\n");
