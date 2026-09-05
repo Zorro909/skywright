@@ -89,11 +89,20 @@ def _handle(value):
     }
 
 
+def bridge_authorize(token):
+    # Only the backend's own service identity enters this client context.
+    os.environ["SKYPILOT_SERVICE_ACCOUNT_TOKEN"] = token
+
+
 @_bridge_boundary
 def bridge_probe():
     endpoint = os.environ["SKYPILOT_API_SERVER_ENDPOINT"].rstrip("/")
     try:
-        with urllib.request.urlopen(f"{endpoint}/api/health", timeout=5) as response:
+        request = urllib.request.Request(f"{endpoint}/api/health")
+        token = os.environ.get("SKYPILOT_SERVICE_ACCOUNT_TOKEN")
+        if token:
+            request.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(request, timeout=5) as response:
             info = json.load(response)
     except Exception as failure:
         return _probe_failure(failure)
@@ -191,7 +200,7 @@ def _catalogue_offering_matches(offering, query):
 
 
 @_bridge_boundary
-def bridge_submit(serialized):
+def bridge_submit(serialized, serialized_secrets="{}"):
     sky, _, sky_common = _sky_modules()
     specification = json.loads(serialized)
     name = specification["name"]
@@ -206,7 +215,7 @@ def bridge_submit(serialized):
             {"operation_id": _submission_operation(request_id, existing_job_id)}
         )
 
-    request_id = sky.jobs.launch(_task(specification), name=name)
+    request_id = sky.jobs.launch(_task(specification, json.loads(serialized_secrets)), name=name)
     return json.dumps({"operation_id": _submission_operation(request_id)})
 
 
@@ -350,8 +359,27 @@ def _submission_operation(request_id, existing_job_id=None):
     return json.dumps(operation, separators=(",", ":"))
 
 
-def _task(specification):
+def _task(specification, secrets=None):
+    secrets = secrets or {}
+    allowed = {
+        f"SKYWRIGHT_{slot}_{field}"
+        for slot in ("DATASET", "RUN_STORE")
+        for field in ("ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN")
+    }
+    if not set(secrets) <= allowed or set(secrets) & set(specification.get("environment", {})):
+        raise ValueError("Invalid Training Process secret channel")
+    if set(specification.get("environment", {})) & allowed:
+        raise ValueError("Storage credentials must use the secret channel")
     sky, _, _ = _sky_modules()
+    runtime_options = {}
+    if specification.get("runtimePullSecret"):
+        runtime_options["_cluster_config_overrides"] = {
+            "kubernetes": {
+                "pod_config": {
+                    "spec": {"imagePullSecrets": [{"name": specification["runtimePullSecret"]}]}
+                }
+            }
+        }
     resources = [
         sky.Resources(
             infra=requested["infrastructure"],
@@ -360,6 +388,7 @@ def _task(specification):
             accelerators=requested.get("accelerators"),
             image_id=requested.get("imageId"),
             use_spot=requested["useSpot"],
+            **runtime_options,
         )
         for requested in specification["resources"]
     ]
@@ -368,6 +397,7 @@ def _task(specification):
         setup=specification.get("setup"),
         run=specification["run"],
         envs=specification.get("environment", {}),
+        secrets=secrets,
         resources=resources,
     )
 

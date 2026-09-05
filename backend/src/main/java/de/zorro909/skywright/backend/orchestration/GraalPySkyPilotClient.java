@@ -37,6 +37,12 @@ final class GraalPySkyPilotClient implements SkyPilotClient, SkyPilotCatalogue {
 
 	private Value bindings;
 
+	private de.zorro909.skywright.backend.credential.BackendSkyPilotAuthorization authorization;
+
+	void authorization(de.zorro909.skywright.backend.credential.BackendSkyPilotAuthorization authorization) {
+		this.authorization = authorization;
+	}
+
 	GraalPySkyPilotClient(Path resources, URI apiServerEndpoint) {
 		this.resources = resolveResources(resources, codeLocation());
 		this.apiServerEndpoint = apiServerEndpoint;
@@ -101,6 +107,21 @@ final class GraalPySkyPilotClient implements SkyPilotClient, SkyPilotCatalogue {
 	}
 
 	@Override
+	public OrchestratorOperation submit(OrchestratorTaskSpecification task,
+			de.zorro909.skywright.backend.credential.TrainingCredentials credentials) {
+		return credentials.send(secrets -> {
+			try {
+				return operation(
+						invoke("bridge_submit", JSON.writeValueAsString(task), JSON.writeValueAsString(secrets)),
+						OperationKind.SUBMISSION);
+			}
+			catch (Exception failure) {
+				throw new IllegalStateException("Credential Projection submission failed");
+			}
+		});
+	}
+
+	@Override
 	public OrchestratorOperation observe(StatusRequest request) throws Exception {
 		return operation(invoke("bridge_status", JSON.writeValueAsString(request.jobNames())), OperationKind.STATUS);
 	}
@@ -137,7 +158,17 @@ final class GraalPySkyPilotClient implements SkyPilotClient, SkyPilotCatalogue {
 		initialize();
 		var currentBindings = this.bindings;
 		try {
-			var result = JSON.readTree(currentBindings.getMember(function).execute(arguments).asString());
+			var result = this.authorization == null
+					? JSON.readTree(currentBindings.getMember(function).execute(arguments).asString())
+					: this.authorization.use(token -> {
+						currentBindings.getMember("bridge_authorize").execute(token);
+						try {
+							return JSON.readTree(currentBindings.getMember(function).execute(arguments).asString());
+						}
+						finally {
+							currentBindings.getMember("bridge_authorize").execute("");
+						}
+					});
 			if (result.has("bridge_failure")) {
 				var failure = result.required("bridge_failure");
 				throw new SkyPilotClientFailure(BridgeFailure.FailureCause.valueOf(requiredText(failure, "cause")),

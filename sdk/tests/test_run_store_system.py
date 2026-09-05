@@ -98,7 +98,7 @@ class RecordingProgress:
 
 
 @contextmanager
-def seaweedfs():
+def seaweedfs(credential_file: Path | None = None):
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
@@ -109,11 +109,17 @@ def seaweedfs():
                 "run",
                 "-d",
                 "--rm",
+                *(
+                    ["-v", f"{credential_file}:/etc/skywright-s3.json:ro,Z"]
+                    if credential_file
+                    else []
+                ),
                 "-p",
                 f"127.0.0.1:{port}:8333",
                 SEAWEEDFS_IMAGE,
                 "mini",
                 "-master.telemetry=false",
+                *(["-s3.config=/etc/skywright-s3.json"] if credential_file else []),
             ],
             check=True,
             text=True,
@@ -544,3 +550,132 @@ def test_training_lifecycle_scenarios_persist_to_pinned_seaweedfs(tmp_path) -> N
             "resumed": False,
             "terminal_report_closed_writer": True,
         }
+
+
+def test_projected_storage_roles_are_enforced_by_real_service(tmp_path, monkeypatch):
+    from skywright.credentials import CredentialProjectionError, s3_credentials
+
+    config = tmp_path / "s3.json"
+    config.write_text(
+        json.dumps(
+            {
+                "identities": [
+                    {
+                        "name": "admin",
+                        "credentials": [
+                            {
+                                "accessKey": "test-access-key",
+                                "secretKey": "test-secret-key",
+                            }
+                        ],
+                        "actions": ["Admin", "Read", "Write", "List"],
+                    },
+                    {
+                        "name": "dataset",
+                        "credentials": [
+                            {"accessKey": "reader", "secretKey": "reader-secret"}
+                        ],
+                        "actions": ["Read:dataset", "List:dataset"],
+                    },
+                    {
+                        "name": "training",
+                        "credentials": [
+                            {"accessKey": "writer", "secretKey": "writer-secret"}
+                        ],
+                        "actions": ["Read:outputs", "Write:outputs", "List:outputs"],
+                    },
+                ]
+            }
+        )
+    )
+    with seaweedfs(config) as (endpoint, admin):
+        admin.create_bucket(Bucket="dataset")
+        admin.create_bucket(Bucket="outputs")
+        admin.put_object(Bucket="dataset", Key="item", Body=b"data")
+        monkeypatch.setenv("SKYWRIGHT_DATASET_ACCESS_KEY_ID", "reader")
+        monkeypatch.setenv("SKYWRIGHT_DATASET_SECRET_ACCESS_KEY", "reader-secret")
+        monkeypatch.setenv("SKYWRIGHT_RUN_STORE_ACCESS_KEY_ID", "writer")
+        monkeypatch.setenv("SKYWRIGHT_RUN_STORE_SECRET_ACCESS_KEY", "writer-secret")
+        # Broader ambient credentials cannot replace either selected role.
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+        reader = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            region_name="us-east-1",
+            **s3_credentials("dataset"),
+        )
+        assert reader.get_object(Bucket="dataset", Key="item")["Body"].read() == b"data"
+        with pytest.raises(ClientError):
+            reader.put_object(Bucket="dataset", Key="forbidden", Body=b"no")
+        target = TargetStorage(
+            "outputs",
+            endpoint,
+            "outputs",
+            "us-east-1",
+            "project",
+            "run",
+            credential_slot="run_store",
+        )
+        writer = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            region_name="us-east-1",
+            **s3_credentials("run_store"),
+        )
+        retained = RunStoreReader(target)
+        writer.put_object(Bucket="outputs", Key="checkpoint", Body=b"state")
+        assert (
+            writer.get_object(Bucket="outputs", Key="checkpoint")["Body"].read()
+            == b"state"
+        )
+        with pytest.raises(ClientError):
+            writer.get_object(Bucket="dataset", Key="item")
+        wrong_target = TargetStorage(
+            "dataset",
+            endpoint,
+            "dataset",
+            "us-east-1",
+            "project",
+            "run",
+            credential_slot="run_store",
+        )
+        with pytest.raises(CredentialProjectionError, match="rejected"):
+            RunStoreReader(wrong_target).list_checkpoints()
+        # A constructed client's projection remains fixed after the environment changes.
+        monkeypatch.setenv("SKYWRIGHT_RUN_STORE_SECRET_ACCESS_KEY", "revoked-secret")
+        assert (
+            writer.get_object(Bucket="outputs", Key="checkpoint")["Body"].read()
+            == b"state"
+        )
+        assert retained.list_checkpoints() == ()
+        rejected = RunStoreReader(target)
+        with pytest.raises(CredentialProjectionError, match="rejected") as failure:
+            rejected.list_checkpoints()
+        assert "revoked-secret" not in str(failure.value)
+        assert len(rejected.measurements) == 1
+        boundary = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+import json, sys
+from skywright import run_training_process
+from skywright.run_store import RunStoreRecorder, TargetStorage
+store = RunStoreRecorder(TargetStorage("outputs", sys.argv[1], "outputs", "us-east-1", "project", "run", credential_slot="run_store"))
+result = run_training_process(lambda context: None, run_id="run", project_version="fixture", configuration={}, dataset="unused:dataset", metric_contracts="unused:metrics", skywright_metric_schema="fixture", recorder=store, seed=0)
+assert result.report.cause.value == "skywright_failure"
+assert result.outcome.value == "failed"
+assert result.report.diagnostics["exception_type"] == "CredentialProjectionError"
+print(json.dumps(dict(result.report.diagnostics)))
+""",
+                endpoint,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert "revoked-secret" not in boundary.stdout + boundary.stderr
+        monkeypatch.delenv("SKYWRIGHT_RUN_STORE_ACCESS_KEY_ID")
+        with pytest.raises(CredentialProjectionError, match="unavailable"):
+            RunStoreReader(target)

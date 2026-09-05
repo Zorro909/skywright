@@ -36,6 +36,7 @@ final class GraalPySkyPilotClientIT {
 	void oneLockedGraalPyContextExercisesCatalogueAndOrchestrationThroughTheApiServer() throws Exception {
 		var client = client();
 		client.probe();
+		assertCredentialTask(client);
 		apiServer.stop();
 		try {
 			client.observe(new StatusRequest(List.of("missing-job")));
@@ -73,6 +74,36 @@ final class GraalPySkyPilotClientIT {
 		orchestrator.close();
 
 		assertThat(held.toCompletableFuture()).isCompleted();
+	}
+
+	private static void assertCredentialTask(GraalPySkyPilotClient client) throws Exception {
+		// Inspect the one production context; native SkyPilot dependencies cannot be
+		// initialized in an extra interpreter just for this assertion.
+		var field = GraalPySkyPilotClient.class.getDeclaredField("context");
+		field.setAccessible(true);
+		var context = (org.graalvm.polyglot.Context) field.get(client);
+		context.eval("python", """
+				import sky
+				specification = {'name': 'projection-fixture', 'run': 'env', 'environment': {},
+				    'resources': [{'infrastructure': 'kubernetes', 'cpus': '2', 'memory': '4', 'useSpot': False}],
+				    'runtimePullSecret': 'skywright-pull-00000000-0000-0000-0000-000000000001'}
+				secrets = {'SKYWRIGHT_DATASET_ACCESS_KEY_ID': 'reader',
+				    'SKYWRIGHT_DATASET_SECRET_ACCESS_KEY': 'reader-secret',
+				    'SKYWRIGHT_RUN_STORE_ACCESS_KEY_ID': 'writer',
+				    'SKYWRIGHT_RUN_STORE_SECRET_ACCESS_KEY': 'writer-secret'}
+				task = _task(specification, secrets)
+				recovered = sky.Task.from_yaml_config(task.to_yaml_config())
+				assert recovered.secrets['SKYWRIGHT_DATASET_ACCESS_KEY_ID'].get_secret_value() == 'reader'
+				assert recovered.envs == {}
+				assert 'writer-secret' not in str(task.to_yaml_config(use_user_specified_yaml=True))
+				assert 'imagePullSecrets' in str(task.to_yaml_config())
+				assert 'ghcr.io' not in str(task.to_yaml_config())
+				try:
+				    _task(specification, {'VAULT_TOKEN': 'forbidden'})
+				    raise AssertionError('Vault token admitted')
+				except ValueError:
+				    pass
+				""");
 	}
 
 	private static GraalPySkyPilotClient client() {

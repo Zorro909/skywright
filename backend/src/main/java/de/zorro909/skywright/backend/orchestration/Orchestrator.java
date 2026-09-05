@@ -6,6 +6,11 @@ public interface Orchestrator extends AutoCloseable {
 
 	CompletionStage<OrchestratorResult<OrchestratorOperation>> submit(OrchestratorTaskSpecification task);
 
+	default CompletionStage<OrchestratorResult<OrchestratorOperation>> submit(OrchestratorTaskSpecification task,
+			de.zorro909.skywright.backend.credential.TrainingCredentials credentials) {
+		throw new UnsupportedOperationException("Credential projection transport is unavailable");
+	}
+
 	CompletionStage<OrchestratorResult<OrchestratorOperation>> observe(StatusRequest request);
 
 	CompletionStage<OrchestratorResult<OrchestratorOperation>> control(ControlRequest request);

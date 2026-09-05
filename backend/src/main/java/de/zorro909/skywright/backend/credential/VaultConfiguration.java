@@ -16,6 +16,11 @@ import tools.jackson.databind.json.JsonMapper;
 class VaultConfiguration {
 
 	@Bean
+	LocalCredentialProjections localCredentialProjections(VaultBindings bindings, LocalProjectionFacts facts) {
+		return new LocalCredentialProjections(bindings, facts);
+	}
+
+	@Bean
 	VaultBindings vaultBindings(@Value("${skywright.credentials.vault.address}") URI address,
 			@Value("${skywright.credentials.vault.mount:skywright}") String mount,
 			@Value("${skywright.credentials.vault.token-file}") Path tokenFile,

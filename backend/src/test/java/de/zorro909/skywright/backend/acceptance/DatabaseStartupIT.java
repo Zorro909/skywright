@@ -22,7 +22,7 @@ final class DatabaseStartupIT {
 			try (var backend = BackendProcess.start(arguments(database, port))) {
 				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
 
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(31);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(33);
 				assertThat(database.extensionExists("btree_gist")).isTrue();
 				assertThat(database.constraints("currency_conversion")).contains(
 						"ex_currency_conversion_effective_interval", "currency_conversion_rate_check",
@@ -51,7 +51,7 @@ final class DatabaseStartupIT {
 					throw new AssertionError(failure.getMessage() + "\n" + backend.output(), failure);
 				}
 
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(31);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(33);
 				assertThat(database.extensionExists("btree_gist")).isTrue();
 				assertThat(database.constraints("currency_conversion")).contains(
 						"ex_currency_conversion_effective_interval", "currency_conversion_rate_check",
@@ -77,7 +77,7 @@ final class DatabaseStartupIT {
 			var upgradedPort = BackendProcess.availablePort();
 			try (var backend = BackendProcess.start(arguments(database, upgradedPort))) {
 				BackendProcess.awaitReadiness(upgradedPort, Duration.ofSeconds(30));
-				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(31);
+				assertThat(database.countTables("skywright")).as(backend.output()).isEqualTo(33);
 			}
 		}
 	}

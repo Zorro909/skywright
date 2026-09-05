@@ -639,6 +639,7 @@ class TargetStorage:
     addressing_style: str = "path"
     profile_name: str | None = None
     compatibility_options: Mapping[str, str] = field(default_factory=dict, hash=False)
+    credential_slot: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -745,6 +746,23 @@ class _S3Gateway:
                     self._measure(
                         operation, transferred, direction, attempt, started, False
                     )
+                    response = getattr(failure, "response", {})
+                    if response.get("Error", {}).get("Code") in {
+                        "AccessDenied",
+                        "InvalidAccessKeyId",
+                        "SignatureDoesNotMatch",
+                        "ExpiredToken",
+                        "InvalidToken",
+                        "TokenRefreshRequired",
+                    } or response.get("ResponseMetadata", {}).get("HTTPStatusCode") in {
+                        401,
+                        403,
+                    }:
+                        from skywright.credentials import CredentialProjectionError
+
+                        raise CredentialProjectionError(
+                            "Storage Credential Projection was rejected"
+                        ) from None
                     conditional_put = operation == "put_object" and (
                         request.get("IfNoneMatch") == "*" or "IfMatch" in request
                     )
@@ -1219,7 +1237,16 @@ def _s3_client(
     from botocore.config import Config
 
     factory = session_factory or boto3.Session
-    session = factory(profile_name=target.profile_name, region_name=target.region)
+    if target.credential_slot is not None:
+        from skywright.credentials import s3_credentials
+
+        if target.credential_slot != "run_store" or target.profile_name is not None:
+            raise ValueError(
+                "Run Store requires its own credential slot without a profile"
+            )
+        session = factory(region_name=target.region, **s3_credentials("run_store"))
+    else:
+        session = factory(profile_name=target.profile_name, region_name=target.region)
     remaining = min(
         max(control.deadline - time.monotonic(), 0.001)
         if control.deadline is not None

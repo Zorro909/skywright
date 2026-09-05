@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import json
+import stat
 from pathlib import Path
 import sys
 import tempfile
@@ -52,6 +54,36 @@ def validate_writable_paths() -> None:
             fail(f"writable runtime path is unavailable: {writable_path}")
 
 
+def validate_kubernetes_projection() -> None:
+    filename = os.environ.pop("SKYWRIGHT_KUBECONFIG", None)
+    if filename is None:
+        return
+    try:
+        descriptor = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "r", encoding="utf-8") as source:
+            metadata = os.fstat(source.fileno())
+            if (not stat.S_ISREG(metadata.st_mode)
+                    or stat.S_IMODE(metadata.st_mode) != 0o400
+                    or metadata.st_uid != os.geteuid()
+                    or metadata.st_size > 1024 * 1024):
+                raise ValueError
+            config = json.load(source)
+        if (config.get("apiVersion") != "v1" or config.get("kind") != "Config"
+                or len(config.get("users", [])) != 1
+                or len(config.get("clusters", [])) != 1
+                or len(config.get("contexts", [])) != 1):
+            raise ValueError
+        user = config["users"][0]["user"]
+        cluster = config["clusters"][0]["cluster"]
+        if (set(user) != {"token"} or not isinstance(user["token"], str) or not user["token"]
+                or set(cluster) != {"server", "certificate-authority-data"}):
+            raise ValueError
+        os.environ["KUBECONFIG"] = filename
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError):
+        fail("local Kubernetes Credential Projection is unavailable")
+
+
+validate_kubernetes_projection()
 validate_database()
 validate_writable_paths()
 os.execv(
