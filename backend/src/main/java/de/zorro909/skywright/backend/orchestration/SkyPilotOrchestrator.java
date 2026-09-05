@@ -166,7 +166,8 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 
 	private <T> void run(CheckedSupplier<T> call, CompletableFuture<OrchestratorResult<T>> result) {
 		try {
-			result.complete(OrchestratorResult.accepted(call.get()));
+			var value = call.get();
+			result.complete(this.admitting.get() ? OrchestratorResult.accepted(value) : shutdownResult());
 		}
 		catch (Exception failure) {
 			if (!this.admitting.get()) {

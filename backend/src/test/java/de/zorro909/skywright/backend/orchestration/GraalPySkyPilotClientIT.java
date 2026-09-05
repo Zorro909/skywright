@@ -33,10 +33,11 @@ final class GraalPySkyPilotClientIT {
 	}
 
 	@Test
-	void oneLockedGraalPyContextExercisesCatalogueAndOrchestrationThroughTheApiServer() throws Exception {
+	void oneNativeGraalPyContextExercisesCatalogueAndOrchestrationThroughTheApiServer() throws Exception {
 		var client = client();
 		client.probe();
 		assertCredentialTask(client);
+		assertConcurrentAuthorization(client);
 		apiServer.stop();
 		try {
 			client.observe(new StatusRequest(List.of("missing-job")));
@@ -104,6 +105,31 @@ final class GraalPySkyPilotClientIT {
 				except ValueError:
 				    pass
 				""");
+	}
+
+	private static void assertConcurrentAuthorization(GraalPySkyPilotClient client) throws Exception {
+		var field = GraalPySkyPilotClient.class.getDeclaredField("context");
+		field.setAccessible(true);
+		var context = (org.graalvm.polyglot.Context) field.get(client);
+		context.eval("python", """
+				from sky.client import service_account_auth
+				_authorization_barrier = threading.Barrier(2)
+				def _qualification_authorization():
+				    before = service_account_auth.get_service_account_headers()
+				    _authorization_barrier.wait(timeout=3)
+				    after = service_account_auth.get_service_account_headers()
+				    assert before == after
+				    return json.dumps(after)
+				""");
+		var call = context.getBindings("python").getMember("bridge_call");
+		try (var workers = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+			var first = workers.submit(() -> call.execute("_qualification_authorization", "sky_first").asString());
+			var second = workers.submit(() -> call.execute("_qualification_authorization", "sky_second").asString());
+			assertThat(first.get(5, TimeUnit.SECONDS)).contains("Bearer sky_first").doesNotContain("sky_second");
+			assertThat(second.get(5, TimeUnit.SECONDS)).contains("Bearer sky_second").doesNotContain("sky_first");
+		}
+		context.eval("python",
+				"assert os.environ.get('SKYPILOT_SERVICE_ACCOUNT_TOKEN') not in ('sky_first', 'sky_second')");
 	}
 
 	private static GraalPySkyPilotClient client() {

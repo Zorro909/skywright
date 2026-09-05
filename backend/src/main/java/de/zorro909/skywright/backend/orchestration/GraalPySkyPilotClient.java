@@ -37,6 +37,10 @@ final class GraalPySkyPilotClient implements SkyPilotClient, SkyPilotCatalogue {
 
 	private Value bindings;
 
+	private int activeCalls;
+
+	private boolean closed;
+
 	private de.zorro909.skywright.backend.credential.BackendSkyPilotAuthorization authorization;
 
 	void authorization(de.zorro909.skywright.backend.credential.BackendSkyPilotAuthorization authorization) {
@@ -154,20 +158,16 @@ final class GraalPySkyPilotClient implements SkyPilotClient, SkyPilotCatalogue {
 		};
 	}
 
-	private synchronized JsonNode invoke(String function, Object... arguments) throws Exception {
-		initialize();
-		var currentBindings = this.bindings;
+	private JsonNode invoke(String function, Object... arguments) throws Exception {
+		var call = callable();
+		var values = new Object[arguments.length + 2];
+		values[0] = function;
+		System.arraycopy(arguments, 0, values, 2, arguments.length);
 		try {
-			var result = this.authorization == null
-					? JSON.readTree(currentBindings.getMember(function).execute(arguments).asString())
+			var result = this.authorization == null ? JSON.readTree(call.execute(values).asString())
 					: this.authorization.use(token -> {
-						currentBindings.getMember("bridge_authorize").execute(token);
-						try {
-							return JSON.readTree(currentBindings.getMember(function).execute(arguments).asString());
-						}
-						finally {
-							currentBindings.getMember("bridge_authorize").execute("");
-						}
+						values[1] = token;
+						return JSON.readTree(call.execute(values).asString());
 					});
 			if (result.has("bridge_failure")) {
 				var failure = result.required("bridge_failure");
@@ -179,6 +179,22 @@ final class GraalPySkyPilotClient implements SkyPilotClient, SkyPilotCatalogue {
 		catch (org.graalvm.polyglot.PolyglotException failure) {
 			throw SkyPilotClientFailure.from(failure);
 		}
+		finally {
+			synchronized (this) {
+				this.activeCalls--;
+				notifyAll();
+			}
+		}
+	}
+
+	private synchronized Value callable() throws SkyPilotClientFailure {
+		if (this.closed) {
+			throw new SkyPilotClientFailure(BridgeFailure.FailureCause.SHUTDOWN, "SkyPilot bridge is shutting down");
+		}
+		initialize();
+		var call = this.bindings.getMember("bridge_call");
+		this.activeCalls++;
+		return call;
 	}
 
 	private synchronized void initialize() throws SkyPilotClientFailure {
@@ -215,10 +231,15 @@ final class GraalPySkyPilotClient implements SkyPilotClient, SkyPilotCatalogue {
 					.build();
 				this.context.eval(source);
 				this.bindings = this.context.getBindings("python");
+				this.bindings.getMember("bridge_initialize").execute();
 			}
 		}
 		catch (Exception failure) {
-			close();
+			if (this.context != null) {
+				this.context.close(true);
+				this.context = null;
+				this.bindings = null;
+			}
 			throw new SkyPilotClientFailure(BridgeFailure.FailureCause.CLIENT_INITIALIZATION,
 					failure.getMessage() == null ? "GraalPy client initialization failed" : failure.getMessage());
 		}
@@ -254,7 +275,26 @@ final class GraalPySkyPilotClient implements SkyPilotClient, SkyPilotCatalogue {
 
 	@Override
 	public synchronized void close() {
+		if (this.closed) {
+			return;
+		}
+		this.closed = true;
 		if (this.context != null) {
+			this.bindings.getMember("bridge_interrupt").execute();
+			var deadline = System.nanoTime() + java.time.Duration.ofSeconds(4).toNanos();
+			try {
+				while (this.activeCalls > 0) {
+					var remaining = deadline - System.nanoTime();
+					if (remaining <= 0) {
+						throw new IllegalStateException("SkyPilot SDK did not quiesce for shutdown");
+					}
+					java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(this, remaining);
+				}
+			}
+			catch (InterruptedException failure) {
+				Thread.currentThread().interrupt();
+				throw new IllegalStateException("SkyPilot shutdown interrupted before SDK quiescence", failure);
+			}
 			this.context.close(true);
 			this.context = null;
 			this.bindings = null;

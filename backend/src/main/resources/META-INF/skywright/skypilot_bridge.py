@@ -1,9 +1,14 @@
+import contextvars
 import json
 import math
 import os
 import re
+import socket
+import sys
+import threading
 import urllib.error
 import urllib.request
+import weakref
 
 
 _SKY_MODULES = None
@@ -89,9 +94,49 @@ def _handle(value):
     }
 
 
-def bridge_authorize(token):
-    # Only the backend's own service identity enters this client context.
-    os.environ["SKYPILOT_SERVICE_ACCOUNT_TOKEN"] = token
+_SOCKETS = weakref.WeakSet()
+_SOCKET_LOCK = threading.Lock()
+_STOPPING = False
+
+
+def _socket_audit(event, arguments):
+    # Include socket wrappers created with an existing descriptor, such as TLS.
+    if event in ("socket.__new__", "socket.connect"):
+        with _SOCKET_LOCK:
+            if _STOPPING:
+                raise RuntimeError("SkyPilot bridge is shutting down")
+            _SOCKETS.add(arguments[0])
+
+
+def bridge_initialize():
+    sys.addaudithook(_socket_audit)
+    _sky_modules()
+    from sky.utils import context
+    os.environ = context.ContextualEnviron(os.environ)
+
+
+def bridge_call(function, token, *arguments):
+    from sky.utils import context
+
+    def execute():
+        with context.initialize() as current:
+            if token is not None:
+                current.override_envs({"SKYPILOT_SERVICE_ACCOUNT_TOKEN": token})
+            return globals()[function](*arguments)
+
+    return contextvars.copy_context().run(execute)
+
+
+def bridge_interrupt():
+    global _STOPPING
+    with _SOCKET_LOCK:
+        _STOPPING = True
+        sockets = list(_SOCKETS)
+    for connection in sockets:
+        try:
+            connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
 
 @_bridge_boundary

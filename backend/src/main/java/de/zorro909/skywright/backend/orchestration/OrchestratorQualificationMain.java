@@ -25,10 +25,12 @@ public final class OrchestratorQualificationMain {
 			throw new IllegalArgumentException("expected unavailable <cause> or saturation");
 		}
 		var endpoint = URI.create(requiredEnvironment("SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT"));
-		try (var client = new GraalPySkyPilotClient(Path.of("graalpy-resources"), endpoint)) {
+		try (var client = new GraalPySkyPilotClient(
+				Path.of(System.getProperty("graalpy.external.directory", "graalpy-resources")), endpoint)) {
 			var result = switch (arguments[0]) {
 				case "unavailable" -> unavailable(client, expectedCause(arguments));
 				case "saturation" -> saturation(client);
+				case "held" -> SkyPilotHeldQualification.run(client);
 				default -> throw new IllegalArgumentException("unsupported qualification: " + arguments[0]);
 			};
 			System.out.println(JSON.writeValueAsString(result));
