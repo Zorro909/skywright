@@ -21,3 +21,5 @@ databaseChangeLog:
       file: db/changelog/versions/0010-gpu-price-schedule.yaml
   - include:
       file: db/changelog/versions/0011-currency-conversion-schedule.yaml
+  - include:
+      file: db/changelog/versions/0012-local-credential-projections.yaml

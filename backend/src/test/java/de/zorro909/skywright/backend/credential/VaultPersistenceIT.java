@@ -48,6 +48,7 @@ class VaultPersistenceIT {
 			unseal(endpoint, key);
 			request(endpoint, "POST", "/v1/sys/mounts/skywright", root,
 					"{\"type\":\"kv\",\"options\":{\"version\":\"2\"}}");
+			assertDirectAgentProjection(container, endpoint, root);
 			var binding = VaultBindingsTest.binding(UUID.randomUUID(), CredentialBinding.Kind.S3, "backend", null);
 			String path = "/v1/skywright/data/" + binding.path();
 			request(endpoint, "POST", path, root,
@@ -86,6 +87,37 @@ class VaultPersistenceIT {
 			unseal(endpoint, key);
 			assertReady(vault, binding);
 		}
+	}
+
+	private void assertDirectAgentProjection(GenericContainer<?> container, URI endpoint, String root)
+			throws Exception {
+		String path = "/v1/skywright/data/local/skypilot-kubernetes";
+		for (String revision : List.of("old", "pinned-kubernetes", "newer")) {
+			request(endpoint, "POST", path, root,
+					JSON.writeValueAsString(java.util.Map.of("data", java.util.Map.of("kubeconfig", revision))));
+		}
+		request(endpoint, "POST", "/v1/sys/policies/acl/skypilot-projector", root, JSON.writeValueAsString(java.util.Map
+			.of("policy", "path \"skywright/data/local/skypilot-kubernetes\" { capabilities = [\"read\"] }")));
+		var issued = request(endpoint, "POST", "/v1/auth/token/create", root,
+				"{\"policies\":[\"skypilot-projector\"],\"ttl\":\"1h\"}");
+		container.copyFileToContainer(org.testcontainers.images.builder.Transferable
+			.of(issued.path("auth").path("client_token").asText(), 0400), "/run/skywright/skypilot-vault-token");
+		var rootDirectory = Path.of(System.getProperty("repository.root"));
+		var fixtures = rootDirectory.resolve("deployment/examples/local-credentials");
+		container.copyFileToContainer(org.testcontainers.images.builder.Transferable
+			.of(Files.readString(fixtures.resolve("kubeconfig.ctmpl"))), "/etc/skywright/kubeconfig.ctmpl");
+		container.copyFileToContainer(org.testcontainers.images.builder.Transferable
+			.of(Files.readString(fixtures.resolve("vault-agent.hcl"))), "/etc/skywright/agent.hcl");
+		var result = container.execInContainer("timeout", "30", "vault", "agent", "-config=/etc/skywright/agent.hcl");
+		assertThat(result.getExitCode()).as((result.getStdout() + result.getStderr())
+			.replace(issued.path("auth").path("client_token").asText(), "[redacted]")).isZero();
+		assertThat(container.execInContainer("cat", "/run/skywright/kubeconfig").getStdout().strip())
+			.isEqualTo("pinned-kubernetes");
+		assertThat(container.execInContainer("stat", "-c", "%a", "/run/skywright/kubeconfig").getStdout().strip())
+			.isEqualTo("400");
+		assertThat(result.getStdout() + result.getStderr()).doesNotContain("pinned-kubernetes",
+				issued.path("auth").path("client_token").asText());
+		container.execInContainer("rm", "/run/skywright/kubeconfig", "/run/skywright/skypilot-vault-token");
 	}
 
 	private void assertReady(VaultBindings vault, CredentialBinding binding) {

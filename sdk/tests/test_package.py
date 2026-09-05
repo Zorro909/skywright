@@ -34,6 +34,7 @@ def test_package_root_declares_its_complete_public_surface() -> None:
         "TrainingProject",
         "__version__",
         "configuration",
+        "credentials",
         "metrics",
         "run_store",
         "run_training_process",

@@ -8,6 +8,11 @@ interface SkyPilotClient extends AutoCloseable {
 
 	OrchestratorOperation submit(OrchestratorTaskSpecification task) throws Exception;
 
+	default OrchestratorOperation submit(OrchestratorTaskSpecification task,
+			de.zorro909.skywright.backend.credential.TrainingCredentials credentials) throws Exception {
+		throw new UnsupportedOperationException("Credential projection transport is unavailable");
+	}
+
 	OrchestratorOperation observe(StatusRequest request) throws Exception;
 
 	OrchestratorOperation control(ControlRequest request) throws Exception;

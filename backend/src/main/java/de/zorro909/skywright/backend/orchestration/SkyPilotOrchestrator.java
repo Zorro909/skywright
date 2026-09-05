@@ -51,6 +51,12 @@ final class SkyPilotOrchestrator implements Orchestrator, AutoCloseable {
 	}
 
 	@Override
+	public CompletionStage<OrchestratorResult<OrchestratorOperation>> submit(OrchestratorTaskSpecification task,
+			de.zorro909.skywright.backend.credential.TrainingCredentials credentials) {
+		return submit(() -> this.client.submit(task, credentials));
+	}
+
+	@Override
 	public CompletionStage<OrchestratorResult<OrchestratorOperation>> observe(StatusRequest request) {
 		return control(() -> this.client.observe(request));
 	}

@@ -3,7 +3,8 @@
 This is the local delivery slice in #228 under [ADR 0025](adr/0025-centralize-managed-credentials-in-vault.md).
 Vault KV v2 is the only managed secret source. The backend reads an explicit version, never `latest`, and
 never copies values into application persistence. Enrollment, promotion and rotation remain in #72;
-Run projection and release remain in #229 and #73.
+Local Run projection and release are documented in [local Credential Projections](local-credential-projections.md);
+the remaining role/provider matrix stays in #73.
 
 ## Persistent Vault operation
 

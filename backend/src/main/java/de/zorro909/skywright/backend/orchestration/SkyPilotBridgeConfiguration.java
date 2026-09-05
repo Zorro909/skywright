@@ -11,8 +11,22 @@ import org.springframework.scheduling.annotation.Scheduled;
 class SkyPilotBridgeConfiguration {
 
 	@Bean(destroyMethod = "close")
-	GraalPySkyPilotClient skyPilotClient(SkyPilotBridgeProperties properties) {
-		return new GraalPySkyPilotClient(properties.externalDirectory(), properties.apiServerEndpoint());
+	GraalPySkyPilotClient skyPilotClient(SkyPilotBridgeProperties properties,
+			org.springframework.beans.factory.ObjectProvider<de.zorro909.skywright.backend.credential.VaultBindings> vault,
+			@org.springframework.beans.factory.annotation.Value("${skywright.credentials.skypilot-binding:}") String binding) {
+		var client = new GraalPySkyPilotClient(properties.externalDirectory(), properties.apiServerEndpoint());
+		if (vault.getIfAvailable() != null) {
+			if (binding.isBlank()) {
+				client.authorization(new de.zorro909.skywright.backend.credential.BackendSkyPilotAuthorization(
+						vault.getObject(), new java.util.UUID(0, 0), properties.apiServerEndpoint().toString()));
+			}
+			else {
+				client.authorization(
+						new de.zorro909.skywright.backend.credential.BackendSkyPilotAuthorization(vault.getObject(),
+								java.util.UUID.fromString(binding), properties.apiServerEndpoint().toString()));
+			}
+		}
+		return client;
 	}
 
 	@Bean(destroyMethod = "close")
