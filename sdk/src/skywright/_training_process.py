@@ -78,7 +78,10 @@ def run_training_process(
     seed: int,
     maximum_recovery_debt: int = 3,
     previous_writer_verifier: PreviousWriterVerifier = uncertain_previous_writer,
-    resume_from: CheckpointSnapshot | str | None = None,
+    resume_from: CheckpointSnapshot
+    | str
+    | Callable[[], CheckpointSnapshot]
+    | None = None,
     source_run_id: str | None = None,
     ordering_reset: bool = False,
     accelerator: Accelerator = CPU_ACCELERATOR,
@@ -205,7 +208,9 @@ def run_training_process(
         resolved_resume = (
             cast(
                 CheckpointSnapshot,
-                resolve_component(resume_from, "resume checkpoint"),
+                resume_from()
+                if callable(resume_from)
+                else resolve_component(resume_from, "resume checkpoint"),
             )
             if resume_from is not None
             else None

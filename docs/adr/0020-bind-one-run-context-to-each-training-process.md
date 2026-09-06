@@ -21,3 +21,7 @@ An explicit Cancellation Request always wins. Otherwise the first `SIGINT` or `S
 ## Consequences
 
 Warnings and returning an existing context are forbidden because both permit the caller to continue with the wrong run identity and ambient state. A failed initialization, repeated direct invocation, or repeated notebook cell requires a fresh process. Numeric exit-code values remain an implementation choice, but only the safely finalized interruption code may be configured to request recovery.
+
+## Managed project entry point
+
+For #231, the owner selected a fixed project module convention on 2026-09-06. Every managed Training Project Image supplies `skywright_project.train(context)`. The library invokes that callable only after validating the accepted Run Definition, its pinned artifacts and recovery admission. The image digest pins the implementation; the project definition and version manifest do not add a configurable entry-point field. Direct embedding retains its private injection seams.

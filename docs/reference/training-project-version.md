@@ -90,3 +90,5 @@ the resolved OCI manifest digest rather than a mutable provenance tag.
 
 Registry retention must preserve every digest referenced by an undeleted Run Record. Skywright
 verifies availability but cannot enforce that external policy.
+
+Managed images must provide `skywright_project.train(context)`. The library constructs the Run Context and calls this fixed entry point after admission and artifact validation. Project code registers Checkpoint State, calls `context.start()`, and owns the training loop. Publication checks that this callable accepts the context argument. The image digest pins its implementation; no entry-point field is added to the version manifest.

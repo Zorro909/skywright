@@ -480,7 +480,9 @@ def test_docker_adapter_builds_from_the_profile_and_checks_sdk_authority(
     ).build_smoke_and_push(definition, "cuda", "registry.test/owner/project:staging")
 
     assert digest == "sha256:" + "b" * 64
-    assert [command[1] for command in commands] == ["build", "run", "push"]
+    assert [command[1] for command in commands] == ["build", "run", "run", "push"]
+    assert "skywright_project.train" in commands[2][-1]
+    assert "inspect.signature" in commands[2][-1]
     assert "FROM registry.test/profile@sha256:" in containerfile
     assert "pip install --no-deps --require-hashes" in containerfile
     assert "is_relative_to" in containerfile

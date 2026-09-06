@@ -464,6 +464,17 @@ class DockerProjectImageBuilder(ProjectImageBuilder):
             staging_tag,
             *definition.smoke_command[1:],
         )
+        _run(
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            "python",
+            staging_tag,
+            "-c",
+            "import inspect,skywright_project; assert callable(skywright_project.train); "
+            "inspect.signature(skywright_project.train).bind(object())",
+        )
         _run("docker", "push", staging_tag)
         return self._registry.manifest_digest(
             definition.registry_repository, staging_tag.rsplit(":", 1)[1]

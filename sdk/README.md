@@ -663,3 +663,6 @@ Production Training Processes now evaluate [Run recovery](RECOVERY.md) before
 publishing an attempt. Recovery requires trusted previous-writer evidence; the
 default refuses uncertain writers. The guide defines debt, durable publication
 evidence, resource bounds and the orchestration handoff.
+
+[Managed runtime assembly](MANAGED_RUNTIME.md) consumes the accepted Run Definition
+and invokes the fixed `skywright_project.train(context)` convention.

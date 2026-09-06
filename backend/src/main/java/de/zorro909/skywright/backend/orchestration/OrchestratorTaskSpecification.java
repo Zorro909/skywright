@@ -26,7 +26,9 @@ public record OrchestratorTaskSpecification(String name, String setup, String ru
 
 		if (runtimePullSecret != null && (!runtimePullSecret
 			.matches("skywright-pull-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-				|| resources.stream().anyMatch(r -> !r.infrastructure().equals("kubernetes")))) {
+				|| resources.stream()
+					.anyMatch(r -> !(r.infrastructure().equals("kubernetes")
+							|| r.infrastructure().startsWith("kubernetes/"))))) {
 			throw new IllegalArgumentException("Runtime pull secret requires the local Kubernetes target");
 		}
 	}

@@ -244,6 +244,7 @@ def category_for(path: str) -> str:
             "sdk/src/skywright/_configuration_resources/",
             "sdk/src/skywright/_metric_resources/",
             "sdk/src/skywright/_run_definition_resources/",
+            "sdk/tests/fixtures/managed-runtime/",
         )
     ):
         return "shared-contract"
