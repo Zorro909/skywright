@@ -44,6 +44,7 @@ from skywright._training_system_metrics import (
 from skywright._training_types import (
     Accelerator,
     ArtifactRecord,
+    CheckpointConfirmation,
     CheckpointSnapshot,
     DatasetBatch,
     DatasetCursor,
@@ -378,7 +379,7 @@ class DefaultRunContext:
 
     def publish_terminal_checkpoint(
         self, *, cancellation_can_preempt: bool = False
-    ) -> CheckpointSnapshot | None:
+    ) -> CheckpointConfirmation | None:
         sampler_shutdown = self._memory_system_metrics.stop(
             self._shutdown_grace_seconds
         )
@@ -386,6 +387,7 @@ class DefaultRunContext:
             raise SkywrightFailure(sampler_shutdown.failure, "finalization")
         try:
             return self._checkpoints.publish_terminal(
+                self._step,
                 self.snapshot,
                 self._cancellation_requested if cancellation_can_preempt else None,
             )

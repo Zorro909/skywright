@@ -10,6 +10,7 @@ def test_package_root_declares_its_complete_public_surface() -> None:
     assert skywright.__all__ == (
         "Accelerator",
         "ArtifactRecord",
+        "CheckpointConfirmation",
         "CheckpointRejectionEvidence",
         "CheckpointSnapshot",
         "CheckpointState",

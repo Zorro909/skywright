@@ -55,6 +55,12 @@ class TestRecorder:
         self.events.append(("checkpoint", checkpoint))
         return f"checkpoint:{checkpoint.step}"
 
+    def checkpoint(self, confirmation):
+        for event in self.events:
+            if event[0] == "checkpoint" and event[1].step == confirmation.step:
+                return event[1].with_reference(confirmation.reference)
+        raise AssertionError("confirmed checkpoint was not published")
+
     def publish_step(
         self,
         step,
@@ -193,12 +199,13 @@ result = run_training_process(
     recorder=recorder,
     seed=17,
 )
+assert set(vars(result.final_checkpoint)) == {"step", "reference"}
 print(json.dumps({
     "outcome": result.outcome.value,
     "cause": result.report.cause.value,
     "last_step": result.report.last_committed_step,
     "durable_step": result.report.latest_durable_step,
-    "checkpoint_state": result.final_checkpoint.state["counter"],
+    "checkpoint_state": recorder.checkpoint(result.final_checkpoint).state["counter"],
     "checkpoint_reference": result.report.latest_durable_checkpoint,
     "events": [event[0] for event in recorder.events],
     "recorder_configuration": recorder.configuration,
@@ -813,7 +820,7 @@ print(json.dumps({
     "confirmations": [list(event[1:]) for event in recorder.events if event[0] == "confirmation"],
     "durable_step": result.report.latest_durable_step,
     "final_state": (
-        result.final_checkpoint.state["state"] if result.final_checkpoint else None
+        recorder.checkpoint(result.final_checkpoint).state["state"] if result.final_checkpoint else None
     ),
     "cause": result.report.cause.value,
     "diagnostics": dict(result.report.diagnostics),
@@ -1982,6 +1989,7 @@ def train(context):
     context.commit_step(next_batch(context))
 
 
+recorder = TestRecorder()
 result = run_training_process(
     train,
     run_id="test-run",
@@ -1990,7 +1998,7 @@ result = run_training_process(
     dataset=TestDataset(),
     metric_contracts=TestMetricContracts(),
     skywright_metric_schema="test-schema@1",
-    recorder=TestRecorder(),
+    recorder=recorder,
     seed=999,
     resume_from=CheckpointSnapshot(
         step=4,
@@ -2006,7 +2014,7 @@ result = run_training_process(
     ),
 )
 assert result.report.last_committed_step == 5
-assert result.final_checkpoint.dataset_cursor == DatasetCursor(
+assert recorder.checkpoint(result.final_checkpoint).dataset_cursor == DatasetCursor(
     epoch=1,
     item_offset=10,
     epoch_step=5,
@@ -2245,6 +2253,7 @@ def train(context):
     context.commit_step(next_batch(context))
 
 
+recorder = TestRecorder()
 result = run_training_process(
     train,
     run_id="test-run",
@@ -2253,7 +2262,7 @@ result = run_training_process(
     dataset=TestDataset(),
     metric_contracts=TestMetricContracts(),
     skywright_metric_schema="test-schema@1",
-    recorder=TestRecorder(),
+    recorder=recorder,
     seed=1,
     interruption_requested=lambda: True,
 )
@@ -2263,7 +2272,7 @@ print(json.dumps({
     "last_step": result.report.last_committed_step,
     "durable_step": result.report.latest_durable_step,
     "checkpoint_step": result.final_checkpoint.step,
-    "checkpoint_state": result.final_checkpoint.state["state"],
+    "checkpoint_state": recorder.checkpoint(result.final_checkpoint).state["state"],
 }))
 """
     )
@@ -3830,13 +3839,14 @@ def train(context):
     context.start()
     context.commit_step(next_batch(context))
 
+recorder = TestRecorder()
 result = run_training_process(
     train, run_id="source", project_version="project", configuration={{}},
     dataset=TestDataset(), metric_contracts=TestMetricContracts(),
-    skywright_metric_schema="test-schema@1", recorder=TestRecorder(), seed=17,
+    skywright_metric_schema="test-schema@1", recorder=recorder, seed=17,
 )
-assert result.final_checkpoint.runtime_state["training_determinism"]["seed"] == 17
-encoded = CheckpointCodec().serialize(result.final_checkpoint)
+assert recorder.checkpoint(result.final_checkpoint).runtime_state["training_determinism"]["seed"] == 17
+encoded = CheckpointCodec().serialize(recorder.checkpoint(result.final_checkpoint))
 shutil.move(encoded.path, {str(checkpoint_path)!r})
 print(json.dumps({{"digest": encoded.digest}}))
 """

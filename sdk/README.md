@@ -543,3 +543,18 @@ cache loss, Storage Location, batch grouping and single-node accelerator count c
 Decoded tensors, augmentation and numerical training results need not match. RNG states
 for surviving accelerator indices restore normally; additional devices retain the
 library-established seed.
+
+### Checkpoint capture and confirmation
+
+A Safe Point captures one owned copy of the registered Checkpoint State before the project can
+mutate it. The publisher reads that owned payload without going through defensive public state
+accessors. There is one active publication and one replaceable pending capture. Capturing the
+replacement can temporarily coexist with both until admission replaces the older pending capture.
+
+`TrainingProcessResult.final_checkpoint` is a `CheckpointConfirmation` containing only `step` and
+`reference`. Publication confirmation does not retain tensors. Load the referenced checkpoint
+through `RunStoreReader` when full state is needed for inspection or whole-state resume.
+`CheckpointSnapshot.state` and `runtime_state` still return defensive copies to their callers.
+
+The [checkpoint memory qualification](../docs/testing/checkpoint-memory.md) records the CPU and ROCm
+workloads, memory budgets, capture/upload overlap and reproduction commands.

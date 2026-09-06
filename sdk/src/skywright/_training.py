@@ -14,6 +14,7 @@ from skywright._training_protocols import (
 from skywright._training_types import (
     Accelerator,
     ArtifactRecord,
+    CheckpointConfirmation,
     CheckpointRejectionEvidence,
     CheckpointSnapshot,
     DatasetBatch,
@@ -33,6 +34,7 @@ from skywright._training_types import (
 __all__ = (
     "Accelerator",
     "ArtifactRecord",
+    "CheckpointConfirmation",
     "CheckpointRejectionEvidence",
     "CheckpointSnapshot",
     "CheckpointState",

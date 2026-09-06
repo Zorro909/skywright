@@ -2,6 +2,11 @@
 
 ## Next
 
+- Bounds checkpoint capture to one owned copy and releases confirmed, superseded and failed
+  publication payloads. `TrainingProcessResult.final_checkpoint` now returns a
+  `CheckpointConfirmation` with only the Step and durable reference; load full state from the
+  Run Store. Internal serialization and reference attachment no longer clone tensor payloads.
+
 - Adds MosaicML MDS Dataset reads with a verified, bounded S3 cache, canonical item
   ordinals and cumulative I/O statistics. The `dataset` extra uses a pinned upstream
   MosaicML Streaming development revision with patched Transformers dependencies.

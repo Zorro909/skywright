@@ -6,7 +6,7 @@ Issue [#214](https://github.com/Zorro909/skywright/issues/214) qualifies the con
 
 The fixture uses one active worker and one queued completion, and one active worker and two queued status calls. Additional calls, including catalogue-price requests, must report `SATURATION` within 100 ms. Catalogue lookups share the held-work lane with completion reads, so pricing traffic cannot create extra context workers or bypass queue limits. An unreachable server must report `REACHABILITY`, independently of queue saturation. Active and queued calls must finish as `SHUTDOWN` when the bridge closes.
 
-The assertions allow 2 seconds each for cancellation and health, 6 seconds for an unreachable health probe, and 5 seconds for shutdown with a 100 ms grace period. Production defaults are eight queued short calls, four queued held calls and five seconds of shutdown grace. Status, submission, cancellation, cleanup and health share one platform thread. Completion and catalogue access share a second platform thread. A stalled short call delays other short calls, as selected in the maintainer decision on #214. A rejected refresh returns the cached availability without starting another worker.
+Before holding the stream, the fixture invokes cancellation once with a ten-second startup bound and records `startup_cancellation_ms`. This initializes the cancellation path separately from the held-work measurement. The assertions allow 2 seconds each for cancellation and health while completion is held, 6 seconds for an unreachable health probe, and 5 seconds for shutdown with a 100 ms grace period. Production defaults are eight queued short calls, four queued held calls and five seconds of shutdown grace. Status, submission, cancellation, cleanup and health share one platform thread. Completion and catalogue access share a second platform thread. A stalled short call delays other short calls, as selected in the maintainer decision on #214. A rejected refresh returns the cached availability without starting another worker.
 
 On Linux amd64 with GraalPy 25.2.4 and SkyPilot 0.13.0, the restored two-lane implementation measured the following on 2026-09-05:
 
@@ -53,3 +53,11 @@ Native dependency startup is included in the test's outer deadline and excluded 
 - [GraalPy native extension embedding](https://github.com/oracle/graalpython/blob/master/docs/user/Embedding-Native-Extensions.md) describes the single-context and platform-thread constraints.
 - [GraalVM Context lifecycle](https://www.graalvm.org/25.0/javadoc/sdk/org/graalvm/polyglot/Context.html) documents interruption and concurrent closure.
 - [Python socket shutdown](https://docs.python.org/3/library/socket.html#socket.socket.shutdown) documents waking a connection before closure.
+
+## First-call timing observed during #215
+
+The unchanged qualification exceeded its two-second cancellation limit in both scenarios on two CI attempts, run 33996295857. Constraining the complete local Maven process tree to one CPU core reproduced both failures at the same cancellation wait. Two CPU cores passed at 1432/1303 ms.
+
+With one unheld cancellation during startup, both one-core scenarios passed. First cancellations took 2880/2626 ms; subsequent cancellations while completion remained held took 1290/1284 ms. Health took 40/34 ms and shutdown took 1356/1333 ms. Both packaged JVMs exited cleanly. The two-second held-work limit, queue limits, native context and shutdown checks are unchanged. The fixture now reports startup cancellation separately, consistent with excluding dependency startup from contention measurements. This does not establish a two-second cold-cancellation guarantee.
+
+[Issue #252](https://github.com/Zorro909/skywright/issues/252) retains the investigation of first-call latency and qualification across runner capacity. The isolation above identifies a first-call cost; it does not yet attribute that cost to a specific SDK initialization or server scheduling step.
