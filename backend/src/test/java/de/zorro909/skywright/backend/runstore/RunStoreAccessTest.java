@@ -143,6 +143,29 @@ class RunStoreAccessTest {
 		assertThat(objects.gets).isZero();
 	}
 
+	@Test
+	void attemptReadsVerifyIdentityAndIntegrityBeforeCorrelation() {
+		var objects = new MemoryObjectStore();
+		var protocol = new RunStoreProtocol("project", "run");
+		String attempt = "123e4567-e89b-12d3-a456-426614174000";
+		String key = protocol.attemptRecordKey(attempt);
+		byte[] body = ("{\"schemaVersion\":1,\"runId\":\"run\",\"attemptId\":\"" + attempt
+				+ "\",\"projectVersion\":\"version\"}")
+			.getBytes(StandardCharsets.UTF_8);
+		objects.put(key, body, "application/json", "execution-attempt-record");
+		var access = new RunStoreAccess(protocol, objects);
+		assertThat(access.listAttempts(1, null).attempts())
+			.containsExactly(new ExecutionAttemptReference("run", attempt, "version"));
+		objects.corrupt(key, "corrupt".getBytes(StandardCharsets.UTF_8));
+		assertThatThrownBy(() -> access.readAttempt(attempt)).isInstanceOf(RunStoreIntegrityException.class);
+		objects.put(key, new String(body, StandardCharsets.UTF_8).replace("\"run\"", "\"other\"")
+			.getBytes(StandardCharsets.UTF_8), "application/json", "execution-attempt-record");
+		assertThatThrownBy(() -> access.readAttempt(attempt)).hasMessageContaining("ATTEMPT_IDENTITY_INVALID");
+		objects.put(key, new byte[65537], "application/json", "execution-attempt-record");
+		assertThatThrownBy(() -> access.readAttempt(attempt)).hasMessageContaining("ATTEMPT_SIZE_OR_KEY_INVALID");
+		assertThatThrownBy(() -> access.listAttempts(1001, null)).isInstanceOf(IllegalArgumentException.class);
+	}
+
 	private static String sha256(byte[] bytes) {
 		try {
 			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));

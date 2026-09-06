@@ -32,7 +32,7 @@ SkyPilot cannot supply a cause, since one operation exit code covers every faile
 
 ## Correlation, submission, and availability
 
-The SkyPilot job is named from the run identity fixed at Run Record creation, and nothing SkyPilot returns is ever stored. Managed-job IDs are database-scoped and renumber when a controller is rebuilt; a derived name does not. Correlation is a pure function of a Skywright-originated fact, submission is idempotent on that name, and a job whose name does not parse as a run identity is not Skywright's — which lets the reconciler ignore foreign jobs on a shared controller without bookkeeping.
+The SkyPilot job is named from the run identity fixed at Run Record creation, and nothing SkyPilot returns is ever stored. Managed-job IDs are database-scoped and renumber when a controller is rebuilt; a derived name does not. Correlation is a pure function of a Skywright-originated fact. The #56 clarification requires an atomic durable first-dispatch claim from #65 rather than treating a name lookup as remote deduplication. Ambiguous delivery is rediscovered without relaunch, and a job whose name does not parse as a run identity is not Skywright's — which lets the reconciler ignore foreign jobs on a shared controller without bookkeeping.
 
 Skywright operates no queue of its own. A Run Record is submitted to SkyPilot at creation and every real wait is SkyPilot's, consistent with excluding a scheduler beside SkyPilot from scope. The only Skywright-originated lifecycle fact is the submission attempt and its time, which is what the derivation reads before SkyPilot knows the job. A capacity shortfall surfaces as an explicit SkyPilot failure rather than a run parked in waiting, which is what T6 requires.
 

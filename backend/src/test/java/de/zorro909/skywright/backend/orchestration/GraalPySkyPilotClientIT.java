@@ -37,6 +37,7 @@ final class GraalPySkyPilotClientIT {
 		var client = client();
 		client.probe();
 		assertCredentialTask(client);
+		assertSourceEvidenceDecoding(client);
 		assertConcurrentAuthorization(client);
 		apiServer.stop();
 		try {
@@ -75,6 +76,47 @@ final class GraalPySkyPilotClientIT {
 		orchestrator.close();
 
 		assertThat(held.toCompletableFuture()).isCompleted();
+	}
+
+	private static void assertSourceEvidenceDecoding(GraalPySkyPilotClient client) throws Exception {
+		var field = GraalPySkyPilotClient.class.getDeclaredField("context");
+		field.setAccessible(true);
+		var context = (org.graalvm.polyglot.Context) field.get(client);
+		context.eval("python", """
+				from sky.schemas.api.responses import ManagedJobRecord
+				from sky.jobs.state import ManagedJobStatus
+				_original_stream = sky.stream_and_get
+				_source_records = [ManagedJobRecord(job_id=42, job_name='evidence-job',
+				    status=ManagedJobStatus.FAILED, recovery_count=2, task_id=0,
+				    submitted_at=100., start_at=110., end_at=150., last_recovered_at=130.,
+				    run_timestamp='source-generation', cloud='kubernetes', region='local',
+				    cluster_resources='MI300X:1', failure_reason='application failed')]
+				sky.stream_and_get = lambda request: (_source_records, 1, {}, 1)
+				""");
+		try {
+			var outcome = (OperationOutcome.Observed) client.complete(new OrchestratorOperation(
+					"{\"request_id\":\"synthetic-source-result\",\"names\":[\"evidence-job\"]}", OperationKind.STATUS));
+			assertThat(outcome.complete()).isTrue();
+			var job = outcome.jobs().getFirst();
+			assertThat(job.jobId()).isEqualTo(42);
+			assertThat(job.endedAt()).isEqualTo(150.0);
+			assertThat(job.recoveryCount()).isEqualTo(2);
+			assertThat(job.status()).isEqualTo("FAILED");
+			assertThat(job.cloud()).isEqualTo("kubernetes");
+			context.eval("python", "sky.stream_and_get = lambda request: (_source_records, 1001, {}, 1001)");
+			assertThat(((OperationOutcome.Observed) client
+				.complete(new OrchestratorOperation("{\"request_id\":\"partial\",\"names\":[]}", OperationKind.STATUS)))
+				.complete()).isFalse();
+		}
+		finally {
+			context.eval("python", "sky.stream_and_get = _original_stream");
+		}
+		// Expired request identifiers are rejected by the actual API server; the adapter
+		// must rediscover by Run identity instead of replaying this operation.
+		assertThat(
+				client.complete(new OrchestratorOperation("{\"request_id\":\"00000000-0000-0000-0000-000000000999\"}",
+						OperationKind.SUBMISSION)))
+			.isInstanceOf(OperationOutcome.Failed.class);
 	}
 
 	private static void assertCredentialTask(GraalPySkyPilotClient client) throws Exception {

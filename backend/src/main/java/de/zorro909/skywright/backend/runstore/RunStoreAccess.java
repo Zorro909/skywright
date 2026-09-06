@@ -139,6 +139,54 @@ public final class RunStoreAccess {
 		}
 	}
 
+	public ExecutionAttemptPage listAttempts(int limit, String continuation) {
+		if (limit < 1 || limit > 1000)
+			throw new IllegalArgumentException("page limit must be 1..1000");
+		String prefix = this.protocol.runPrefix() + "attempts/";
+		var page = this.objects.list(prefix, limit, continuation);
+		if (page.entries().size() > limit)
+			throw new RunStoreIntegrityException("RUN_STORE_INVALID_PAGE");
+		var attempts = new ArrayList<ExecutionAttemptReference>();
+		for (var entry : page.entries()) {
+			if (!entry.key().startsWith(prefix))
+				throw new RunStoreIntegrityException("RUN_STORE_INVALID_KEY");
+			if (!entry.key().endsWith("/record.json"))
+				continue;
+			String attemptId = entry.key().substring(prefix.length(), entry.key().length() - "/record.json".length());
+			attempts.add(readAttempt(attemptId));
+		}
+		return new ExecutionAttemptPage(attempts, page.continuation());
+	}
+
+	public ExecutionAttemptReference readAttempt(String attemptId) {
+		String key = this.protocol.attemptRecordKey(attemptId);
+		try (var content = this.objects.open(key)) {
+			if (content == null)
+				throw new RunStoreIntegrityException("RUN_STORE_MISSING_OBJECT");
+			var descriptor = content.descriptor();
+			if (!key.equals(descriptor.key()) || descriptor.size() > 65536 || descriptor.size() < 0)
+				throw new RunStoreIntegrityException("RUN_STORE_ATTEMPT_SIZE_OR_KEY_INVALID");
+			byte[] bytes = content.stream().readNBytes(65537);
+			var object = new RunStoreObject(key, bytes, descriptor.contentType(), descriptor.metadata());
+			validate(object);
+			if (bytes.length != descriptor.size() || bytes.length > 65536
+					|| !"execution-attempt-record".equals(object.metadata().get("skywright-kind")))
+				throw new RunStoreIntegrityException("RUN_STORE_ATTEMPT_METADATA_INVALID");
+			var value = tools.jackson.databind.json.JsonMapper.builder().build().readTree(bytes);
+			if (!value.path("schemaVersion").isInt() || value.path("schemaVersion").asInt() != 1
+					|| !this.protocol.runId().equals(value.path("runId").asText())
+					|| !attemptId.equals(value.path("attemptId").asText()) || !value.path("projectVersion").isString()
+					|| value.path("projectVersion").asText().isBlank())
+				throw new RunStoreIntegrityException("RUN_STORE_ATTEMPT_IDENTITY_INVALID");
+			content.accept();
+			return new ExecutionAttemptReference(this.protocol.runId(), attemptId,
+					value.path("projectVersion").asText());
+		}
+		catch (IOException failure) {
+			throw new UncheckedIOException(failure);
+		}
+	}
+
 	public ProgressRecord readProgress() {
 		RunStoreObject object = require(this.protocol.progressKey());
 		validate(object);
