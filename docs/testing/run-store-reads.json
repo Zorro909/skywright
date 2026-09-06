@@ -1,0 +1,44 @@
+{
+  "date": "2026-09-06",
+  "baseline_source": "0657469b2f9e4b6906b65ff7bbc325c2aa354415",
+  "implementation_source": "a108c670d393b820db37ee21a636f35ed76447fe",
+  "recovery": {
+    "baseline": {
+      "additional_rss_bytes": 667602944,
+      "baseline_rss_bytes": 262643712,
+      "budget_passed": false,
+      "disk_budget_bytes": 134218616,
+      "elapsed_seconds": 0.4343248140066862,
+      "host_budget_bytes": 335544320,
+      "object_bytes": 134218616,
+      "payload_bytes": 134217728,
+      "peak_rss_bytes": 930246656,
+      "staged_disk_peak_bytes": 134218616,
+      "state_verified": true
+    },
+    "fixed": {
+      "additional_rss_bytes": 258609152,
+      "baseline_rss_bytes": 262402048,
+      "budget_passed": true,
+      "disk_budget_bytes": 134218616,
+      "elapsed_seconds": 0.21963387000141665,
+      "host_budget_bytes": 335544320,
+      "object_bytes": 134218616,
+      "payload_bytes": 134217728,
+      "peak_rss_bytes": 521011200,
+      "staged_disk_peak_bytes": 134218616,
+      "state_verified": true
+    }
+  },
+  "java_metadata": {
+    "outputs": 100,
+    "output_bytes": 4194304,
+    "list_calls": 4,
+    "head_calls": 200,
+    "local_presign_calls": 100,
+    "get_calls": 0,
+    "payload_bytes": 0,
+    "retained_heap_growth_bytes": 134440,
+    "verified_download_bytes": 4194304
+  }
+}
