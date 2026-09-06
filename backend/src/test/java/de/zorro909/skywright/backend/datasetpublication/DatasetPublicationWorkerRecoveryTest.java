@@ -26,6 +26,7 @@ class DatasetPublicationWorkerRecoveryTest {
 		UUID publicationId = UUID.randomUUID();
 		Path jobDirectory = Files.createDirectory(this.temporaryDirectory.resolve("job"));
 		Files.writeString(jobDirectory.resolve("job.json"), "{}");
+		Files.writeString(jobDirectory.resolve("result.json.pending"), "{\"verified\":true");
 		var open = new DatasetPublicationOpenCredentialProjection(projectionId, publicationId, 123L, null,
 				jobDirectory);
 		var projections = new RecordingProjectionLifecycle(open);

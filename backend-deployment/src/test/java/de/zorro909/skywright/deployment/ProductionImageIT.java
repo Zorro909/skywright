@@ -72,7 +72,7 @@ final class ProductionImageIT {
 						+ " GRANT USAGE ON SCHEMA skywright TO skywright_runtime;");
 		runningContainer = containerName("running");
 		var arguments = applicationContainerArguments(runningContainer);
-		arguments.addAll(List.of("--read-only", "--tmpfs", "/tmp:rw,exec,nosuid,size=128m", "--publish",
+		arguments.addAll(List.of("--read-only", "--tmpfs", BackendPodBudget.temporaryMount(), "--publish",
 				"127.0.0.1::8080", imageName()));
 		docker(arguments.toArray(String[]::new));
 		var port = awaitPublishedPort(runningContainer, STARTUP_TIMEOUT);
@@ -184,7 +184,7 @@ final class ProductionImageIT {
 		try (var skyPilot = HeldSkyPilotServer.start()) {
 			var arguments = applicationContainerArguments(container);
 			arguments.addAll(
-					List.of("--read-only", "--tmpfs", "/tmp:rw,exec,nosuid,size=128m", "--add-host",
+					List.of("--read-only", "--tmpfs", BackendPodBudget.temporaryMount(), "--add-host",
 							"skywright-test-host:host-gateway", "--env",
 							"SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT=http://skywright-test-host:"
 									+ skyPilot.port(),

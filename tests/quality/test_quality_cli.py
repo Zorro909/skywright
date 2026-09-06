@@ -273,6 +273,10 @@ class PlanningTest(unittest.TestCase):
         for path in (
             "backend/src/main/java/de/zorro909/skywright/backend/datasetpublication/Service.java",
             "sdk/src/skywright/_dataset_cli.py",
+            "deployment/base/backend-deployment.yaml",
+            "deployment/overlays/production/backend-patch.yaml",
+            "backend-deployment/src/test/java/de/zorro909/skywright/deployment/DatasetPublicationImageIT.java",
+            "backend-deployment/src/test/java/de/zorro909/skywright/deployment/BackendPodBudget.java",
         ):
             with self.subTest(path=path):
                 plan = self.plan(path)

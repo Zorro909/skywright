@@ -54,7 +54,7 @@ location. It must permit execution because Graal installs its pinned native runt
 docker run --rm \
   --name skywright-backend \
   --read-only \
-  --tmpfs /tmp:rw,exec,nosuid,size=128m \
+  --tmpfs /tmp:rw,exec,nosuid,size=64m \
   --env SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=production \
   --env SKYWRIGHT_DEPLOYMENT_REPORTING_CURRENCY=EUR \
   --env SKYWRIGHT_DATABASE_MIGRATION_URL='jdbc:postgresql://<database-host>:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
@@ -89,7 +89,7 @@ Bind both application and JDWP ports only to loopback:
 docker run --rm \
   --name skywright-backend-debug \
   --read-only \
-  --tmpfs /tmp:rw,exec,nosuid,size=128m \
+  --tmpfs /tmp:rw,exec,nosuid,size=64m \
   --env SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=local \
   --env SKYWRIGHT_DEPLOYMENT_REPORTING_CURRENCY=EUR \
   --env SKYWRIGHT_DATABASE_MIGRATION_URL='jdbc:postgresql://<database-host>:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
@@ -107,3 +107,6 @@ docker run --rm \
 
 Repository CI orchestration, release automation, signing, attestations, retention, and policy are
 deliberately delegated to [issue #78](https://github.com/Zorro909/skywright/issues/78).
+
+Dataset Publication verification uses the production pod's 64 MiB temporary-storage
+budget. See [the object and concurrency limits and qualification evidence](../docs/testing/dataset-publication-storage.md).

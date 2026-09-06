@@ -329,6 +329,8 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
     ):
         applicable = applicable.union(("integration",))
     publication_prefixes = (
+        "backend-deployment/src/test/java/de/zorro909/skywright/deployment/DatasetPublication",
+        "backend-deployment/src/test/java/de/zorro909/skywright/deployment/BackendPodBudget",
         "backend/src/main/java/de/zorro909/skywright/backend/datasetpublication/",
         "backend/src/test/java/de/zorro909/skywright/backend/acceptance/DatasetPublication",
         "sdk/src/skywright/_dataset_",
