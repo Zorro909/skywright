@@ -32,6 +32,15 @@ final class SkyPilotHeldQualification {
 				.toCompletableFuture()
 				.get(90, TimeUnit.SECONDS)
 				.value();
+			// Initialize the cancellation path before measuring contention with held
+			// work.
+			var startupStarted = System.nanoTime();
+			var startupCancellation = orchestrator
+				.control(new ControlRequest("missing-job", ControlRequest.Action.CANCEL))
+				.toCompletableFuture()
+				.get(10, TimeUnit.SECONDS);
+			require(startupCancellation.failure() == null, "startup cancellation");
+			evidence.put("startup_cancellation_ms", elapsed(startupStarted));
 			System.out.println("HOLD " + JSON.readTree(operation.id()).required("request_id").asText());
 			proceed(input, "complete");
 			var held = orchestrator.complete(operation).toCompletableFuture();
