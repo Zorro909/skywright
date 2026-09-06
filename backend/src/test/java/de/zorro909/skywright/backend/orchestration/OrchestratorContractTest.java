@@ -1,6 +1,7 @@
 package de.zorro909.skywright.backend.orchestration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import jakarta.persistence.Entity;
 import java.lang.reflect.RecordComponent;
@@ -45,6 +46,18 @@ final class OrchestratorContractTest {
 		assertThat(task.resources()).containsExactly(cuda, rocm);
 		assertThat(task.resources()).extracting(OrchestratorTaskSpecification.Resources::useSpot)
 			.containsExactly(true, false);
+	}
+
+	@Test
+	void recoveryRequestsOnlyDurablyFinalizedInterruption() {
+		var codes = new ArrayList<>(List.of(75));
+		var recovery = new OrchestratorTaskSpecification.JobRecovery(0, codes);
+		codes.add(1);
+		assertThat(recovery.recoverOnExitCodes()).containsExactly(75);
+		assertThatThrownBy(() -> new OrchestratorTaskSpecification.JobRecovery(1, List.of(75)))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new OrchestratorTaskSpecification.JobRecovery(0, List.of(1, 64, 75, 137)))
+			.isInstanceOf(IllegalArgumentException.class);
 	}
 
 	@Test

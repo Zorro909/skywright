@@ -50,12 +50,29 @@ public record OrchestratorTaskSpecification(String name, String setup, String ru
 	}
 
 	public record Resources(String infrastructure, String cpus, String memory, String accelerators, String imageId,
-			boolean useSpot) {
+			boolean useSpot, JobRecovery jobRecovery) {
+
+		public Resources(String infrastructure, String cpus, String memory, String accelerators, String imageId,
+				boolean useSpot) {
+			this(infrastructure, cpus, memory, accelerators, imageId, useSpot, null);
+		}
 
 		public Resources {
 			requireText(infrastructure, "infrastructure");
 			requireText(cpus, "cpus");
 			requireText(memory, "memory");
+		}
+
+	}
+
+	/** Only a durably finalized interruption may request an application-code recovery. */
+	public record JobRecovery(int maxRestartsOnErrors, List<Integer> recoverOnExitCodes) {
+
+		public JobRecovery {
+			recoverOnExitCodes = List.copyOf(recoverOnExitCodes);
+			if (maxRestartsOnErrors != 0 || !recoverOnExitCodes.equals(List.of(75))) {
+				throw new IllegalArgumentException("Only finalized interruption outcome 75 may request recovery");
+			}
 		}
 
 	}
