@@ -21,6 +21,7 @@ from skywright.dataset import (
     MdsDatasetAccess,
     StorageLocation,
 )
+from skywright.recovery import PreviousWriterEvidence
 from skywright.run_store import (
     CheckpointCodec,
     RunStoreReader,
@@ -65,7 +66,7 @@ checkpoint = (
     RunStoreReader(source_target, checkpoint_codec=codec).read_exact(
         inputs["reference"]
     )
-    if inputs.get("reference")
+    if inputs.get("reference") and source_id is not None
     else None
 )
 
@@ -137,10 +138,17 @@ with MdsDatasetAccess(
         seed=19,
         resume_from=checkpoint,
         source_run_id=source_id,
+        previous_writer_verifier=lambda previous: (
+            PreviousWriterEvidence(**inputs["previous_writer"])
+            if inputs.get("previous_writer", {}).get("attempt_id")
+            == previous.attempt_id
+            else None
+        ),
         ordering_reset=inputs.get("ordering_reset", False),
         interruption_requested=lambda: stop,
     )
 observed.update(
+    attempt_id=result.attempt.attempt_id,
     outcome=result.outcome.value,
     report_cause=result.report.cause.value,
     reference=result.report.latest_durable_checkpoint,

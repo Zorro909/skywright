@@ -446,6 +446,8 @@ def test_training_lifecycle_scenarios_persist_to_pinned_seaweedfs(tmp_path) -> N
         bucket = f"skywright-{uuid.uuid4().hex}"
         client.create_bucket(Bucket=bucket)
 
+        stopped_attempts: dict[str, str] = {}
+
         def run_scenario(scenario: str, run_id: str) -> dict[str, object]:
             completed = subprocess.run(
                 [
@@ -460,12 +462,19 @@ def test_training_lifecycle_scenarios_persist_to_pinned_seaweedfs(tmp_path) -> N
                     run_id,
                     "--staging-directory",
                     str(tmp_path / f"{run_id}-{scenario}"),
+                    *(
+                        ["--stopped-previous-attempt", stopped_attempts[run_id]]
+                        if run_id in stopped_attempts
+                        else []
+                    ),
                 ],
                 check=True,
                 text=True,
                 capture_output=True,
             )
-            return json.loads(completed.stdout)
+            result = json.loads(completed.stdout)
+            stopped_attempts[run_id] = result.pop("attempt_id")
+            return result
 
         interrupted = run_scenario("interrupted", "resume-run")
         assert interrupted == {
@@ -662,12 +671,19 @@ def test_projected_storage_roles_are_enforced_by_real_service(tmp_path, monkeypa
 import json, sys
 from skywright import run_training_process
 from skywright.run_store import RunStoreRecorder, TargetStorage
+from skywright.recovery import RecoveryAdmissionError
+from skywright.credentials import CredentialProjectionError
+from types import SimpleNamespace
 store = RunStoreRecorder(TargetStorage("outputs", sys.argv[1], "outputs", "us-east-1", "project", "run", credential_slot="run_store"))
-result = run_training_process(lambda context: None, run_id="run", project_version="fixture", configuration={}, dataset="unused:dataset", metric_contracts="unused:metrics", skywright_metric_schema="fixture", recorder=store, seed=0)
-assert result.report.cause.value == "skywright_failure"
-assert result.outcome.value == "failed"
-assert result.report.diagnostics["exception_type"] == "CredentialProjectionError"
-print(json.dumps(dict(result.report.diagnostics)))
+try:
+    run_training_process(lambda context: None, run_id="run", project_version="fixture", configuration={}, dataset=SimpleNamespace(ordering_fingerprint="ordering"), metric_contracts="unused:metrics", skywright_metric_schema="fixture", recorder=store, seed=0)
+except RecoveryAdmissionError as failure:
+    assert failure.code == "RECOVERY_UNAVAILABLE"
+    assert isinstance(failure.__cause__, CredentialProjectionError)
+    print(json.dumps({"code": failure.code, "detail": failure.detail}))
+else:
+    raise AssertionError("rejected storage credentials admitted an attempt")
+
 """,
                 endpoint,
             ],

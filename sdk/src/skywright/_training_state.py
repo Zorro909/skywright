@@ -73,3 +73,33 @@ def validate_output(
             "persist immutable bytes",
         )
     return data
+
+
+def validate_recovery_runtime_state(state: Mapping[str, object]) -> None:
+    """Reject incomplete library state without changing process-global RNGs."""
+    from skywright.recovery import RecoveryAdmissionError
+
+    required = {"python_random", "training_determinism"}
+    if importlib.util.find_spec("numpy") is not None:
+        required.add("numpy_random")
+    if importlib.util.find_spec("torch") is not None:
+        required.add("torch_cpu_random")
+    if not required.issubset(state):
+        raise RecoveryAdmissionError(
+            "RECOVERY_STATE_INCOMPATIBLE",
+            "checkpoint lacks required library state: "
+            + ", ".join(sorted(required - set(state))),
+        )
+    try:
+        random.Random().setstate(cast(tuple[object, ...], state["python_random"]))
+        if "numpy_random" in required:
+            numpy = importlib.import_module("numpy")
+            numpy.random.RandomState().set_state(state["numpy_random"])
+        if "torch_cpu_random" in required:
+            torch = importlib.import_module("torch")
+            torch.Generator(device="cpu").set_state(state["torch_cpu_random"])
+    except (TypeError, ValueError, RuntimeError) as failure:
+        raise RecoveryAdmissionError(
+            "RECOVERY_STATE_INCOMPATIBLE",
+            "checkpoint library RNG state cannot be restored",
+        ) from failure

@@ -5,7 +5,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from skywright._cgroup_memory import read_cgroup_memory_usage
 from skywright._training_context import DefaultRunContext
@@ -34,6 +34,7 @@ from skywright._training_results import (
     unpublished_failure,
 )
 from skywright._training_signals import SignalRequests
+from skywright._training_state import validate_recovery_runtime_state
 from skywright._training_system_metrics import SamplerWait, wait_for_sampling
 from skywright._training_types import (
     CPU_ACCELERATOR,
@@ -44,7 +45,16 @@ from skywright._training_types import (
     ExecutionTerminationCause,
     TrainingProcessOutcome,
     TrainingProcessResult,
+    checkpoint_payload,
 )
+from skywright.recovery import (
+    PreviousWriterVerifier,
+    RecoveryAdmissionError,
+    uncertain_previous_writer,
+)
+
+if TYPE_CHECKING:
+    from skywright.run_store import CheckpointResolution
 
 
 def _never_requested() -> bool:
@@ -66,6 +76,8 @@ def run_training_process(
     skywright_metric_schema: str,
     recorder: TrainingProcessRecorder | str,
     seed: int,
+    maximum_recovery_debt: int = 3,
+    previous_writer_verifier: PreviousWriterVerifier = uncertain_previous_writer,
     resume_from: CheckpointSnapshot | str | None = None,
     source_run_id: str | None = None,
     ordering_reset: bool = False,
@@ -92,6 +104,54 @@ def run_training_process(
             rejected_corrupt_checkpoints=rejected_corrupt_checkpoints,
         )
         return unpublished_failure(attempt, violation, "construction")
+    # The production recorder gates recovery before an Execution Attempt Record
+    # exists. Test/embedding recorders retain their explicit injection contract.
+    try:
+        resolved_recorder = cast(
+            TrainingProcessRecorder, resolve_component(recorder, "recorder")
+        )
+    except Exception as failure:
+        attempt = ExecutionAttemptRecord(
+            str(uuid.uuid4()), run_id, project_version, None
+        )
+        return unpublished_failure(attempt, failure, "construction")
+    resolved_dataset: DatasetAccess | None = None
+    prepare = getattr(resolved_recorder, "prepare_recovery", None)
+    if callable(prepare):
+        try:
+            resolved_dataset = cast(
+                DatasetAccess, resolve_component(dataset, "Dataset access")
+            )
+            prepare_recovery = cast(
+                Callable[..., "CheckpointResolution | None"], prepare
+            )
+            resolution = prepare_recovery(
+                project_version=project_version,
+                ordering_fingerprint=resolved_dataset.ordering_fingerprint,
+                maximum_debt=maximum_recovery_debt,
+                previous_writer_verifier=previous_writer_verifier,
+                external_seed=source_run_id is not None,
+            )
+            if resolution is not None:
+                if resume_from is not None:
+                    raise RecoveryAdmissionError(
+                        "RECOVERY_SEED_OVERRIDE",
+                        "same-Run recovery selects its seed from complete durable history",
+                    )
+                resume_from = resolution.checkpoint
+                rejected_corrupt_checkpoints = resolution.rejected
+            elif resume_from is not None and source_run_id is None:
+                raise RecoveryAdmissionError(
+                    "RECOVERY_SEED_OVERRIDE",
+                    "an explicit seed requires a new Run and source Run identity",
+                )
+        except RecoveryAdmissionError:
+            raise
+        except Exception as failure:
+            raise RecoveryAdmissionError(
+                "RECOVERY_UNAVAILABLE",
+                f"startup validation failed: {type(failure).__name__}: {failure}",
+            ) from failure
     attempt = ExecutionAttemptRecord(
         attempt_id=str(uuid.uuid4()),
         run_id=run_id,
@@ -138,9 +198,6 @@ def run_training_process(
         return signal_requests.interruption_requested or interruption_requested()
 
     try:
-        resolved_recorder = cast(
-            TrainingProcessRecorder, resolve_component(recorder, "recorder")
-        )
         configure_recorder_observability(
             resolved_recorder,
             configuration,
@@ -154,6 +211,16 @@ def run_training_process(
             if resume_from is not None
             else None
         )
+        if callable(prepare) and resolved_resume is not None:
+            project_state, runtime_state = checkpoint_payload(resolved_resume)
+            if not project_state or any(
+                not isinstance(value, Mapping) for value in project_state.values()
+            ):
+                raise RecoveryAdmissionError(
+                    "RECOVERY_STATE_INCOMPATIBLE",
+                    "checkpoint project state must contain named state mappings",
+                )
+            validate_recovery_runtime_state(runtime_state)
         attempt = replace(
             attempt,
             seed_checkpoint_step=(
@@ -164,12 +231,16 @@ def run_training_process(
             ),
         )
         resolved_recorder.publish_attempt(attempt)
+    except RecoveryAdmissionError:
+        signal_requests.finalize()
+        raise
     except Exception as failure:
         return finish(unpublished_failure(attempt, failure, "construction"))
     try:
-        resolved_dataset = cast(
-            DatasetAccess, resolve_component(dataset, "Dataset access")
-        )
+        if resolved_dataset is None:
+            resolved_dataset = cast(
+                DatasetAccess, resolve_component(dataset, "Dataset access")
+            )
         resolved_metric_contracts = cast(
             MetricContractResolver,
             resolve_component(metric_contracts, "metric contract resolver"),

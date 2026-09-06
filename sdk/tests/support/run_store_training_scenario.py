@@ -23,9 +23,9 @@ from skywright import (
     run_training_process,
 )
 from skywright.metrics import MetricSchema
+from skywright.recovery import PreviousWriterEvidence
 from skywright.run_store import (
     CheckpointCodec,
-    RunStoreReader,
     RunStoreRecorder,
     TargetStorage,
 )
@@ -76,6 +76,7 @@ def main() -> None:
     parser.add_argument(
         "scenario", choices=("interrupted", "resume", "cancelled", "failed")
     )
+    parser.add_argument("--stopped-previous-attempt")
     parser.add_argument("--endpoint", required=True)
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--run-id", required=True)
@@ -101,14 +102,6 @@ def main() -> None:
     arguments.staging_directory.mkdir(parents=True, exist_ok=True)
     codec = CheckpointCodec(staging_directory=arguments.staging_directory)
     recorder = RunStoreRecorder(target, client=client, checkpoint_codec=codec)
-    reader = RunStoreReader(target, client=client, checkpoint_codec=codec)
-    resume_from = None
-    if arguments.scenario == "resume":
-        resume_from = reader.resolve_latest_valid(
-            project_version="project@digest",
-            ordering_fingerprint=TwoItemDataset.ordering_fingerprint,
-        ).checkpoint
-
     observed: dict[str, object] = {}
 
     def train(context):
@@ -133,7 +126,16 @@ def main() -> None:
         skywright_metric_schema="metrics@1",
         recorder=recorder,
         seed=7,
-        resume_from=resume_from,
+        previous_writer_verifier=lambda previous: (
+            PreviousWriterEvidence(
+                previous.run_id,
+                previous.attempt_id,
+                "stopped",
+                "fixture-parent:subprocess-run-completed",
+            )
+            if previous.attempt_id == arguments.stopped_previous_attempt
+            else None
+        ),
         cancellation_requested=lambda: arguments.scenario == "cancelled",
         interruption_requested=lambda: arguments.scenario == "interrupted",
     )
@@ -147,6 +149,7 @@ def main() -> None:
     print(
         json.dumps(
             {
+                "attempt_id": result.attempt.attempt_id,
                 "outcome": result.outcome.value,
                 "cause": result.report.cause.value,
                 "last_step": result.report.last_committed_step,

@@ -38,6 +38,7 @@ def test_package_root_declares_its_complete_public_surface() -> None:
         "credentials",
         "dataset",
         "metrics",
+        "recovery",
         "run_store",
         "run_training_process",
         "version",
