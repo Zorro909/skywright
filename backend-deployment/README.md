@@ -3,6 +3,10 @@
 This module is the independently buildable deployment boundary for the backend. Its Maven package
 phase consumes the executable JAR from `backend`, constructs `skywright-backend:0.1.0-SNAPSHOT`,
 and copies that same artifact into the image. Docker-compatible tooling is required.
+Verification also requires `kubectl` on `PATH` to render the production overlay; it
+does not require a cluster or Kubernetes credentials. `scripts/setup-worktree` reuses
+an installed client or installs a checksum-verified Linux client into `~/.local/bin`.
+Include that directory on `PATH` after initial setup.
 
 ## Build
 

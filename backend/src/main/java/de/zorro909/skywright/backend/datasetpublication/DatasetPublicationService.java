@@ -437,8 +437,12 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 		}
 		operation.state = DatasetPublicationState.FAILED_CLEANUP;
 		operation.failureCode = failure.failureCode() == null ? "DATASET_CLEANUP_UNAVAILABLE" : failure.failureCode();
-		operation.failureDetail = "Dataset Publication cleanup could not verify object and multipart absence";
-		operation.unavailableSource = "Dataset Target Storage";
+		boolean temporaryStorageUnavailable = "DATASET_WORKER_TEMPORARY_STORAGE_UNAVAILABLE"
+			.equals(failure.failureCode());
+		operation.failureDetail = temporaryStorageUnavailable ? failureDetail(failure)
+				: "Dataset Publication cleanup could not verify object and multipart absence";
+		operation.unavailableSource = temporaryStorageUnavailable ? unavailableSource(failure)
+				: "Dataset Target Storage";
 		operation.retryable = true;
 		operation.updatedAt = this.clock.instant();
 	}
@@ -465,6 +469,9 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 	}
 
 	static String failureDetail(DatasetPublicationWorkerResult failure) {
+		if ("DATASET_WORKER_TEMPORARY_STORAGE_UNAVAILABLE".equals(failure.failureCode())) {
+			return "The Dataset worker could not write its temporary control files";
+		}
 		if ("DATASET_PROJECTION_UNAVAILABLE".equals(failure.failureCode())) {
 			return "Managed credential projection is temporarily unavailable";
 		}
@@ -482,6 +489,9 @@ class DatasetPublicationService implements DatasetPublicationOperations {
 	}
 
 	static String unavailableSource(DatasetPublicationWorkerResult failure) {
+		if ("DATASET_WORKER_TEMPORARY_STORAGE_UNAVAILABLE".equals(failure.failureCode())) {
+			return "Dataset Verification Worker";
+		}
 		if ("DATASET_PROJECTION_UNAVAILABLE".equals(failure.failureCode())) {
 			return "Managed Credential Projection";
 		}

@@ -21,6 +21,7 @@ The repository pins every build tool in a file consumed by its native version ma
 | pnpm | 11.21.0 | `frontend/package.json` |
 | Playwright | 1.62.1 | `frontend/package.json` |
 | uv | 0.8.8 | `sdk/pyproject.toml` |
+| kubectl for image verification | Existing client, or v1.36.3 bootstrap | `scripts/setup-worktree` |
 | Contributor Python | 3.14 | `scripts/setup-worktree` and the primary CI lanes |
 
 Install [SDKMAN](https://sdkman.io/install) and [NVM](https://github.com/nvm-sh/nvm), then have
