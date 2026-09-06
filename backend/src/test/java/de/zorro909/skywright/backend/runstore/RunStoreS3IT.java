@@ -10,6 +10,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.junit.jupiter.api.io.TempDir;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -31,6 +34,9 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @Tag("real-service")
 class RunStoreS3IT {
+
+	@TempDir
+	Path temporary;
 
 	@Test
 	void javaAccessUsesTheSamePinnedSeaweedFsProtocol() throws Exception {
@@ -80,17 +86,21 @@ class RunStoreS3IT {
 						UUID.randomUUID(), 1);
 				try (S3RunStoreObjectStore objects = new S3RunStoreObjectStore(target)) {
 					RunStoreAccess access = new RunStoreAccess(protocol, objects);
-					assertThat(access.listOutputs()).extracting(RunStoreOutput::name)
+					assertThatThrownBy(() -> objects.head("another/run/v1/artifacts/output"))
+						.hasMessageContaining("RUN_STORE_WRONG_RUN");
+					assertThat(access.listOutputs(RunStoreOutputKind.ARTIFACT, 10, null).outputs())
+						.extracting(RunStoreOutput::name)
 						.containsExactly("reports/final.txt");
-					assertThat(access.resolveCheckpoint("skywright-checkpoint:v1:1:sha256:" + checkpointDigest).bytes())
-						.containsExactly(checkpoint);
-					URI download = access.presignDownload(key, 60);
+					assertThat(access.resolveCheckpoint("skywright-checkpoint:v1:1:sha256:" + checkpointDigest).size())
+						.isEqualTo(checkpoint.length);
+					URI download = access.presignDownload(key, 60).url();
 					HttpResponse<byte[]> response = HttpClient.newHttpClient()
 						.send(HttpRequest.newBuilder(download).timeout(Duration.ofSeconds(5)).build(),
 								HttpResponse.BodyHandlers.ofByteArray());
 					assertThat(response.body()).isEqualTo(body);
 					assertThat(objects.measurements()).isNotEmpty();
 					qualifyBoundedReadHistory(objects, key, body);
+					qualifyMetadataAndStreaming(writer, bucket, objects, access, protocol);
 
 					writer.putObject(PutObjectRequest.builder()
 						.bucket(bucket)
@@ -99,11 +109,106 @@ class RunStoreS3IT {
 						.metadata(Map.of("skywright-sha256", sha256(body), "skywright-size",
 								Integer.toString(body.length), "skywright-kind", "artifact", "skywright-schema", "v1"))
 						.build(), AsyncRequestBody.fromBytes("corrupt".getBytes(StandardCharsets.UTF_8))).join();
-					assertThatThrownBy(access::listOutputs).isInstanceOf(RunStoreIntegrityException.class)
-						.hasMessageContaining("RUN_STORE_DIGEST_MISMATCH");
+					assertThatThrownBy(() -> access.listOutputs(RunStoreOutputKind.ARTIFACT, 10, null))
+						.isInstanceOf(RunStoreIntegrityException.class)
+						.hasMessageContaining("RUN_STORE_METADATA_MISMATCH");
 				}
 			}
 		}
+	}
+
+	private void qualifyMetadataAndStreaming(S3AsyncClient writer, String bucket, S3RunStoreObjectStore objects,
+			RunStoreAccess access, RunStoreProtocol protocol) throws Exception {
+		byte[] body = new byte[4 * 1024 * 1024];
+		String digest = sha256(body);
+		String first = null;
+		for (int step = 0; step < 100; step++) {
+			String key = protocol.sampleKey("123e4567-e89b-12d3-a456-426614174000", step, "large.bin");
+			if (first == null) {
+				first = key;
+			}
+			writer
+				.putObject(PutObjectRequest.builder()
+					.bucket(bucket)
+					.key(key)
+					.contentType("application/octet-stream")
+					.metadata(Map.of("skywright-schema", "v1", "skywright-kind", "sample", "skywright-size",
+							Integer.toString(body.length), "skywright-sha256", digest))
+					.build(), AsyncRequestBody.fromBytes(body))
+				.join();
+		}
+		objects.drainMeasurements();
+		System.gc();
+		long initialHeap = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
+		long peakHeap = initialHeap;
+		var counts = new java.util.HashMap<String, Long>();
+		long transferred = 0;
+		String continuation = null;
+		int total = 0;
+		do {
+			RunStoreOutputPage page = access.listOutputs(RunStoreOutputKind.SAMPLE, 25, continuation);
+			assertThat(page.outputs()).hasSize(25);
+			for (RunStoreOutput output : page.outputs()) {
+				RunStoreDownloadLink link = access.presignDownload(output.key(), 60);
+				assertThat(link.size()).isEqualTo(body.length);
+				assertThat(link.digest()).isEqualTo(digest);
+				assertThat(link.verification()).isEqualTo(RunStoreDownloadLink.Verification.NOT_RECORDED);
+			}
+			total += page.outputs().size();
+			continuation = page.continuation();
+			var measurements = objects.drainMeasurements();
+			assertThat(measurements.gap()).isNull();
+			for (var item : measurements.measurements()) {
+				counts.merge(item.operation(), 1L, Long::sum);
+				transferred += item.bytes();
+			}
+			System.gc();
+			peakHeap = Math.max(peakHeap, ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed());
+		}
+		while (continuation != null);
+		assertThat(total).isEqualTo(100);
+		assertThat(counts).containsExactlyInAnyOrderEntriesOf(
+				Map.of("ListObjectsV2", 4L, "HeadObject", 200L, "PresignGetObject", 100L));
+		assertThat(transferred).isZero();
+		assertThat(peakHeap - initialHeap).isLessThan(32L * 1024 * 1024);
+		try (VerifiedRunStoreObject accepted = access.stageDownload(first, temporary, body.length)) {
+			assertThat(Files.size(accepted.path())).isEqualTo(body.length);
+		}
+		var read = objects.drainMeasurements();
+		assertThat(read.measurements()).singleElement().satisfies(item -> {
+			assertThat(item.operation()).isEqualTo("GetObject");
+			assertThat(item.bytes()).isEqualTo(body.length);
+			assertThat(item.succeeded()).isTrue();
+		});
+		// Same-size corruption cannot be detected by HEAD. It must fail consumption.
+		body[0] = 1;
+		writer
+			.putObject(PutObjectRequest.builder()
+				.bucket(bucket)
+				.key(first)
+				.contentType("application/octet-stream")
+				.metadata(Map.of("skywright-schema", "v1", "skywright-kind", "sample", "skywright-size",
+						Integer.toString(body.length), "skywright-sha256", digest))
+				.build(), AsyncRequestBody.fromBytes(body))
+			.join();
+		String corruptedKey = first;
+		assertThat(access.presignDownload(corruptedKey, 60).verification())
+			.isEqualTo(RunStoreDownloadLink.Verification.NOT_RECORDED);
+		assertThatThrownBy(() -> access.stageDownload(corruptedKey, temporary, body.length))
+			.hasMessageContaining("RUN_STORE_DIGEST_MISMATCH");
+		assertThat(objects.drainMeasurements().measurements()).filteredOn(item -> item.operation().equals("GetObject"))
+			.singleElement()
+			.satisfies(item -> {
+				assertThat(item.bytes()).isEqualTo(body.length);
+				assertThat(item.succeeded()).isFalse();
+			});
+		try (var files = Files.list(temporary)) {
+			assertThat(files).isEmpty();
+		}
+		System.out
+			.println("Run Store metadata evidence: outputs=" + total + ", object_bytes=" + body.length + ", calls="
+					+ counts + ", listing_signing_payload_bytes=" + transferred + ", retained_heap_growth_bytes="
+					+ (peakHeap - initialHeap) + ", verified_download_bytes=" + read.measurements().getFirst().bytes());
 	}
 
 	private static void qualifyBoundedReadHistory(S3RunStoreObjectStore objects, String key, byte[] expected) {

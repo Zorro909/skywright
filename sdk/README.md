@@ -570,6 +570,9 @@ output bytes instead of retaining lifetime lists.
 
 `RunStoreRecorder` and `RunStoreReader` retain at most 256 recent S3 request measurements by
 default. Set their positive `measurement_capacity` constructor argument to choose another bound.
+GET measurements finalize when the response closes and count bytes consumed by the caller.
+They report failure when consumption or integrity validation fails. HTTP transport buffering
+and provider billing may count different bytes.
 The `measurements` property is a recent diagnostic snapshot, not complete accounting history.
 Call `drain_measurements()` to take an immutable batch and release those diagnostic records.
 
@@ -587,3 +590,35 @@ use producer/sequence identities to recognize repeated delivery.
 
 The [runtime history qualification](../docs/testing/runtime-history.md) records long-run memory,
 persisted-output checks and the Java adapter's matching drain/overflow contract.
+
+### Bounded reads and download links
+
+`RunStoreReader.read_exact()` downloads in chunks of at most 1 MiB to one private temporary
+file, verifies its size and SHA-256, then decodes tensor leaves directly from that file.
+`staging_directory` chooses recovery disk placement. `max_checkpoint_bytes` limits the
+staged object size and defaults to 64 GiB; the reader also checks available disk space.
+Concurrent recoveries each need their own budget. All responses close and staged files are
+removed on success, corruption, cancellation and decode failure.
+
+Recovery keeps decoded state and its defensive snapshot copy during construction. For the
+qualified numeric model/optimizer workload, reserve twice the decoded payload plus 64 MiB
+of host memory, in addition to the initialized Python/ML runtime. Structural metadata also
+uses memory; the codec caps its encoded header at 32 MiB and tensor entries at one million.
+The numeric workload budget is not a universal RSS limit for metadata-heavy checkpoints.
+Progress Record reads have a separate 16 MiB content limit.
+
+`reader.presign_download(key)` returns a `DownloadLink`. Use `link.url` where the old method
+returned a URL string. The link includes the exact key, current storage identity, expected
+`size` and `digest`, and `verification="not-recorded"`. Existing objects record expected
+integrity metadata but no separate completed verification evidence. Signing checks the
+canonical immutable key and metadata with HEAD, without downloading or claiming to have
+verified its bytes. Construct the reader from the authorized Run's resolved current Target
+Storage, including its current credentials.
+
+Use `reader.download(key, destination, max_bytes=...)` for Skywright consumption. It stages
+and verifies content before atomically replacing `destination`; failure preserves an existing
+destination. A raw external URL consumer must compare its received byte count and SHA-256
+with the link before accepting the download. Links remain valid for 1..3600 seconds.
+
+The [Run Store read qualification](../docs/testing/run-store-reads.md) records actual S3
+traffic, recovery RSS, malformed-content checks and the Java pagination contract.

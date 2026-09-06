@@ -65,13 +65,17 @@ final class TargetStorageQualificationIT {
 
 			byte[] directContent = "resolved registration".getBytes(StandardCharsets.UTF_8);
 			administrator
-				.putObject(PutObjectRequest.builder().bucket(bucket).key("direct/output.bin").build(),
-						AsyncRequestBody.fromBytes(directContent))
+				.putObject(PutObjectRequest.builder()
+					.bucket(bucket)
+					.key("project/run/v1/artifacts/123e4567-e89b-12d3-a456-426614174000/0000000000000000000/output.bin")
+					.build(), AsyncRequestBody.fromBytes(directContent))
 				.join();
 			var resolved = new TargetStorageResolver(registry, credentialAccess).resolveRunOutput(storageId, "backend",
 					"project", "run");
 			try (var runStore = new S3RunStoreObjectStore(resolved)) {
-				assertThat(runStore.get("direct/output.bin").bytes()).isEqualTo(directContent);
+				assertThat(runStore
+					.get("project/run/v1/artifacts/123e4567-e89b-12d3-a456-426614174000/0000000000000000000/output.bin")
+					.bytes()).isEqualTo(directContent);
 			}
 		}
 	}
