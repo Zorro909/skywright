@@ -14,6 +14,10 @@ When refusing a recovery, the gate atomically publishes one immutable, run-level
 
 The gate also fails closed before opening an Execution Attempt when it cannot read or validate the complete history, or when it cannot publish evidence that must be durable. It never permits project code to run from unverified state merely because exhaustion could not be proven. If publication of the exhaustion record itself fails, the process still exits nonzero and the eventual retained SkyPilot terminal fact supplies the lifecycle evidence; Skywright does not manufacture an exhaustion record it failed to persist.
 
+## Checkpoint validation and project registration
+
+On 2026-09-06, the owner confirmed that recovery admission, storage integrity and library-owned continuation checks remain before Training Project entry. Project-specific Checkpoint State completeness is validated and registered state is restored at `context.start()`, after the project registers its state and before its training loop begins. This preserves ADR 0001’s project-owned registration contract without requiring a separate pre-entry declaration phase. Failed registration or restoration cannot admit training work.
+
 ## Recovery admission and previous writers
 
 On 2026-09-04, the owner accepted a fail-closed writer rule for the first local AMD workflow. Before admitting a recovered Execution Attempt, Skywright must establish that the previous Training Process has stopped or has lost storage write authority. An unreachable node, missing heartbeat, absent termination report or new attempt identity does not establish either condition. If neither can be established, recovery remains unavailable and no new Training Project code starts. Record the uncertainty without inventing a termination cause or a Recovery Exhaustion Record.

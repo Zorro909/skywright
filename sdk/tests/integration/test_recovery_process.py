@@ -284,3 +284,30 @@ def test_installed_sdk_never_emits_75_when_interruption_report_is_not_durable(
             assert any("/checkpoints/" in key for key in keys)
         finally:
             supervisor.close()
+
+
+def test_installed_sdk_checks_project_state_after_registration_before_training(
+    installed_recovery_sdk, tmp_path
+):
+    with seaweedfs() as (endpoint, client):
+        client.create_bucket(Bucket="recovery")
+        supervisor = Supervisor(
+            installed_recovery_sdk, tmp_path, endpoint, "recovery", "run"
+        )
+        try:
+            initial, initial_dir = supervisor.start("interrupted")
+            supervisor.finish(initial, initial_dir, expected=75)
+            recovered, recovered_dir = supervisor.start("incomplete")
+            result = supervisor.finish(recovered, recovered_dir, expected=1)
+            assert result["cause"] == "contract_violation"
+            assert (recovered_dir / "attempt.json").exists()
+            assert (recovered_dir / "registered.json").exists()
+            assert not (recovered_dir / "entered.json").exists()
+            checkpoints = [
+                item
+                for item in client.list_objects_v2(Bucket="recovery")["Contents"]
+                if "/checkpoints/" in item["Key"]
+            ]
+            assert len(checkpoints) == 1
+        finally:
+            supervisor.close()

@@ -145,7 +145,10 @@ def main():
 
     def train(context):
         state = State()
-        context.register_checkpoint_state("state", state)
+        context.register_checkpoint_state(
+            "other" if mode == "incomplete" else "state", state
+        )
+        signal_file("registered.json", {"registered": True})
         context.start()
         signal_file(
             "entered.json",
