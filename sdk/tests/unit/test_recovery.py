@@ -361,10 +361,12 @@ def test_incomplete_writer_proof_cannot_admit_or_exhaust(tmp_path):
 
 
 def test_library_state_validation_is_complete_and_does_not_mutate_rngs():
+    import importlib
     import random
 
     import numpy as np
-    import torch
+
+    torch = importlib.import_module("torch")
 
     from skywright._training_state import (
         capture_runtime_state,
