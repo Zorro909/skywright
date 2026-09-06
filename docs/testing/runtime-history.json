@@ -1,0 +1,218 @@
+{
+  "date": "2026-09-06",
+  "baseline_source": "053d3e7b5cb9f9288a0b2c56c85a885977253534",
+  "fixed_source": "ed23258dad7bf2431bcbfc69f343d5bab864bcde",
+  "python": "3.12.11",
+  "boto3": "1.43.73",
+  "java": "OpenJDK 25.0.4 / GraalVM CE 25.2.4+7.1",
+  "platform": "Linux 7.1.5-201.fc44.x86_64, glibc 2.43",
+  "seaweedfs_image": "docker.io/chrislusf/seaweedfs:4.42@sha256:f7cbc8bdbbf60a1aaba7d61784a3bdff3ec1e0657f6ad0b26d5b6ab2cd9d0dc6",
+  "python_runs": {
+    "baseline": {
+      "steps": 3000,
+      "payload_bytes": 65536,
+      "persisted_output_bytes": 393216000,
+      "persisted_outputs_verified": 6000,
+      "persisted_observations_verified": 12000,
+      "metric_segments": 188,
+      "training_seconds": 14.213813873997424,
+      "memory_samples": [
+        {
+          "step": 512,
+          "rss_bytes": 403333120,
+          "retained_measurements": 1154,
+          "live_metric_observations": 64,
+          "live_output_records": 64
+        },
+        {
+          "step": 768,
+          "rss_bytes": 437166080,
+          "retained_measurements": 1730,
+          "live_metric_observations": 64,
+          "live_output_records": 64
+        },
+        {
+          "step": 1024,
+          "rss_bytes": 471089152,
+          "retained_measurements": 2306,
+          "live_metric_observations": 64,
+          "live_output_records": 64
+        },
+        {
+          "step": 1280,
+          "rss_bytes": 504995840,
+          "retained_measurements": 2882,
+          "live_metric_observations": 64,
+          "live_output_records": 64
+        },
+        {
+          "step": 1536,
+          "rss_bytes": 538869760,
+          "retained_measurements": 3458,
+          "live_metric_observations": 64,
+          "live_output_records": 64
+        },
+        {
+          "step": 1792,
+          "rss_bytes": 572858368,
+          "retained_measurements": 4034,
+          "live_metric_observations": 64,
+          "live_output_records": 64
+        },
+        {
+          "step": 2048,
+          "rss_bytes": 606752768,
+          "retained_measurements": 4610,
+          "live_metric_observations": 64,
+          "live_output_records": 64
+        },
+        {
+          "step": 2304,
+          "rss_bytes": 640700416,
+          "retained_measurements": 5186,
+          "live_metric_observations": 64,
+          "live_output_records": 64
+        },
+        {
+          "step": 2560,
+          "rss_bytes": 674570240,
+          "retained_measurements": 5762,
+          "live_metric_observations": 64,
+          "live_output_records": 64
+        },
+        {
+          "step": 2816,
+          "rss_bytes": 708489216,
+          "retained_measurements": 6338,
+          "live_metric_observations": 64,
+          "live_output_records": 64
+        }
+      ],
+      "rss_growth_after_warmup_bytes": 305156096,
+      "max_live_metric_observations": 64,
+      "max_live_output_records": 64,
+      "max_retained_measurements": 6760,
+      "delivered_measurements": 0,
+      "explicitly_missing_measurements": 0,
+      "measurement_through_sequence": 0,
+      "budgets": {
+        "rss_growth_bytes": 33554432,
+        "live_metrics": 4,
+        "live_outputs": 0,
+        "measurements": 256
+      }
+    },
+    "fixed": {
+      "steps": 3000,
+      "payload_bytes": 65536,
+      "persisted_output_bytes": 393216000,
+      "persisted_outputs_verified": 6000,
+      "persisted_observations_verified": 12000,
+      "metric_segments": 188,
+      "training_seconds": 13.13415355500183,
+      "memory_samples": [
+        {
+          "step": 512,
+          "rss_bytes": 336023552,
+          "retained_measurements": 0,
+          "live_metric_observations": 1,
+          "live_output_records": 0
+        },
+        {
+          "step": 768,
+          "rss_bytes": 336023552,
+          "retained_measurements": 0,
+          "live_metric_observations": 1,
+          "live_output_records": 0
+        },
+        {
+          "step": 1024,
+          "rss_bytes": 335880192,
+          "retained_measurements": 0,
+          "live_metric_observations": 1,
+          "live_output_records": 0
+        },
+        {
+          "step": 1280,
+          "rss_bytes": 335880192,
+          "retained_measurements": 0,
+          "live_metric_observations": 1,
+          "live_output_records": 0
+        },
+        {
+          "step": 1536,
+          "rss_bytes": 335880192,
+          "retained_measurements": 0,
+          "live_metric_observations": 1,
+          "live_output_records": 0
+        },
+        {
+          "step": 1792,
+          "rss_bytes": 335884288,
+          "retained_measurements": 0,
+          "live_metric_observations": 1,
+          "live_output_records": 0
+        },
+        {
+          "step": 2048,
+          "rss_bytes": 335888384,
+          "retained_measurements": 0,
+          "live_metric_observations": 1,
+          "live_output_records": 0
+        },
+        {
+          "step": 2304,
+          "rss_bytes": 335888384,
+          "retained_measurements": 0,
+          "live_metric_observations": 1,
+          "live_output_records": 0
+        },
+        {
+          "step": 2560,
+          "rss_bytes": 335888384,
+          "retained_measurements": 0,
+          "live_metric_observations": 1,
+          "live_output_records": 0
+        },
+        {
+          "step": 2816,
+          "rss_bytes": 335900672,
+          "retained_measurements": 0,
+          "live_metric_observations": 1,
+          "live_output_records": 0
+        }
+      ],
+      "rss_growth_after_warmup_bytes": 0,
+      "max_live_metric_observations": 1,
+      "max_live_output_records": 0,
+      "max_retained_measurements": 256,
+      "delivered_measurements": 5862,
+      "explicitly_missing_measurements": 898,
+      "measurement_through_sequence": 6760,
+      "budgets": {
+        "rss_growth_bytes": 33554432,
+        "live_metrics": 4,
+        "live_outputs": 0,
+        "measurements": 256
+      }
+    }
+  },
+  "java_s3": {
+    "measured_requests": 4096,
+    "warmup_requests": 512,
+    "retained_measurements": 256,
+    "missing_measurements": 3840,
+    "heap_bytes": [
+      27975544,
+      28169504,
+      28335704,
+      28487968
+    ],
+    "batch_ms": [
+      894,
+      848,
+      750,
+      698
+    ]
+  }
+}

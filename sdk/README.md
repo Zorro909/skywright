@@ -558,3 +558,32 @@ through `RunStoreReader` when full state is needed for inspection or whole-state
 
 The [checkpoint memory qualification](../docs/testing/checkpoint-memory.md) records the CPU and ROCm
 workloads, memory budgets, capture/upload overlap and reproduction commands.
+
+### Runtime history and storage measurements
+
+`TrainingProcessResult` contains the outcome, attempt, termination report and final checkpoint
+identity. It no longer returns `metric_observations`, `artifacts` or `samples`. Complete history
+stays in the Run Store's Metric Segments and immutable outputs. A test implementation of
+`TrainingProcessRecorder` can retain published values when a test needs historical assertions.
+The production context and background System Metric sampler release published observations and
+output bytes instead of retaining lifetime lists.
+
+`RunStoreRecorder` and `RunStoreReader` retain at most 256 recent S3 request measurements by
+default. Set their positive `measurement_capacity` constructor argument to choose another bound.
+The `measurements` property is a recent diagnostic snapshot, not complete accounting history.
+Call `drain_measurements()` to take an immutable batch and release those diagnostic records.
+
+Every measurement has a `producer_id` and monotonic `sequence`; `request_number` continues to
+identify the attempt within one retried operation. A new client creates a new producer identity.
+Draining does not reset sequence numbers. Batches preserve Run identity, storage provenance,
+request attributes and a `through_sequence` watermark. On overflow, the oldest records are
+evicted and `batch.gap` gives the exact inclusive missing sequence range and timestamp bounds.
+The gap denotes unknown usage, never zero. Storage calls do not wait for a diagnostic consumer.
+
+Consumers must drain often enough for their selected capacity. Durable accounting delivery and
+deduplication belong to #68; these in-process batches do not survive a process crash. An empty
+drain can repeat the previous watermark. Retain the batch until your own handoff succeeds, and
+use producer/sequence identities to recognize repeated delivery.
+
+The [runtime history qualification](../docs/testing/runtime-history.md) records long-run memory,
+persisted-output checks and the Java adapter's matching drain/overflow contract.

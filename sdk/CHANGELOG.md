@@ -2,6 +2,14 @@
 
 ## Next
 
+- Releases published output and Metric Observation history from the production context and
+  background sampler. `TrainingProcessResult` no longer contains `metric_observations`,
+  `artifacts` or `samples`; read persisted Run Store history or use a test recorder.
+- Bounds S3 request diagnostics to 256 records by default, with configurable capacity and
+  atomic `drain_measurements()` batches. Producer/sequence identities distinguish retries and
+  new clients. Overflow reports missing identity ranges and timestamp bounds without stopping
+  storage operations; accounting consumers must preserve these gaps as unknown usage.
+
 - Bounds checkpoint capture to one owned copy and releases confirmed, superseded and failed
   publication payloads. `TrainingProcessResult.final_checkpoint` now returns a
   `CheckpointConfirmation` with only the Step and durable reference; load full state from the
