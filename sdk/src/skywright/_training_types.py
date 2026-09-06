@@ -273,12 +273,9 @@ class ExecutionTerminationReport:
 
 @dataclass(frozen=True)
 class TrainingProcessResult:
-    """Observable result of executing one Training Project process."""
+    """Outcome and durable identities for one Training Project process."""
 
     outcome: TrainingProcessOutcome
     attempt: ExecutionAttemptRecord
     report: ExecutionTerminationReport
     final_checkpoint: CheckpointConfirmation | None
-    metric_observations: tuple[MetricObservation, ...]
-    artifacts: tuple[ArtifactRecord, ...]
-    samples: tuple[SampleRecord, ...]

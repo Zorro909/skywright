@@ -47,6 +47,7 @@ class RunStoreRecorder(_RunStoreRecorder):
         multipart_threshold: int = 64 * 1024 * 1024,
         multipart_part_size: int = 64 * 1024 * 1024,
         operation_control: OperationControl | None = None,
+        measurement_capacity: int = 256,
         metric_staging_directory: Path | None = None,
         metric_wall_clock: Callable[[], float] = time.time,
         metric_periodic_wait: PeriodicWait = wait_for_flush,
@@ -60,6 +61,7 @@ class RunStoreRecorder(_RunStoreRecorder):
             multipart_threshold=multipart_threshold,
             multipart_part_size=multipart_part_size,
             operation_control=operation_control,
+            measurement_capacity=measurement_capacity,
         )
         self._metric_configuration: Mapping[str, object] | None = None
         self._metric_staging_directory = metric_staging_directory

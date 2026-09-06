@@ -93,6 +93,21 @@ class TestRecorder:
     def publish_report(self, report):
         self.events.append(("report", report))
 
+    @property
+    def observations(self):
+        committed = tuple(observation for event in self.events if event[0] == "step"
+                          for observation in event[3])
+        wall_time = tuple(event[1] for event in self.events if event[0] == "wall_time")
+        return committed + wall_time
+
+    @property
+    def artifacts(self):
+        return tuple(event[1] for event in self.events if event[0] == "artifact")
+
+    @property
+    def samples(self):
+        return tuple(event[1] for event in self.events if event[0] == "sample")
+
 
 def test_catalog(*definitions):
     return MetricCatalog(
@@ -211,7 +226,7 @@ print(json.dumps({
     "recorder_configuration": recorder.configuration,
     "metrics": [
         [observation.name, observation.step, observation.value]
-        for observation in result.metric_observations
+        for observation in recorder.observations
         if not observation.name.startswith("skywright/")
     ],
 }))
@@ -346,7 +361,7 @@ print(json.dumps({
     "cause": result.report.cause.value,
     "metrics": [
         [observation.name, observation.step, observation.value]
-        for observation in result.metric_observations
+        for observation in recorder.observations
     ],
 }))
 """
@@ -464,6 +479,7 @@ def train(context):
     context.commit_step(next_batch(context))
 
 
+recorder = TestRecorder()
 result = run_training_process(
     train,
     run_id="test-run",
@@ -474,7 +490,7 @@ result = run_training_process(
         system_definitions=MetricSchema.definitions()
     ),
     skywright_metric_schema="test-schema@1",
-    recorder=TestRecorder(),
+    recorder=recorder,
     seed=5,
     resume_from=CheckpointSnapshot(
         step=4,
@@ -490,7 +506,7 @@ result = run_training_process(
 )
 print(json.dumps([
     [observation.name, observation.step, observation.value]
-    for observation in result.metric_observations
+    for observation in recorder.observations
 ]))
 """
     )
@@ -2071,6 +2087,7 @@ def train(context):
     context.commit_step(batches[-1])
 
 
+recorder = TestRecorder()
 result = run_training_process(
     train,
     run_id="test-run",
@@ -2079,18 +2096,18 @@ result = run_training_process(
     dataset=TestDataset(("item-2", "item-1")),
     metric_contracts=TestMetricContracts(),
     skywright_metric_schema="test-schema@1",
-    recorder=TestRecorder(),
+    recorder=recorder,
     seed=5,
 )
 print(json.dumps({
     "observed": observed,
     "artifacts": [
         [artifact.name, artifact.data.decode(), artifact.step]
-        for artifact in result.artifacts
+        for artifact in recorder.artifacts
     ],
     "samples": [
         [sample.name, sample.media_type, sample.data.decode(), sample.step]
-        for sample in result.samples
+        for sample in recorder.samples
     ],
 }))
 """
@@ -2755,6 +2772,7 @@ def train(context):
     context.commit_step(next_batch(context))
 
 
+recorder = TestRecorder()
 result = run_training_process(
     train,
     run_id="test-run",
@@ -2769,12 +2787,12 @@ result = run_training_process(
         step_reduction="mean",
     ),),
     skywright_metric_schema="test-schema@1",
-    recorder=TestRecorder(),
+    recorder=recorder,
     seed=2,
 )
 print(json.dumps([
     [observation.name, observation.step, observation.value]
-    for observation in result.metric_observations
+    for observation in recorder.observations
     if not observation.name.startswith("skywright/")
 ]))
 """
@@ -2935,7 +2953,7 @@ result = run_training_process(
 print(json.dumps({
     "cause": result.report.cause.value,
     "last_step": result.report.last_committed_step,
-    "observations": len(result.metric_observations),
+    "observations": len(recorder.observations),
     "events": [event[0] for event in recorder.events],
 }))
 """
@@ -3221,7 +3239,7 @@ result = run_training_process(
 print(json.dumps({
     "cause": result.report.cause.value,
     "last_step": result.report.last_committed_step,
-    "observations": len(result.metric_observations),
+    "observations": len(recorder.observations),
     "events": [event[0] for event in recorder.events],
 }))
 """
@@ -3879,3 +3897,60 @@ print(json.dumps({{"cause": result.report.cause.value, "rule": result.report.dia
     assert observed["rule"] == "dataset-ordering/seed"
     if clone:
         assert observed["durable"] is None
+
+
+def test_published_output_bytes_do_not_accumulate_in_the_run_context() -> None:
+    completed = run_project(
+        """
+import gc
+import json
+import tracemalloc
+from skywright import run_training_process
+
+class Counter:
+    def state_dict(self):
+        return {"value": 0}
+    def load_state_dict(self, state):
+        pass
+
+class PublishingRecorder(TestRecorder):
+    artifact_count = 0
+    sample_count = 0
+    def publish_artifact(self, artifact):
+        self.artifact_count += 1
+    def publish_sample(self, sample):
+        self.sample_count += 1
+
+retention = []
+def train(context):
+    context.register_checkpoint_state("counter", Counter())
+    context.start()
+    tracemalloc.start()
+    for index in range(260):
+        context.persist_artifact(f"artifact-{index}", bytes([index % 256]) * 65536)
+        context.persist_sample(f"sample-{index}", bytes([index % 256]) * 65536,
+                               media_type="application/octet-stream")
+        if index in (3, 259):
+            gc.collect()
+            retention.append(tracemalloc.get_traced_memory()[0])
+    tracemalloc.stop()
+    context.commit_step(next_batch(context))
+
+recorder = PublishingRecorder()
+result = run_training_process(
+    train, run_id="test-run", project_version="test-project@abc123",
+    configuration={}, dataset=TestDataset(), metric_contracts=TestMetricContracts(),
+    skywright_metric_schema="test-schema@1", recorder=recorder, seed=17,
+)
+assert set(vars(result)) == {"outcome", "attempt", "report", "final_checkpoint"}
+print(json.dumps({"outcome": result.outcome.value,
+                  "retained_bytes": retention[1] - retention[0],
+                  "diagnostics": dict(result.report.diagnostics),
+                  "artifacts": recorder.artifact_count, "samples": recorder.sample_count}))
+"""
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["outcome"] == "completed", result
+    assert (result["artifacts"], result["samples"]) == (260, 260)
+    assert result["retained_bytes"] < 1024 * 1024
