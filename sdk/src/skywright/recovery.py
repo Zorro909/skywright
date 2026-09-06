@@ -44,6 +44,16 @@ def uncertain_previous_writer(
 
 
 @dataclass(frozen=True)
+class RecoverySeed:
+    """Pinned external continuation retained until a clone publishes its own state."""
+
+    source_run_id: str
+    step: int
+    reference: str
+    ordering_reset: bool
+
+
+@dataclass(frozen=True)
 class RecoveryHistory:
     """Validated durable history; checkpoint identities survive payload retention."""
 
@@ -52,3 +62,4 @@ class RecoveryHistory:
     debt: int
     maximum_debt: int
     head: str | None
+    seed: RecoverySeed | None = None

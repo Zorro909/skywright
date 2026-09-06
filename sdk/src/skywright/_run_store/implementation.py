@@ -46,6 +46,7 @@ from skywright.recovery import (
     PreviousWriterVerifier,
     RecoveryAdmissionError,
     RecoveryHistory,
+    RecoverySeed,
     uncertain_previous_writer,
 )
 
@@ -983,7 +984,7 @@ class RunStoreRecorder:
             measurement_capacity,
         )
         self._recovery: RecoveryJournal | None = None
-        self._recovery_external_seed = False
+        self._recovery_external_seed: RecoverySeed | None = None
         self._attempt: ExecutionAttemptRecord | None = None
         self._confirmation_lock = threading.Lock()
         self._latest_confirmation: tuple[int, str] | None = None
@@ -1007,7 +1008,9 @@ class RunStoreRecorder:
         ordering_fingerprint: str,
         maximum_debt: int = 3,
         previous_writer_verifier: PreviousWriterVerifier = uncertain_previous_writer,
-        external_seed: bool = False,
+        source_run_id: str | None = None,
+        seed_checkpoint: CheckpointSnapshot | str | None = None,
+        ordering_reset: bool = False,
     ) -> CheckpointResolution | None:
         """Gate startup before attempt publication; uncertainty never admits a writer."""
         if self._attempt is not None or self._recovery is not None:
@@ -1016,14 +1019,48 @@ class RunStoreRecorder:
             )
         journal = self._new_recovery_journal(project_version, maximum_debt)
         history = journal.prepare(previous_writer_verifier)
-        if external_seed and history.attempts:
-            raise RecoveryAdmissionError(
-                "RECOVERY_HISTORY_INVALID", "an external seed requires a new Run"
-            )
         if not history.checkpoints:
+            seed = None
+            snapshot = None
+            if source_run_id is not None:
+                from skywright._training_environment import resolve_component
+
+                resolved = resolve_component(seed_checkpoint, "clone seed checkpoint")
+                if (
+                    not isinstance(resolved, CheckpointSnapshot)
+                    or resolved.run_id != source_run_id
+                    or resolved.project_version != project_version
+                    or resolved.reference is None
+                ):
+                    raise RecoveryAdmissionError(
+                        "RECOVERY_SEED_UNAVAILABLE",
+                        "clone seed does not match its source Run and Project Version",
+                    )
+                snapshot = resolved
+                seed = RecoverySeed(
+                    source_run_id, resolved.step, resolved.reference, ordering_reset
+                )
+            elif seed_checkpoint is not None:
+                raise RecoveryAdmissionError(
+                    "RECOVERY_SEED_OVERRIDE",
+                    "an explicit checkpoint requires a source Run",
+                )
+            if history.attempts and seed != history.seed:
+                raise RecoveryAdmissionError(
+                    "RECOVERY_SEED_OVERRIDE",
+                    "recovery must preserve the clone's pinned external seed",
+                )
             self._recovery = journal
-            self._recovery_external_seed = external_seed
-            return None
+            self._recovery_external_seed = seed
+            return (
+                CheckpointResolution(snapshot, (), source_run_id, ordering_reset)
+                if snapshot is not None
+                else None
+            )
+        if seed_checkpoint is not None and source_run_id is None:
+            raise RecoveryAdmissionError(
+                "RECOVERY_SEED_OVERRIDE", "same-Run recovery selects confirmed history"
+            )
         reader = RunStoreReader(
             self.target, checkpoint_codec=self._codec, client=self._client
         )
@@ -1049,7 +1086,7 @@ class RunStoreRecorder:
                 )
                 continue
             self._recovery = journal
-            self._recovery_external_seed = external_seed
+            self._recovery_external_seed = None
             return CheckpointResolution(snapshot, tuple(rejected))
         raise RecoveryAdmissionError(
             "RECOVERY_CHECKPOINT_UNAVAILABLE",
@@ -1704,6 +1741,8 @@ class CheckpointResolution:
 
     checkpoint: CheckpointSnapshot
     rejected: tuple[CheckpointRejectionEvidence, ...]
+    source_run_id: str | None = None
+    ordering_reset: bool = False
 
 
 @dataclass(frozen=True)

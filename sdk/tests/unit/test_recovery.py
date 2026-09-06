@@ -416,3 +416,93 @@ def test_recovery_reader_has_one_bounded_provider_retry_loop(tmp_path, monkeypat
     with pytest.raises(TimeoutError):
         admit(memory, tmp_path)
     assert len(calls) == 8
+
+
+def test_clone_recovery_preserves_external_seed_until_own_checkpoint(tmp_path):
+    from dataclasses import replace
+
+    from skywright.run_store import RunStoreRecorder
+
+    memory = MemoryS3()
+    source, _ = admit(memory, tmp_path)
+    reference = publish(source, 1)
+    seed = RunStoreReader(source.target, client=memory).read_exact(reference)
+    target = replace(source.target, run_id="clone")
+    for expected_debt in (0, 1):
+        clone = RunStoreRecorder(target, client=memory)
+        resolution = clone.prepare_recovery(
+            project_version="project@digest",
+            ordering_fingerprint="ordering",
+            source_run_id="run",
+            seed_checkpoint=seed,
+            previous_writer_verifier=stopped,
+        )
+        assert resolution is not None and resolution.checkpoint.reference == reference
+        assert resolution.source_run_id == "run"
+        attempt = ExecutionAttemptRecord(
+            str(uuid.uuid4()), "clone", "project@digest", 1, reference
+        )
+        clone.publish_attempt(attempt)
+        assert (
+            clone.recovery_history(project_version="project@digest").debt
+            == expected_debt
+        )
+    own_reference = clone.publish_checkpoint(
+        CheckpointSnapshot(
+            2,
+            {"value": 2},
+            run_id="clone",
+            project_version="project@digest",
+            dataset_cursor=DatasetCursor(ordering_fingerprint="ordering"),
+        )
+    )
+    recovered = RunStoreRecorder(target, client=memory)
+    resolution = recovered.prepare_recovery(
+        project_version="project@digest",
+        ordering_fingerprint="ordering",
+        source_run_id="run",
+        seed_checkpoint="missing_source_module:must_not_load",
+        previous_writer_verifier=stopped,
+        ordering_reset=True,
+    )
+    assert resolution is not None and resolution.checkpoint.reference == own_reference
+    assert resolution.source_run_id is None and not resolution.ordering_reset
+    history = recovered.recovery_history(project_version="project@digest")
+    assert history.seed is not None and history.seed.reference == reference
+
+
+@pytest.mark.parametrize("change", ["omitted", "reset"])
+def test_clone_recovery_cannot_omit_or_change_pinned_seed(tmp_path, change):
+    from dataclasses import replace
+
+    from skywright.run_store import RunStoreRecorder
+
+    memory = MemoryS3()
+    source, _ = admit(memory, tmp_path)
+    reference = publish(source, 1)
+    seed = RunStoreReader(source.target, client=memory).read_exact(reference)
+    target = replace(source.target, run_id="clone")
+    clone = RunStoreRecorder(target, client=memory)
+    clone.prepare_recovery(
+        project_version="project@digest",
+        ordering_fingerprint="ordering",
+        source_run_id="run",
+        seed_checkpoint=seed,
+    )
+    clone.publish_attempt(
+        ExecutionAttemptRecord(
+            str(uuid.uuid4()), "clone", "project@digest", 1, reference
+        )
+    )
+    before = set(memory.objects)
+    recovered = RunStoreRecorder(target, client=memory)
+    with pytest.raises(RecoveryAdmissionError, match="RECOVERY_SEED_OVERRIDE"):
+        recovered.prepare_recovery(
+            project_version="project@digest",
+            ordering_fingerprint="ordering",
+            source_run_id=None if change == "omitted" else "run",
+            seed_checkpoint=None if change == "omitted" else seed,
+            ordering_reset=change == "reset",
+            previous_writer_verifier=stopped,
+        )
+    assert set(memory.objects) == before

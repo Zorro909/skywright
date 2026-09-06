@@ -186,6 +186,14 @@ def main():
         state.value += 1
         context.commit_step(next(iter(context.dataset.batches(context.dataset_cursor))))
 
+    def clone_seed():
+        from dataclasses import replace
+
+        return RunStoreReader(
+            replace(target, run_id=settings["source_run_id"]), client=real
+        ).read_exact(settings["seed_reference"])
+
+    globals()["clone_seed"] = clone_seed
     try:
         result = run_training_process(
             train,
@@ -197,6 +205,10 @@ def main():
             skywright_metric_schema="metrics@1",
             recorder=store,
             seed=7,
+            source_run_id=settings.get("source_run_id"),
+            resume_from="__main__:clone_seed"
+            if settings.get("source_run_id")
+            else None,
             previous_writer_verifier=proof,
             interruption_requested=lambda: (
                 mode in {"interrupted", "upload-loss", "report-loss"}

@@ -130,16 +130,15 @@ def run_training_process(
                 ordering_fingerprint=resolved_dataset.ordering_fingerprint,
                 maximum_debt=maximum_recovery_debt,
                 previous_writer_verifier=previous_writer_verifier,
-                external_seed=source_run_id is not None,
+                source_run_id=source_run_id,
+                seed_checkpoint=resume_from,
+                ordering_reset=ordering_reset,
             )
             if resolution is not None:
-                if resume_from is not None:
-                    raise RecoveryAdmissionError(
-                        "RECOVERY_SEED_OVERRIDE",
-                        "same-Run recovery selects its seed from complete durable history",
-                    )
                 resume_from = resolution.checkpoint
                 rejected_corrupt_checkpoints = resolution.rejected
+                source_run_id = resolution.source_run_id
+                ordering_reset = resolution.ordering_reset
             elif resume_from is not None and source_run_id is None:
                 raise RecoveryAdmissionError(
                     "RECOVERY_SEED_OVERRIDE",

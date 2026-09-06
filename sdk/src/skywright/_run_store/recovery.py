@@ -9,7 +9,7 @@ import re
 import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any, NoReturn, cast
 
 from skywright._training_types import (
@@ -22,6 +22,7 @@ from skywright.recovery import (
     PreviousWriterVerifier,
     RecoveryAdmissionError,
     RecoveryHistory,
+    RecoverySeed,
 )
 
 # Limits fail closed rather than silently truncating the evidence used for debt.
@@ -96,6 +97,63 @@ def read_attempt(raw: Any) -> ExecutionAttemptRecord:
         raise RecoveryAdmissionError(
             "RECOVERY_HISTORY_INVALID", "invalid attempt record"
         ) from failure
+
+
+def read_seed(raw: object) -> RecoverySeed | None:
+    if raw is None:
+        return None
+    try:
+        if not isinstance(raw, dict):
+            fail("external seed is not an object")
+        values = cast(dict[str, Any], raw)
+        if not isinstance(values.get("source_run_id"), str) or not isinstance(
+            values.get("reference"), str
+        ):
+            fail("external seed identities must be strings")
+        seed = RecoverySeed(**values)
+        if (
+            not seed.source_run_id
+            or type(seed.step) is not int
+            or not 1 <= seed.step <= 2**63 - 1
+            or type(seed.ordering_reset) is not bool
+            or re.fullmatch(
+                r"skywright-checkpoint:v1:" + str(seed.step) + r":sha256:[0-9a-f]{64}",
+                seed.reference,
+            )
+            is None
+        ):
+            fail("external seed identity is invalid")
+        return seed
+    except (TypeError, ValueError) as failure:
+        raise RecoveryAdmissionError(
+            "RECOVERY_HISTORY_INVALID", "invalid external seed"
+        ) from failure
+
+
+def validate_attempt_seed(
+    attempt: ExecutionAttemptRecord,
+    checkpoints: tuple[CheckpointConfirmation, ...],
+    pinned: RecoverySeed | None,
+    active: RecoverySeed | None,
+) -> None:
+    if active is not None:
+        if (
+            checkpoints
+            or active != pinned
+            or attempt.seed_checkpoint_step != active.step
+            or attempt.seed_checkpoint_reference != active.reference
+            or active.source_run_id == attempt.run_id
+        ):
+            fail("attempt external seed differs from its pinned continuation")
+    elif checkpoints:
+        if not any(
+            c.step == attempt.seed_checkpoint_step
+            and c.reference == attempt.seed_checkpoint_reference
+            for c in checkpoints
+        ):
+            fail("attempt seed is not a confirmed checkpoint")
+    elif pinned is not None or attempt.seed_checkpoint_reference is not None:
+        fail("attempt omitted its pinned external seed")
 
 
 class RecoveryJournal:
@@ -204,6 +262,7 @@ class RecoveryJournal:
         attempts: list[ExecutionAttemptRecord] = []
         checkpoints: dict[int, CheckpointConfirmation] = {}
         debt = 0
+        pinned_seed: RecoverySeed | None = None
         for event in reversed(events):
             if event.get("kind") == "attempt":
                 attempt = read_attempt(event.get("attempt"))
@@ -230,16 +289,12 @@ class RecoveryJournal:
                     or event.get("admittedDebt") != debt
                 ):
                     fail("attempt debt does not match durable history")
-                if (
-                    attempt.seed_checkpoint_reference is not None
-                    and not any(
-                        c.reference == attempt.seed_checkpoint_reference
-                        and c.step == attempt.seed_checkpoint_step
-                        for c in checkpoints.values()
-                    )
-                    and (attempts or not event.get("externalSeed"))
-                ):
-                    fail("attempt seed is not in prior durable history")
+                active_seed = read_seed(event.get("externalSeed"))
+                if not attempts:
+                    pinned_seed = active_seed
+                validate_attempt_seed(
+                    attempt, tuple(checkpoints.values()), pinned_seed, active_seed
+                )
                 self._verify_attempt(attempt)
                 attempts.append(attempt)
             elif event.get("kind") == "checkpoint":
@@ -277,6 +332,7 @@ class RecoveryJournal:
             debt,
             self.maximum_debt,
             head["digest"],
+            pinned_seed,
         )
         return self._history
 
@@ -331,7 +387,10 @@ class RecoveryJournal:
         return history
 
     def admit(
-        self, attempt: ExecutionAttemptRecord, *, external_seed: bool = False
+        self,
+        attempt: ExecutionAttemptRecord,
+        *,
+        external_seed: RecoverySeed | None = None,
     ) -> None:
         with self._lock:
             history = self._required_history()
@@ -350,18 +409,12 @@ class RecoveryJournal:
                 or attempt.project_version != self.project_version
             ):
                 fail("prospective attempt identity differs from its prepared Run")
-            if history.checkpoints and not any(
-                c.step == attempt.seed_checkpoint_step
-                and c.reference == attempt.seed_checkpoint_reference
-                for c in history.checkpoints
-            ):
-                fail("prospective recovery does not name a confirmed checkpoint")
-            if (
-                not history.checkpoints
-                and attempt.seed_checkpoint_reference is not None
-                and not external_seed
-            ):
-                fail("prospective attempt names an unconfirmed checkpoint")
+            pinned_seed = history.seed if history.attempts else external_seed
+            if external_seed is not None:
+                read_seed(asdict(external_seed))
+            validate_attempt_seed(
+                attempt, history.checkpoints, pinned_seed, external_seed
+            )
             debt = history.debt + bool(history.attempts)
             if debt > self.maximum_debt:
                 raise RecoveryAdmissionError(
@@ -375,15 +428,17 @@ class RecoveryJournal:
                     "previousWriter": asdict(self._evidence)
                     if self._evidence
                     else None,
-                    "externalSeed": external_seed,
+                    "externalSeed": asdict(external_seed)
+                    if external_seed is not None
+                    else None,
                 }
             )
-            self._history = RecoveryHistory(
-                (*history.attempts, attempt),
-                history.checkpoints,
-                debt,
-                self.maximum_debt,
-                self._required_history().head,
+            self._history = replace(
+                history,
+                attempts=(*history.attempts, attempt),
+                debt=debt,
+                head=self._required_history().head,
+                seed=pinned_seed,
             )
             self._active_attempt = attempt.attempt_id
 
@@ -407,12 +462,14 @@ class RecoveryJournal:
                     "reference": reference,
                 }
             )
-            self._history = RecoveryHistory(
-                history.attempts,
-                (*history.checkpoints, CheckpointConfirmation(step, reference)),
-                max(0, history.debt - 1),
-                self.maximum_debt,
-                self._required_history().head,
+            self._history = replace(
+                history,
+                checkpoints=(
+                    *history.checkpoints,
+                    CheckpointConfirmation(step, reference),
+                ),
+                debt=max(0, history.debt - 1),
+                head=self._required_history().head,
             )
 
     def _append(self, fields: dict[str, object]) -> None:
@@ -445,13 +502,7 @@ class RecoveryJournal:
         self._etag = current[1]
         self._history_bytes += len(body)
         self._event_count += 1
-        self._history = RecoveryHistory(
-            history.attempts,
-            history.checkpoints,
-            history.debt,
-            self.maximum_debt,
-            digest,
-        )
+        self._history = replace(history, head=digest)
 
     def _required_history(self) -> RecoveryHistory:
         if self._history is None:

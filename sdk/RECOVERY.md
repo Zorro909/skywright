@@ -29,6 +29,12 @@ writer may have published progress or its final report during the check. A chang
 head refuses this startup; a fresh process can reevaluate the latest history.
 Terminal reports prevent same-Run recovery. A terminal Run can instead seed an
 explicit clone with a new Run identity, `source_run_id`, and `resume_from`.
+The initial admission pins the clone’s source Run, checkpoint Step/reference and
+Ordering Reset choice. Until the clone publishes its own checkpoint, recovery
+requires that same verified external seed; it never silently restarts from zero.
+Once its own checkpoint is confirmed, recovery uses that state and clears the
+source/Ordering Reset context. A seed factory is then left unevaluated, so retained
+clone inputs do not require the original payload to remain available.
 
 The local orchestration adapter in #56 owns trustworthy evidence or explicit
 uncertainty. #231 owns assembly from the accepted Run Definition. Their absence

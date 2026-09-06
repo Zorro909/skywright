@@ -60,6 +60,7 @@ class Supervisor:
         self.processes = []
         self.latest_proof = None
         self.counter = 0
+        self.seed_inputs = {}
 
     def start(self, mode):
         directory = self.root / str(self.counter)
@@ -85,6 +86,7 @@ class Supervisor:
                     "bucket": self.bucket,
                     "run_id": self.run_id,
                     "mode": mode,
+                    **self.seed_inputs,
                 }
             )
         )
@@ -311,3 +313,55 @@ def test_installed_sdk_checks_project_state_after_registration_before_training(
             assert len(checkpoints) == 1
         finally:
             supervisor.close()
+
+
+def test_installed_sdk_recovers_clone_before_and_after_own_checkpoint(
+    installed_recovery_sdk, tmp_path
+):
+    with seaweedfs() as (endpoint, client):
+        client.create_bucket(Bucket="recovery")
+        source = Supervisor(
+            installed_recovery_sdk, tmp_path / "source", endpoint, "recovery", "source"
+        )
+        clone = Supervisor(
+            installed_recovery_sdk, tmp_path / "clone", endpoint, "recovery", "clone"
+        )
+        try:
+            process, directory = source.start("interrupted")
+            seed = source.finish(process, directory, expected=75)
+            clone.seed_inputs = {
+                "source_run_id": "source",
+                "seed_reference": seed["checkpoint"],
+            }
+            process, directory = clone.start("crash")
+            clone.finish(process, directory, expected=137)
+            assert json.loads((directory / "entered.json").read_text()) == {
+                "step": 1,
+                "value": 1,
+                "cursor": 1,
+            }
+            process, directory = clone.start("interrupted")
+            result = clone.finish(process, directory, expected=75)
+            assert result["step"] == 2
+            assert json.loads((directory / "entered.json").read_text()) == {
+                "step": 1,
+                "value": 1,
+                "cursor": 1,
+            }
+            # The accepted clone inputs remain present, but recovery now owns its
+            # continuation and no longer needs access to the original seed bytes.
+            for item in client.list_objects_v2(
+                Bucket="recovery", Prefix="project/source/v1/checkpoints/"
+            )["Contents"]:
+                client.delete_object(Bucket="recovery", Key=item["Key"])
+            process, directory = clone.start("interrupted")
+            result = clone.finish(process, directory, expected=75)
+            assert result["step"] == 3
+            assert json.loads((directory / "entered.json").read_text()) == {
+                "step": 2,
+                "value": 2,
+                "cursor": 2,
+            }
+        finally:
+            source.close()
+            clone.close()
