@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
@@ -19,7 +20,7 @@ from skywright._run_definition import RunDefinition
 from skywright._training import Accelerator, TrainingProcessResult, run_training_process
 from skywright._training_types import CheckpointSnapshot
 from skywright.configuration import ConfigurationContract
-from skywright.credentials import s3_credentials
+from skywright.credentials import CredentialProjectionError, s3_credentials
 from skywright.dataset import (
     DatasetDefinition,
     DatasetObject,
@@ -27,7 +28,11 @@ from skywright.dataset import (
     StorageLocation,
 )
 from skywright.metrics import MetricSchema, ProjectMetricContract
-from skywright.recovery import PreviousWriterVerifier, uncertain_previous_writer
+from skywright.recovery import (
+    PreviousWriterVerifier,
+    RecoveryAdmissionError,
+    uncertain_previous_writer,
+)
 from skywright.run_store import (
     RunStoreReader,
     RunStoreRecorder,
@@ -232,7 +237,22 @@ class ManagedRuntime:
             source_run = str(UUID(source["runId"]))
             source_reference = source["reference"]
             source_target = _storage(
-                source["storage"], project["projectIdentity"], source_run
+                _object(
+                    source["storage"],
+                    {
+                        "storageId",
+                        "registrationRevision",
+                        "configurationRevision",
+                        "endpoint",
+                        "bucket",
+                        "region",
+                        "addressingMode",
+                        "compatibilityOptions",
+                    },
+                    "source storage",
+                ),
+                project["projectIdentity"],
+                source_run,
             )
             if (
                 source_run == run_id
@@ -265,8 +285,13 @@ class ManagedRuntime:
         _previous_writer_verifier: PreviousWriterVerifier = uncertain_previous_writer,
     ) -> TrainingProcessResult:
         # Validate both projections before any storage access or project import.
-        s3_credentials("dataset")
-        s3_credentials("run_store")
+        try:
+            s3_credentials("dataset")
+            s3_credentials("run_store")
+        except CredentialProjectionError as failure:
+            raise RecoveryAdmissionError(
+                "RECOVERY_UNAVAILABLE", str(failure)
+            ) from failure
         value = self.definition.value()
         configuration = value["configuration"]
         seed = configuration["reproducibility"]["seed"]
@@ -279,20 +304,26 @@ class ManagedRuntime:
                 self.source_target or replace(self.target, run_id=self.source_run_id)
             ).read_exact(self.source_reference)
 
-        with MdsDatasetAccess(
-            self.dataset_definition,
-            self.dataset_location,
-            cache_directory=cache_directory,
-            seed=seed,
-            ordering_policy=ordering["policy"],
-            ordering_version=ordering["version"],
-        ) as dataset:
+        with ExitStack() as resources:
+
+            def dataset_factory() -> MdsDatasetAccess:
+                return resources.enter_context(
+                    MdsDatasetAccess(
+                        self.dataset_definition,
+                        self.dataset_location,
+                        cache_directory=cache_directory,
+                        seed=seed,
+                        ordering_policy=ordering["policy"],
+                        ordering_version=ordering["version"],
+                    )
+                )
+
             return run_training_process(
                 ENTRY_POINT,
                 run_id=self.run_id,
                 project_version=self.project_version,
                 configuration=self.configuration,
-                dataset=dataset,
+                dataset=dataset_factory,
                 metric_contracts=self.metrics,
                 skywright_metric_schema=value["trainingProjectVersion"][
                     "metricContract"

@@ -103,6 +103,9 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
             )
             assert process.returncode == expected, (process.stdout, process.stderr)
             result = json.loads(process.stdout.splitlines()[-1])
+            if result["outcome"] == "startup-refused":
+                assert "Traceback" not in process.stderr
+                return directory, result
             result["step"] = result["last_committed_step"]
             result["reference"] = result["latest_durable_checkpoint"]
             # subprocess.run reaped the process; the private supervisor owns this evidence.
@@ -142,3 +145,22 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
         )
         assert not (rejected_dir / "started.json").exists()
         assert rejected["outcome"] == "failed"
+
+        for fault in ("missing", "corrupt"):
+            if fault == "missing":
+                client.delete_object(Bucket="datasets", Key="authority/index.json")
+            else:
+                client.put_object(
+                    Bucket="datasets", Key="authority/index.json", Body=b"corrupt index"
+                )
+            refused_id = str(uuid4())
+            refused_dir, refusal = execute(refused_id, expected=1)
+            assert refusal["outcome"] == "startup-refused"
+            assert refusal["code"] == "RECOVERY_UNAVAILABLE"
+            assert not (refused_dir / "started.json").exists()
+            assert (
+                client.list_objects_v2(
+                    Bucket="outputs", Prefix=f"stable-project/{refused_id}/v1/"
+                ).get("KeyCount", 0)
+                == 0
+            )

@@ -71,7 +71,7 @@ def run_training_process(
     run_id: str,
     project_version: str,
     configuration: Mapping[str, object],
-    dataset: DatasetAccess | str,
+    dataset: DatasetAccess | str | Callable[[], DatasetAccess],
     metric_contracts: MetricContractResolver | str,
     skywright_metric_schema: str,
     recorder: TrainingProcessRecorder | str,
@@ -123,7 +123,10 @@ def run_training_process(
     if callable(prepare):
         try:
             resolved_dataset = cast(
-                DatasetAccess, resolve_component(dataset, "Dataset access")
+                DatasetAccess,
+                dataset()
+                if callable(dataset)
+                else resolve_component(dataset, "Dataset access"),
             )
             prepare_recovery = cast(
                 Callable[..., "CheckpointResolution | None"], prepare
@@ -243,7 +246,10 @@ def run_training_process(
     try:
         if resolved_dataset is None:
             resolved_dataset = cast(
-                DatasetAccess, resolve_component(dataset, "Dataset access")
+                DatasetAccess,
+                dataset()
+                if callable(dataset)
+                else resolve_component(dataset, "Dataset access"),
             )
         resolved_metric_contracts = cast(
             MetricContractResolver,

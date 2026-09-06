@@ -92,3 +92,22 @@ def test_rejects_inconsistent_inputs_before_project_import(case):
         definition["orderingReset"] = True
     with pytest.raises(ValueError):
         ManagedRuntime.decode(json.dumps(definition), json.dumps(materials))
+
+
+@pytest.mark.parametrize("mutation", ["extra", "missing"])
+def test_rejects_incompatible_source_storage_shape(mutation):
+    definition, materials = documents()
+    source_storage = deepcopy(definition["storage"]["execution"])
+    if mutation == "extra":
+        source_storage["futureField"] = "unsupported"
+    else:
+        del source_storage["configurationRevision"]
+    materials["sourceCheckpoint"] = {
+        "runId": "00000000-0000-0000-0000-000000000302",
+        "reference": "checkpoint",
+        "storage": source_storage,
+    }
+    with pytest.raises(
+        ValueError, match="source storage has missing or unsupported fields"
+    ):
+        ManagedRuntime.decode(json.dumps(definition), json.dumps(materials))

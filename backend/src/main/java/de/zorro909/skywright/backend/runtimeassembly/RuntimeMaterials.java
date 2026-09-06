@@ -35,7 +35,8 @@ public record RuntimeMaterials(int materialsVersion, UUID runId, String image, S
 			@JsonProperty("checksum_calculation") String checksumCalculation) {
 	}
 
-	public record SourceStorage(String storageId, String endpoint, String bucket, String region, String addressingMode,
+	public record SourceStorage(String storageId, long registrationRevision, long configurationRevision,
+			String endpoint, String bucket, String region, String addressingMode,
 			java.util.Map<String, String> compatibilityOptions) {
 		public SourceStorage {
 			compatibilityOptions = java.util.Map.copyOf(compatibilityOptions);

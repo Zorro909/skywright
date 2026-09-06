@@ -59,3 +59,9 @@ container and storage qualification remains #235.
 
 Direct embedding retains the existing explicit private runtime document and the
 `run_training_process` API. These seams do not determine managed project assembly.
+
+Dataset construction runs inside the Training Process Boundary. Missing or corrupt
+Dataset storage encountered before admission produces a structured terminal
+`startup-refused` outcome with exit code 1. As required by #52, that gate creates no
+Execution Attempt Record or invented Execution Termination Report. Failures after
+admission use the existing process finalization contract.
