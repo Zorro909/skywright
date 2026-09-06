@@ -149,11 +149,12 @@ class RunJobAdapterTest {
 		source.jobs = List.of(job("RUNNING", 0), job("SUCCEEDED", 0));
 		assertThat(adapter().reconcile(RUN).toCompletableFuture().join().availability())
 			.isEqualTo(RunJobAdapter.SourceAvailability.AMBIGUOUS);
-		source.jobs = List.of(job("RUNNING", 0));
+		retained.clear();
+		source.jobs = List.of(job("SUCCEEDED", 0));
 		source.complete = false;
 		assertThat(adapter().reconcile(RUN).toCompletableFuture().join().availability())
 			.isEqualTo(RunJobAdapter.SourceAvailability.INCOMPLETE);
-		assertThat(retained).isEmpty();
+		assertThat(retained).extracting(RetainedSkyPilotFact::kind).contains(RetainedSkyPilotFact.Kind.TERMINATION);
 	}
 
 	@Test
@@ -191,7 +192,7 @@ class RunJobAdapterTest {
 		var adapter = adapter();
 		var cancel = adapter.cancel(RUN).toCompletableFuture().join();
 		assertThat(cancel.value().kind()).isEqualTo(OperationKind.CONTROL);
-		assertThat(adapter.complete(cancel.value()).toCompletableFuture().join().outcome())
+		assertThat(adapter.complete(RUN, cancel.value()).toCompletableFuture().join().outcome())
 			.isEqualTo(new OperationOutcome.Controlled(true));
 		assertThat(adapter.reconcile(RUN).toCompletableFuture().join().liveJobs().getFirst().status())
 			.isEqualTo("RUNNING");
@@ -219,7 +220,8 @@ class RunJobAdapterTest {
 		for (String category : List.of("ResourcesUnavailableError", "NoCloudAccessError", "CommandError",
 				"ClusterDoesNotExist")) {
 			source.operationFailure = category;
-			var result = adapter().complete(new OrchestratorOperation("expired-or-failed", OperationKind.SUBMISSION))
+			var result = adapter()
+				.complete(RUN, new OrchestratorOperation("expired-or-failed", OperationKind.SUBMISSION))
 				.toCompletableFuture()
 				.join();
 			assertThat(result.failureKind()).isNotNull().isNotEqualTo(RunJobAdapter.OperationFailureKind.UNKNOWN);
@@ -231,7 +233,7 @@ class RunJobAdapterTest {
 	void expiredRequestIsDiscardedAndTerminalJobIsRediscoveredAfterRestart() {
 		adapter().submit(RUN, task(), null).toCompletableFuture().join();
 		source.operationFailure = "ClientError";
-		assertThat(adapter().complete(new OrchestratorOperation("expired", OperationKind.SUBMISSION))
+		assertThat(adapter().complete(RUN, new OrchestratorOperation("expired", OperationKind.SUBMISSION))
 			.toCompletableFuture()
 			.join()
 			.outcome()).isInstanceOf(OperationOutcome.Failed.class);
@@ -253,6 +255,59 @@ class RunJobAdapterTest {
 		assertThat(correlated.executionAttemptId()).isEqualTo(attempt);
 		assertThat(correlated.jobName()).isEqualTo(task().name());
 		assertThat(correlated.scope()).contains("RUN_ONLY", "unproven");
+	}
+
+	@Test
+	void launchFailureWaitsForRetentionAndSurvivesMissingJobVisibility() {
+		source.operationFailure = "ResourcesUnavailableError";
+		var durable = new CompletableFuture<Void>();
+		var adapter = new RunJobAdapter(source,
+				(r, f) -> CompletableFuture.completedFuture(LaunchDispatchGate.Decision.FIRST_DISPATCH), facts -> {
+					retained.addAll(facts);
+					return durable;
+				}, clock);
+		var completion = adapter.complete(RUN, new OrchestratorOperation("ephemeral", OperationKind.SUBMISSION))
+			.toCompletableFuture();
+		assertThat(completion).isNotDone();
+		durable.complete(null);
+		assertThat(completion.join().retentionConfirmed()).isTrue();
+		assertThat(retained).singleElement().satisfies(f -> {
+			assertThat(f.runId()).isEqualTo(RUN);
+			assertThat(f.kind()).isEqualTo(RetainedSkyPilotFact.Kind.SUBMISSION_OPERATION_FAILURE);
+			assertThat(f.sourceEventIdentity()).isEqualTo("first-dispatch");
+			assertThat(f.payload()).containsEntry("category", "ResourcesUnavailableError");
+		});
+		source.operationFailure = null;
+		assertThat(adapter().reconcile(RUN).toCompletableFuture().join().availability())
+			.isEqualTo(RunJobAdapter.SourceAvailability.MISSING);
+		assertThat(retained).hasSize(1);
+	}
+
+	@Test
+	void launchFailureDoesNotAcknowledgeFailedRetention() {
+		source.operationFailure = "NoCloudAccessError";
+		var adapter = new RunJobAdapter(source,
+				(r, f) -> CompletableFuture.completedFuture(LaunchDispatchGate.Decision.FIRST_DISPATCH),
+				facts -> CompletableFuture.failedFuture(new IllegalStateException("offline")), clock);
+		var result = adapter.complete(RUN, new OrchestratorOperation("ephemeral", OperationKind.SUBMISSION))
+			.toCompletableFuture()
+			.join();
+		assertThat(result.retentionConfirmed()).isFalse();
+		assertThat(result.unavailable()).isNotNull();
+	}
+
+	@Test
+	void everySourceIdentityComponentIsRequiredForDurableFacts() {
+		for (var job : List.of(
+				new OperationOutcome.ManagedJobStatus(4L, task().name(), "FAILED", 0, null, 100., 110., 150., null,
+						"source-generation", null, null, null, null, null, null),
+				new OperationOutcome.ManagedJobStatus(4L, task().name(), "FAILED", 0, 0, 100., 110., 150., null, null,
+						null, null, null, null, null, null))) {
+			source.jobs = List.of(job);
+			var result = adapter().reconcile(RUN).toCompletableFuture().join();
+			assertThat(result.retainedFacts()).isEmpty();
+			assertThat(result.evidenceGaps()).contains("TERMINATION_SOURCE_EVENT_ID_MISSING");
+		}
 	}
 
 	static class Source implements Orchestrator {

@@ -14,11 +14,13 @@ Submission returns when the source accepts an operation, before provisioning fin
 
 ## Evidence
 
+Submission completion requires Run correlation and durably retains source operation failures before acknowledging retention, including failures before a job row exists. The one authorized first dispatch supplies the stable event identity. Neither a transient request ID nor poll time enters that key. An expired request's client error is retained as an operation observation with unknown job outcome, not invented terminal job evidence. Retention failure remains explicit.
+
 Status reads request at most 1,000 source records. A truncated response is incomplete, not proof of absence or uniqueness. Multiple jobs with the same name are ambiguous. Missing source identifiers and recovery counts remain explicit gaps.
 
-The adapter emits source submission, execution-start, infrastructure, latest recovery and termination facts. Keys use the Run, fact kind, source job/task identifiers, source run timestamp and source event timestamp. Poll time records when evidence was observed and never supplies event identity. The sink acknowledges durable retention; it must insert absent keys and retain conflicting source payloads with their observation times as ADR 0005 requires. A failed sink produces `RETENTION_UNAVAILABLE`.
+The adapter emits source submission, execution-start, infrastructure, latest recovery and termination facts. Incomplete or ambiguous lookups still retain facts from each returned record while preserving their availability qualification. Keys use the Run, fact kind, source job/task identifiers, source run timestamp and source event timestamp. Poll time records when evidence was observed and never supplies event identity. The sink acknowledges durable retention; it must insert absent keys and retain conflicting source payloads with their observation times as ADR 0005 requires. A failed sink produces `RETENTION_UNAVAILABLE`.
 
-SkyPilot job IDs are database-scoped. The SDK does not expose a durable database epoch, so every observation carries that limitation. Missing timestamps prevent emission of the corresponding fact. A recovery count greater than one cannot reconstruct unobserved earlier recoveries. Source cluster health and recovery count do not establish preemption cause.
+SkyPilot job IDs are database-scoped. The SDK does not expose a durable database epoch, so every observation carries that limitation. Missing task identifiers, source run timestamps or event timestamps prevent emission of the corresponding fact. A recovery count greater than one cannot reconstruct unobserved earlier recoveries. Source cluster health and recovery count do not establish preemption cause.
 
 `RunStoreAccess` reads bounded Execution Attempt records with digest, owning Run and attempt identity checks. Correlation links a verified attempt to the Run's job name. It does not equate an SDK attempt UUID with a SkyPilot recovery generation. Live job status is returned from the source, not persisted as a second lifecycle authority.
 

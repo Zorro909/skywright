@@ -128,13 +128,13 @@ public final class RunJobAdapter {
 	}
 
 	public record OperationObservation(OperationOutcome outcome, OperationFailureKind failureKind,
-			BridgeFailure unavailable) {
+			BridgeFailure unavailable, boolean retentionConfirmed) {
 	}
 
-	public CompletionStage<OperationObservation> complete(OrchestratorOperation operation) {
+	public CompletionStage<OperationObservation> complete(UUID runId, OrchestratorOperation operation) {
 		return this.orchestrator.complete(operation).thenApply(result -> {
 			if (result.failure() != null)
-				return new OperationObservation(null, null, result.failure());
+				return new OperationObservation(null, null, result.failure(), false);
 			OperationFailureKind kind = null;
 			if (result.value() instanceof OperationOutcome.Failed failed)
 				kind = switch (failed.category()) {
@@ -148,7 +148,22 @@ public final class RunJobAdapter {
 						OperationFailureKind.APPLICATION_OR_CONTROLLER_FAILURE;
 					default -> OperationFailureKind.UNKNOWN;
 				};
-			return new OperationObservation(result.value(), kind, null);
+			return new OperationObservation(result.value(), kind, null, false);
+		}).thenCompose(observation -> {
+			if (operation.kind() != OperationKind.SUBMISSION
+					|| !(observation.outcome() instanceof OperationOutcome.Failed failed))
+				return CompletableFuture.completedFuture(observation);
+			// One launch is authorized for this Run. Its observation is stable across
+			// repeated completion reads without retaining the transient request ID.
+			var fact = new RetainedSkyPilotFact(runId, RetainedSkyPilotFact.Kind.SUBMISSION_OPERATION_FAILURE,
+					"first-dispatch", Map.of("category", failed.category(), "message", failed.message(), "meaning",
+							"operation failure observation; job outcome may be unknown"),
+					this.clock.instant());
+			return this.retention.append(List.of(fact))
+				.handle((ignored, failure) -> new OperationObservation(observation.outcome(), observation.failureKind(),
+						failure == null ? null : BridgeFailure.unavailable(BridgeFailure.FailureCause.ADAPTER_CONTRACT,
+								"Submission failure retention is unavailable"),
+						failure == null));
 		});
 	}
 
@@ -188,54 +203,60 @@ public final class RunJobAdapter {
 
 	private CompletionStage<Reconciliation> retain(UUID runId, OperationOutcome.Observed observed) {
 		var jobs = observed.jobs().stream().filter(job -> jobName(runId).equals(job.jobName())).toList();
-		if (!observed.complete())
-			return CompletableFuture.completedFuture(new Reconciliation(runId, SourceAvailability.INCOMPLETE, jobs,
-					List.of(), List.of("SOURCE_LOOKUP_INCOMPLETE"), null));
-		if (jobs.size() > 1)
-			return CompletableFuture.completedFuture(new Reconciliation(runId, SourceAvailability.AMBIGUOUS, jobs,
-					List.of(), List.of("MULTIPLE_SOURCE_JOBS"), null));
-		if (jobs.isEmpty())
-			return CompletableFuture.completedFuture(new Reconciliation(runId, SourceAvailability.MISSING, jobs,
-					List.of(), List.of("ABSENCE_DOES_NOT_AUTHORIZE_LAUNCH"), null));
 		var facts = new ArrayList<RetainedSkyPilotFact>();
 		var gaps = new ArrayList<String>();
-		var job = jobs.getFirst();
-		if (job.jobId() == null)
-			gaps.add("SOURCE_JOB_ID_MISSING");
-		gaps.add("SOURCE_JOB_ID_IS_DATABASE_SCOPED; database epoch unavailable");
-		Instant now = this.clock.instant();
-		add(facts, gaps, runId, job, RetainedSkyPilotFact.Kind.SUBMISSION, job.submittedAt(), Map.of(), now);
-		if (job.startedAt() != null)
-			add(facts, gaps, runId, job, RetainedSkyPilotFact.Kind.EXECUTION_STARTED, job.startedAt(), Map.of(), now);
-		if (job.cloud() != null || job.resources() != null) {
-			var payload = new LinkedHashMap<String, String>();
-			put(payload, "cloud", job.cloud());
-			put(payload, "clusterName", job.clusterName());
-			put(payload, "region", job.region());
-			put(payload, "zone", job.zone());
-			put(payload, "resources", job.resources());
-			add(facts, gaps, runId, job, RetainedSkyPilotFact.Kind.INFRASTRUCTURE,
-					job.lastRecoveredAt() != null ? job.lastRecoveredAt() : job.startedAt(), payload, now);
-		}
-		if (job.recoveryCount() == null)
-			gaps.add("SOURCE_RECOVERY_COUNT_MISSING");
-		else if (job.recoveryCount() > 0) {
-			add(facts, gaps, runId, job, RetainedSkyPilotFact.Kind.RECOVERY, job.lastRecoveredAt(),
-					Map.of("recoveryCount", job.recoveryCount().toString(), "meaning",
-							"orchestrator recovery; termination cause unproven"),
-					now);
-			if (job.recoveryCount() > 1)
-				gaps.add("ONLY_LATEST_RECOVERY_EVENT_OBSERVED; earlier events require retained evidence");
-		}
-		if (TERMINAL.contains(job.status())) {
-			var payload = new LinkedHashMap<String, String>();
-			payload.put("status", job.status());
-			put(payload, "failureReason", job.failureReason());
-			add(facts, gaps, runId, job, RetainedSkyPilotFact.Kind.TERMINATION, job.endedAt(), payload, now);
+		SourceAvailability availability = !observed.complete() ? SourceAvailability.INCOMPLETE : jobs.size() > 1
+				? SourceAvailability.AMBIGUOUS : jobs.isEmpty() ? SourceAvailability.MISSING : SourceAvailability.LIVE;
+		if (!observed.complete())
+			gaps.add("SOURCE_LOOKUP_INCOMPLETE");
+		if (jobs.size() > 1)
+			gaps.add("MULTIPLE_SOURCE_JOBS");
+		if (jobs.isEmpty())
+			return CompletableFuture
+				.completedFuture(
+						new Reconciliation(runId, availability, jobs, List.of(),
+								List.of("ABSENCE_DOES_NOT_AUTHORIZE_LAUNCH",
+										observed.complete() ? "SOURCE_JOB_MISSING" : "SOURCE_LOOKUP_INCOMPLETE"),
+								null));
+		for (var job : jobs) {
+			if (job.jobId() == null)
+				gaps.add("SOURCE_JOB_ID_MISSING");
+			gaps.add("SOURCE_JOB_ID_IS_DATABASE_SCOPED; database epoch unavailable");
+			Instant now = this.clock.instant();
+			add(facts, gaps, runId, job, RetainedSkyPilotFact.Kind.SUBMISSION, job.submittedAt(), Map.of(), now);
+			if (job.startedAt() != null)
+				add(facts, gaps, runId, job, RetainedSkyPilotFact.Kind.EXECUTION_STARTED, job.startedAt(), Map.of(),
+						now);
+			if (job.cloud() != null || job.resources() != null) {
+				var payload = new LinkedHashMap<String, String>();
+				put(payload, "cloud", job.cloud());
+				put(payload, "clusterName", job.clusterName());
+				put(payload, "region", job.region());
+				put(payload, "zone", job.zone());
+				put(payload, "resources", job.resources());
+				add(facts, gaps, runId, job, RetainedSkyPilotFact.Kind.INFRASTRUCTURE,
+						job.lastRecoveredAt() != null ? job.lastRecoveredAt() : job.startedAt(), payload, now);
+			}
+			if (job.recoveryCount() == null)
+				gaps.add("SOURCE_RECOVERY_COUNT_MISSING");
+			else if (job.recoveryCount() > 0) {
+				add(facts, gaps, runId, job, RetainedSkyPilotFact.Kind.RECOVERY, job.lastRecoveredAt(),
+						Map.of("recoveryCount", job.recoveryCount().toString(), "meaning",
+								"orchestrator recovery; termination cause unproven"),
+						now);
+				if (job.recoveryCount() > 1)
+					gaps.add("ONLY_LATEST_RECOVERY_EVENT_OBSERVED; earlier events require retained evidence");
+			}
+			if (TERMINAL.contains(job.status())) {
+				var payload = new LinkedHashMap<String, String>();
+				payload.put("status", job.status());
+				put(payload, "failureReason", job.failureReason());
+				add(facts, gaps, runId, job, RetainedSkyPilotFact.Kind.TERMINATION, job.endedAt(), payload, now);
+			}
 		}
 		return this.retention.append(facts)
 			.handle((ignored, failure) -> new Reconciliation(runId,
-					failure == null ? SourceAvailability.LIVE : SourceAvailability.RETENTION_UNAVAILABLE, jobs,
+					failure == null ? availability : SourceAvailability.RETENTION_UNAVAILABLE, jobs,
 					failure == null ? facts : List.of(), gaps, null));
 	}
 
@@ -247,7 +268,8 @@ public final class RunJobAdapter {
 	private static void add(List<RetainedSkyPilotFact> facts, List<String> gaps, UUID runId,
 			OperationOutcome.ManagedJobStatus job, RetainedSkyPilotFact.Kind kind, Double sourceTime,
 			Map<String, String> data, Instant observedAt) {
-		if (sourceTime == null || !Double.isFinite(sourceTime) || sourceTime < 0 || job.jobId() == null) {
+		if (sourceTime == null || !Double.isFinite(sourceTime) || sourceTime < 0 || job.jobId() == null
+				|| job.taskId() == null || job.runTimestamp() == null || job.runTimestamp().isBlank()) {
 			gaps.add(kind + "_SOURCE_EVENT_ID_MISSING");
 			return;
 		}
