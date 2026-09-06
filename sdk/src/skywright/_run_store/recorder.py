@@ -10,6 +10,7 @@ from typing import Any, Protocol, cast
 from skywright._run_store.implementation import (
     CheckpointCodec,
     OperationControl,
+    RunStoreMissingObjectError,
     TargetStorage,
 )
 from skywright._run_store.implementation import (
@@ -263,17 +264,8 @@ class RunStoreRecorder(_RunStoreRecorder):
     def _existing_object(self, key: str) -> tuple[bytes | None, str | None]:
         try:
             response = self._client.get_object(Bucket=self.target.bucket, Key=key)
-        except Exception as failure:
-            response_details = getattr(failure, "response", {})
-            code = response_details.get("Error", {}).get("Code")
-            status = response_details.get("ResponseMetadata", {}).get("HTTPStatusCode")
-            if (
-                isinstance(failure, KeyError)
-                or code in {"NoSuchKey", "404"}
-                or status == 404
-            ):
-                return None, None
-            raise
+        except RunStoreMissingObjectError:
+            return None, None
         with response["Body"] as content:
             body = content.read()
             metadata = response.get("Metadata", {})

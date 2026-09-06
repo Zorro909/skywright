@@ -702,6 +702,10 @@ class RunStoreIntegrityError(RunStoreError, ValueError):
     """Persisted bytes or protocol metadata failed integrity validation."""
 
 
+class RunStoreMissingObjectError(RunStoreIntegrityError):
+    """A provider confirmed absence of one addressed object, not its bucket."""
+
+
 class RunStoreConflictError(RunStoreError):
     """An immutable semantic identity already has different content."""
 
@@ -821,7 +825,24 @@ class _S3Gateway:
                     else "control"
                 )
                 try:
-                    response = provider_operation(**request)
+                    try:
+                        response = provider_operation(**request)
+                    except Exception as failure:
+                        if operation in {
+                            "get_object",
+                            "head_object",
+                            "delete_object",
+                        } and (
+                            (
+                                isinstance(failure, KeyError)
+                                and failure.args == (request.get("Key"),)
+                            )
+                            or _is_missing_resource(failure, "NoSuchKey")
+                        ):
+                            raise RunStoreMissingObjectError(
+                                f"RUN_STORE_MISSING_OBJECT: {request.get('Key')}"
+                            ) from failure
+                        raise
                     if operation == "get_object":
 
                         def finish(
@@ -851,18 +872,15 @@ class _S3Gateway:
                     self._measure(
                         operation, transferred, direction, attempt, started, False
                     )
-                    response = getattr(failure, "response", {})
-                    if response.get("Error", {}).get("Code") in {
+                    code, status = _provider_error_details(failure)
+                    if code in {
                         "AccessDenied",
                         "InvalidAccessKeyId",
                         "SignatureDoesNotMatch",
                         "ExpiredToken",
                         "InvalidToken",
                         "TokenRefreshRequired",
-                    } or response.get("ResponseMetadata", {}).get("HTTPStatusCode") in {
-                        401,
-                        403,
-                    }:
+                    } or status in {401, 403}:
                         from skywright.credentials import CredentialProjectionError
 
                         raise CredentialProjectionError(
@@ -1370,10 +1388,30 @@ def _s3_client(
     )
 
 
+def _provider_error_details(failure: Exception) -> tuple[str | None, int | None]:
+    response = getattr(failure, "response", None)
+    if not isinstance(response, Mapping):
+        return None, None
+    error = response.get("Error")
+    metadata = response.get("ResponseMetadata")
+    code = error.get("Code") if isinstance(error, Mapping) else None
+    status = metadata.get("HTTPStatusCode") if isinstance(metadata, Mapping) else None
+    return (
+        code if isinstance(code, str) else None,
+        status if type(status) is int else None,
+    )
+
+
+def _is_missing_resource(failure: Exception, expected_code: str) -> bool:
+    code, status = _provider_error_details(failure)
+    # Named bucket, permission and availability failures take precedence over 404.
+    return (code == expected_code and status in {None, 404}) or (
+        status == 404 and code in {None, "404", "NotFound"}
+    )
+
+
 def _is_precondition_failure(failure: Exception) -> bool:
-    response = getattr(failure, "response", {})
-    code = response.get("Error", {}).get("Code")
-    status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    code, status = _provider_error_details(failure)
     return code in {
         "PreconditionFailed",
         "ConditionalRequestConflict",
@@ -1386,9 +1424,7 @@ def _is_precondition_failure(failure: Exception) -> bool:
 
 
 def _is_transient_failure(failure: Exception) -> bool:
-    response = getattr(failure, "response", {})
-    code = response.get("Error", {}).get("Code")
-    status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    code, status = _provider_error_details(failure)
     return (
         isinstance(failure, (OSError, TimeoutError))
         or code
@@ -1404,10 +1440,7 @@ def _is_transient_failure(failure: Exception) -> bool:
 
 
 def _is_missing_upload(failure: Exception) -> bool:
-    response = getattr(failure, "response", {})
-    code = response.get("Error", {}).get("Code")
-    status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-    return code in {"NoSuchUpload", "404"} or status == 404
+    return _is_missing_resource(failure, "NoSuchUpload")
 
 
 def _request_bytes(request: Mapping[str, object]) -> int:
@@ -1430,7 +1463,7 @@ class CheckpointSummary:
 
 @dataclass(frozen=True)
 class CheckpointResolution:
-    """Selected Checkpoint plus every newer corrupt candidate rejected first."""
+    """Selected Checkpoint plus every newer missing or corrupt candidate rejected first."""
 
     checkpoint: CheckpointSnapshot
     rejected: tuple[CheckpointRejectionEvidence, ...]
@@ -1563,7 +1596,23 @@ class RunStoreReader:
                     parsed.digest,
                     available_disk=shutil.disk_usage(path.parent).free,
                 )
-            checkpoint = self._codec.deserialize(path, expected_digest=parsed.digest)
+            try:
+                checkpoint = self._codec.deserialize(
+                    path, expected_digest=parsed.digest
+                )
+            except (
+                ValueError,
+                KeyError,
+                TypeError,
+                OverflowError,
+                IndexError,
+            ) as failure:
+                if str(failure).startswith("RUN_STORE_INCOMPATIBLE_"):
+                    raise
+                code = _integrity_code(failure) or "RUN_STORE_MALFORMED_SAFETENSORS"
+                raise RunStoreIntegrityError(
+                    f"{code}: Checkpoint decoding failed"
+                ) from failure
         finally:
             path.unlink(missing_ok=True)
         if checkpoint.run_id != self.target.run_id:
@@ -1600,23 +1649,18 @@ class RunStoreReader:
                     project_version=project_version,
                     ordering_fingerprint=ordering_fingerprint,
                 )
-            except (
-                RunStoreIntegrityError,
-                ValueError,
-                KeyError,
-                TypeError,
-                OverflowError,
-                IndexError,
-            ) as failure:
+            except RunStoreIntegrityError as failure:
                 code = _integrity_code(failure)
                 if code is None:
-                    code = "RUN_STORE_MALFORMED_SAFETENSORS"
+                    raise
                 rejected.append(
                     CheckpointRejectionEvidence(
                         candidate.step,
                         candidate.reference,
                         code,
-                        "Checkpoint failed content or container integrity validation",
+                        "Checkpoint object was missing when read"
+                        if isinstance(failure, RunStoreMissingObjectError)
+                        else "Checkpoint failed content or container integrity validation",
                     )
                 )
                 continue
@@ -1659,7 +1703,8 @@ class RunStoreReader:
             if recovery.reference not in verified:
                 self.read_exact(recovery.reference)
                 verified.add(recovery.reference)
-            self._client.delete_object(Bucket=self.target.bucket, Key=candidate.key)
+            with suppress(RunStoreMissingObjectError):
+                self._client.delete_object(Bucket=self.target.bucket, Key=candidate.key)
 
     def presign_download(self, key: str, *, expires_in: int = 900) -> DownloadLink:
         expected_kind, digest = self._immutable_identity(key)
@@ -1816,12 +1861,7 @@ class RunStoreReader:
         *,
         available_disk: int | None = None,
     ) -> Mapping[str, Any]:
-        try:
-            response = self._client.get_object(Bucket=self.target.bucket, Key=key)
-        except KeyError as failure:
-            raise RunStoreIntegrityError(
-                f"RUN_STORE_MISSING_OBJECT: {key}"
-            ) from failure
+        response = self._client.get_object(Bucket=self.target.bucket, Key=key)
         with response["Body"] as body:
             size, expected = _validated_metadata(key, response, digest)
             expected_kind = (
@@ -1876,7 +1916,7 @@ def _integrity_code(failure: Exception) -> str | None:
         "RUN_STORE_MALFORMED_SAFETENSORS",
         "RUN_STORE_MISSING_OBJECT",
     ):
-        if code in message:
+        if message == code or message.startswith(code + ":"):
             return code
     return None
 
