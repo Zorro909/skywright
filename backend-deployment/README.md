@@ -3,6 +3,10 @@
 This module is the independently buildable deployment boundary for the backend. Its Maven package
 phase consumes the executable JAR from `backend`, constructs `skywright-backend:0.1.0-SNAPSHOT`,
 and copies that same artifact into the image. Docker-compatible tooling is required.
+Verification also requires `kubectl` on `PATH` to render the production overlay; it
+does not require a cluster or Kubernetes credentials. `scripts/setup-worktree` reuses
+an installed client or installs a checksum-verified Linux client into `~/.local/bin`.
+Include that directory on `PATH` after initial setup.
 
 ## Build
 
@@ -54,7 +58,7 @@ location. It must permit execution because Graal installs its pinned native runt
 docker run --rm \
   --name skywright-backend \
   --read-only \
-  --tmpfs /tmp:rw,exec,nosuid,size=128m \
+  --tmpfs /tmp:rw,exec,nosuid,size=64m \
   --env SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=production \
   --env SKYWRIGHT_DEPLOYMENT_REPORTING_CURRENCY=EUR \
   --env SKYWRIGHT_DATABASE_MIGRATION_URL='jdbc:postgresql://<database-host>:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
@@ -89,7 +93,7 @@ Bind both application and JDWP ports only to loopback:
 docker run --rm \
   --name skywright-backend-debug \
   --read-only \
-  --tmpfs /tmp:rw,exec,nosuid,size=128m \
+  --tmpfs /tmp:rw,exec,nosuid,size=64m \
   --env SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=local \
   --env SKYWRIGHT_DEPLOYMENT_REPORTING_CURRENCY=EUR \
   --env SKYWRIGHT_DATABASE_MIGRATION_URL='jdbc:postgresql://<database-host>:5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true' \
@@ -107,3 +111,6 @@ docker run --rm \
 
 Repository CI orchestration, release automation, signing, attestations, retention, and policy are
 deliberately delegated to [issue #78](https://github.com/Zorro909/skywright/issues/78).
+
+Dataset Publication verification uses the production pod's 64 MiB temporary-storage
+budget. See [the object and concurrency limits and qualification evidence](../docs/testing/dataset-publication-storage.md).

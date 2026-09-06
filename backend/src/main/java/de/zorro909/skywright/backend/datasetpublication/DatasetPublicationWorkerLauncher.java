@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
 final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifier {
@@ -41,6 +42,10 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 		this.targetStorages = targetStorages;
 		this.projections = projections;
 		this.cleanupGate = cleanupGate;
+		if (verificationConcurrency < 1
+				|| verificationConcurrency > DatasetPublicationWorkerMain.MAX_VERIFICATION_CONCURRENCY) {
+			throw new IllegalArgumentException("Dataset verification concurrency must be 1..16");
+		}
 		this.verificationConcurrency = verificationConcurrency;
 	}
 
@@ -83,16 +88,21 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 		ActiveWorker activeWorker = null;
 		try {
 			projectionId = project(publication, target);
-			directory = Files.createTempDirectory("skywright-dataset-worker-job-" + projectionId + "-");
-			prepare(projectionId, directory);
+			try {
+				directory = Files.createTempDirectory("skywright-dataset-worker-job-" + projectionId + "-");
+				prepare(projectionId, directory);
+				JSON.writeValue(directory.resolve("job.json").toFile(), new DatasetPublicationWorkerJob(action,
+						target.endpoint(), target.bucket(), target.region().id(), target.pathStyleAccess(),
+						"enabled".equals(target.compatibilityOptions().get("chunkedEncoding")),
+						publication.formatIdentity(), publication.manifestIdentity(), publication.contentFingerprint(),
+						publication.objectCount(), publication.byteCount(), publication.payloadLocation(),
+						publication.operationLocation(), this.verificationConcurrency));
+			}
+			catch (IOException | JacksonException failure) {
+				return temporaryStorageFailure();
+			}
 			Path job = directory.resolve("job.json");
 			Path result = directory.resolve("result.json");
-			JSON.writeValue(job.toFile(), new DatasetPublicationWorkerJob(action, target.endpoint(), target.bucket(),
-					target.region().id(), target.pathStyleAccess(),
-					"enabled".equals(target.compatibilityOptions().get("chunkedEncoding")),
-					publication.formatIdentity(), publication.manifestIdentity(), publication.contentFingerprint(),
-					publication.objectCount(), publication.byteCount(), publication.payloadLocation(),
-					publication.operationLocation(), this.verificationConcurrency));
 			var process = new ProcessBuilder(command(job, result)).redirectErrorStream(true)
 				.redirectOutput(ProcessBuilder.Redirect.DISCARD);
 			clearEnvironment(process.environment());
@@ -107,6 +117,9 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 				JSON.writeValue(credentialStream, credential(credentials));
 			}
 			awaitCompletion(worker);
+			if (worker.exitValue() == DatasetPublicationWorkerMain.TEMPORARY_STORAGE_FAILURE_EXIT) {
+				return temporaryStorageFailure();
+			}
 			if (!Files.isRegularFile(result)) {
 				return this.closing.get() ? interrupted() : failure();
 			}
@@ -210,6 +223,7 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 		try {
 			Files.deleteIfExists(directory.resolve("job.json"));
 			Files.deleteIfExists(directory.resolve("result.json"));
+			Files.deleteIfExists(directory.resolve("result.json.pending"));
 			Files.deleteIfExists(directory);
 		}
 		catch (IOException ignored) {
@@ -241,6 +255,11 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 	static DatasetPublicationWorkerResult failure() {
 		return new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0, null, 0,
 				"DATASET_VERIFICATION_PROCESS_UNAVAILABLE", true);
+	}
+
+	static DatasetPublicationWorkerResult temporaryStorageFailure() {
+		return new DatasetPublicationWorkerResult(false, java.util.List.of(), 0, 0, null, 0,
+				"DATASET_WORKER_TEMPORARY_STORAGE_UNAVAILABLE", true);
 	}
 
 	static DatasetPublicationWorkerResult projectionFailure() {

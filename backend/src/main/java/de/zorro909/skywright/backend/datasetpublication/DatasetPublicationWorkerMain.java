@@ -2,10 +2,10 @@ package de.zorro909.skywright.backend.datasetpublication;
 
 import de.zorro909.skywright.backend.datasetcatalog.DatasetManifestEntry;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -47,6 +47,13 @@ public final class DatasetPublicationWorkerMain {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
+	static final int TEMPORARY_STORAGE_FAILURE_EXIT = 74;
+	static final int MAX_VERIFICATION_CONCURRENCY = 16;
+
+	private static final int MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
+
+	private static final int MAX_MANIFEST_OBJECTS = 100_000;
+
 	private DatasetPublicationWorkerMain() {
 	}
 
@@ -69,7 +76,15 @@ public final class DatasetPublicationWorkerMain {
 			result = new DatasetPublicationWorkerResult(false, List.of(), 0, 0, null, ProcessHandle.current().pid(),
 					"DATASET_VERIFICATION_UNAVAILABLE", true);
 		}
-		JSON.writeValue(resultPath.toFile(), result);
+		Path pending = resultPath.resolveSibling(resultPath.getFileName() + ".pending");
+		try {
+			JSON.writeValue(pending.toFile(), result);
+			Files.move(pending, resultPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+		}
+		catch (IOException | JacksonException failure) {
+			System.err.println("DATASET_WORKER_TEMPORARY_STORAGE_UNAVAILABLE");
+			System.exit(TEMPORARY_STORAGE_FAILURE_EXIT);
+		}
 	}
 
 	private static DatasetPublicationWorkerResult execute(DatasetPublicationWorkerJob job,
@@ -181,16 +196,10 @@ public final class DatasetPublicationWorkerMain {
 	private static DatasetPublicationWorkerResult verify(DatasetPublicationWorkerJob job,
 			DatasetPublicationWorkerCredential credential) {
 		try (S3AsyncClient client = client(job, credential)) {
-			if (job.verificationConcurrency() < 1) {
+			if (job.verificationConcurrency() < 1 || job.verificationConcurrency() > MAX_VERIFICATION_CONCURRENCY) {
 				throw mismatch();
 			}
-			byte[] manifestBytes = client
-				.getObject(GetObjectRequest.builder()
-					.bucket(job.bucket())
-					.key(key(job.operationLocation(), "manifest.json"))
-					.build(), AsyncResponseTransformer.toBytes())
-				.join()
-				.asByteArray();
+			byte[] manifestBytes = readManifest(client, job);
 			if (!digest(manifestBytes).equals(job.manifestIdentity())) {
 				throw mismatch();
 			}
@@ -244,7 +253,8 @@ public final class DatasetPublicationWorkerMain {
 			if (!"skywright-dataset-manifest@1".equals(root.path("version").asText())
 					|| !job.formatIdentity().equals(root.path("format").asText())
 					|| job.objectCount() != root.path("objectCount").asLong(-1)
-					|| job.byteCount() != root.path("byteCount").asLong(-1) || !root.path("objects").isArray()) {
+					|| job.byteCount() != root.path("byteCount").asLong(-1) || !root.path("objects").isArray()
+					|| job.objectCount() < 0 || job.objectCount() > MAX_MANIFEST_OBJECTS) {
 				throw mismatch();
 			}
 			List<ManifestObject> objects = new ArrayList<>();
@@ -265,27 +275,69 @@ public final class DatasetPublicationWorkerMain {
 				previousKey = objectKey;
 			}
 			if (objects.size() != job.objectCount()
-					|| objects.stream().mapToLong(ManifestObject::byteCount).sum() != job.byteCount()) {
+					|| objects.stream().mapToLong(ManifestObject::byteCount).reduce(0, Math::addExact) != job
+						.byteCount()) {
 				throw mismatch();
 			}
 			return List.copyOf(objects);
 		}
-		catch (JacksonException failure) {
+		catch (JacksonException | ArithmeticException failure) {
 			throw mismatch();
+		}
+	}
+
+	private static byte[] readManifest(S3AsyncClient client, DatasetPublicationWorkerJob job) {
+		var response = client
+			.getObject(GetObjectRequest.builder()
+				.bucket(job.bucket())
+				.key(key(job.operationLocation(), "manifest.json"))
+				.build(), AsyncResponseTransformer.toBlockingInputStream())
+			.join();
+		try {
+			if (response.response().contentLength() > MAX_MANIFEST_BYTES) {
+				throw mismatch();
+			}
+			byte[] bytes = response.readNBytes(MAX_MANIFEST_BYTES + 1);
+			if (bytes.length > MAX_MANIFEST_BYTES || bytes.length != response.response().contentLength()) {
+				throw mismatch();
+			}
+			return bytes;
+		}
+		catch (IOException failure) {
+			throw new WorkerFailure("DATASET_VERIFICATION_UNAVAILABLE", true);
+		}
+		finally {
+			response.abort();
 		}
 	}
 
 	private static DatasetManifestEntry verifyObject(S3AsyncClient client, String bucket, String key,
 			ManifestObject object) {
-		Path directory = null;
+		var response = client
+			.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build(),
+					AsyncResponseTransformer.toBlockingInputStream())
+			.join();
 		try {
-			directory = Files.createTempDirectory("skywright-dataset-worker-");
-			Path downloaded = directory.resolve("object");
-			client
-				.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build(),
-						AsyncResponseTransformer.toFile(downloaded))
-				.join();
-			if (Files.size(downloaded) != object.byteCount() || !digest(downloaded).equals(object.sha256())) {
+			if (response.response().contentLength() != object.byteCount()) {
+				throw mismatch();
+			}
+			MessageDigest digest = sha256();
+			byte[] buffer = new byte[1024 * 1024];
+			long consumed = 0;
+			int count;
+			while ((count = response.read(buffer, 0,
+					(int) Math.min(buffer.length - 1L, object.byteCount() - consumed) + 1)) != -1) {
+				if (Thread.currentThread().isInterrupted()) {
+					throw new WorkerFailure("DATASET_VERIFICATION_INTERRUPTED", true);
+				}
+				consumed += count;
+				if (consumed > object.byteCount()) {
+					throw mismatch();
+				}
+				digest.update(buffer, 0, count);
+			}
+			if (consumed != object.byteCount()
+					|| !("sha256:" + HexFormat.of().formatHex(digest.digest())).equals(object.sha256())) {
 				throw mismatch();
 			}
 			return new DatasetManifestEntry(object.objectKey(), object.byteCount(),
@@ -295,15 +347,7 @@ public final class DatasetPublicationWorkerMain {
 			throw new WorkerFailure("DATASET_VERIFICATION_UNAVAILABLE", true);
 		}
 		finally {
-			if (directory != null) {
-				try {
-					Files.deleteIfExists(directory.resolve("object"));
-					Files.deleteIfExists(directory);
-				}
-				catch (IOException ignored) {
-					// The temporary worker copy is not authoritative publication state.
-				}
-			}
+			response.abort();
 		}
 	}
 
@@ -348,18 +392,6 @@ public final class DatasetPublicationWorkerMain {
 			configuration.apiCallAttemptTimeout(Duration.ofSeconds(2)).apiCallTimeout(Duration.ofSeconds(5));
 		}
 		return configuration.build();
-	}
-
-	private static String digest(Path path) throws IOException {
-		MessageDigest digest = sha256();
-		try (InputStream stream = Files.newInputStream(path)) {
-			byte[] buffer = new byte[1024 * 1024];
-			int count;
-			while ((count = stream.read(buffer)) >= 0) {
-				digest.update(buffer, 0, count);
-			}
-		}
-		return "sha256:" + HexFormat.of().formatHex(digest.digest());
 	}
 
 	private static String digest(byte[] bytes) {

@@ -4,7 +4,7 @@ set -euo pipefail
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository"
 
-for command in curl flock; do
+for command in curl flock sha256sum install; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "Required command is unavailable: $command" >&2
     exit 1
@@ -25,6 +25,28 @@ fi
 lock_directory="${XDG_RUNTIME_DIR:-/tmp}"
 exec 9>"${lock_directory}/skywright-toolchain-${UID}.lock"
 flock 9
+
+# Image qualification renders the production overlay without contacting a cluster.
+# Reuse an installed kubectl; bootstrap a verified release on Linux when absent.
+if ! command -v kubectl >/dev/null 2>&1; then
+  case "$(uname -s)/$(uname -m)" in
+    Linux/x86_64) kubectl_architecture=amd64 ;;
+    Linux/aarch64) kubectl_architecture=arm64 ;;
+    *) echo "Install kubectl before running scripts/setup-worktree on this platform" >&2; exit 1 ;;
+  esac
+  kubectl_version=v1.36.3
+  kubectl_staging="$(mktemp -d "${lock_directory}/skywright-kubectl.XXXXXX")"
+  trap 'rm -rf "$kubectl_staging"' EXIT
+  kubectl_release="https://dl.k8s.io/release/${kubectl_version}/bin/linux/${kubectl_architecture}/kubectl"
+  curl --fail --location --silent --show-error "$kubectl_release" --output "$kubectl_staging/kubectl"
+  curl --fail --location --silent --show-error "${kubectl_release}.sha256" --output "$kubectl_staging/kubectl.sha256"
+  (cd "$kubectl_staging" && printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check --status)
+  install -D -m 0755 "$kubectl_staging/kubectl" "${HOME}/.local/bin/kubectl"
+  rm -rf "$kubectl_staging"
+  trap - EXIT
+  export PATH="${HOME}/.local/bin:${PATH}"
+fi
+kubectl version --client >/dev/null
 
 sdkman_config="$sdkman_directory/etc/config"
 if grep -q '^sdkman_auto_env=' "$sdkman_config"; then

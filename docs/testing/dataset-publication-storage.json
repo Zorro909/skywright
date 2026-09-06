@@ -1,0 +1,24 @@
+{
+  "shards": 4,
+  "shard_bytes": 268435456,
+  "verification_concurrency": 4,
+  "temporary_volume": {
+    "medium": "Memory",
+    "sizeLimit": "64Mi"
+  },
+  "peak_temporary_bytes": 40960,
+  "verification_seconds": 4.019642112994916,
+  "verified_bytes": 1073741824,
+  "exhaustion_exit_code": 74,
+  "exhaustion_published_result": false,
+  "cancelled_worker_stopped": true,
+  "restart_verified": true,
+  "cluster": "v1.36.1",
+  "image": "docker.io/library/skywright-backend:issue218-pod",
+  "date": "2026-09-06",
+  "baseline_commit": "e96ac58d761a022ddc300a4c4a6b5ed235466dc5",
+  "image_id": "6695f303d45a8e86640df70d0d96ebb2c3179a6d8644f1192838d929edbc82e5",
+  "baseline_64_mib_verified": false,
+  "baseline_512_mib_verified": true,
+  "streaming_64_mib_verified": true
+}
