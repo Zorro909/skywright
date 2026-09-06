@@ -50,7 +50,6 @@ from skywright._training_types import (
     DatasetCursor,
     ExecutionTerminationCause,
     MetricCatalog,
-    MetricObservation,
     ResumeState,
     SampleRecord,
 )
@@ -129,9 +128,6 @@ class DefaultRunContext:
             )
         self._states: dict[str, CheckpointState] = {}
         self._pending: dict[str, list[int | float]] = {}
-        self._observations: list[MetricObservation] = []
-        self._artifacts: list[ArtifactRecord] = []
-        self._samples: list[SampleRecord] = []
         self._step = resume_from.step if resume_from is not None else 0
         self._initial_step = self._step
         self._dataset_cursor: DatasetCursor = continuation_cursor(
@@ -224,18 +220,6 @@ class DefaultRunContext:
         except Exception as failure:
             raise SkywrightFailure(failure, "project") from failure
 
-    @property
-    def observations(self) -> tuple[MetricObservation, ...]:
-        return tuple(self._observations) + self._memory_system_metrics.observations
-
-    @property
-    def artifacts(self) -> tuple[ArtifactRecord, ...]:
-        return tuple(self._artifacts)
-
-    @property
-    def samples(self) -> tuple[SampleRecord, ...]:
-        return tuple(self._samples)
-
     def register_checkpoint_state(self, name: str, state: CheckpointState) -> None:
         self._require_registering("register Checkpoint State")
         if not name or name in self._states:
@@ -313,7 +297,6 @@ class DefaultRunContext:
                 )
         except Exception as failure:
             raise SkywrightFailure(failure, "project") from failure
-        self._observations.extend(committed)
         self._step_system_metrics.committed(interval_end)
         self._pending.clear()
         self._step = next_step
@@ -345,7 +328,6 @@ class DefaultRunContext:
             self._recorder.publish_artifact(artifact)
         except Exception as failure:
             raise SkywrightFailure(failure, "project") from failure
-        self._artifacts.append(artifact)
 
     def persist_sample(self, name: str, data: object, *, media_type: str) -> None:
         self._require_running(f"persist Sample {name!r}")
@@ -361,7 +343,6 @@ class DefaultRunContext:
             self._recorder.publish_sample(sample)
         except Exception as failure:
             raise SkywrightFailure(failure, "project") from failure
-        self._samples.append(sample)
 
     def snapshot(self) -> CheckpointSnapshot:
         return capture_checkpoint(

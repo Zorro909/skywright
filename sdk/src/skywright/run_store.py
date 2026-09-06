@@ -8,6 +8,7 @@ from skywright._run_store.implementation import (
     MultipartUpload,
     OperationControl,
     OperationMeasurement,
+    OperationMeasurementBatch,
     RunStoreCancelledError,
     RunStoreConflictError,
     RunStoreDeadlineError,
@@ -18,6 +19,7 @@ from skywright._run_store.implementation import (
     SerializedCheckpoint,
     TargetStorage,
 )
+from skywright._run_store.measurements import OperationMeasurementGap
 from skywright._run_store.progress import ProgressRecord
 from skywright._run_store.recorder import RunStoreRecorder
 
@@ -29,6 +31,8 @@ __all__ = (
     "MultipartUpload",
     "OperationControl",
     "OperationMeasurement",
+    "OperationMeasurementBatch",
+    "OperationMeasurementGap",
     "ProgressRecord",
     "RunStoreCancelledError",
     "RunStoreConflictError",

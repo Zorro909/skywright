@@ -74,7 +74,6 @@ def stopped_result(
         latest_durable_step=durable_step,
         latest_durable_checkpoint=durable_checkpoint,
         final_checkpoint=None,
-        context=context,
         diagnostics=diagnostics,
     )
     return _publish_report(result, recorder) if shutdown.stopped else result
@@ -123,7 +122,6 @@ def durable_result(
         latest_durable_step=checkpoint.step,
         latest_durable_checkpoint=checkpoint.reference,
         final_checkpoint=checkpoint,
-        context=context,
         diagnostics=diagnostics or {},
     )
     return _publish_report(result, recorder)
@@ -182,7 +180,6 @@ def failure_result(
         latest_durable_step=durable_step,
         latest_durable_checkpoint=durable_checkpoint,
         final_checkpoint=None,
-        context=context,
         diagnostics=_with_cleanup_failure(diagnostics, cleanup_failure),
     )
     checkpoint_work_stopped = shutdown is None or shutdown.stopped
@@ -219,7 +216,6 @@ def unpublished_failure(
         latest_durable_step=None,
         latest_durable_checkpoint=None,
         final_checkpoint=None,
-        context=None,
         diagnostics=diagnostics,
     )
 
@@ -233,7 +229,6 @@ def _result(
     latest_durable_step: int | None,
     latest_durable_checkpoint: str | None,
     final_checkpoint: CheckpointConfirmation | None,
-    context: DefaultRunContext | None,
     diagnostics: Mapping[str, object],
 ) -> TrainingProcessResult:
     report = ExecutionTerminationReport(
@@ -252,9 +247,6 @@ def _result(
         attempt=attempt,
         report=report,
         final_checkpoint=final_checkpoint,
-        metric_observations=context.observations if context is not None else (),
-        artifacts=context.artifacts if context is not None else (),
-        samples=context.samples if context is not None else (),
     )
 
 

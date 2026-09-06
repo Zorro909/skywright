@@ -30,6 +30,11 @@ from urllib.parse import quote, unquote
 
 import numpy as np
 
+from skywright._run_store.measurements import (
+    OperationMeasurement,
+    OperationMeasurementBatch,
+    OperationMeasurements,
+)
 from skywright._training_errors import (
     CheckpointPublicationCancelled,
     TrainingContractViolation,
@@ -679,20 +684,6 @@ class OperationControl:
     cancellation_requested: Callable[[], bool] = lambda: False
 
 
-@dataclass(frozen=True)
-class OperationMeasurement:
-    """One non-secret provider request measurement retained for cost accounting."""
-
-    operation: str
-    bytes: int
-    direction: str
-    request_number: int
-    run_id: str
-    timestamp: float
-    provenance: str
-    succeeded: bool
-
-
 class _S3Gateway:
     _RETRYABLE = frozenset(
         {
@@ -707,12 +698,18 @@ class _S3Gateway:
     )
 
     def __init__(
-        self, client: Any, target: TargetStorage, control: OperationControl
+        self,
+        client: Any,
+        target: TargetStorage,
+        control: OperationControl,
+        measurement_capacity: int = 256,
     ) -> None:
         self._client = client
         self._target = target
         self._control = control
-        self.measurements: list[OperationMeasurement] = []
+        self.measurements = OperationMeasurements(
+            target.run_id, target.storage_id, measurement_capacity
+        )
 
     def __getattr__(self, operation: str) -> Any:
         provider_operation = getattr(self._client, operation)
@@ -808,17 +805,8 @@ class _S3Gateway:
         timestamp: float,
         succeeded: bool,
     ) -> None:
-        self.measurements.append(
-            OperationMeasurement(
-                operation,
-                transferred,
-                direction,
-                attempt,
-                self._target.run_id,
-                timestamp,
-                self._target.storage_id,
-                succeeded,
-            )
+        self.measurements.record(
+            operation, transferred, direction, attempt, timestamp, succeeded
         )
 
 
@@ -836,6 +824,7 @@ class RunStoreRecorder:
         multipart_threshold: int = 64 * 1024 * 1024,
         multipart_part_size: int = 64 * 1024 * 1024,
         operation_control: OperationControl | None = None,
+        measurement_capacity: int = 256,
     ) -> None:
         self.target = target
         self.protocol: RunStoreProtocol = RunStoreProtocol(
@@ -859,6 +848,7 @@ class RunStoreRecorder:
             client or _s3_client(target, session_factory, controlled_publication),
             target,
             controlled_publication,
+            measurement_capacity,
         )
         self._attempt: ExecutionAttemptRecord | None = None
         self._confirmation_lock = threading.Lock()
@@ -869,7 +859,12 @@ class RunStoreRecorder:
 
     @property
     def measurements(self) -> tuple[OperationMeasurement, ...]:
-        return tuple(self._client.measurements)
+        """Recent diagnostics only; drain measurements to receive overflow gaps."""
+        return self._client.measurements.snapshot()
+
+    def drain_measurements(self) -> OperationMeasurementBatch:
+        """Transfer a bounded batch, including identities of any missing records."""
+        return self._client.measurements.drain()
 
     def publish_attempt(self, attempt: ExecutionAttemptRecord) -> None:
         if attempt.run_id != self.target.run_id:
@@ -1359,6 +1354,7 @@ class RunStoreReader:
         client: Any | None = None,
         session_factory: Any | None = None,
         operation_control: OperationControl | None = None,
+        measurement_capacity: int = 256,
     ) -> None:
         self.target = target
         self.protocol: RunStoreProtocol = RunStoreProtocol(
@@ -1370,11 +1366,17 @@ class RunStoreReader:
             client or _s3_client(target, session_factory, control),
             target,
             control,
+            measurement_capacity,
         )
 
     @property
     def measurements(self) -> tuple[OperationMeasurement, ...]:
-        return tuple(self._client.measurements)
+        """Recent diagnostics only; drain measurements to receive overflow gaps."""
+        return self._client.measurements.snapshot()
+
+    def drain_measurements(self) -> OperationMeasurementBatch:
+        """Transfer a bounded batch, including identities of any missing records."""
+        return self._client.measurements.drain()
 
     def list_checkpoints(self) -> tuple[CheckpointSummary, ...]:
         prefix = f"{self.protocol.run_prefix}checkpoints/"

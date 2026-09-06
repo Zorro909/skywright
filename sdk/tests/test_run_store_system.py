@@ -711,3 +711,37 @@ def test_model_optimizer_checkpoint_memory_scenario_uses_real_s3() -> None:
         assert evidence["whole_state_resume_verified"] is True
         assert len(evidence["capture_ms"]) == 3
         assert evidence["upload_held_during_training_and_capture_ms"] > 0
+
+
+def test_runtime_history_remains_bounded_while_real_s3_keeps_all_outputs() -> None:
+    with seaweedfs() as (endpoint, client):
+        client.create_bucket(Bucket="runtime-history")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).parent / "support" / "runtime_history_scenario.py"),
+                "--endpoint",
+                endpoint,
+                "--bucket",
+                "runtime-history",
+                "--steps",
+                "128",
+                "--warmup",
+                "32",
+                "--sample-every",
+                "32",
+                "--payload-bytes",
+                "4096",
+                "--expect-bounded",
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=90,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        evidence = json.loads(result.stdout)
+        assert evidence["persisted_outputs_verified"] == 256
+        assert evidence["persisted_observations_verified"] == 512
+        assert evidence["max_live_output_records"] == 0
+        assert evidence["max_live_metric_observations"] <= 4

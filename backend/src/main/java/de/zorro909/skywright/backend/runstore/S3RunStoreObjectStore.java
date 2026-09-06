@@ -5,8 +5,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicLong;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
@@ -32,15 +30,19 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 
 	private final RunStoreOperationControl control;
 
-	private final List<RunStoreOperationMeasurement> measurements = new CopyOnWriteArrayList<>();
-
-	private final AtomicLong requestNumber = new AtomicLong();
+	private final RunStoreMeasurements measurements;
 
 	public S3RunStoreObjectStore(ResolvedTargetStorage target) {
 		this(target, RunStoreOperationControl.defaults());
 	}
 
 	public S3RunStoreObjectStore(ResolvedTargetStorage target, RunStoreOperationControl control) {
+		this(target, control, 256);
+	}
+
+	public S3RunStoreObjectStore(ResolvedTargetStorage target, RunStoreOperationControl control,
+			int measurementCapacity) {
+		this.measurements = new RunStoreMeasurements(target.runId(), target.storageId(), measurementCapacity);
 		this.target = target;
 		this.control = control;
 		S3Configuration configuration = S3Configuration.builder()
@@ -149,7 +151,12 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 	}
 
 	public List<RunStoreOperationMeasurement> measurements() {
-		return List.copyOf(this.measurements);
+		return this.measurements.snapshot();
+	}
+
+	/** Transfer recent records and explicit overflow gaps to the usage consumer. */
+	public RunStoreMeasurementBatch drainMeasurements() {
+		return this.measurements.drain();
 	}
 
 	private void checkCancellation() {
@@ -159,9 +166,7 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 	}
 
 	private void measure(String operation, long bytes, String direction, Instant timestamp, boolean succeeded) {
-		this.measurements
-			.add(new RunStoreOperationMeasurement(operation, bytes, direction, this.requestNumber.incrementAndGet(),
-					this.target.runId(), timestamp, this.target.storageId(), succeeded));
+		this.measurements.record(operation, bytes, direction, timestamp, succeeded);
 	}
 
 	@Override

@@ -214,13 +214,7 @@ class MemorySystemMetrics:
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._failure: Exception | None = None
-        self._observations: list[MetricObservation] = []
         self._worker: threading.Thread | None = None
-
-    @property
-    def observations(self) -> tuple[MetricObservation, ...]:
-        with self._lock:
-            return tuple(self._observations)
 
     def start(self) -> None:
         if self._definition is None:
@@ -255,8 +249,6 @@ class MemorySystemMetrics:
                 with self._publication_lock:
                     observation = self._memory_observation(value)
                     self._publish(observation)
-                with self._lock:
-                    self._observations.append(observation)
         except Exception as failure:
             with self._lock:
                 self._failure = failure

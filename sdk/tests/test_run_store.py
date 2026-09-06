@@ -1305,6 +1305,81 @@ def test_reader_inventories_parts_and_aborts_uploads_under_the_stable_run_prefix
     assert reader.list_incomplete_uploads() == ()
 
 
+def test_repeated_s3_reads_keep_only_bounded_measurement_diagnostics(tmp_path) -> None:
+    memory = MemoryS3()
+    store = recorder(memory, tmp_path)
+    reader = RunStoreReader(store.target, client=memory)
+
+    for _ in range(4096):
+        assert reader.list_checkpoints() == ()
+
+    assert len(reader.measurements) <= 256
+
+
+def test_s3_measurement_drains_preserve_identity_and_report_overflow(tmp_path) -> None:
+    memory = MemoryS3()
+    store = recorder(memory, tmp_path)
+    reader = RunStoreReader(store.target, client=memory, measurement_capacity=2)
+    for _ in range(4):
+        reader.list_checkpoints()
+
+    batch = reader.drain_measurements()
+    assert batch.run_id == "run"
+    assert batch.provenance == "test-storage"
+    assert batch.through_sequence == 4
+    assert batch.gap is not None
+    assert (batch.gap.first_sequence, batch.gap.last_sequence) == (1, 2)
+    assert batch.gap.count == 2
+    assert batch.gap.earliest_timestamp <= batch.gap.latest_timestamp
+    assert [item.sequence for item in batch.measurements] == [3, 4]
+    assert all(item.producer_id == batch.producer_id for item in batch.measurements)
+    assert reader.measurements == ()
+
+    reader.list_checkpoints()
+    next_batch = reader.drain_measurements()
+    assert next_batch.producer_id == batch.producer_id
+    assert next_batch.through_sequence == 5
+    assert next_batch.gap is None
+    assert [item.sequence for item in next_batch.measurements] == [5]
+    assert reader.drain_measurements().measurements == ()
+    assert batch.gap.count == 2  # Already delivered batches remain immutable.
+
+    other_reader = RunStoreReader(store.target, client=memory)
+    other_reader.list_checkpoints()
+    assert other_reader.drain_measurements().producer_id != batch.producer_id
+
+
+def test_s3_retry_attempts_have_distinct_measurement_identities(tmp_path) -> None:
+    from botocore.exceptions import ClientError
+
+    class TransientListS3(MemoryS3):
+        calls = 0
+
+        def list_objects_v2(self, **request):
+            self.calls += 1
+            if self.calls == 1:
+                raise ClientError(
+                    {
+                        "Error": {"Code": "SlowDown"},
+                        "ResponseMetadata": {"HTTPStatusCode": 503},
+                    },
+                    "ListObjectsV2",
+                )
+            return super().list_objects_v2(**request)
+
+    memory = TransientListS3()
+    store = recorder(memory, tmp_path)
+    reader = RunStoreReader(store.target, client=memory)
+    assert reader.list_checkpoints() == ()
+    assert reader.list_checkpoints() == ()
+    batch = reader.drain_measurements()
+    assert batch.gap is None
+    assert [item.sequence for item in batch.measurements] == [1, 2, 3]
+    assert [item.request_number for item in batch.measurements] == [1, 2, 1]
+    assert [item.succeeded for item in batch.measurements] == [False, True, True]
+    assert all(item.operation == "list_objects_v2" for item in batch.measurements)
+
+
 def test_operations_honor_cancellation_and_retain_non_secret_measurements(
     tmp_path,
 ) -> None:
