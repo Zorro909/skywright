@@ -43,6 +43,8 @@ from skywright.run_store import (
     TargetStorage,
 )
 
+pytestmark = pytest.mark.integration
+
 SEAWEEDFS_IMAGE = (
     "docker.io/chrislusf/seaweedfs:4.42@"
     "sha256:f7cbc8bdbbf60a1aaba7d61784a3bdff3ec1e0657f6ad0b26d5b6ab2cd9d0dc6"
@@ -214,7 +216,6 @@ esac
     )
 
 
-@pytest.mark.system
 def test_registered_descriptor_uses_standard_credentials_against_pinned_seaweedfs(
     tmp_path, monkeypatch
 ) -> None:
@@ -439,7 +440,6 @@ def test_registered_descriptor_uses_standard_credentials_against_pinned_seaweedf
         )
 
 
-@pytest.mark.system
 def test_training_lifecycle_scenarios_persist_to_pinned_seaweedfs(tmp_path) -> None:
     scenario_runner = Path(__file__).parent / "support/run_store_training_scenario.py"
     with seaweedfs() as (endpoint, client):
@@ -747,7 +747,6 @@ def test_runtime_history_remains_bounded_while_real_s3_keeps_all_outputs() -> No
         assert evidence["max_live_metric_observations"] <= 4
 
 
-@pytest.mark.system
 def test_checkpoint_recovery_respects_memory_and_integrity_budgets(tmp_path) -> None:
     import hashlib
 

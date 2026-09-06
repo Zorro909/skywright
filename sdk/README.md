@@ -394,6 +394,22 @@ scripts/build-distributions dist
 uv run --locked pytest tests/system -m system --artifact-dir dist
 ```
 
+Pytest discovers `tests/` recursively. The default run and `scripts/check` select
+unit tests, including MDS decoding and new unmarked `test_*.py` modules. Mark a
+service module with `pytestmark = pytest.mark.integration`; add `pytest.mark.dataset`
+when it needs the optional Dataset stack. `scripts/integration` discovers both
+service groups through these markers. Tests under `tests/system/` are automatically
+marked `system` and run against built artifacts through `scripts/verify`. Their
+artifact directory is required when fixtures execute, so collection needs no wheel.
+Unknown markers fail immediately. A collection regression creates temporary future
+modules and checks that the three suites remain separate.
+
+To run a specific real-service case, override the default unit selection:
+
+```bash
+uv run --locked --group ml-test pytest -m integration -k checkpoint_recovery
+```
+
 The separate `ml-test` dependency group locks a CPU-only PyTorch and NumPy stack for future ML
 integration tests. It is intentionally excluded from ordinary bootstrap work. Activate it only
 when working on a check that explicitly needs that stack:

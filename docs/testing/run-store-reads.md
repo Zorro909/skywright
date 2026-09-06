@@ -105,7 +105,7 @@ boto3 1.43.73, Java 25.0.4 GraalVM CE 25.2.4+7.1. SeaweedFS uses the repository'
 
 ```sh
 sdk/scripts/check
-uv run --project sdk --locked --group ml-test pytest sdk/tests/test_run_store_system.py
+uv run --project sdk --locked --group ml-test pytest -m integration sdk/tests/test_run_store_system.py
 mvn -pl backend -am -DskipFrontendInstall=true -DskipFrontendTests=true \
   -Dtest=RunStoreAccessTest,RunStoreGoldenCorpusTest -Dsurefire.failIfNoSpecifiedTests=false \
   -Dit.test=RunStoreS3IT,TargetStorageQualificationIT -Dfailsafe.failIfNoSpecifiedTests=false verify

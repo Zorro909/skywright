@@ -55,7 +55,7 @@ These are workload measurements, not latency guarantees or GPU OOM qualification
 The automated CPU scenario is part of the real S3 suite:
 
 ```sh
-uv run --project sdk --locked --group ml-test pytest \
+uv run --project sdk --locked --group ml-test pytest -m integration \
   sdk/tests/test_run_store_system.py \
   -k model_optimizer_checkpoint_memory_scenario_uses_real_s3
 ```

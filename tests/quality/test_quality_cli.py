@@ -83,7 +83,7 @@ class PlanningTest(unittest.TestCase):
                     "deployment": False,
                     "frontend": False,
                     "image": True,
-                    "integration": False,
+                    "integration": True,
                     "java": True,
                     "profile": False,
                     "sdk": False,
@@ -97,7 +97,7 @@ class PlanningTest(unittest.TestCase):
                     "deployment": False,
                     "frontend": False,
                     "image": True,
-                    "integration": False,
+                    "integration": True,
                     "java": True,
                     "profile": False,
                     "sdk": False,
@@ -230,10 +230,12 @@ class PlanningTest(unittest.TestCase):
                     applicability,
                 )
 
-    def test_real_structural_overlay_corpus_is_a_shared_fixture(self) -> None:
+    def test_real_structural_overlay_corpus_selects_shared_contract_consumers(
+        self,
+    ) -> None:
         plan = self.plan("sdk/src/skywright/_configuration_resources/corpus.json")
 
-        self.assertEqual(plan["categories"], ["fixture"])
+        self.assertEqual(plan["categories"], ["shared-contract"])
         self.assertEqual(
             {name: check["applicable"] for name, check in plan["checks"].items()},
             {
@@ -241,12 +243,87 @@ class PlanningTest(unittest.TestCase):
                 "deployment": False,
                 "frontend": False,
                 "image": True,
-                "integration": False,
+                "integration": True,
                 "java": True,
-                "profile": False,
+                "profile": True,
                 "sdk": True,
                 "security": True,
             },
+        )
+
+    def test_every_backend_adapter_and_resource_selects_real_services(self) -> None:
+        for path in (
+            "backend/src/main/java/de/zorro909/skywright/backend/orchestration/GraalPySkyPilotClient.java",
+            "backend/src/main/resources/META-INF/skywright/skypilot_bridge.py",
+            "backend/src/main/java/de/zorro909/skywright/backend/datasetcatalog/S3DatasetCopyStorage.java",
+            "backend/src/main/java/de/zorro909/skywright/backend/targetstorage/S3TargetStorageQualificationProbe.java",
+            "backend/src/main/resources/META-INF/skywright/future_bridge.py",
+            "backend/src/main/java/de/zorro909/skywright/backend/future/Adapter.java",
+            "backend/src/test/java/de/zorro909/skywright/backend/future/AdapterTest.java",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(self.plan(path)["checks"]["integration"]["applicable"])
+
+    def test_packaged_sdk_resources_select_all_consumers(self) -> None:
+        required = {
+            "application",
+            "image",
+            "integration",
+            "java",
+            "profile",
+            "sdk",
+            "security",
+        }
+        for family in ("configuration", "metric", "run_definition"):
+            for resource in ("schema.json", "corpus.json", "future-contract.json"):
+                path = f"sdk/src/skywright/_{family}_resources/{resource}"
+                with self.subTest(path=path):
+                    selected = {
+                        name
+                        for name, check in self.plan(path)["checks"].items()
+                        if check["applicable"]
+                    }
+                    self.assertTrue(required.issubset(selected), selected)
+
+    def test_all_sdk_resource_directories_packaged_by_maven_have_consumer_coverage(
+        self,
+    ) -> None:
+        import xml.etree.ElementTree as ET
+
+        pom = ET.parse(REPOSITORY / "backend/pom.xml")
+        ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+        packaged = []
+        for resource in pom.findall("./m:build/m:resources/m:resource", ns):
+            directory = resource.findtext("m:directory", namespaces=ns)
+            if directory and "/sdk/" in directory:
+                path = directory.replace("${maven.multiModuleProjectDirectory}/", "")
+                packaged.append(path)
+                with self.subTest(path=path):
+                    self.assertEqual(
+                        resource.findtext("m:filtering", namespaces=ns), "false"
+                    )
+                    self.assertTrue(
+                        resource.findtext("m:targetPath", namespaces=ns).startswith(
+                            "META-INF/skywright/"
+                        )
+                    )
+                    plan = self.plan(path + "/future-resource.json")
+                    for consumer in (
+                        "java",
+                        "sdk",
+                        "integration",
+                        "application",
+                        "image",
+                        "profile",
+                    ):
+                        self.assertTrue(
+                            plan["checks"][consumer]["applicable"], consumer
+                        )
+        self.assertTrue(
+            {
+                f"sdk/src/skywright/_{family}_resources"
+                for family in ("configuration", "metric", "run_definition")
+            }.issubset(packaged)
         )
 
     def test_dependency_backed_implementation_paths_select_integration(self) -> None:

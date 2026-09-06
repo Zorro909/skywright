@@ -46,7 +46,7 @@ Exact source identities, platform/image versions and raw samples are in [runtime
 Run from the repository root after `scripts/setup-worktree`. The smaller CI scenario exercises the same path:
 
 ```sh
-uv run --project sdk --locked --group ml-test pytest \
+uv run --project sdk --locked --group ml-test pytest -m integration \
   sdk/tests/test_run_store_system.py -k runtime_history
 ```
 

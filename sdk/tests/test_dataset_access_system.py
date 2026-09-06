@@ -27,8 +27,9 @@ from skywright.dataset import (
     StorageLocation,
 )
 
+pytestmark = [pytest.mark.integration, pytest.mark.dataset]
 
-@pytest.mark.system
+
 @pytest.mark.parametrize("compression", [None, "gz", "bz2", "br", "zstd", "snappy"])
 def test_real_s3_cache_lifecycle_location_changes_and_direct_process(
     tmp_path, monkeypatch, compression
@@ -227,7 +228,6 @@ def test_real_s3_cache_lifecycle_location_changes_and_direct_process(
                 changed.read_item(ordinal)
 
 
-@pytest.mark.system
 def test_exact_committed_sequence_across_process_recovery_and_clone(
     tmp_path, monkeypatch
 ) -> None:

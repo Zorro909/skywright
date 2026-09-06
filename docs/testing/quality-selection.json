@@ -1,0 +1,607 @@
+{
+  "baseline_commit": "4fe81cc99f80ac3b9f4278d1803a2c80b94bdded",
+  "selection_regressions": [
+    {
+      "path": "backend/src/main/resources/META-INF/skywright/skypilot_bridge.py",
+      "before": [
+        "application",
+        "image",
+        "integration",
+        "java",
+        "security"
+      ],
+      "after": [
+        "application",
+        "image",
+        "integration",
+        "java",
+        "security"
+      ]
+    },
+    {
+      "path": "backend/src/main/java/de/zorro909/skywright/backend/datasetcatalog/S3DatasetCopyStorage.java",
+      "before": [
+        "application",
+        "image",
+        "java",
+        "security"
+      ],
+      "after": [
+        "application",
+        "image",
+        "integration",
+        "java",
+        "security"
+      ]
+    },
+    {
+      "path": "backend/src/main/java/de/zorro909/skywright/backend/targetstorage/S3TargetStorageQualificationProbe.java",
+      "before": [
+        "application",
+        "image",
+        "java",
+        "security"
+      ],
+      "after": [
+        "application",
+        "image",
+        "integration",
+        "java",
+        "security"
+      ]
+    },
+    {
+      "path": "sdk/src/skywright/_configuration_resources/schema.json",
+      "before": [
+        "profile",
+        "sdk",
+        "security"
+      ],
+      "after": [
+        "application",
+        "image",
+        "integration",
+        "java",
+        "profile",
+        "sdk",
+        "security"
+      ]
+    },
+    {
+      "path": "sdk/src/skywright/_metric_resources/schema.json",
+      "before": [
+        "profile",
+        "sdk",
+        "security"
+      ],
+      "after": [
+        "application",
+        "image",
+        "integration",
+        "java",
+        "profile",
+        "sdk",
+        "security"
+      ]
+    },
+    {
+      "path": "sdk/src/skywright/_run_definition_resources/schema.json",
+      "before": [
+        "profile",
+        "sdk",
+        "security"
+      ],
+      "after": [
+        "application",
+        "image",
+        "integration",
+        "java",
+        "profile",
+        "sdk",
+        "security"
+      ]
+    },
+    {
+      "path": "backend/src/main/java/de/zorro909/skywright/backend/orchestration/GraalPySkyPilotClient.java",
+      "before": [
+        "application",
+        "image",
+        "integration",
+        "java",
+        "security"
+      ],
+      "after": [
+        "application",
+        "image",
+        "integration",
+        "java",
+        "security"
+      ]
+    }
+  ],
+  "packaged_resource_files": {
+    "configuration": 7,
+    "metric": 5,
+    "run_definition": 5
+  },
+  "runs": [
+    {
+      "label": "pr",
+      "run_id": 34008278541,
+      "url": "https://github.com/Zorro909/skywright/actions/runs/34008278541",
+      "head_sha": "306bda193b03619113181d48ce7f65e3daa86ba3",
+      "event": "pull_request",
+      "conclusion": "success",
+      "selected_checks": [
+        "application",
+        "image",
+        "integration",
+        "java",
+        "profile",
+        "sdk",
+        "security"
+      ],
+      "elapsed_seconds": 1102.0,
+      "summed_job_seconds": 4058.0,
+      "jobs": [
+        {
+          "name": "Plan",
+          "seconds": 5.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Security",
+          "seconds": 201.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Environment Profiles",
+          "seconds": 323.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Python SDK / Primary artifacts",
+          "seconds": 286.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Prepare packaged GraalPy environment",
+          "seconds": 31.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Production control-plane images",
+          "seconds": 562.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete application",
+          "seconds": 235.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Real-service integration",
+          "seconds": 1049.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Java and backend",
+          "seconds": 198.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Python SDK / Python 3.13",
+          "seconds": 250.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Python SDK / Python 3.12",
+          "seconds": 243.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Python SDK / Python 3.11",
+          "seconds": 314.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Python SDK / Python 3.10",
+          "seconds": 353.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Python SDK",
+          "seconds": 2.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Quality Gate",
+          "seconds": 6.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_hits": [
+        {
+          "job": "Python SDK / Primary artifacts",
+          "key": "setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.14.7-pruned-fd0e3189ce2edcb2a3fc1da7de1ac2c8520e50767d70c44026a10df693936c2d"
+        },
+        {
+          "job": "Prepare packaged GraalPy environment",
+          "key": "Linux-X64-graalvm-community-3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e"
+        },
+        {
+          "job": "Prepare packaged GraalPy environment",
+          "key": "setup-java-Linux-x64-maven-2857a537877b6923f228f1702c1aead1850efa623859f9c5f60065687de0cf37"
+        },
+        {
+          "job": "Prepare packaged GraalPy environment",
+          "key": "setup-java-Linux-x64-maven-wrapper-8cfda2abb09e83e53b59dae5d410e36050316510ade3fef2521f1cb035ba1fc0"
+        },
+        {
+          "job": "Prepare packaged GraalPy environment",
+          "key": "Linux-X64-ubuntu24-graalpy-env-v3-3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e-e4a48c507daec8cdb386076bad34c51798268d6cbcdc9ce726f99d2b7eede4d3"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "Linux-X64-graalvm-community-3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "setup-java-Linux-x64-maven-2857a537877b6923f228f1702c1aead1850efa623859f9c5f60065687de0cf37"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "setup-java-Linux-x64-maven-wrapper-8cfda2abb09e83e53b59dae5d410e36050316510ade3fef2521f1cb035ba1fc0"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "Linux-node-26.7.0-pnpm-11.21.0-999ab8027f5586d0c0ed9dbc3c926c1e65b2095609e772307bf24cb447bdd18f"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "trivy-binary-v0.70.0-Linux-X64"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "cache-trivy-2026-09-06"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "trivy-binary-v0.70.0-Linux-X64"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "cache-trivy-2026-09-06"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "trivy-binary-v0.70.0-Linux-X64"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "cache-trivy-2026-09-06"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "trivy-binary-v0.70.0-Linux-X64"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "cache-trivy-2026-09-06"
+        },
+        {
+          "job": "Complete application",
+          "key": "Linux-X64-graalvm-community-3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e"
+        },
+        {
+          "job": "Complete application",
+          "key": "setup-java-Linux-x64-maven-2857a537877b6923f228f1702c1aead1850efa623859f9c5f60065687de0cf37"
+        },
+        {
+          "job": "Complete application",
+          "key": "setup-java-Linux-x64-maven-wrapper-8cfda2abb09e83e53b59dae5d410e36050316510ade3fef2521f1cb035ba1fc0"
+        },
+        {
+          "job": "Complete application",
+          "key": "Linux-node-26.7.0-pnpm-11.21.0-999ab8027f5586d0c0ed9dbc3c926c1e65b2095609e772307bf24cb447bdd18f"
+        },
+        {
+          "job": "Complete application",
+          "key": "Linux-node-26.7.0-pnpm-11.21.0-playwright-1.62.1-999ab8027f5586d0c0ed9dbc3c926c1e65b2095609e772307bf24cb447bdd18f"
+        },
+        {
+          "job": "Real-service integration",
+          "key": "Linux-X64-graalvm-community-3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e"
+        },
+        {
+          "job": "Real-service integration",
+          "key": "setup-java-Linux-x64-maven-2857a537877b6923f228f1702c1aead1850efa623859f9c5f60065687de0cf37"
+        },
+        {
+          "job": "Real-service integration",
+          "key": "setup-java-Linux-x64-maven-wrapper-8cfda2abb09e83e53b59dae5d410e36050316510ade3fef2521f1cb035ba1fc0"
+        },
+        {
+          "job": "Real-service integration",
+          "key": "Linux-node-26.7.0-pnpm-11.21.0-999ab8027f5586d0c0ed9dbc3c926c1e65b2095609e772307bf24cb447bdd18f"
+        },
+        {
+          "job": "Real-service integration",
+          "key": "setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.14.7-pruned-fd0e3189ce2edcb2a3fc1da7de1ac2c8520e50767d70c44026a10df693936c2d"
+        },
+        {
+          "job": "Java and backend",
+          "key": "Linux-X64-graalvm-community-3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e"
+        },
+        {
+          "job": "Java and backend",
+          "key": "setup-java-Linux-x64-maven-2857a537877b6923f228f1702c1aead1850efa623859f9c5f60065687de0cf37"
+        },
+        {
+          "job": "Java and backend",
+          "key": "setup-java-Linux-x64-maven-wrapper-8cfda2abb09e83e53b59dae5d410e36050316510ade3fef2521f1cb035ba1fc0"
+        },
+        {
+          "job": "Java and backend",
+          "key": "Linux-node-26.7.0-pnpm-11.21.0-999ab8027f5586d0c0ed9dbc3c926c1e65b2095609e772307bf24cb447bdd18f"
+        },
+        {
+          "job": "Python SDK / Python 3.13",
+          "key": "setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.13.15-pruned-fd0e3189ce2edcb2a3fc1da7de1ac2c8520e50767d70c44026a10df693936c2d"
+        },
+        {
+          "job": "Python SDK / Python 3.12",
+          "key": "setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.14-pruned-fd0e3189ce2edcb2a3fc1da7de1ac2c8520e50767d70c44026a10df693936c2d"
+        },
+        {
+          "job": "Python SDK / Python 3.11",
+          "key": "setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.11.16-pruned-fd0e3189ce2edcb2a3fc1da7de1ac2c8520e50767d70c44026a10df693936c2d"
+        },
+        {
+          "job": "Python SDK / Python 3.10",
+          "key": "setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.10.21-pruned-fd0e3189ce2edcb2a3fc1da7de1ac2c8520e50767d70c44026a10df693936c2d"
+        }
+      ],
+      "cache_misses": []
+    },
+    {
+      "label": "main",
+      "run_id": 34009095746,
+      "url": "https://github.com/Zorro909/skywright/actions/runs/34009095746",
+      "head_sha": "e96ac58d761a022ddc300a4c4a6b5ed235466dc5",
+      "event": "push",
+      "conclusion": "success",
+      "selected_checks": [
+        "application",
+        "image",
+        "integration",
+        "java",
+        "profile",
+        "sdk",
+        "security"
+      ],
+      "elapsed_seconds": 1125.0,
+      "summed_job_seconds": 4433.0,
+      "jobs": [
+        {
+          "name": "Plan",
+          "seconds": 7.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Security",
+          "seconds": 280.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Python SDK / Primary artifacts",
+          "seconds": 271.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Prepare packaged GraalPy environment",
+          "seconds": 33.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Environment Profiles",
+          "seconds": 630.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Java and backend",
+          "seconds": 180.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Production control-plane images",
+          "seconds": 527.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete application",
+          "seconds": 224.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Real-service integration",
+          "seconds": 1070.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Python SDK / Python 3.12",
+          "seconds": 310.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Python SDK / Python 3.10",
+          "seconds": 340.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Python SDK / Python 3.11",
+          "seconds": 301.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Python SDK / Python 3.13",
+          "seconds": 251.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Python SDK",
+          "seconds": 4.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Quality Gate",
+          "seconds": 5.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_hits": [
+        {
+          "job": "Python SDK / Primary artifacts",
+          "key": "setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.14.7-pruned-fd0e3189ce2edcb2a3fc1da7de1ac2c8520e50767d70c44026a10df693936c2d"
+        },
+        {
+          "job": "Prepare packaged GraalPy environment",
+          "key": "Linux-X64-graalvm-community-3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e"
+        },
+        {
+          "job": "Prepare packaged GraalPy environment",
+          "key": "setup-java-Linux-x64-maven-2857a537877b6923f228f1702c1aead1850efa623859f9c5f60065687de0cf37"
+        },
+        {
+          "job": "Prepare packaged GraalPy environment",
+          "key": "setup-java-Linux-x64-maven-wrapper-8cfda2abb09e83e53b59dae5d410e36050316510ade3fef2521f1cb035ba1fc0"
+        },
+        {
+          "job": "Prepare packaged GraalPy environment",
+          "key": "Linux-X64-ubuntu24-graalpy-env-v3-3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e-e4a48c507daec8cdb386076bad34c51798268d6cbcdc9ce726f99d2b7eede4d3"
+        },
+        {
+          "job": "Java and backend",
+          "key": "Linux-X64-graalvm-community-3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e"
+        },
+        {
+          "job": "Java and backend",
+          "key": "setup-java-Linux-x64-maven-2857a537877b6923f228f1702c1aead1850efa623859f9c5f60065687de0cf37"
+        },
+        {
+          "job": "Java and backend",
+          "key": "setup-java-Linux-x64-maven-wrapper-8cfda2abb09e83e53b59dae5d410e36050316510ade3fef2521f1cb035ba1fc0"
+        },
+        {
+          "job": "Java and backend",
+          "key": "Linux-node-26.7.0-pnpm-11.21.0-999ab8027f5586d0c0ed9dbc3c926c1e65b2095609e772307bf24cb447bdd18f"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "Linux-X64-graalvm-community-3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "setup-java-Linux-x64-maven-2857a537877b6923f228f1702c1aead1850efa623859f9c5f60065687de0cf37"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "setup-java-Linux-x64-maven-wrapper-8cfda2abb09e83e53b59dae5d410e36050316510ade3fef2521f1cb035ba1fc0"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "Linux-node-26.7.0-pnpm-11.21.0-999ab8027f5586d0c0ed9dbc3c926c1e65b2095609e772307bf24cb447bdd18f"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "trivy-binary-v0.70.0-Linux-X64"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "cache-trivy-2026-09-06"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "trivy-binary-v0.70.0-Linux-X64"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "cache-trivy-2026-09-06"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "trivy-binary-v0.70.0-Linux-X64"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "cache-trivy-2026-09-06"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "trivy-binary-v0.70.0-Linux-X64"
+        },
+        {
+          "job": "Production control-plane images",
+          "key": "cache-trivy-2026-09-06"
+        },
+        {
+          "job": "Complete application",
+          "key": "Linux-X64-graalvm-community-3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e"
+        },
+        {
+          "job": "Complete application",
+          "key": "setup-java-Linux-x64-maven-2857a537877b6923f228f1702c1aead1850efa623859f9c5f60065687de0cf37"
+        },
+        {
+          "job": "Complete application",
+          "key": "setup-java-Linux-x64-maven-wrapper-8cfda2abb09e83e53b59dae5d410e36050316510ade3fef2521f1cb035ba1fc0"
+        },
+        {
+          "job": "Complete application",
+          "key": "Linux-node-26.7.0-pnpm-11.21.0-999ab8027f5586d0c0ed9dbc3c926c1e65b2095609e772307bf24cb447bdd18f"
+        },
+        {
+          "job": "Complete application",
+          "key": "Linux-node-26.7.0-pnpm-11.21.0-playwright-1.62.1-999ab8027f5586d0c0ed9dbc3c926c1e65b2095609e772307bf24cb447bdd18f"
+        },
+        {
+          "job": "Real-service integration",
+          "key": "Linux-X64-graalvm-community-3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e"
+        },
+        {
+          "job": "Real-service integration",
+          "key": "setup-java-Linux-x64-maven-2857a537877b6923f228f1702c1aead1850efa623859f9c5f60065687de0cf37"
+        },
+        {
+          "job": "Real-service integration",
+          "key": "setup-java-Linux-x64-maven-wrapper-8cfda2abb09e83e53b59dae5d410e36050316510ade3fef2521f1cb035ba1fc0"
+        },
+        {
+          "job": "Real-service integration",
+          "key": "Linux-node-26.7.0-pnpm-11.21.0-999ab8027f5586d0c0ed9dbc3c926c1e65b2095609e772307bf24cb447bdd18f"
+        },
+        {
+          "job": "Real-service integration",
+          "key": "setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.14.7-pruned-fd0e3189ce2edcb2a3fc1da7de1ac2c8520e50767d70c44026a10df693936c2d"
+        },
+        {
+          "job": "Python SDK / Python 3.12",
+          "key": "setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.14-pruned-fd0e3189ce2edcb2a3fc1da7de1ac2c8520e50767d70c44026a10df693936c2d"
+        },
+        {
+          "job": "Python SDK / Python 3.10",
+          "key": "setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.10.21-pruned-fd0e3189ce2edcb2a3fc1da7de1ac2c8520e50767d70c44026a10df693936c2d"
+        },
+        {
+          "job": "Python SDK / Python 3.11",
+          "key": "setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.11.16-pruned-fd0e3189ce2edcb2a3fc1da7de1ac2c8520e50767d70c44026a10df693936c2d"
+        },
+        {
+          "job": "Python SDK / Python 3.13",
+          "key": "setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.13.15-pruned-fd0e3189ce2edcb2a3fc1da7de1ac2c8520e50767d70c44026a10df693936c2d"
+        }
+      ],
+      "cache_misses": []
+    }
+  ]
+}
