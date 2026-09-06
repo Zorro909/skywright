@@ -157,6 +157,28 @@ public class TargetStorageRegistry {
 		return storage.descriptor();
 	}
 
+	/**
+	 * Qualified descriptor and exact non-secret binding selection for a new Training
+	 * Process.
+	 */
+	public record TrainingAccess(RunDefinitionStorageSnapshot storage, UUID bindingId, long bindingRevision) {
+	}
+
+	public TrainingAccess trainingAccess(UUID id, boolean dataset) {
+		var storage = this.storage(id);
+		if (!storage.eligible()
+				|| storage.purpose() != (dataset ? TargetStoragePurpose.DATASET : TargetStoragePurpose.RUN_OUTPUT))
+			throw new TargetStorageIneligibleException("TARGET_STORAGE_INELIGIBLE", "Training storage is unavailable");
+		var binding = storage.bindings()
+			.stream()
+			.filter(value -> value.role() == TargetStorageRole.TRAINING_PROCESS
+					&& value.readiness() == BindingReadiness.READY)
+			.findFirst()
+			.orElseThrow(() -> new TargetStorageIneligibleException("TARGET_STORAGE_BINDING_UNAVAILABLE",
+					"Training binding is unavailable"));
+		return new TrainingAccess(definitionSnapshot(storage), binding.bindingId(), binding.bindingRevision());
+	}
+
 	TargetStorageResolution resolveEligibleRunOutput(UUID id, TargetStorageRole role) {
 		TargetStorageAggregate storage = this.requireRunOutput(id);
 		if (!storage.eligible()) {

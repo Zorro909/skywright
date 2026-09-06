@@ -110,6 +110,11 @@ public class TrainingProjects {
 	}
 
 	@Transactional(readOnly = true)
+	public boolean requiresRuntimePullProjection(UUID id) {
+		return requireReady(get(id).activeBinding()).accessMode() == RegistryAccessMode.PRIVATE;
+	}
+
+	@Transactional(readOnly = true)
 	public ResolvedTrainingProjectBinding resolveForNewWork(UUID id) {
 		TrainingProjectView project = get(id);
 		RegistryBinding binding = requireReady(project.activeBinding());

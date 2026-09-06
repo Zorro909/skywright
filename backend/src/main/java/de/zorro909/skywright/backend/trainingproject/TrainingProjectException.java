@@ -1,6 +1,6 @@
 package de.zorro909.skywright.backend.trainingproject;
 
-class TrainingProjectException extends RuntimeException {
+public class TrainingProjectException extends RuntimeException {
 
 	private static final long serialVersionUID = 1L;
 
@@ -11,7 +11,7 @@ class TrainingProjectException extends RuntimeException {
 		this.code = code;
 	}
 
-	String code() {
+	public String code() {
 		return this.code;
 	}
 

@@ -17,6 +17,37 @@ servers:
   - url: /api/v1
     description: Version 1 product API
 paths:
+  /runs:
+    post:
+      operationId: createLocalRun
+      summary: Accept and immediately hand off a fully resolved local AMD Run.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateLocalRun' }
+      responses:
+        '202':
+          description: Durable intent accepted. Handoff may remain uncertain; replay the same submission identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AcceptedLocalRun' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /runs/{runId}:
+    parameters:
+      - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      operationId: getLocalRun
+      summary: Read accepted intent separately from current source visibility.
+      responses:
+        '200':
+          description: Immutable accepted Run and current handoff evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AcceptedLocalRun' }
+        '404': { $ref: '#/components/responses/Problem' }
   /price-sources:
     get:
       operationId: listPriceSources
@@ -1088,6 +1119,34 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
 components:
   schemas:
+    CreateLocalRun:
+      type: object
+      additionalProperties: false
+      required: [submissionId, trainingProjectId, manifestArtifactDigest, datasetDefinitionId, target, gpuCount, configuration]
+      properties:
+        submissionId: { $ref: '#/components/schemas/SkywrightId' }
+        trainingProjectId: { $ref: '#/components/schemas/SkywrightId' }
+        manifestArtifactDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        datasetDefinitionId: { $ref: '#/components/schemas/SkywrightId' }
+        preferredDatasetCopyId: { $ref: '#/components/schemas/SkywrightId' }
+        executionStorageId: { $ref: '#/components/schemas/SkywrightId' }
+        target: { type: string, minLength: 1, maxLength: 255 }
+        gpuCount: { type: integer, minimum: 1, maximum: 1024 }
+        configuration: { type: object, additionalProperties: true }
+        maximumRecoveryDebt: { type: integer, minimum: 1, maximum: 2147483647 }
+    AcceptedLocalRun:
+      type: object
+      additionalProperties: false
+      required: [runId, submissionId, acceptedAt, acceptedIntent, handoff, sourceAvailability, definition, evidenceGaps]
+      properties:
+        runId: { $ref: '#/components/schemas/SkywrightId' }
+        submissionId: { $ref: '#/components/schemas/SkywrightId' }
+        acceptedAt: { type: string, format: date-time }
+        acceptedIntent: { type: string, enum: [submit] }
+        handoff: { type: string, enum: [source-accepted, source-observed, uncertain] }
+        sourceAvailability: { type: string, enum: [live, missing, incomplete, ambiguous, unavailable, retention-unavailable, not-observed] }
+        definition: { type: object, additionalProperties: true }
+        evidenceGaps: { type: array, items: { type: string } }
     PriceSourceKind:
       type: string
       enum: [operator-schedule, provider-api, skypilot-catalog]

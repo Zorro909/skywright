@@ -107,7 +107,7 @@ public final class RunJobAdapter {
 			return CompletableFuture.completedFuture(new Submission.Refused("RUN_JOB_IDENTITY_MISMATCH"));
 		if (task.resources().size() != 1)
 			return CompletableFuture.completedFuture(new Submission.Refused("PINNED_RESOURCE_REQUIRED"));
-		return this.dispatch.claim(runId, fingerprint(task)).<Submission>thenCompose(decision -> switch (decision) {
+		return this.dispatch.claim(runId, taskFingerprint(task)).<Submission>thenCompose(decision -> switch (decision) {
 			case DEFINITION_CONFLICT ->
 				CompletableFuture.completedFuture(new Submission.Refused("RUN_JOB_DEFINITION_CONFLICT"));
 			case UNAVAILABLE ->
@@ -281,7 +281,7 @@ public final class RunJobAdapter {
 		facts.add(new RetainedSkyPilotFact(runId, kind, sourceId, payload, observedAt));
 	}
 
-	private static String fingerprint(OrchestratorTaskSpecification task) {
+	public static String taskFingerprint(OrchestratorTaskSpecification task) {
 		try {
 			return "sha256:" + HexFormat.of()
 				.formatHex(MessageDigest.getInstance("SHA-256")

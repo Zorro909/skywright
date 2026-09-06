@@ -1,0 +1,75 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-232-run-acceptance
+      author: skywright
+      changes:
+        - createTable:
+            schemaName: skywright
+            tableName: run_record
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: submission_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: principal_identity, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: project_identity, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: artifact_references_json, type: text, constraints: { nullable: false } }
+              - column: { name: request_digest, type: varchar(64), constraints: { nullable: false } }
+              - column: { name: accepted_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: definition_json, type: text, constraints: { nullable: false } }
+              - column: { name: task_fingerprint, type: varchar(71), constraints: { nullable: false } }
+              - column: { name: task_json, type: text, constraints: { nullable: false } }
+        - createTable:
+            schemaName: skywright
+            tableName: run_launch_claim
+            columns:
+              - column: { name: run_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: task_fingerprint, type: varchar(71), constraints: { nullable: false } }
+              - column: { name: claimed_at, type: timestamp with time zone, constraints: { nullable: false } }
+        - createTable:
+            schemaName: skywright
+            tableName: retained_skypilot_fact
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: run_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: fact_kind, type: varchar(64), constraints: { nullable: false } }
+              - column: { name: source_event_identity, type: varchar(512), constraints: { nullable: false } }
+              - column: { name: payload_digest, type: varchar(64), constraints: { nullable: false } }
+              - column: { name: payload_json, type: text, constraints: { nullable: false } }
+              - column: { name: observed_at, type: timestamp with time zone, constraints: { nullable: false } }
+        - createTable:
+            schemaName: skywright
+            tableName: skypilot_fact_observation
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: fact_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: observed_at, type: timestamp with time zone, constraints: { nullable: false } }
+        - addUniqueConstraint: { schemaName: skywright, tableName: retained_skypilot_fact, columnNames: 'run_id, fact_kind, source_event_identity, payload_digest', constraintName: uq_skypilot_fact_payload }
+        - addUniqueConstraint: { schemaName: skywright, tableName: skypilot_fact_observation, columnNames: 'fact_id, observed_at', constraintName: uq_skypilot_fact_observation }
+        - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: skypilot_fact_observation, baseColumnNames: fact_id, referencedTableSchemaName: skywright, referencedTableName: retained_skypilot_fact, referencedColumnNames: id, constraintName: fk_skypilot_observation_fact }
+        - createIndex:
+            schemaName: skywright
+            tableName: run_record
+            indexName: ix_run_project
+            columns:
+              - column: { name: project_identity }
+              - column: { name: id }
+        - addUniqueConstraint: { schemaName: skywright, tableName: run_record, columnNames: 'principal_identity, submission_id', constraintName: uq_run_submission_identity }
+        - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: run_launch_claim, baseColumnNames: run_id, referencedTableSchemaName: skywright, referencedTableName: run_record, referencedColumnNames: id, constraintName: fk_launch_claim_run }
+        - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: retained_skypilot_fact, baseColumnNames: run_id, referencedTableSchemaName: skywright, referencedTableName: run_record, referencedColumnNames: id, constraintName: fk_skypilot_fact_run }
+        - createIndex:
+            schemaName: skywright
+            tableName: retained_skypilot_fact
+            indexName: ix_skypilot_fact_event
+            columns:
+              - column: { name: run_id }
+              - column: { name: fact_kind }
+              - column: { name: source_event_identity }
+              - column: { name: observed_at }
+        - sql:
+            sql: GRANT SELECT, INSERT ON skywright.run_record, skywright.run_launch_claim, skywright.retained_skypilot_fact, skywright.skypilot_fact_observation TO "${runtimeRole}"
+        - sql:
+            sql: GRANT UPDATE (id) ON skywright.run_record TO "${runtimeRole}"
+      rollback:
+        - dropTable: { schemaName: skywright, tableName: skypilot_fact_observation }
+        - dropTable: { schemaName: skywright, tableName: retained_skypilot_fact }
+        - dropTable: { schemaName: skywright, tableName: run_launch_claim }
+        - dropTable: { schemaName: skywright, tableName: run_record }
