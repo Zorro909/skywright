@@ -86,7 +86,8 @@ final class GraalPySkyPilotClientIT {
 		context.eval("python", """
 				import sky
 				specification = {'name': 'projection-fixture', 'run': 'env', 'environment': {},
-				    'resources': [{'infrastructure': 'kubernetes', 'cpus': '2', 'memory': '4', 'useSpot': False}],
+				    'resources': [{'infrastructure': 'kubernetes', 'cpus': '2', 'memory': '4', 'useSpot': False,
+				        'jobRecovery': {'maxRestartsOnErrors': 0, 'recoverOnExitCodes': [75]}}],
 				    'runtimePullSecret': 'skywright-pull-00000000-0000-0000-0000-000000000001'}
 				secrets = {'SKYWRIGHT_DATASET_ACCESS_KEY_ID': 'reader',
 				    'SKYWRIGHT_DATASET_SECRET_ACCESS_KEY': 'reader-secret',
@@ -96,6 +97,8 @@ final class GraalPySkyPilotClientIT {
 				recovered = sky.Task.from_yaml_config(task.to_yaml_config())
 				assert recovered.secrets['SKYWRIGHT_DATASET_ACCESS_KEY_ID'].get_secret_value() == 'reader'
 				assert recovered.envs == {}
+				assert next(iter(recovered.resources)).job_recovery['max_restarts_on_errors'] == 0
+				assert next(iter(recovered.resources)).job_recovery['recover_on_exit_codes'] == [75]
 				assert 'writer-secret' not in str(task.to_yaml_config(use_user_specified_yaml=True))
 				assert 'imagePullSecrets' in str(task.to_yaml_config())
 				assert 'ghcr.io' not in str(task.to_yaml_config())

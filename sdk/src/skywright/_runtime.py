@@ -13,6 +13,7 @@ from skywright._build_info import SOURCE_REVISION
 from skywright._training import (
     Accelerator,
     TrainingProcessOutcome,
+    TrainingProcessResult,
     run_training_process,
 )
 from skywright._training_environment import resolve_component
@@ -70,40 +71,35 @@ def main() -> None:
         type=Path,
         help="resolved JSON runtime definition",
     )
+    parser.add_argument(
+        "--materials", type=Path, help="verified runtime delivery materials"
+    )
+    parser.add_argument(
+        "--cache-directory", type=Path, default=Path("/tmp/skywright-dataset")
+    )
     arguments = parser.parse_args()
-    if arguments.entry_point is None or arguments.definition is None:
-        parser.error("MODULE:CALLABLE and --definition are required for training")
-
+    if arguments.definition is None:
+        parser.error("--definition is required for training")
+    run_id = "unknown"
     try:
-        definition = _load_definition(cast(Path, arguments.definition))
-    except (ImportError, AttributeError, OSError, TypeError, ValueError) as failure:
-        parser.error(str(failure))
+        if arguments.materials is not None:
+            from skywright._managed_runtime import ManagedRuntime, read_document
 
-    try:
-        verifier_factory = definition["previous_writer_verifier_factory"]
-        verifier = (
-            cast(
-                PreviousWriterVerifier,
-                resolve_component(verifier_factory, "previous writer verifier"),
+            if arguments.entry_point is not None:
+                parser.error(
+                    "managed execution uses the fixed skywright_project:train convention"
+                )
+            managed = ManagedRuntime.decode(
+                read_document(arguments.definition), read_document(arguments.materials)
             )
-            if verifier_factory is not None
-            else uncertain_previous_writer
-        )
-        result = run_training_process(
-            cast(str, arguments.entry_point),
-            configuration=definition["configuration"],
-            dataset=definition["dataset_factory"],
-            metric_contracts=definition["metric_contract_factory"],
-            skywright_metric_schema=definition["skywright_metric_schema"],
-            recorder=definition["recorder_factory"],
-            seed=definition["seed"],
-            maximum_recovery_debt=definition["maximum_recovery_debt"],
-            previous_writer_verifier=verifier,
-            resume_from=definition["resume_factory"],
-            accelerator=definition["accelerator"],
-            run_id=definition["run_id"],
-            project_version=definition["project_version"],
-        )
+            run_id = managed.run_id
+            result = managed.run(arguments.cache_directory)
+        else:
+            if arguments.entry_point is None:
+                parser.error("managed execution requires --materials")
+            definition = _load_definition(cast(Path, arguments.definition))
+            run_id = definition["run_id"]
+            result = _run_embedding(definition, cast(str, arguments.entry_point))
     except RecoveryAdmissionError as failure:
         print(
             json.dumps(
@@ -111,12 +107,14 @@ def main() -> None:
                     "outcome": "startup-refused",
                     "code": failure.code,
                     "detail": failure.detail,
-                    "run_id": definition["run_id"],
+                    "run_id": run_id,
                 },
                 sort_keys=True,
             )
         )
         raise SystemExit(1) from None
+    except (ImportError, AttributeError, OSError, TypeError, ValueError) as failure:
+        parser.error(str(failure))
     print(
         json.dumps(
             {
@@ -136,6 +134,36 @@ def main() -> None:
         )
     )
     raise SystemExit(_EXIT_CODES[result.outcome])
+
+
+def _run_embedding(
+    definition: _RuntimeDefinition, entry_point: str
+) -> TrainingProcessResult:
+    verifier_factory = definition["previous_writer_verifier_factory"]
+    verifier = (
+        cast(
+            PreviousWriterVerifier,
+            resolve_component(verifier_factory, "previous writer verifier"),
+        )
+        if verifier_factory is not None
+        else uncertain_previous_writer
+    )
+    result = run_training_process(
+        entry_point,
+        configuration=definition["configuration"],
+        dataset=definition["dataset_factory"],
+        metric_contracts=definition["metric_contract_factory"],
+        skywright_metric_schema=definition["skywright_metric_schema"],
+        recorder=definition["recorder_factory"],
+        seed=definition["seed"],
+        maximum_recovery_debt=definition["maximum_recovery_debt"],
+        previous_writer_verifier=verifier,
+        resume_from=definition["resume_factory"],
+        accelerator=definition["accelerator"],
+        run_id=definition["run_id"],
+        project_version=definition["project_version"],
+    )
+    return result
 
 
 def _load_definition(path: Path) -> _RuntimeDefinition:

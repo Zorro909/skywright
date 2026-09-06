@@ -44,6 +44,32 @@ class RunDefinitionResolverIT {
 	private final MetricContracts metricContracts = new MetricContracts();
 
 	@Test
+	void installedRuntimeFixtureIsExactlyBackendResolved() throws Exception {
+		var root = java.nio.file.Path.of("../sdk/tests/fixtures/managed-runtime");
+		var json = tools.jackson.databind.json.JsonMapper.builder().build();
+		var data = json.readTree(java.nio.file.Files.readString(root.resolve("dataset.json")));
+		var registry = eligibleVersionRegistry();
+		var resolver = resolver(registry, DatasetDefinitionAssessment.accepted(), targets(), storage(), "EUR");
+		var base = submission(TargetClass.LOCAL_SINGLE_GPU);
+		var request = new RunSubmission(base.trainingProject(), base.manifestArtifactDigest(), base.configurationJson(),
+				new DatasetDefinitionReference(data.path("datasetIdentity").asText(), data.path("version").asText(),
+						data.path("contentFingerprint").asText()),
+				new TargetRequest(TargetClass.LOCAL_SINGLE_GPU, 1, null, null, "MI300X", null), base.storageOverrides(),
+				null, null, null, false);
+		var resolved = resolver.resolve(request, null);
+		assertThat(resolved.failures()).isEmpty();
+		var artifacts = Map.of("definition.json", resolved.definition().encode(), "configuration.json",
+				registry.pullArtifact("registry", "sha256:" + "e".repeat(64)).orElseThrow().content(), "metrics.json",
+				registry.pullArtifact("registry", "sha256:" + "f".repeat(64)).orElseThrow().content());
+		for (var artifact : artifacts.entrySet()) {
+			var path = root.resolve(artifact.getKey());
+			if (Boolean.getBoolean("updateRuntimeFixture"))
+				java.nio.file.Files.writeString(path, artifact.getValue() + "\n");
+			assertThat(java.nio.file.Files.readString(path).stripTrailing()).isEqualTo(artifact.getValue());
+		}
+	}
+
+	@Test
 	void resolvesACompleteDefinitionThroughThePublicSeam() {
 		RunDefinitionResolver resolver = resolver(eligibleVersionRegistry(), DatasetDefinitionAssessment.accepted(),
 				targets(), storage(), "EUR");

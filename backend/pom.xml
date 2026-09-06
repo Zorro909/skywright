@@ -20,6 +20,9 @@
 
   <dependencies>
     <dependency>
+      <groupId>org.mapstruct</groupId><artifactId>mapstruct</artifactId><version>1.6.3</version>
+    </dependency>
+    <dependency>
       <groupId>de.zorro909.skywright</groupId>
       <artifactId>skywright-web</artifactId>
       <version>${project.version}</version>
@@ -164,6 +167,7 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
           <annotationProcessorPaths>
+            <path><groupId>org.mapstruct</groupId><artifactId>mapstruct-processor</artifactId><version>1.6.3</version></path>
             <path>
               <groupId>org.springframework.boot</groupId>
               <artifactId>spring-boot-configuration-processor</artifactId>

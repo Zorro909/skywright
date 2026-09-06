@@ -71,14 +71,17 @@ def run_training_process(
     run_id: str,
     project_version: str,
     configuration: Mapping[str, object],
-    dataset: DatasetAccess | str,
+    dataset: DatasetAccess | str | Callable[[], DatasetAccess],
     metric_contracts: MetricContractResolver | str,
     skywright_metric_schema: str,
     recorder: TrainingProcessRecorder | str,
     seed: int,
     maximum_recovery_debt: int = 3,
     previous_writer_verifier: PreviousWriterVerifier = uncertain_previous_writer,
-    resume_from: CheckpointSnapshot | str | None = None,
+    resume_from: CheckpointSnapshot
+    | str
+    | Callable[[], CheckpointSnapshot]
+    | None = None,
     source_run_id: str | None = None,
     ordering_reset: bool = False,
     accelerator: Accelerator = CPU_ACCELERATOR,
@@ -120,7 +123,10 @@ def run_training_process(
     if callable(prepare):
         try:
             resolved_dataset = cast(
-                DatasetAccess, resolve_component(dataset, "Dataset access")
+                DatasetAccess,
+                dataset()
+                if callable(dataset)
+                else resolve_component(dataset, "Dataset access"),
             )
             prepare_recovery = cast(
                 Callable[..., "CheckpointResolution | None"], prepare
@@ -205,7 +211,9 @@ def run_training_process(
         resolved_resume = (
             cast(
                 CheckpointSnapshot,
-                resolve_component(resume_from, "resume checkpoint"),
+                resume_from()
+                if callable(resume_from)
+                else resolve_component(resume_from, "resume checkpoint"),
             )
             if resume_from is not None
             else None
@@ -238,7 +246,10 @@ def run_training_process(
     try:
         if resolved_dataset is None:
             resolved_dataset = cast(
-                DatasetAccess, resolve_component(dataset, "Dataset access")
+                DatasetAccess,
+                dataset()
+                if callable(dataset)
+                else resolve_component(dataset, "Dataset access"),
             )
         resolved_metric_contracts = cast(
             MetricContractResolver,

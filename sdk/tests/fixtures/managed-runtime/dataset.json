@@ -1,0 +1,33 @@
+{
+  "datasetIdentity": "dataset-1",
+  "version": "v1",
+  "contentFingerprint": "sha256:b0445d45a11a3ed0d9dc6278e3efebb7253fd0f767f67aa2770d367a905a0917",
+  "manifestIdentity": "sha256:479834a1a38f43d52c366628e74efd24455f2abfc3ace6f00d91309768271dac",
+  "objects": [
+    {
+      "object_key": "index.json",
+      "byte_count": 1526,
+      "sha256": "sha256:0a4f96e3193bef32de7fb6e74df24df8d6fed201184a50da565ac47da4cf76dc"
+    },
+    {
+      "object_key": "shard.00000.mds",
+      "byte_count": 488,
+      "sha256": "sha256:d28de59e0237c6f729788d780b0b91b0b3a3a643c3d4ad0a58e5d0a6e2662cae"
+    },
+    {
+      "object_key": "shard.00001.mds",
+      "byte_count": 488,
+      "sha256": "sha256:52ea2f532d739a9c780cd0dc10844fcfd50e0cd92d549b74e75a0dc2684c4942"
+    },
+    {
+      "object_key": "shard.00002.mds",
+      "byte_count": 488,
+      "sha256": "sha256:e1769966682de890af4bb4eea39bc5657768ef69b39c5ba9c86671aaff7f81ce"
+    },
+    {
+      "object_key": "shard.00003.mds",
+      "byte_count": 488,
+      "sha256": "sha256:c88709fafaf77cba515f08c91034f8b9bc59516a00f0bbe4ce9d97fcc1c0239f"
+    }
+  ]
+}

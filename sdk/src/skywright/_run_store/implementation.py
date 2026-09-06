@@ -1009,7 +1009,10 @@ class RunStoreRecorder:
         maximum_debt: int = 3,
         previous_writer_verifier: PreviousWriterVerifier = uncertain_previous_writer,
         source_run_id: str | None = None,
-        seed_checkpoint: CheckpointSnapshot | str | None = None,
+        seed_checkpoint: CheckpointSnapshot
+        | str
+        | Callable[[], CheckpointSnapshot]
+        | None = None,
         ordering_reset: bool = False,
     ) -> CheckpointResolution | None:
         """Gate startup before attempt publication; uncertainty never admits a writer."""
@@ -1025,7 +1028,11 @@ class RunStoreRecorder:
             if source_run_id is not None:
                 from skywright._training_environment import resolve_component
 
-                resolved = resolve_component(seed_checkpoint, "clone seed checkpoint")
+                resolved = (
+                    seed_checkpoint()
+                    if callable(seed_checkpoint)
+                    else resolve_component(seed_checkpoint, "clone seed checkpoint")
+                )
                 if (
                     not isinstance(resolved, CheckpointSnapshot)
                     or resolved.run_id != source_run_id

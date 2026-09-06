@@ -230,6 +230,12 @@ class PlanningTest(unittest.TestCase):
                     applicability,
                 )
 
+    def test_managed_runtime_fixture_selects_both_contract_consumers(self) -> None:
+        plan = self.plan("sdk/tests/fixtures/managed-runtime/definition.json")
+        self.assertEqual(plan["categories"], ["shared-contract"])
+        for check in ("sdk", "java", "integration"):
+            self.assertTrue(plan["checks"][check]["applicable"])
+
     def test_real_structural_overlay_corpus_selects_shared_contract_consumers(
         self,
     ) -> None:

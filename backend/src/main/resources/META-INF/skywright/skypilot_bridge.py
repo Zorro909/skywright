@@ -439,6 +439,14 @@ def _task(specification, secrets=None):
             accelerators=requested.get("accelerators"),
             image_id=requested.get("imageId"),
             use_spot=requested["useSpot"],
+            job_recovery=(
+                {
+                    "max_restarts_on_errors": requested["jobRecovery"]["maxRestartsOnErrors"],
+                    "recover_on_exit_codes": requested["jobRecovery"]["recoverOnExitCodes"],
+                }
+                if requested.get("jobRecovery") is not None
+                else None
+            ),
             **runtime_options,
         )
         for requested in specification["resources"]

@@ -2,6 +2,10 @@
 
 ## Next
 
+- Assemble accepted Run Definitions into production Dataset, metrics, Run Store and
+  recovery components. Managed projects expose `skywright_project.train(context)`;
+  their image pins the implementation and no infrastructure factories are needed.
+
 - Gate production recovery using immutable publication history and progress-decayed
   debt. Refuse uncertain previous writers, incomplete history and terminal Runs;
   preserve evidence after payload retention and publish idempotent exhaustion
