@@ -1795,3 +1795,109 @@ def test_recovery_disk_budget_closes_body_and_cleans_staging(tmp_path) -> None:
         reader.read_exact(str(CheckpointReference(1, digest)))
     assert body.closed
     assert not list(tmp_path.glob("skywright-read-*"))
+
+
+@pytest.mark.parametrize(
+    "failure_mode,expected_bytes",
+    [
+        ("budget", 0),
+        ("digest", 8),
+        ("truncated", 4),
+        ("excess", 9),
+        ("cancelled", 0),
+        ("success", 8),
+    ],
+)
+def test_get_measurements_describe_consumption_outcome(
+    tmp_path, failure_mode: str, expected_bytes: int
+) -> None:
+    import io
+
+    from skywright.run_store import RunStoreError
+
+    memory = MemoryS3()
+    store = recorder(memory, tmp_path)
+    key = store.protocol.artifact_key(
+        "123e4567-e89b-12d3-a456-426614174000", 1, "weights"
+    )
+    original = b"original"
+    data = {"digest": b"tampered", "truncated": b"part", "excess": b"original!"}.get(
+        failure_mode, original
+    )
+    body = io.BytesIO(data)
+    cancelled = False
+
+    def get_object(**_) -> dict[str, Any]:
+        nonlocal cancelled
+        cancelled = failure_mode == "cancelled"
+        return {
+            "Body": body,
+            "ContentLength": 8,
+            "Metadata": {
+                "skywright-schema": "v1",
+                "skywright-kind": "artifact",
+                "skywright-size": "8",
+                "skywright-sha256": hashlib.sha256(original).hexdigest(),
+            },
+        }
+
+    memory.get_object = get_object
+    reader = RunStoreReader(
+        store.target,
+        client=memory,
+        operation_control=OperationControl(cancellation_requested=lambda: cancelled),
+    )
+    if failure_mode == "success":
+        reader.download(key, tmp_path / "accepted", max_bytes=8)
+    else:
+        with pytest.raises(RunStoreError):
+            reader.download(
+                key,
+                tmp_path / "accepted",
+                max_bytes=4 if failure_mode == "budget" else 8,
+            )
+    batch = reader.drain_measurements()
+    assert len(batch.measurements) == 1
+    measurement = batch.measurements[0]
+    assert measurement.operation == "get_object"
+    assert measurement.bytes == expected_bytes
+    assert measurement.succeeded == (failure_mode == "success")
+    assert body.closed
+
+
+def test_immutable_retry_uses_one_bounded_verified_get(tmp_path) -> None:
+    import io
+
+    memory = MemoryS3()
+    store = recorder(memory, tmp_path)
+    store.publish_attempt(
+        ExecutionAttemptRecord(
+            "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+        )
+    )
+    artifact = ArtifactRecord("large", b"x" * (2 * 1024 * 1024), 1)
+    store.publish_artifact(artifact)
+    store.drain_measurements()
+    bodies = []
+    original_get = memory.get_object
+
+    class BoundedBody(io.BytesIO):
+        def read(self, size: int | None = -1):
+            assert size is not None and 0 < size <= 1024 * 1024
+            return super().read(size)
+
+    def get_object(**request) -> dict[str, Any]:
+        response = original_get(**request)
+        with response["Body"] as content:
+            body = BoundedBody(content.read())
+        bodies.append(body)
+        response["Body"] = body
+        return response
+
+    memory.get_object = get_object
+    store.publish_artifact(artifact)
+    assert len(bodies) == 1 and bodies[0].closed
+    measurements = store.drain_measurements().measurements
+    assert [item.operation for item in measurements] == ["put_object", "get_object"]
+    assert measurements[1].bytes == len(artifact.data)
+    assert measurements[1].succeeded

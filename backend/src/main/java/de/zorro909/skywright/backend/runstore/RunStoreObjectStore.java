@@ -29,7 +29,10 @@ public interface RunStoreObjectStore {
 			if (bytes.length > limit || bytes.length != content.descriptor().size()) {
 				throw new RunStoreIntegrityException("RUN_STORE_DIGEST_MISMATCH: content length differs");
 			}
-			return new RunStoreObject(key, bytes, content.descriptor().contentType(), content.descriptor().metadata());
+			RunStoreObject result = new RunStoreObject(key, bytes, content.descriptor().contentType(),
+					content.descriptor().metadata());
+			content.accept();
+			return result;
 		}
 		catch (IOException failure) {
 			throw new UncheckedIOException(failure);

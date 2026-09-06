@@ -23,7 +23,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from contextlib import closing, suppress
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType, TracebackType
@@ -722,6 +722,54 @@ class OperationControl:
     cancellation_requested: Callable[[], bool] = lambda: False
 
 
+class _MeasuredBody:
+    """Finalize one GET when its caller finishes validating and closes the response."""
+
+    def __init__(
+        self, body: Any, finish: Callable[[int, bool], None], check: Callable[[], None]
+    ) -> None:
+        self._body = body
+        self._check = check
+        self._finish = finish
+        self._bytes = 0
+        self._complete = False
+        self._closed = False
+
+    def read(self, size: int | None = -1) -> bytes:
+        self._check()
+        data: bytes = self._body.read(size)
+        self._bytes += len(data)
+        if (not data and size != 0) or size is None or size < 0:
+            self._complete = True
+        return data
+
+    def __enter__(self) -> _MeasuredBody:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self._close(exc_type is None and self._complete)
+
+    def close(self) -> None:
+        self._close(False)
+
+    def _close(self, succeeded: bool) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._body.close()
+        except BaseException:
+            succeeded = False
+            raise
+        finally:
+            self._finish(self._bytes, succeeded)
+
+
 class _S3Gateway:
     _RETRYABLE = frozenset(
         {
@@ -775,7 +823,26 @@ class _S3Gateway:
                 try:
                     response = provider_operation(**request)
                     if operation == "get_object":
-                        transferred = int(response.get("ContentLength", 0))
+
+                        def finish(
+                            consumed: int,
+                            succeeded: bool,
+                            attempt: int = attempt,
+                            started: float = started,
+                        ) -> None:
+                            self._measure(
+                                "get_object",
+                                consumed,
+                                "read",
+                                attempt,
+                                started,
+                                succeeded,
+                            )
+
+                        response["Body"] = _MeasuredBody(
+                            response["Body"], finish, self._check_control
+                        )
+                        return response
                     self._measure(
                         operation, transferred, direction, attempt, started, True
                     )
@@ -1154,16 +1221,8 @@ class RunStoreRecorder:
         except Exception as failure:
             if not _is_precondition_failure(failure):
                 raise
-        existing = self._read_verified(key)
-        if payload is None:
-            stream = cast(BinaryIO, body)
-            payload = stream.read()
-            stream.seek(0)
-        response = self._client.get_object(Bucket=self.target.bucket, Key=key)
-        same = existing == payload and all(
-            response.get("Metadata", {}).get(name) == value
-            for name, value in metadata.items()
-        )
+        existing = self._verified_metadata(key)
+        same = all(existing.get(name) == value for name, value in metadata.items())
         if same:
             return
         if conflict_is_contract:
@@ -1220,12 +1279,12 @@ class RunStoreRecorder:
         except Exception as failure:
             if _is_precondition_failure(failure) or _is_transient_failure(failure):
                 try:
-                    existing = self._read_verified(key)
+                    existing = self._verified_metadata(key)
                 except Exception:
                     existing = None
                 if existing is not None and (
-                    len(existing) == staged.size
-                    and hashlib.sha256(existing).hexdigest() == staged.digest
+                    existing.get("skywright-size") == str(staged.size)
+                    and existing.get("skywright-sha256") == staged.digest
                 ):
                     return
             raise
@@ -1236,16 +1295,20 @@ class RunStoreRecorder:
                         Bucket=self.target.bucket, Key=key, UploadId=upload_id
                     )
 
-    def _read_verified(self, key: str) -> bytes:
+    def _verified_metadata(self, key: str) -> Mapping[str, str]:
         response = self._client.get_object(Bucket=self.target.bucket, Key=key)
-        body = response["Body"].read()
-        metadata = response.get("Metadata", {})
-        if (
-            metadata.get("skywright-size") != str(len(body))
-            or metadata.get("skywright-sha256") != hashlib.sha256(body).hexdigest()
-        ):
-            raise RunStoreIntegrityError(f"RUN_STORE_DIGEST_MISMATCH at {key}")
-        return body
+        with response["Body"] as content:
+            size, expected = _validated_metadata(key, response)
+            actual = hashlib.sha256()
+            consumed = 0
+            while chunk := content.read(min(1024 * 1024, size - consumed + 1)):
+                consumed += len(chunk)
+                if consumed > size:
+                    raise RunStoreIntegrityError(f"RUN_STORE_DIGEST_MISMATCH at {key}")
+                actual.update(chunk)
+            if consumed != size or actual.hexdigest() != expected:
+                raise RunStoreIntegrityError(f"RUN_STORE_DIGEST_MISMATCH at {key}")
+            return response["Metadata"]
 
     def _list_keys(self, prefix: str) -> list[str]:
         result: list[str] = []
@@ -1413,7 +1476,6 @@ class RunStoreReader:
             raise ValueError("max_checkpoint_bytes must be positive")
         self._staging_directory = staging_directory
         self._max_checkpoint_bytes = max_checkpoint_bytes
-        self._control = operation_control or OperationControl()
         self.target = target
         self.protocol: RunStoreProtocol = RunStoreProtocol(
             target.training_project_id, target.run_id
@@ -1760,7 +1822,7 @@ class RunStoreReader:
             raise RunStoreIntegrityError(
                 f"RUN_STORE_MISSING_OBJECT: {key}"
             ) from failure
-        with closing(response["Body"]) as body:
+        with response["Body"] as body:
             size, expected = _validated_metadata(key, response, digest)
             expected_kind = (
                 "progress-record"
@@ -1778,15 +1840,6 @@ class RunStoreReader:
             actual = hashlib.sha256()
             received = 0
             while True:
-                if self._control.cancellation_requested():
-                    raise RunStoreCancelledError("Run Store consumption cancelled")
-                if (
-                    self._control.deadline is not None
-                    and time.monotonic() >= self._control.deadline
-                ):
-                    raise RunStoreDeadlineError(
-                        "Run Store consumption deadline expired"
-                    )
                 chunk = body.read(min(1024 * 1024, size - received + 1))
                 if not chunk:
                     break

@@ -274,13 +274,14 @@ class RunStoreRecorder(_RunStoreRecorder):
             ):
                 return None, None
             raise
-        body = response["Body"].read()
-        metadata = response.get("Metadata", {})
-        if (
-            response.get("ContentLength") != len(body)
-            or metadata.get("skywright-size") != str(len(body))
-            or metadata.get("skywright-sha256") != hashlib.sha256(body).hexdigest()
-        ):
-            raise RuntimeError(f"RUN_STORE_DIGEST_MISMATCH at {key}")
-        etag = response.get("ETag")
-        return body, etag if isinstance(etag, str) else None
+        with response["Body"] as content:
+            body = content.read()
+            metadata = response.get("Metadata", {})
+            if (
+                response.get("ContentLength") != len(body)
+                or metadata.get("skywright-size") != str(len(body))
+                or metadata.get("skywright-sha256") != hashlib.sha256(body).hexdigest()
+            ):
+                raise RuntimeError(f"RUN_STORE_DIGEST_MISMATCH at {key}")
+            etag = response.get("ETag")
+            return body, etag if isinstance(etag, str) else None

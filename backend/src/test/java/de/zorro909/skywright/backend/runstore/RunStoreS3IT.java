@@ -196,6 +196,12 @@ class RunStoreS3IT {
 			.isEqualTo(RunStoreDownloadLink.Verification.NOT_RECORDED);
 		assertThatThrownBy(() -> access.stageDownload(corruptedKey, temporary, body.length))
 			.hasMessageContaining("RUN_STORE_DIGEST_MISMATCH");
+		assertThat(objects.drainMeasurements().measurements()).filteredOn(item -> item.operation().equals("GetObject"))
+			.singleElement()
+			.satisfies(item -> {
+				assertThat(item.bytes()).isEqualTo(body.length);
+				assertThat(item.succeeded()).isFalse();
+			});
 		try (var files = Files.list(temporary)) {
 			assertThat(files).isEmpty();
 		}

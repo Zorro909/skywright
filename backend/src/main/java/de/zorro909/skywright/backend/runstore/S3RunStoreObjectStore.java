@@ -90,15 +90,16 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 					.continuationToken(continuation)
 					.build())
 				.join();
-			measure("ListObjectsV2", 0, "control", started, true);
 			if (page.contents().size() > limit || (page.isTruncated()
 					&& (page.nextContinuationToken() == null || page.nextContinuationToken().equals(continuation)))) {
 				throw new RunStoreIntegrityException("RUN_STORE_INVALID_PAGE: provider exceeded page contract");
 			}
-			return new RunStoreObjectPage(page.contents()
+			RunStoreObjectPage result = new RunStoreObjectPage(page.contents()
 				.stream()
 				.map(item -> new RunStoreObjectPage.Entry(item.key(), item.size()))
 				.toList(), page.isTruncated() ? page.nextContinuationToken() : null);
+			measure("ListObjectsV2", 0, "control", started, true);
+			return result;
 		}
 		catch (RuntimeException failure) {
 			measure("ListObjectsV2", 0, "control", started, false);
@@ -146,54 +147,53 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 						AsyncResponseTransformer.toBlockingInputStream())
 				.join();
 			GetObjectResponse metadata = response.response();
-			return new RunStoreContent(new RunStoreObjectMetadata(key, metadata.contentLength(), metadata.contentType(),
-					metadata.metadata()), new FilterInputStream(response) {
-						private long consumed;
+			var transfer = new FilterInputStream(response) {
+				private long consumed;
 
-						private boolean complete;
+				private boolean complete;
 
-						private boolean closed;
+				private boolean closed;
 
-						@Override
-						public int read() throws IOException {
-							byte[] single = new byte[1];
-							return read(single, 0, 1) < 0 ? -1 : single[0] & 255;
+				@Override
+				public int read() throws IOException {
+					byte[] single = new byte[1];
+					return read(single, 0, 1) < 0 ? -1 : single[0] & 255;
+				}
+
+				@Override
+				public int read(byte[] buffer, int offset, int length) throws IOException {
+					checkCancellation();
+					if (Duration.between(started, Instant.now()).compareTo(control.requestTimeout()) > 0) {
+						throw new IOException("Run Store content deadline expired");
+					}
+					int count = in.read(buffer, offset, length);
+					if (count < 0) {
+						this.complete = true;
+					}
+					else {
+						this.consumed += count;
+					}
+					return count;
+				}
+
+				@Override
+				public void close() throws IOException {
+					if (!this.closed) {
+						this.closed = true;
+						if (this.complete) {
+							response.close();
 						}
-
-						@Override
-						public int read(byte[] buffer, int offset, int length) throws IOException {
-							checkCancellation();
-							if (Duration.between(started, Instant.now()).compareTo(control.requestTimeout()) > 0) {
-								throw new IOException("Run Store content deadline expired");
-							}
-							int count = in.read(buffer, offset, length);
-							if (count < 0) {
-								this.complete = true;
-							}
-							else {
-								this.consumed += count;
-							}
-							return count;
+						else {
+							response.abort();
 						}
-
-						@Override
-						public void close() throws IOException {
-							if (!this.closed) {
-								this.closed = true;
-								try {
-									if (this.complete) {
-										response.close();
-									}
-									else {
-										response.abort();
-									}
-								}
-								finally {
-									measure("GetObject", this.consumed, "read", started, this.complete);
-								}
-							}
-						}
-					});
+					}
+				}
+			};
+			return new RunStoreContent(
+					new RunStoreObjectMetadata(key, metadata.contentLength(), metadata.contentType(),
+							metadata.metadata()),
+					transfer, accepted -> measure("GetObject", transfer.consumed, "read", started,
+							accepted && transfer.complete));
 		}
 		catch (RuntimeException failure) {
 			measure("GetObject", 0, "read", started, false);

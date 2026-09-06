@@ -570,6 +570,9 @@ output bytes instead of retaining lifetime lists.
 
 `RunStoreRecorder` and `RunStoreReader` retain at most 256 recent S3 request measurements by
 default. Set their positive `measurement_capacity` constructor argument to choose another bound.
+GET measurements finalize when the response closes and count bytes consumed by the caller.
+They report failure when consumption or integrity validation fails. HTTP transport buffering
+and provider billing may count different bytes.
 The `measurements` property is a recent diagnostic snapshot, not complete accounting history.
 Call `drain_measurements()` to take an immutable batch and release those diagnostic records.
 

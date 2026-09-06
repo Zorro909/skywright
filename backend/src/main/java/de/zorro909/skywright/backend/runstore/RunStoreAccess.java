@@ -119,6 +119,7 @@ public final class RunStoreAccess {
 					throw new RunStoreIntegrityException("RUN_STORE_DIGEST_MISMATCH: " + key);
 				}
 				result = new VerifiedRunStoreObject(path, descriptor);
+				content.accept();
 			}
 			path = null;
 			return result;

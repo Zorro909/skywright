@@ -17,7 +17,8 @@ then uses HEAD for protocol metadata. It never fetches output bodies or construc
 lifetime collection. Callers that accumulate pages must budget for their own collection.
 
 `RunStoreObjectStore` separates `list`, `head` and caller-owned `open` streams. Its retained
-`get` convenience method accepts only control objects of at most 16 MiB. Larger consumers
+`get` convenience method accepts only control objects of at most 16 MiB. Direct stream
+consumers call `content.accept()` after their integrity checks pass, then close the content. Larger consumers
 use streaming. `resolveCheckpoint` returns `RunStoreObjectMetadata`; it validates the
 reference and expected checksum without decoding or loading State.
 
@@ -130,3 +131,21 @@ PY
 
 For the baseline, set `PYTHONPATH` to its exported `sdk/src` in the recovery subprocess and
 omit `--expect-bounded`. The runner uses the shared public checkpoint interface in both versions.
+
+## Review follow-up
+
+GET measurements now finalize when the response closes. They count bytes consumed by the
+caller, rather than the advertised object length. Budget rejection and cancellation before
+reading report zero bytes and failure; truncation, excess content and checksum failure
+report the consumed bytes and failure. Successful validation and response closure produce
+one successful record. These are application-consumed bytes, not a claim about provider
+billing or bytes buffered by the HTTP transport. Python recorder conflict/progress reads
+also close their response owners, preserving their existing integrity checks. Immutable-write
+retry reconciliation uses one bounded verification GET and its metadata, removing the
+second unconsumed GET and the full-payload comparison.
+
+Seven Python regression cases cover these outcomes and bounded immutable-write retries. Three additional Java tests feed malformed
+LIST responses through the actual S3 client and count the HTTP requests. Oversized pages,
+missing continuation tokens and repeated tokens each produce exactly one failed measurement.
+The successful LIST measurement is recorded only after page validation. Real S3 coverage
+also checks that a same-size corrupt Java download records its consumed bytes as a failure.
