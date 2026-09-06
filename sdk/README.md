@@ -643,3 +643,18 @@ with the link before accepting the download. Links remain valid for 1..3600 seco
 
 The [Run Store read qualification](../docs/testing/run-store-reads.md) records actual S3
 traffic, recovery RSS, malformed-content checks and the Java pagination contract.
+
+
+`resolve_latest_valid()` can reject a checkpoint that vanished after listing or whose
+bytes/container are corrupt and then read its predecessor. Each rejection retains
+its Step, reference and reason. Confirmed GET/HEAD object absence raises
+`RunStoreMissingObjectError`, also catchable as `RunStoreIntegrityError`. A missing
+bucket, denied credentials, transient service failure, timeout, deadline or
+cancellation does not mean that a checkpoint is absent. Those failures stop recovery,
+as do incompatible checkpoint schemas, project versions, ordering and protocol
+metadata. Exact reads never select a different reference.
+
+Missing-object normalization is shared by progress publication and retention.
+Retention can ignore a confirmed already-absent obsolete object, but still verifies
+a protected newer checkpoint before deleting anything. Upload absence is classified
+separately from object and bucket absence.

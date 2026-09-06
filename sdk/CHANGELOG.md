@@ -2,6 +2,11 @@
 
 ## Next
 
+- Normalizes confirmed missing S3 objects as `RunStoreMissingObjectError`, a subtype of
+  `RunStoreIntegrityError`, across reads, publication and retention. Recovery falls back
+  only for missing objects or recognized content/container corruption. Permission loss,
+  timeouts, unavailable history and incompatible state fail closed.
+
 - Streams checkpoint recovery to one size-limited staged file and decodes tensor leaves
   directly from disk. `RunStoreReader` accepts `staging_directory` and `max_checkpoint_bytes`,
   defaulting to 64 GiB. Download streams close and staging is deleted on success or failure.
