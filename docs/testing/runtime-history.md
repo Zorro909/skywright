@@ -47,7 +47,7 @@ Run from the repository root after `scripts/setup-worktree`. The smaller CI scen
 
 ```sh
 uv run --project sdk --locked --group ml-test pytest -m integration \
-  sdk/tests/test_run_store_system.py -k runtime_history
+  sdk/tests/integration/test_run_store_system.py -k runtime_history
 ```
 
 Run the representative workload with an automatically cleaned-up real service:
@@ -58,7 +58,7 @@ import subprocess
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd() / "sdk/tests"))
-from test_run_store_system import seaweedfs
+from integration.test_run_store_system import seaweedfs
 with seaweedfs() as (endpoint, client):
     client.create_bucket(Bucket="runtime-history")
     subprocess.run([

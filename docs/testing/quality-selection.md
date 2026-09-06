@@ -14,18 +14,19 @@ regressions cover the four original adapters, new backend paths and future resou
 filenames. A Maven resource-table check verifies every packaged SDK family has
 consumer coverage. The Plan CI job executes the quality-tool regression suite.
 
-SDK discovery now defaults to unit tests throughout `tests/`. Service modules use
-`integration`, with `dataset` for the optional Dataset stack. The installed suite
-uses the `tests/system/` directory and its `system` marker. Artifact requirements
-are checked when fixtures execute, so collecting the unit suite needs no wheel.
-A regression creates new modules and verifies discovery and suite separation.
+SDK discovery defaults to `tests/unit/`. Service tests live in `tests/integration/`,
+with an independently collected `dataset/` subdirectory for the optional stack.
+The installed suite uses `tests/system/`. Directory hooks assign suite markers.
+Artifact requirements are checked when fixtures execute, so collecting the unit suite needs no wheel.
+A regression creates new modules, including an unavailable optional import, and
+verifies discovery and separation before modules are imported.
 
 ## Local verification
 
 - 40 quality planner/gate tests. The added regressions reproduced 17 failing cases
   before the selection fix.
 - 324 SDK unit tests, including 29 MDS decoding cases and a discovery regression.
-- Seven Run Store and seven Dataset real-service tests, selected by markers.
+- Seven Run Store and seven Dataset real-service tests, discovered in separate service directories.
 - 20 installed-artifact cases against a direct wheel and a wheel rebuilt from the
   source distribution.
 - The backend JAR contains byte-identical packaged resources: seven configuration,

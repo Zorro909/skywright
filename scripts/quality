@@ -309,9 +309,10 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         "sdk/src/skywright/dataset.py",
         "sdk/tests/fixtures/mds-reader/",
         "sdk/src/skywright/_training_process.py",
-        "sdk/tests/test_run_store",
-        "sdk/tests/test_dataset_access",
-        "sdk/tests/test_dataset_cli.py",
+        "sdk/tests/unit/test_run_store",
+        "sdk/tests/integration/",
+        "sdk/tests/unit/test_dataset_access",
+        "sdk/tests/unit/test_dataset_cli.py",
         "sdk/tests/support/",
     )
     integration_files = {
@@ -331,7 +332,7 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         "backend/src/main/java/de/zorro909/skywright/backend/datasetpublication/",
         "backend/src/test/java/de/zorro909/skywright/backend/acceptance/DatasetPublication",
         "sdk/src/skywright/_dataset_",
-        "sdk/tests/test_dataset_cli.py",
+        "sdk/tests/unit/test_dataset_cli.py",
     )
     if any(
         path.removeprefix("./").startswith(publication_prefixes)

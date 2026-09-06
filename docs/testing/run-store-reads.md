@@ -99,13 +99,13 @@ and malformed S3 metadata. The initial regression test failed on an unbounded `B
 
 Environment: Linux 7.1.5-201.fc44 x86_64, glibc 2.43, Python 3.12.11, NumPy 2.4.6,
 boto3 1.43.73, Java 25.0.4 GraalVM CE 25.2.4+7.1. SeaweedFS uses the repository's pinned
-4.42 image and digest in `sdk/tests/test_run_store_system.py`.
+4.42 image and digest in `sdk/tests/integration/test_run_store_system.py`.
 
 ## Reproduction
 
 ```sh
 sdk/scripts/check
-uv run --project sdk --locked --group ml-test pytest -m integration sdk/tests/test_run_store_system.py
+uv run --project sdk --locked --group ml-test pytest -m integration sdk/tests/integration/test_run_store_system.py
 mvn -pl backend -am -DskipFrontendInstall=true -DskipFrontendTests=true \
   -Dtest=RunStoreAccessTest,RunStoreGoldenCorpusTest -Dsurefire.failIfNoSpecifiedTests=false \
   -Dit.test=RunStoreS3IT,TargetStorageQualificationIT -Dfailsafe.failIfNoSpecifiedTests=false verify
@@ -119,7 +119,7 @@ import subprocess
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd() / "sdk/tests"))
-from test_run_store_system import seaweedfs
+from integration.test_run_store_system import seaweedfs
 with seaweedfs() as (endpoint, client):
     client.create_bucket(Bucket="recovery-bounds")
     command = [sys.executable, "sdk/tests/support/recovery_read_scenario.py"]

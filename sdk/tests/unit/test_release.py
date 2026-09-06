@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-SDK_ROOT = Path(__file__).parents[1]
+SDK_ROOT = Path(__file__).parents[2]
 RELEASE_COMMAND = SDK_ROOT / "release_support.py"
 
 

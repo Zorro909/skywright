@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-SDK_ROOT = Path(__file__).parents[1]
+SDK_ROOT = Path(__file__).parents[2]
 
 PROCESS_SUPPORT = """
 from skywright import DatasetBatch, DatasetCursor, MetricCatalog, MetricDefinition

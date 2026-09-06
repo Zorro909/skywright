@@ -339,7 +339,10 @@ class PlanningTest(unittest.TestCase):
             "sdk/tests/support/run_store_training_scenario.py",
             "sdk/src/skywright/dataset.py",
             "sdk/tests/fixtures/mds-reader/raw/index.json",
-            "sdk/tests/test_dataset_access_system.py",
+            "sdk/tests/integration/dataset/test_dataset_access_system.py",
+            "sdk/tests/integration/future/test_service.py",
+            "sdk/tests/integration/dataset/future/test_service.py",
+            "sdk/tests/unit/test_run_store.py",
         ):
             with self.subTest(path=path):
                 plan = self.plan(path)
@@ -350,6 +353,7 @@ class PlanningTest(unittest.TestCase):
         for path in (
             "backend/src/main/java/de/zorro909/skywright/backend/datasetpublication/Service.java",
             "sdk/src/skywright/_dataset_cli.py",
+            "sdk/tests/unit/test_dataset_cli.py",
             "deployment/base/backend-deployment.yaml",
             "deployment/overlays/production/backend-patch.yaml",
             "backend-deployment/src/test/java/de/zorro909/skywright/deployment/DatasetPublicationImageIT.java",

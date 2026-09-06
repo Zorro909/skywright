@@ -275,7 +275,7 @@ def test_protocol_rejects_invalid_identities_before_key_construction() -> None:
 
 def test_python_accepts_the_shared_run_store_golden_corpus() -> None:
     corpus = json.loads(
-        (Path(__file__).parents[2] / "protocol/run-store/v1/golden.json").read_text()
+        (Path(__file__).parents[3] / "protocol/run-store/v1/golden.json").read_text()
     )
     for case in corpus["identities"]:
         protocol = RunStoreProtocol(case["project"], case["run"])
@@ -318,7 +318,7 @@ def test_python_accepts_the_shared_run_store_golden_corpus() -> None:
 
 def test_python_applies_shared_progress_integrity_metadata(tmp_path) -> None:
     corpus = json.loads(
-        (Path(__file__).parents[2] / "protocol/run-store/v1/golden.json").read_text()
+        (Path(__file__).parents[3] / "protocol/run-store/v1/golden.json").read_text()
     )
     body = corpus["progressRecords"][0]["json"].encode()
     key = RunStoreProtocol("project", "run-1").progress_key()

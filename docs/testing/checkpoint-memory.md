@@ -56,7 +56,7 @@ The automated CPU scenario is part of the real S3 suite:
 
 ```sh
 uv run --project sdk --locked --group ml-test pytest -m integration \
-  sdk/tests/test_run_store_system.py \
+  sdk/tests/integration/test_run_store_system.py \
   -k model_optimizer_checkpoint_memory_scenario_uses_real_s3
 ```
 
@@ -69,7 +69,7 @@ uv run --project sdk --locked --group ml-test python \
   --device cpu --optimizer adamw --expect-bounded
 ```
 
-The fixture uses `test-access-key` and `test-secret-key`; it is intended for a disposable local S3 service. `seaweedfs()` in `sdk/tests/test_run_store_system.py` starts and cleans up the pinned service.
+The fixture uses `test-access-key` and `test-secret-key`; it is intended for a disposable local S3 service. `seaweedfs()` in `sdk/tests/integration/test_run_store_system.py` starts and cleans up the pinned service.
 
 ROCm qualification used the locally built `localhost/skywright-environment-profile:rocm-check` image, with the current SDK source mounted read-only. That image is built by `environment-profiles/scripts/check` from the pinned profile Containerfile. Run from the repository root with the disposable service already available on the host:
 

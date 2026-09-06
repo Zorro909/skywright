@@ -12,7 +12,7 @@ uv run --locked pyright --verifytypes skywright
 scripts/generate-configuration-reference --check
 ../scripts/generate-run-definition-models --check
 uv run --locked --group ml-test pytest \
-  -m 'not integration and not system' \
+  tests/unit \
   --junitxml target/test-results/unit.xml \
   --cov skywright \
   --cov-report xml:target/coverage/coverage.xml \
