@@ -70,7 +70,10 @@ CATEGORY_CHECKS = {
     "api": frozenset(
         ("application", "image", "integration", "java", "frontend", "sdk", "security")
     ),
-    "backend": frozenset(("application", "image", "java", "security")),
+    "backend": frozenset(("application", "image", "integration", "java", "security")),
+    "shared-contract": frozenset(
+        ("application", "image", "integration", "java", "profile", "sdk", "security")
+    ),
     "deployment": ALL_CHECKS,
     "documentation": frozenset(),
     "fixture": frozenset(("application", "image", "java", "sdk", "security")),
@@ -236,8 +239,14 @@ class QualityPlan:
 
 def category_for(path: str) -> str:
     normalized = path.removeprefix("./")
-    if normalized == "sdk/src/skywright/_configuration_resources/corpus.json":
-        return "fixture"
+    if normalized.startswith(
+        (
+            "sdk/src/skywright/_configuration_resources/",
+            "sdk/src/skywright/_metric_resources/",
+            "sdk/src/skywright/_run_definition_resources/",
+        )
+    ):
+        return "shared-contract"
     if (
         normalized.startswith(("docs/", ".github/ISSUE_TEMPLATE/"))
         or normalized
@@ -293,15 +302,6 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         else frozenset().union(*(CATEGORY_CHECKS[category] for category in categories))
     )
     integration_prefixes = (
-        "backend/src/main/java/de/zorro909/skywright/backend/orchestration/",
-        "backend/src/main/java/de/zorro909/skywright/backend/availability/",
-        "backend/src/main/java/de/zorro909/skywright/backend/datasetpublication/",
-        "backend/src/main/java/de/zorro909/skywright/backend/persistence/",
-        "backend/src/main/java/de/zorro909/skywright/backend/runstore/",
-        "backend/src/main/resources/db/",
-        "backend/src/test/java/de/zorro909/skywright/backend/acceptance/",
-        "backend/src/test/java/de/zorro909/skywright/backend/orchestration/",
-        "backend/src/test/java/de/zorro909/skywright/backend/runstore/",
         "protocol/run-store/",
         "sdk/src/skywright/_run_store/",
         "sdk/src/skywright/_dataset_",
@@ -309,15 +309,13 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         "sdk/src/skywright/dataset.py",
         "sdk/tests/fixtures/mds-reader/",
         "sdk/src/skywright/_training_process.py",
-        "sdk/tests/test_run_store",
-        "sdk/tests/test_dataset_access",
-        "sdk/tests/test_dataset_cli.py",
+        "sdk/tests/unit/test_run_store",
+        "sdk/tests/integration/",
+        "sdk/tests/unit/test_dataset_access",
+        "sdk/tests/unit/test_dataset_cli.py",
         "sdk/tests/support/",
     )
     integration_files = {
-        "backend/pom.xml",
-        "backend/src/main/resources/META-INF/skywright/skypilot_bridge.py",
-        "backend/src/main/resources/application.properties",
         "sdk/pyproject.toml",
         "sdk/uv.lock",
         "sdk/scripts/integration",
@@ -334,7 +332,7 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         "backend/src/main/java/de/zorro909/skywright/backend/datasetpublication/",
         "backend/src/test/java/de/zorro909/skywright/backend/acceptance/DatasetPublication",
         "sdk/src/skywright/_dataset_",
-        "sdk/tests/test_dataset_cli.py",
+        "sdk/tests/unit/test_dataset_cli.py",
     )
     if any(
         path.removeprefix("./").startswith(publication_prefixes)

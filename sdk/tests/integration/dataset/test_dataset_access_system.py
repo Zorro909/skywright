@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from test_dataset_access import published_definition
-from test_run_store_system import seaweedfs
+from integration.test_run_store_system import seaweedfs
+from unit.test_dataset_access import published_definition
 
 from skywright import DatasetCursor
 from skywright.dataset import (
@@ -28,14 +28,13 @@ from skywright.dataset import (
 )
 
 
-@pytest.mark.system
 @pytest.mark.parametrize("compression", [None, "gz", "bz2", "br", "zstd", "snappy"])
 def test_real_s3_cache_lifecycle_location_changes_and_direct_process(
     tmp_path, monkeypatch, compression
 ) -> None:
     source = tmp_path / "source"
     shutil.copytree(
-        Path(__file__).parent / "fixtures" / "mds-reader" / (compression or "raw"),
+        Path(__file__).parents[2] / "fixtures" / "mds-reader" / (compression or "raw"),
         source,
     )
     definition = published_definition(source)
@@ -196,7 +195,11 @@ def test_real_s3_cache_lifecycle_location_changes_and_direct_process(
         process = subprocess.run(
             [
                 sys.executable,
-                str(Path(__file__).parent / "support" / "dataset_training_scenario.py"),
+                str(
+                    Path(__file__).parents[2]
+                    / "support"
+                    / "dataset_training_scenario.py"
+                ),
                 str(configuration),
             ],
             capture_output=True,
@@ -227,11 +230,10 @@ def test_real_s3_cache_lifecycle_location_changes_and_direct_process(
                 changed.read_item(ordinal)
 
 
-@pytest.mark.system
 def test_exact_committed_sequence_across_process_recovery_and_clone(
     tmp_path, monkeypatch
 ) -> None:
-    source = Path(__file__).parent / "fixtures" / "mds-reader" / "raw"
+    source = Path(__file__).parents[2] / "fixtures" / "mds-reader" / "raw"
     definition = published_definition(source)
     with seaweedfs() as (endpoint, client):
         client.create_bucket(Bucket="datasets")
@@ -286,7 +288,7 @@ def test_exact_committed_sequence_across_process_recovery_and_clone(
                 [
                     sys.executable,
                     str(
-                        Path(__file__).parent
+                        Path(__file__).parents[2]
                         / "support"
                         / "dataset_continuation_scenario.py"
                     ),

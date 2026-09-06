@@ -214,7 +214,6 @@ esac
     )
 
 
-@pytest.mark.system
 def test_registered_descriptor_uses_standard_credentials_against_pinned_seaweedfs(
     tmp_path, monkeypatch
 ) -> None:
@@ -439,9 +438,10 @@ def test_registered_descriptor_uses_standard_credentials_against_pinned_seaweedf
         )
 
 
-@pytest.mark.system
 def test_training_lifecycle_scenarios_persist_to_pinned_seaweedfs(tmp_path) -> None:
-    scenario_runner = Path(__file__).parent / "support/run_store_training_scenario.py"
+    scenario_runner = (
+        Path(__file__).parents[1] / "support/run_store_training_scenario.py"
+    )
     with seaweedfs() as (endpoint, client):
         bucket = f"skywright-{uuid.uuid4().hex}"
         client.create_bucket(Bucket=bucket)
@@ -688,7 +688,9 @@ def test_model_optimizer_checkpoint_memory_scenario_uses_real_s3() -> None:
             [
                 sys.executable,
                 str(
-                    Path(__file__).parent / "support" / "checkpoint_memory_scenario.py"
+                    Path(__file__).parents[1]
+                    / "support"
+                    / "checkpoint_memory_scenario.py"
                 ),
                 "--endpoint",
                 endpoint,
@@ -719,7 +721,11 @@ def test_runtime_history_remains_bounded_while_real_s3_keeps_all_outputs() -> No
         result = subprocess.run(
             [
                 sys.executable,
-                str(Path(__file__).parent / "support" / "runtime_history_scenario.py"),
+                str(
+                    Path(__file__).parents[1]
+                    / "support"
+                    / "runtime_history_scenario.py"
+                ),
                 "--endpoint",
                 endpoint,
                 "--bucket",
@@ -747,7 +753,6 @@ def test_runtime_history_remains_bounded_while_real_s3_keeps_all_outputs() -> No
         assert evidence["max_live_metric_observations"] <= 4
 
 
-@pytest.mark.system
 def test_checkpoint_recovery_respects_memory_and_integrity_budgets(tmp_path) -> None:
     import hashlib
 
@@ -756,7 +761,7 @@ def test_checkpoint_recovery_respects_memory_and_integrity_budgets(tmp_path) -> 
         client.create_bucket(Bucket=bucket)
         command = [
             sys.executable,
-            str(Path(__file__).parent / "support/recovery_read_scenario.py"),
+            str(Path(__file__).parents[1] / "support/recovery_read_scenario.py"),
         ]
         arguments = ["--endpoint", endpoint, "--bucket", bucket, "--payload-mib", "32"]
         subprocess.run(

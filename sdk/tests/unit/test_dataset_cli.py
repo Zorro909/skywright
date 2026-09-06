@@ -211,7 +211,7 @@ def test_versioned_mds_fixture_has_fixed_manifest_and_content_identities(
     tmp_path: Path,
 ) -> None:
     fixture_path = (
-        Path(__file__).parents[2]
+        Path(__file__).parents[3]
         / "tests/fixtures/dataset-publication/mds-v2-contract.json"
     )
     fixture = json.loads(fixture_path.read_text())

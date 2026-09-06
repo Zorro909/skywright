@@ -30,13 +30,21 @@ scripts/quality plan --base origin/main
 scripts/quality plan --format json --changed-file frontend/src/app/app.ts
 ```
 
-Root files, wrappers, GitHub automation, and unknown top-level paths fail safe by selecting every
-check. API, backend, frontend, SDK, deployment, shared-fixture (including `protocol/`), and Environment Profile
-paths fan out to their affected active checks. The canonical structural-overlay corpus at
-`sdk/src/skywright/_configuration_resources/corpus.json` is classified as a shared fixture despite
-its SDK-owned location. API, backend, frontend, and shared-fixture changes
-select both the complete-application and production-image checks. Documentation-only changes retain
-the visible aggregate result without running build-heavy work.
+Root files, wrappers, GitHub automation, and unknown top-level paths select every
+check. All backend changes, including Java adapters and Python bridge resources,
+select real-service integration. Narrower backend rules require explicit impact
+coverage before replacing this default.
+
+Configuration, metric and Run Definition resources under the SDK are shared
+contracts. Changes to any file in those packaged resource directories select Java,
+SDK, integration, application, image, Environment Profile and security checks.
+Planner regressions inspect `backend/pom.xml` so a newly packaged SDK resource
+family must have consumer coverage. Other API, frontend, deployment and fixture
+paths retain their component plans. Documentation-only changes retain the visible
+aggregate result without build jobs.
+
+The Plan job runs `python3 -m unittest discover -s tests/quality -v` before using the
+planner. A broken planner or gate regression therefore fails the required workflow.
 
 ## GitHub Actions contract
 

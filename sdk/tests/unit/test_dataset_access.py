@@ -145,7 +145,7 @@ def published_definition(directory: Path) -> DatasetDefinition:
 
 
 def test_upstream_fixture_identity() -> None:
-    root = Path(__file__).parent / "fixtures" / "mds-reader"
+    root = Path(__file__).parents[1] / "fixtures" / "mds-reader"
     provenance = json.loads((root / "provenance.json").read_text())
     for relative, expected in provenance["files"].items():
         assert hashlib.sha256((root / relative).read_bytes()).hexdigest() == expected
