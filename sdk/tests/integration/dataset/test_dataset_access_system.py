@@ -270,6 +270,7 @@ def test_exact_committed_sequence_across_process_recovery_and_clone(
                 cache_directory=tmp_path / "empty-cache",
             )
         counter = 0
+        stopped_writers = {}
 
         def execute(**options):
             nonlocal counter
@@ -280,6 +281,7 @@ def test_exact_committed_sequence_across_process_recovery_and_clone(
                 "cache": str(tmp_path / f"cache-{counter}"),
                 "limits": {"byte_limit": 5000, "file_limit": 3},
                 "batch_size": 5,
+                "previous_writer": stopped_writers.get(options["run_id"], {}),
                 **options,
             }
             document = tmp_path / f"input-{counter}.json"
@@ -299,7 +301,14 @@ def test_exact_committed_sequence_across_process_recovery_and_clone(
                 timeout=90,
                 check=True,
             )
-            return json.loads(process.stdout.strip().splitlines()[-1])
+            result = json.loads(process.stdout.strip().splitlines()[-1])
+            stopped_writers[options["run_id"]] = {
+                "run_id": options["run_id"],
+                "attempt_id": result["attempt_id"],
+                "condition": "stopped",
+                "reference": f"fixture-parent:completed-subprocess:{counter}",
+            }
+            return result
 
         baseline = execute(run_id="baseline")
         assert baseline["outcome"] == "completed"
@@ -353,7 +362,8 @@ def test_exact_committed_sequence_across_process_recovery_and_clone(
         assert failed["outcome"] == "failed"
         assert failed["reference"] is not None
         resumed = execute(
-            run_id="failure",
+            run_id="failure-clone",
+            source_run_id="failure",
             reference=failed["reference"],
             location=replica,
             batch_size=4,

@@ -2,6 +2,12 @@
 
 ## Next
 
+- Gate production recovery using immutable publication history and progress-decayed
+  debt. Refuse uncertain previous writers, incomplete history and terminal Runs;
+  preserve evidence after payload retention and publish idempotent exhaustion
+  records. Expose recovery refusal separately from attempt termination reports.
+
+
 - Normalizes confirmed missing S3 objects as `RunStoreMissingObjectError`, a subtype of
   `RunStoreIntegrityError`, across reads, publication and retention. Recovery falls back
   only for missing objects or recognized content/container corruption. Permission loss,

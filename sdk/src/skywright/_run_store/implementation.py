@@ -37,9 +37,17 @@ from skywright._run_store.measurements import (
     OperationMeasurementBatch,
     OperationMeasurements,
 )
+from skywright._run_store.recovery import RecoveryJournal
 from skywright._training_errors import (
     CheckpointPublicationCancelled,
     TrainingContractViolation,
+)
+from skywright.recovery import (
+    PreviousWriterVerifier,
+    RecoveryAdmissionError,
+    RecoveryHistory,
+    RecoverySeed,
+    uncertain_previous_writer,
 )
 
 if TYPE_CHECKING:
@@ -50,6 +58,7 @@ from skywright._training_types import (
     CheckpointSnapshot,
     DatasetCursor,
     ExecutionAttemptRecord,
+    ExecutionTerminationCause,
     ExecutionTerminationReport,
     MetricObservation,
     SampleRecord,
@@ -974,6 +983,8 @@ class RunStoreRecorder:
             controlled_publication,
             measurement_capacity,
         )
+        self._recovery: RecoveryJournal | None = None
+        self._recovery_external_seed: RecoverySeed | None = None
         self._attempt: ExecutionAttemptRecord | None = None
         self._confirmation_lock = threading.Lock()
         self._latest_confirmation: tuple[int, str] | None = None
@@ -990,6 +1001,260 @@ class RunStoreRecorder:
         """Transfer a bounded batch, including identities of any missing records."""
         return self._client.measurements.drain()
 
+    def prepare_recovery(
+        self,
+        *,
+        project_version: str,
+        ordering_fingerprint: str,
+        maximum_debt: int = 3,
+        previous_writer_verifier: PreviousWriterVerifier = uncertain_previous_writer,
+        source_run_id: str | None = None,
+        seed_checkpoint: CheckpointSnapshot | str | None = None,
+        ordering_reset: bool = False,
+    ) -> CheckpointResolution | None:
+        """Gate startup before attempt publication; uncertainty never admits a writer."""
+        if self._attempt is not None or self._recovery is not None:
+            raise RecoveryAdmissionError(
+                "RECOVERY_ADMISSION_CONFLICT", "recorder startup was already prepared"
+            )
+        journal = self._new_recovery_journal(project_version, maximum_debt)
+        history = journal.prepare(previous_writer_verifier)
+        if not history.checkpoints:
+            seed = None
+            snapshot = None
+            if source_run_id is not None:
+                from skywright._training_environment import resolve_component
+
+                resolved = resolve_component(seed_checkpoint, "clone seed checkpoint")
+                if (
+                    not isinstance(resolved, CheckpointSnapshot)
+                    or resolved.run_id != source_run_id
+                    or resolved.project_version != project_version
+                    or resolved.reference is None
+                ):
+                    raise RecoveryAdmissionError(
+                        "RECOVERY_SEED_UNAVAILABLE",
+                        "clone seed does not match its source Run and Project Version",
+                    )
+                snapshot = resolved
+                seed = RecoverySeed(
+                    source_run_id, resolved.step, resolved.reference, ordering_reset
+                )
+            elif seed_checkpoint is not None:
+                raise RecoveryAdmissionError(
+                    "RECOVERY_SEED_OVERRIDE",
+                    "an explicit checkpoint requires a source Run",
+                )
+            if history.attempts and seed != history.seed:
+                raise RecoveryAdmissionError(
+                    "RECOVERY_SEED_OVERRIDE",
+                    "recovery must preserve the clone's pinned external seed",
+                )
+            self._recovery = journal
+            self._recovery_external_seed = seed
+            return (
+                CheckpointResolution(snapshot, (), source_run_id, ordering_reset)
+                if snapshot is not None
+                else None
+            )
+        if seed_checkpoint is not None and source_run_id is None:
+            raise RecoveryAdmissionError(
+                "RECOVERY_SEED_OVERRIDE", "same-Run recovery selects confirmed history"
+            )
+        reader = RunStoreReader(
+            self.target, checkpoint_codec=self._codec, client=self._client
+        )
+        rejected: list[CheckpointRejectionEvidence] = []
+        for checkpoint in reversed(history.checkpoints):
+            try:
+                snapshot = reader.read_exact(
+                    checkpoint.reference,
+                    project_version=project_version,
+                    ordering_fingerprint=ordering_fingerprint,
+                )
+            except RunStoreIntegrityError as failure:
+                code = _integrity_code(failure)
+                if code is None:
+                    raise
+                rejected.append(
+                    CheckpointRejectionEvidence(
+                        checkpoint.step,
+                        checkpoint.reference,
+                        code,
+                        "Confirmed checkpoint was missing or corrupt during recovery",
+                    )
+                )
+                continue
+            self._recovery = journal
+            self._recovery_external_seed = None
+            return CheckpointResolution(snapshot, tuple(rejected))
+        raise RecoveryAdmissionError(
+            "RECOVERY_CHECKPOINT_UNAVAILABLE",
+            "no confirmed checkpoint passed integrity validation",
+        )
+
+    def recovery_history(
+        self, *, project_version: str, maximum_debt: int = 3
+    ) -> RecoveryHistory:
+        """Read complete immutable debt evidence independently of checkpoint retention."""
+        return self._new_recovery_journal(project_version, maximum_debt).load()
+
+    def _new_recovery_journal(
+        self, project_version: str, maximum_debt: int
+    ) -> RecoveryJournal:
+        def read(suffix: str) -> tuple[bytes, str] | None:
+            key = self.protocol.run_prefix + suffix
+            try:
+                response = self._client.get_object(Bucket=self.target.bucket, Key=key)
+            except RunStoreMissingObjectError:
+                return None
+            with response["Body"] as stream:
+                size, digest = _validated_metadata(key, response)
+                limit = (
+                    16 * 1024 * 1024
+                    if suffix == "recovery/exhaustion.json"
+                    else 64 * 1024
+                )
+                if size > limit:
+                    raise RecoveryAdmissionError(
+                        "RECOVERY_HISTORY_INVALID",
+                        "control record exceeds its byte budget",
+                    )
+                expected_kind = (
+                    "recovery-head"
+                    if suffix == "recovery/head.json"
+                    else "recovery-record"
+                    if suffix.startswith("recovery/")
+                    else "execution-attempt-record"
+                    if suffix.endswith("/record.json")
+                    else "execution-termination-report"
+                )
+                if response["Metadata"].get("skywright-kind") != expected_kind:
+                    raise RecoveryAdmissionError(
+                        "RECOVERY_HISTORY_INVALID",
+                        "control record kind differs from its address",
+                    )
+                body = stream.read(size + 1)
+                if len(body) != size or hashlib.sha256(body).hexdigest() != digest:
+                    raise RecoveryAdmissionError(
+                        "RECOVERY_HISTORY_INVALID",
+                        "control record failed integrity verification",
+                    )
+                etag = response.get("ETag")
+                if not isinstance(etag, str) or not etag:
+                    raise RecoveryAdmissionError(
+                        "RECOVERY_HISTORY_INVALID",
+                        "control record has no conditional write identity",
+                    )
+                return body, etag
+
+        def immutable(suffix: str, body: bytes) -> None:
+            self._put_immutable(
+                self.protocol.run_prefix + suffix,
+                body,
+                kind="recovery-record",
+                content_type="application/json",
+            )
+
+        def exchange(suffix: str, body: bytes, etag: str | None) -> None:
+            request: dict[str, Any] = {
+                "Bucket": self.target.bucket,
+                "Key": self.protocol.run_prefix + suffix,
+                "Body": body,
+                "ContentLength": len(body),
+                "ContentType": "application/json",
+                "Metadata": {
+                    "skywright-sha256": hashlib.sha256(body).hexdigest(),
+                    "skywright-size": str(len(body)),
+                    "skywright-schema": "v1",
+                    "skywright-kind": "recovery-head",
+                    "skywright-media-type": "application/json",
+                },
+            }
+            request["IfNoneMatch" if etag is None else "IfMatch"] = (
+                "*" if etag is None else etag
+            )
+            try:
+                self._client.put_object(**request)
+            except Exception as failure:
+                # Lost responses may be reconciled only against these exact bytes.
+                current = read(suffix)
+                if current is not None and current[0] == body:
+                    return
+                raise RecoveryAdmissionError(
+                    "RECOVERY_ADMISSION_CONFLICT",
+                    "conditional recovery head publication failed",
+                ) from failure
+
+        def verify_attempt(attempt: ExecutionAttemptRecord) -> None:
+            record = read(f"attempts/{_attempt(attempt.attempt_id)}/record.json")
+            if record is None or record[0] != self._attempt_body(attempt):
+                raise RecoveryAdmissionError(
+                    "RECOVERY_HISTORY_INVALID",
+                    "an admitted Execution Attempt Record is missing or inconsistent",
+                )
+
+        def verify_report(
+            attempt: ExecutionAttemptRecord,
+        ) -> tuple[str, int | None, str | None] | None:
+            record = read(f"attempts/{_attempt(attempt.attempt_id)}/report.json")
+            if record is None:
+                return None
+            report = json.loads(record[0])
+            causes = {cause.value for cause in ExecutionTerminationCause}
+            if (
+                not isinstance(report, dict)
+                or report.get("schemaVersion") != 1
+                or report.get("attemptId") != attempt.attempt_id
+                or report.get("runId") != attempt.run_id
+                or report.get("projectVersion") != attempt.project_version
+                or report.get("cause") not in causes
+            ):
+                raise RecoveryAdmissionError(
+                    "RECOVERY_HISTORY_INVALID", "invalid Execution Termination Report"
+                )
+            if report["cause"] in {"completed", "interrupted"} and (
+                type(report.get("lastCommittedStep")) is not int
+                or report["lastCommittedStep"] < 1
+                or report.get("latestDurableStep") != report["lastCommittedStep"]
+                or not report.get("latestDurableCheckpoint")
+            ):
+                raise RecoveryAdmissionError(
+                    "RECOVERY_HISTORY_INVALID",
+                    "interruption report lacks durable finalization evidence",
+                )
+            step, reference = (
+                report.get("latestDurableStep"),
+                report.get("latestDurableCheckpoint"),
+            )
+            if (step is None) != (reference is None) or (
+                step is not None
+                and (
+                    type(step) is not int or step < 1 or not isinstance(reference, str)
+                )
+            ):
+                raise RecoveryAdmissionError(
+                    "RECOVERY_HISTORY_INVALID",
+                    "termination checkpoint identity is incomplete",
+                )
+            return (
+                cast(str, report["cause"]),
+                step,
+                cast(str | None, reference),
+            )
+
+        return RecoveryJournal(
+            run_id=self.target.run_id,
+            project_version=project_version,
+            maximum_debt=maximum_debt,
+            read=read,
+            immutable=immutable,
+            exchange=exchange,
+            empty_store=lambda: not self._list_keys(self.protocol.run_prefix),
+            verify_attempt=verify_attempt,
+            verify_report=verify_report,
+        )
+
     def publish_attempt(self, attempt: ExecutionAttemptRecord) -> None:
         if attempt.run_id != self.target.run_id:
             raise TrainingContractViolation(
@@ -997,7 +1262,29 @@ class RunStoreRecorder:
                 "Execution Attempt Run does not match the resolved Run Store",
                 "publish the attempt to its owning Run Store",
             )
-        body = _canonical_json(
+        if self._recovery is not None:
+            self._recovery.admit(attempt, external_seed=self._recovery_external_seed)
+        body = self._attempt_body(attempt)
+        self._put_immutable(
+            self.protocol.attempt_record_key(attempt.attempt_id),
+            body,
+            kind="execution-attempt-record",
+            content_type="application/json",
+        )
+        self._attempt = attempt
+        if (
+            attempt.seed_checkpoint_step is not None
+            and attempt.seed_checkpoint_reference is not None
+        ):
+            with self._confirmation_lock:
+                self._latest_confirmation = (
+                    attempt.seed_checkpoint_step,
+                    attempt.seed_checkpoint_reference,
+                )
+
+    @staticmethod
+    def _attempt_body(attempt: ExecutionAttemptRecord) -> bytes:
+        return _canonical_json(
             {
                 "schemaVersion": 1,
                 "attemptId": attempt.attempt_id,
@@ -1016,22 +1303,6 @@ class RunStoreRecorder:
                 ],
             }
         ).encode()
-        self._put_immutable(
-            self.protocol.attempt_record_key(attempt.attempt_id),
-            body,
-            kind="execution-attempt-record",
-            content_type="application/json",
-        )
-        self._attempt = attempt
-        if (
-            attempt.seed_checkpoint_step is not None
-            and attempt.seed_checkpoint_reference is not None
-        ):
-            with self._confirmation_lock:
-                self._latest_confirmation = (
-                    attempt.seed_checkpoint_step,
-                    attempt.seed_checkpoint_reference,
-                )
 
     def publish_checkpoint(self, checkpoint: CheckpointSnapshot) -> str:
         self._require_open()
@@ -1071,7 +1342,10 @@ class RunStoreRecorder:
                     f"Step {checkpoint.step} concurrently acquired conflicting Checkpoints",
                     "retain one immutable Checkpoint identity per committed Step",
                 )
-            return str(CheckpointReference(checkpoint.step, staged.digest))
+            reference = str(CheckpointReference(checkpoint.step, staged.digest))
+            if self._recovery is not None:
+                self._recovery.checkpoint(checkpoint.step, reference)
+            return reference
 
     def publish_step(
         self,
@@ -1467,6 +1741,8 @@ class CheckpointResolution:
 
     checkpoint: CheckpointSnapshot
     rejected: tuple[CheckpointRejectionEvidence, ...]
+    source_run_id: str | None = None
+    ordering_reset: bool = False
 
 
 @dataclass(frozen=True)
@@ -1515,11 +1791,15 @@ class RunStoreReader:
         )
         self._codec = checkpoint_codec or CheckpointCodec()
         control = operation_control or OperationControl()
-        self._client = _S3Gateway(
-            client or _s3_client(target, session_factory, control),
-            target,
-            control,
-            measurement_capacity,
+        self._client = (
+            client
+            if isinstance(client, _S3Gateway)
+            else _S3Gateway(
+                client or _s3_client(target, session_factory, control),
+                target,
+                control,
+                measurement_capacity,
+            )
         )
 
     @property

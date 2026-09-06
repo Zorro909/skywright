@@ -15,6 +15,12 @@ from skywright._training import (
     TrainingProcessOutcome,
     run_training_process,
 )
+from skywright._training_environment import resolve_component
+from skywright.recovery import (
+    PreviousWriterVerifier,
+    RecoveryAdmissionError,
+    uncertain_previous_writer,
+)
 
 _EXIT_CODES = {
     TrainingProcessOutcome.COMPLETED: 0,
@@ -35,6 +41,8 @@ class _RuntimeDefinition(TypedDict):
     skywright_metric_schema: str
     seed: int
     accelerator: Accelerator
+    maximum_recovery_debt: int
+    previous_writer_verifier_factory: str | None
 
 
 def main() -> None:
@@ -71,19 +79,44 @@ def main() -> None:
     except (ImportError, AttributeError, OSError, TypeError, ValueError) as failure:
         parser.error(str(failure))
 
-    result = run_training_process(
-        cast(str, arguments.entry_point),
-        configuration=definition["configuration"],
-        dataset=definition["dataset_factory"],
-        metric_contracts=definition["metric_contract_factory"],
-        skywright_metric_schema=definition["skywright_metric_schema"],
-        recorder=definition["recorder_factory"],
-        seed=definition["seed"],
-        resume_from=definition["resume_factory"],
-        accelerator=definition["accelerator"],
-        run_id=definition["run_id"],
-        project_version=definition["project_version"],
-    )
+    try:
+        verifier_factory = definition["previous_writer_verifier_factory"]
+        verifier = (
+            cast(
+                PreviousWriterVerifier,
+                resolve_component(verifier_factory, "previous writer verifier"),
+            )
+            if verifier_factory is not None
+            else uncertain_previous_writer
+        )
+        result = run_training_process(
+            cast(str, arguments.entry_point),
+            configuration=definition["configuration"],
+            dataset=definition["dataset_factory"],
+            metric_contracts=definition["metric_contract_factory"],
+            skywright_metric_schema=definition["skywright_metric_schema"],
+            recorder=definition["recorder_factory"],
+            seed=definition["seed"],
+            maximum_recovery_debt=definition["maximum_recovery_debt"],
+            previous_writer_verifier=verifier,
+            resume_from=definition["resume_factory"],
+            accelerator=definition["accelerator"],
+            run_id=definition["run_id"],
+            project_version=definition["project_version"],
+        )
+    except RecoveryAdmissionError as failure:
+        print(
+            json.dumps(
+                {
+                    "outcome": "startup-refused",
+                    "code": failure.code,
+                    "detail": failure.detail,
+                    "run_id": definition["run_id"],
+                },
+                sort_keys=True,
+            )
+        )
+        raise SystemExit(1) from None
     print(
         json.dumps(
             {
@@ -118,6 +151,16 @@ def _load_definition(path: Path) -> _RuntimeDefinition:
     skywright_metric_schema = definition.get("skywright_metric_schema")
     seed = definition.get("seed")
     accelerator = definition.get("accelerator", {"kind": "cpu"})
+    maximum_debt = definition.get("maximum_recovery_debt", 3)
+    verifier_factory = definition.get("previous_writer_verifier_factory")
+    if type(maximum_debt) is not int or not 1 <= maximum_debt <= 2**31 - 1:
+        raise ValueError(
+            "runtime maximum_recovery_debt must be a positive finite integer"
+        )
+    if verifier_factory is not None and (
+        not isinstance(verifier_factory, str) or not verifier_factory
+    ):
+        raise TypeError("previous_writer_verifier_factory must be MODULE:CALLABLE")
     run_id = definition.get("run_id")
     project_version = definition.get("project_version")
     if not isinstance(configuration, dict):
@@ -169,6 +212,8 @@ def _load_definition(path: Path) -> _RuntimeDefinition:
         skywright_metric_schema=skywright_metric_schema,
         seed=seed,
         accelerator=Accelerator(kind, index),
+        maximum_recovery_debt=maximum_debt,
+        previous_writer_verifier_factory=verifier_factory,
     )
 
 
