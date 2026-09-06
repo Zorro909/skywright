@@ -13,6 +13,12 @@ import weakref
 
 _SKY_MODULES = None
 _SKY_LOCK = threading.Lock()
+_JOB_LIMIT = 1000
+_JOB_FIELDS = [
+    "job_id", "job_name", "status", "recovery_count", "task_id", "submitted_at",
+    "start_at", "end_at", "last_recovered_at", "run_timestamp", "cloud", "region",
+    "zone", "cluster_resources", "failure_reason", "current_cluster_name",
+]
 
 
 def _sky_modules():
@@ -30,13 +36,19 @@ def _sky_modules():
     return _SKY_MODULES
 
 
+def _is_connection_failure(failure):
+    from requests.exceptions import ConnectionError, Timeout
+
+    return isinstance(failure, (ConnectionError, Timeout))
+
+
 def _bridge_boundary(function):
     def guarded(*arguments):
         try:
             return function(*arguments)
         except Exception as failure:
             category = type(failure).__name__
-            if category == "ApiServerConnectionError":
+            if category == "ApiServerConnectionError" or _is_connection_failure(failure):
                 _clear_api_server_status_cache()
                 return _bridge_failure(
                     "REACHABILITY", "SkyPilot API server is unreachable"
@@ -274,7 +286,9 @@ def bridge_submit(serialized, serialized_secrets="{}"):
 def bridge_status(serialized_names):
     sky, _, _ = _sky_modules()
     names = set(json.loads(serialized_names))
-    request_id = sky.jobs.queue_v2(refresh=False, all_users=True)
+    request_id = sky.jobs.queue_v2(
+        refresh=False, all_users=True, limit=_JOB_LIMIT, fields=_JOB_FIELDS
+    )
     operation_id = json.dumps(
         {
             "request_id": str(request_id),
@@ -321,7 +335,7 @@ def bridge_complete(operation_id, kind):
     try:
         value = sky.stream_and_get(str(request_id))
     except Exception as failure:
-        if type(failure).__name__ in (
+        if _is_connection_failure(failure) or type(failure).__name__ in (
             "ApiServerConnectionError",
             "ApiServerAuthenticationError",
             "APIVersionMismatchError",
@@ -354,17 +368,22 @@ def bridge_complete(operation_id, kind):
             status = _field(record, "status")
             jobs.append(
                 {
-                    "job_id": int(_field(record, "job_id")),
+                    "job_id": _optional_field(record, "job_id"),
                     "job_name": job_name,
                     "status": str(getattr(status, "value", status)),
-                    "recovery_count": int(_field(record, "recovery_count")),
+                    "recovery_count": _optional_field(record, "recovery_count"),
+                    **{
+                        key: _optional_field(record, key)
+                        for key in _JOB_FIELDS
+                        if key not in ("job_id", "job_name", "status", "recovery_count")
+                    },
                 }
             )
-        result = {"jobs": jobs}
+        result = {"jobs": jobs, "complete": len(records) >= value[1]}
     elif kind == "control":
-        result = {"applied": True}
+        result = {"request_completed": True}
     elif kind == "cleanup":
-        result = {"removed": True}
+        result = {"request_completed": True}
     else:
         raise ValueError(f"unsupported operation kind: {kind}")
     return json.dumps(result)
@@ -386,7 +405,9 @@ def _existing_managed_job_id(name, refresh=True):
         if str(_field(record, "job_name")) == name
         and _field(record, "job_id") is not None
     ]
-    return max(matching_ids, default=None)
+    if len(set(matching_ids)) > 1:
+        raise ValueError("Ambiguous managed job name")
+    return next(iter(matching_ids), None)
 
 
 def _existing_launch_request(name):

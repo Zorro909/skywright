@@ -150,9 +150,10 @@ final class GraalPySkyPilotClient implements SkyPilotClient {
 		return switch (operation.kind()) {
 			case SUBMISSION -> new OperationOutcome.Submitted(result.required("job_id").asLong(),
 					readHandle(result.required("handle")));
-			case STATUS -> new OperationOutcome.Observed(readJobs(result.required("jobs")));
-			case CONTROL -> new OperationOutcome.Controlled(result.required("applied").asBoolean());
-			case CLEANUP -> new OperationOutcome.Cleaned(result.required("removed").asBoolean());
+			case STATUS -> new OperationOutcome.Observed(readJobs(result.required("jobs")),
+					result.required("complete").asBoolean());
+			case CONTROL -> new OperationOutcome.Controlled(result.required("request_completed").asBoolean());
+			case CLEANUP -> new OperationOutcome.Cleaned(result.required("request_completed").asBoolean());
 		};
 	}
 
@@ -250,11 +251,29 @@ final class GraalPySkyPilotClient implements SkyPilotClient {
 	private static ArrayList<OperationOutcome.ManagedJobStatus> readJobs(JsonNode values) {
 		var jobs = new ArrayList<OperationOutcome.ManagedJobStatus>();
 		for (var value : values) {
-			jobs.add(new OperationOutcome.ManagedJobStatus(value.required("job_id").asLong(),
+			jobs.add(new OperationOutcome.ManagedJobStatus(
+					value.path("job_id").isNumber() ? value.path("job_id").asLong() : null,
 					requiredText(value, "job_name"), requiredText(value, "status"),
-					value.required("recovery_count").asInt()));
+					optionalInteger(value, "recovery_count"), optionalInteger(value, "task_id"),
+					optionalNumber(value, "submitted_at"), optionalNumber(value, "start_at"),
+					optionalNumber(value, "end_at"), optionalNumber(value, "last_recovered_at"),
+					optionalText(value, "run_timestamp"), optionalText(value, "cloud"), optionalText(value, "region"),
+					optionalText(value, "zone"), optionalText(value, "cluster_resources"),
+					optionalText(value, "failure_reason"), optionalText(value, "current_cluster_name")));
 		}
 		return jobs;
+	}
+
+	private static String optionalText(JsonNode value, String field) {
+		return value.path(field).isString() ? value.path(field).asText() : null;
+	}
+
+	private static Integer optionalInteger(JsonNode value, String field) {
+		return value.path(field).isNumber() ? value.path(field).asInt() : null;
+	}
+
+	private static Double optionalNumber(JsonNode value, String field) {
+		return value.path(field).isNumber() ? value.path(field).asDouble() : null;
 	}
 
 	private static OperationOutcome.ResourceHandle readHandle(JsonNode value) {
