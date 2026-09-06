@@ -89,13 +89,20 @@ class RunStoreGoldenCorpusTest {
 
 	private record SingleObjectStore(RunStoreObject object) implements RunStoreObjectStore {
 		@Override
-		public java.util.List<RunStoreObject> list(String prefix) {
-			return java.util.List.of(object);
+		public RunStoreObjectPage list(String prefix, int limit, String continuation) {
+			throw new UnsupportedOperationException();
 		}
 
 		@Override
-		public RunStoreObject get(String key) {
-			return object.key().equals(key) ? object : null;
+		public RunStoreObjectMetadata head(String key) {
+			return new RunStoreObjectMetadata(object.key(), object.bytes().length, object.contentType(),
+					object.metadata());
+		}
+
+		@Override
+		public RunStoreContent open(String key) {
+			return object.key().equals(key)
+					? new RunStoreContent(head(key), new java.io.ByteArrayInputStream(object.bytes())) : null;
 		}
 
 		@Override

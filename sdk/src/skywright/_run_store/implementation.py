@@ -12,20 +12,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import random
 import re
+import shutil
 import struct
 import tempfile
 import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from contextlib import suppress
+from contextlib import closing, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType, TracebackType
-from typing import TYPE_CHECKING, Any, BinaryIO, NoReturn, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Literal, NoReturn, cast
 from urllib.parse import quote, unquote
 
 import numpy as np
@@ -438,7 +440,9 @@ class CheckpointCodec:
                 raise ValueError(
                     "RUN_STORE_MALFORMED_SAFETENSORS: invalid header"
                 ) from error
-            data = stream.read()
+            data_offset = stream.tell()
+        if not isinstance(header, dict):
+            raise ValueError("RUN_STORE_MALFORMED_SAFETENSORS: header is not an object")
         metadata = header.pop("__metadata__", None)
         if (
             not isinstance(metadata, dict)
@@ -451,7 +455,7 @@ class CheckpointCodec:
             raise ValueError(
                 "RUN_STORE_MALFORMED_SAFETENSORS: invalid manifest"
             ) from error
-        entries = _decode_entries(header, data)
+        entries = _decode_entries(header, path, data_offset)
         used: set[str] = set()
         state = _decode_tree(manifest["state"], entries, used)
         runtime_state = _decode_tree(manifest["runtimeState"], entries, used)
@@ -514,12 +518,46 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+@dataclass(frozen=True)
+class _FileEntry:
+    path: Path
+    offset: int
+    size: int
+
+    def array(self, dtype: np.dtype[Any]) -> Any:
+        if dtype.hasobject or dtype.itemsize <= 0 or self.size % dtype.itemsize:
+            raise ValueError("RUN_STORE_MALFORMED_SAFETENSORS: unsafe or invalid dtype")
+        with self.path.open("rb") as stream:
+            stream.seek(self.offset)
+            value = np.fromfile(stream, dtype=dtype, count=self.size // dtype.itemsize)
+        if value.nbytes != self.size:
+            raise ValueError("RUN_STORE_MALFORMED_SAFETENSORS: truncated tensor")
+        return value
+
+    def bytes(self) -> bytes:
+        with self.path.open("rb") as stream:
+            stream.seek(self.offset)
+            value = stream.read(self.size)
+        if len(value) != self.size:
+            raise ValueError("RUN_STORE_MALFORMED_SAFETENSORS: truncated bytes")
+        return value
+
+
+def _shape_size(shape: tuple[int, ...]) -> int:
+    if any(type(dimension) is not int or dimension < 0 for dimension in shape):
+        raise ValueError("RUN_STORE_MALFORMED_SAFETENSORS: invalid shape")
+    return math.prod(shape)
+
+
 def _decode_entries(
-    header: object, data: bytes
-) -> dict[str, tuple[str, tuple[int, ...], bytes]]:
-    if not isinstance(header, dict):
-        raise ValueError("RUN_STORE_MALFORMED_SAFETENSORS: header is not an object")
-    result: dict[str, tuple[str, tuple[int, ...], bytes]] = {}
+    header: object, path: Path, data_offset: int
+) -> dict[str, tuple[str, tuple[int, ...], _FileEntry]]:
+    if not isinstance(header, dict) or len(header) > _MAX_LEAVES:
+        raise ValueError(
+            "RUN_STORE_MALFORMED_SAFETENSORS: invalid header or too many leaves"
+        )
+    result: dict[str, tuple[str, tuple[int, ...], _FileEntry]] = {}
+    data_size = path.stat().st_size - data_offset
     expected_offset = 0
     for name, descriptor in header.items():
         if not isinstance(name, str) or not isinstance(descriptor, dict):
@@ -535,24 +573,30 @@ def _decode_entries(
                 "RUN_STORE_MALFORMED_SAFETENSORS: invalid tensor descriptor"
             ) from error
         if (
-            start != expected_offset
-            or not isinstance(end, int)
+            type(start) is not int
+            or type(end) is not int
+            or start != expected_offset
             or end < start
-            or end > len(data)
+            or end > data_size
         ):
             raise ValueError(
                 "RUN_STORE_MALFORMED_SAFETENSORS: inconsistent tensor offsets"
             )
-        result[name] = (dtype, shape, data[start:end])
+        _shape_size(shape)
+        result[name] = (
+            dtype,
+            shape,
+            _FileEntry(path, data_offset + start, end - start),
+        )
         expected_offset = end
-    if expected_offset != len(data):
+    if expected_offset != data_size:
         raise ValueError("RUN_STORE_MALFORMED_SAFETENSORS: unaccounted payload bytes")
     return result
 
 
 def _decode_tree(
     node: object,
-    entries: Mapping[str, tuple[str, tuple[int, ...], bytes]],
+    entries: Mapping[str, tuple[str, tuple[int, ...], _FileEntry]],
     used: set[str],
     depth: int = 0,
 ) -> object:
@@ -590,39 +634,33 @@ def _decode_tree(
     used.add(identifier)
     dtype, shape, raw = entries[identifier]
     if kind == "bytes":
-        if dtype != "U8" or shape != (len(raw),):
+        if dtype != "U8" or shape != (raw.size,):
             raise ValueError("RUN_STORE_MALFORMED_SAFETENSORS: inconsistent byte entry")
-        return raw
+        return raw.bytes()
     if kind in {"numpy-array", "numpy-scalar"}:
         value_dtype = np.dtype(node["numpyDtype"])
         expected_shape = tuple(node["numpyShape"])
-        expected_size = (
-            int(np.prod(expected_shape, dtype=np.int64)) * value_dtype.itemsize
-        )
-        if dtype != "U8" or len(raw) != expected_size:
+        expected_size = _shape_size(expected_shape) * value_dtype.itemsize
+        if dtype != "U8" or raw.size != expected_size or shape != (raw.size,):
             raise ValueError(
                 "RUN_STORE_MALFORMED_SAFETENSORS: inconsistent NumPy entry"
             )
-        value = np.frombuffer(raw, dtype=value_dtype).copy().reshape(expected_shape)
+        value = raw.array(value_dtype).reshape(expected_shape)
         return value[()] if kind == "numpy-scalar" else value
     if kind == "torch-tensor":
         torch = _torch()
         if torch is None:
             raise ValueError("RUN_STORE_INCOMPATIBLE_VALUE: PyTorch is unavailable")
         if dtype == "BF16":
-            value = (
-                torch.frombuffer(bytearray(raw), dtype=torch.uint8)
-                .clone()
-                .view(torch.bfloat16)
-            )
+            value = torch.from_numpy(raw.array(np.dtype("uint8"))).view(torch.bfloat16)
         else:
             numpy_dtype = _NUMPY_FOR_TORCH.get(dtype)
             if numpy_dtype is None:
                 raise ValueError(
                     "RUN_STORE_INCOMPATIBLE_VALUE: unsupported tensor dtype"
                 )
-            value = torch.from_numpy(np.frombuffer(raw, dtype=numpy_dtype).copy())
-        expected = int(np.prod(shape, dtype=np.int64))
+            value = torch.from_numpy(raw.array(numpy_dtype))
+        expected = _shape_size(shape)
         if value.numel() != expected:
             raise ValueError(
                 "RUN_STORE_MALFORMED_SAFETENSORS: inconsistent tensor shape"
@@ -688,6 +726,7 @@ class _S3Gateway:
     _RETRYABLE = frozenset(
         {
             "get_object",
+            "head_object",
             "list_objects_v2",
             "list_multipart_uploads",
             "list_parts",
@@ -1343,6 +1382,18 @@ class MultipartUpload:
     part_numbers: tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class DownloadLink:
+    """Metadata-only link; consumers must verify size and SHA-256 after download."""
+
+    url: str
+    key: str
+    storage_id: str
+    size: int
+    digest: str
+    verification: Literal["not-recorded"] = "not-recorded"
+
+
 class RunStoreReader:
     """Checkpoint discovery, exact reads, corruption fallback, and retention."""
 
@@ -1355,7 +1406,14 @@ class RunStoreReader:
         session_factory: Any | None = None,
         operation_control: OperationControl | None = None,
         measurement_capacity: int = 256,
+        staging_directory: Path | None = None,
+        max_checkpoint_bytes: int = 64 * 1024**3,
     ) -> None:
+        if max_checkpoint_bytes < 1:
+            raise ValueError("max_checkpoint_bytes must be positive")
+        self._staging_directory = staging_directory
+        self._max_checkpoint_bytes = max_checkpoint_bytes
+        self._control = operation_control or OperationControl()
         self.target = target
         self.protocol: RunStoreProtocol = RunStoreProtocol(
             target.training_project_id, target.run_id
@@ -1409,10 +1467,7 @@ class RunStoreReader:
 
         body, response = self._read_verified_object(self.protocol.progress_key())
         metadata = response.get("Metadata", {})
-        if (
-            metadata.get("skywright-kind") != "progress-record"
-            or metadata.get("skywright-schema") != "v1"
-        ):
+        if metadata.get("skywright-kind") != "progress-record":
             raise RunStoreIntegrityError(
                 "RUN_STORE_METADATA_MISMATCH: expected Progress Record schema v1"
             )
@@ -1432,15 +1487,20 @@ class RunStoreReader:
     ) -> CheckpointSnapshot:
         parsed = CheckpointReference.parse(reference)
         key = self.protocol.checkpoint_key(parsed.step, parsed.digest)
-        body = self._read_verified(key, parsed.digest)
         descriptor, name = tempfile.mkstemp(
-            prefix="skywright-read-", suffix=".safetensors"
+            prefix="skywright-read-", suffix=".safetensors", dir=self._staging_directory
         )
         path = Path(name)
         try:
             os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "wb") as stream:
-                stream.write(body)
+                self._consume_verified(
+                    key,
+                    stream,
+                    self._max_checkpoint_bytes,
+                    parsed.digest,
+                    available_disk=shutil.disk_usage(path.parent).free,
+                )
             checkpoint = self._codec.deserialize(path, expected_digest=parsed.digest)
         finally:
             path.unlink(missing_ok=True)
@@ -1539,17 +1599,16 @@ class RunStoreReader:
                 verified.add(recovery.reference)
             self._client.delete_object(Bucket=self.target.bucket, Key=candidate.key)
 
-    def presign_download(self, key: str, *, expires_in: int = 900) -> str:
-        immutable_prefixes = (
-            f"{self.protocol.run_prefix}checkpoints/",
-            f"{self.protocol.run_prefix}artifacts/",
-            f"{self.protocol.run_prefix}samples/",
-        )
-        if not key.startswith(immutable_prefixes) or not 1 <= expires_in <= 3600:
-            raise ValueError(
-                "only exact immutable outputs can be presigned for 1..3600 seconds"
+    def presign_download(self, key: str, *, expires_in: int = 900) -> DownloadLink:
+        expected_kind, digest = self._immutable_identity(key)
+        if not 1 <= expires_in <= 3600:
+            raise ValueError("downloads expire within 1..3600 seconds")
+        response = self._client.head_object(Bucket=self.target.bucket, Key=key)
+        size, expected = _validated_metadata(key, response, digest)
+        if response["Metadata"].get("skywright-kind") != expected_kind:
+            raise RunStoreIntegrityError(
+                "RUN_STORE_METADATA_MISMATCH: object kind differs from key"
             )
-        _, response = self._read_verified_object(key)
         media_type = response.get("Metadata", {}).get(
             "skywright-media-type",
             response.get("ContentType", "application/octet-stream"),
@@ -1558,7 +1617,7 @@ class RunStoreReader:
         filename = unquote(encoded_component).rsplit("/", 1)[-1]
         if not filename or any(ord(character) < 32 for character in filename):
             filename = "skywright-output"
-        return self._client.generate_presigned_url(
+        url = self._client.generate_presigned_url(
             ClientMethod="get_object",
             Params={
                 "Bucket": self.target.bucket,
@@ -1570,6 +1629,52 @@ class RunStoreReader:
             },
             ExpiresIn=expires_in,
         )
+
+        return DownloadLink(url, key, self.target.storage_id, size, expected)
+
+    def download(self, key: str, destination: Path, *, max_bytes: int) -> None:
+        """Atomically accept a verified immutable output within the caller's disk budget."""
+        _, digest = self._immutable_identity(key)
+        if max_bytes < 1:
+            raise ValueError("max_bytes must be positive")
+        descriptor, name = tempfile.mkstemp(
+            prefix=".skywright-download-", dir=destination.parent
+        )
+        staged = Path(name)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                self._consume_verified(
+                    key,
+                    stream,
+                    max_bytes,
+                    digest,
+                    available_disk=shutil.disk_usage(destination.parent).free,
+                )
+            os.replace(staged, destination)
+        finally:
+            staged.unlink(missing_ok=True)
+
+    def _immutable_identity(self, key: str) -> tuple[str, str | None]:
+        if not key.startswith(self.protocol.run_prefix):
+            raise ValueError("immutable object is outside this Run Store")
+        suffix = key[len(self.protocol.run_prefix) :]
+        checkpoint = re.fullmatch(
+            r"checkpoints/([0-9]{19})/([0-9a-f]{64})\.safetensors", suffix
+        )
+        if checkpoint is not None:
+            _step(int(checkpoint[1]))
+            return "checkpoint", checkpoint[2]
+        output = re.fullmatch(
+            r"(artifacts|samples)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/([0-9]{19})/(.+)",
+            suffix,
+        )
+        if output is None:
+            raise ValueError("only canonical immutable output keys are supported")
+        _step(int(output[3]))
+        name = unquote(output[4], errors="strict")
+        if _output_name(name) != output[4]:
+            raise ValueError("output name is not canonically encoded")
+        return ("artifact" if output[1] == "artifacts" else "sample"), None
 
     def list_incomplete_uploads(self) -> tuple[MultipartUpload, ...]:
         result: list[MultipartUpload] = []
@@ -1630,29 +1735,69 @@ class RunStoreReader:
             if not _is_missing_upload(failure):
                 raise
 
-    def _read_verified(self, key: str, digest: str | None = None) -> bytes:
-        return self._read_verified_object(key, digest)[0]
-
     def _read_verified_object(
         self, key: str, digest: str | None = None
     ) -> tuple[bytes, Mapping[str, Any]]:
+        import io
+
+        # Progress is a control record, never an unbounded payload.
+        body = io.BytesIO()
+        response = self._consume_verified(key, body, 16 * 1024 * 1024, digest)
+        return body.getvalue(), response
+
+    def _consume_verified(
+        self,
+        key: str,
+        destination: BinaryIO,
+        limit: int,
+        digest: str | None = None,
+        *,
+        available_disk: int | None = None,
+    ) -> Mapping[str, Any]:
         try:
             response = self._client.get_object(Bucket=self.target.bucket, Key=key)
         except KeyError as failure:
             raise RunStoreIntegrityError(
                 f"RUN_STORE_MISSING_OBJECT: {key}"
             ) from failure
-        body = response["Body"].read()
-        metadata = response.get("Metadata", {})
-        actual = hashlib.sha256(body).hexdigest()
-        if (
-            response.get("ContentLength") != len(body)
-            or metadata.get("skywright-size") != str(len(body))
-            or metadata.get("skywright-sha256") != actual
-            or (digest is not None and digest != actual)
-        ):
-            raise RunStoreIntegrityError(f"RUN_STORE_DIGEST_MISMATCH: {key}")
-        return body, response
+        with closing(response["Body"]) as body:
+            size, expected = _validated_metadata(key, response, digest)
+            expected_kind = (
+                "progress-record"
+                if key == self.protocol.progress_key()
+                else self._immutable_identity(key)[0]
+            )
+            if response["Metadata"].get("skywright-kind") != expected_kind:
+                raise RunStoreIntegrityError(
+                    "RUN_STORE_METADATA_MISMATCH: object kind differs from key"
+                )
+            if size > limit or (available_disk is not None and size > available_disk):
+                raise RunStoreError(
+                    "RUN_STORE_STAGING_BUDGET: object exceeds recovery budget"
+                )
+            actual = hashlib.sha256()
+            received = 0
+            while True:
+                if self._control.cancellation_requested():
+                    raise RunStoreCancelledError("Run Store consumption cancelled")
+                if (
+                    self._control.deadline is not None
+                    and time.monotonic() >= self._control.deadline
+                ):
+                    raise RunStoreDeadlineError(
+                        "Run Store consumption deadline expired"
+                    )
+                chunk = body.read(min(1024 * 1024, size - received + 1))
+                if not chunk:
+                    break
+                received += len(chunk)
+                if received > size:
+                    raise RunStoreIntegrityError(f"RUN_STORE_DIGEST_MISMATCH: {key}")
+                destination.write(chunk)
+                actual.update(chunk)
+            if received != size or actual.hexdigest() != expected:
+                raise RunStoreIntegrityError(f"RUN_STORE_DIGEST_MISMATCH: {key}")
+        return response
 
     def _list(self, prefix: str) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
@@ -1681,3 +1826,29 @@ def _integrity_code(failure: Exception) -> str | None:
         if code in message:
             return code
     return None
+
+
+def _validated_metadata(
+    key: str,
+    response: Mapping[str, Any],
+    digest: str | None = None,
+) -> tuple[int, str]:
+    metadata = response.get("Metadata", {})
+    size = response.get("ContentLength")
+    expected = metadata.get("skywright-sha256")
+    if (
+        type(size) is not int
+        or size < 0
+        or metadata.get("skywright-size") != str(size)
+        or not isinstance(expected, str)
+        or _DIGEST.fullmatch(expected) is None
+        or (digest is not None and digest != expected)
+    ):
+        raise RunStoreIntegrityError(
+            f"RUN_STORE_DIGEST_MISMATCH: invalid metadata for {key}"
+        )
+    if metadata.get("skywright-schema") != "v1":
+        raise RunStoreIntegrityError(
+            f"RUN_STORE_METADATA_MISMATCH: unsupported schema for {key}"
+        )
+    return size, expected

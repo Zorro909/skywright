@@ -13,6 +13,7 @@ import os
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -81,7 +82,7 @@ class MemoryS3:
         self.put_bodies.setdefault(key, []).append(body)
         return {}
 
-    def get_object(self, **request):
+    def get_object(self, **request) -> dict[str, Any]:
         import io
 
         body, metadata, content_type = self.objects[request["Key"]]
@@ -91,6 +92,14 @@ class MemoryS3:
             "ContentLength": len(body),
             "ContentType": content_type,
             "ETag": f'"{hashlib.md5(body, usedforsecurity=False).hexdigest()}"',
+        }
+
+    def head_object(self, **request) -> dict[str, Any]:
+        body, metadata, content_type = self.objects[request["Key"]]
+        return {
+            "ContentLength": len(body),
+            "Metadata": metadata,
+            "ContentType": content_type,
         }
 
     def list_objects_v2(self, **request):
@@ -1316,6 +1325,49 @@ def test_repeated_s3_reads_keep_only_bounded_measurement_diagnostics(tmp_path) -
     assert len(reader.measurements) <= 256
 
 
+def test_checkpoint_recovery_reads_bounded_chunks_and_closes_the_body(tmp_path) -> None:
+    import io
+
+    memory = MemoryS3()
+    store = recorder(memory, tmp_path)
+    store.publish_attempt(
+        ExecutionAttemptRecord(
+            "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+        )
+    )
+    reference = store.publish_checkpoint(
+        CheckpointSnapshot(
+            1,
+            {"payload": b"x" * (2 * 1024 * 1024)},
+            dataset_cursor=DatasetCursor(ordering_fingerprint="ordering"),
+            run_id="run",
+            project_version="project@digest",
+        )
+    )
+    bodies = []
+    original_get = memory.get_object
+
+    class BoundedBody(io.BytesIO):
+        def read(self, size: int | None = -1):
+            assert size is not None
+            assert 0 <= size <= 1024 * 1024, "unbounded checkpoint download"
+            return super().read(size)
+
+    def get_object(**request):
+        response = original_get(**request)
+        body = BoundedBody(response["Body"].read())
+        bodies.append(body)
+        response["Body"] = body
+        return response
+
+    memory.get_object = get_object
+    reader = RunStoreReader(store.target, client=memory)
+    restored = reader.read_exact(reference)
+
+    assert restored.state["payload"] == b"x" * (2 * 1024 * 1024)
+    assert bodies and all(body.closed for body in bodies)
+
+
 def test_s3_measurement_drains_preserve_identity_and_report_overflow(tmp_path) -> None:
     memory = MemoryS3()
     store = recorder(memory, tmp_path)
@@ -1629,3 +1681,117 @@ def test_terminal_confirmation_retains_only_identity_and_reuses_durable_step(
         assert torch.equal(weights, torch.ones(32))
     finally:
         coordinator.stop()
+
+
+def test_links_use_metadata_and_downloads_accept_only_verified_content(
+    tmp_path,
+) -> None:
+    memory = MemoryS3()
+    store = recorder(memory, tmp_path)
+    key = store.protocol.artifact_key(
+        "123e4567-e89b-12d3-a456-426614174000", 1, "plot.png"
+    )
+    original = b"original"
+    metadata = {
+        "skywright-schema": "v1",
+        "skywright-kind": "artifact",
+        "skywright-size": str(len(original)),
+        "skywright-sha256": hashlib.sha256(original).hexdigest(),
+    }
+    memory.objects[key] = (b"tampered", metadata, "image/png")
+    calls = []
+
+    def head_object(**request):
+        calls.append("head")
+        body, headers, content_type = memory.objects[request["Key"]]
+        return {
+            "ContentLength": len(body),
+            "Metadata": headers,
+            "ContentType": content_type,
+        }
+
+    memory.head_object = head_object
+    reader = RunStoreReader(store.target, client=memory)
+    link = reader.presign_download(key)
+    assert calls == ["head"]
+    assert link.size == len(original)
+    assert link.digest == hashlib.sha256(original).hexdigest()
+    assert link.verification == "not-recorded"
+    destination = tmp_path / "accepted"
+    destination.write_bytes(b"previous")
+    with pytest.raises(ValueError, match="RUN_STORE_DIGEST_MISMATCH"):
+        reader.download(key, destination, max_bytes=1024)
+    assert destination.read_bytes() == b"previous"
+    assert not list(tmp_path.glob(".skywright-download-*"))
+    memory.objects[key] = (original, metadata, "image/png")
+    reader.download(key, destination, max_bytes=len(original))
+    assert destination.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("skywright-size", "-1"),
+        ("skywright-size", "08"),
+        ("skywright-sha256", "not-a-digest"),
+        ("skywright-schema", "v2"),
+        ("skywright-kind", "checkpoint"),
+    ],
+)
+def test_malformed_metadata_cannot_be_signed(tmp_path, field, value) -> None:
+    memory = MemoryS3()
+    store = recorder(memory, tmp_path)
+    key = store.protocol.artifact_key(
+        "123e4567-e89b-12d3-a456-426614174000", 1, "plot.png"
+    )
+    metadata = {
+        "skywright-schema": "v1",
+        "skywright-kind": "artifact",
+        "skywright-size": "8",
+        "skywright-sha256": hashlib.sha256(b"original").hexdigest(),
+        field: value,
+    }
+
+    def head_object(**_):
+        return {"ContentLength": 8, "Metadata": metadata}
+
+    memory.head_object = head_object
+    reader = RunStoreReader(store.target, client=memory)
+    with pytest.raises(ValueError, match=r"RUN_STORE_(DIGEST|METADATA)_MISMATCH"):
+        reader.presign_download(key)
+
+
+def test_recovery_disk_budget_closes_body_and_cleans_staging(tmp_path) -> None:
+    import io
+
+    from skywright.run_store import RunStoreError
+
+    memory = MemoryS3()
+    store = recorder(memory, tmp_path)
+    payload = b"x" * 2048
+    digest = hashlib.sha256(payload).hexdigest()
+    body = io.BytesIO(payload)
+
+    def get_object(**_) -> dict[str, Any]:
+        return {
+            "Body": body,
+            "ContentLength": len(payload),
+            "Metadata": {
+                "skywright-schema": "v1",
+                "skywright-kind": "checkpoint",
+                "skywright-size": str(len(payload)),
+                "skywright-sha256": digest,
+            },
+        }
+
+    memory.get_object = get_object
+    reader = RunStoreReader(
+        store.target,
+        client=memory,
+        staging_directory=tmp_path,
+        max_checkpoint_bytes=1024,
+    )
+    with pytest.raises(RunStoreError, match="RUN_STORE_STAGING_BUDGET"):
+        reader.read_exact(str(CheckpointReference(1, digest)))
+    assert body.closed
+    assert not list(tmp_path.glob("skywright-read-*"))

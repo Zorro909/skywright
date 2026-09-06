@@ -1,14 +1,16 @@
 package de.zorro909.skywright.backend.runstore;
 
 import java.io.ByteArrayOutputStream;
-import java.net.URI;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HexFormat;
-import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -30,40 +32,110 @@ public final class RunStoreAccess {
 		this.objects = objects;
 	}
 
-	public List<RunStoreOutput> listOutputs() {
-		List<RunStoreOutput> outputs = new ArrayList<>();
-		for (RunStoreOutputKind expectedKind : RunStoreOutputKind.values()) {
-			String outputPrefix = this.protocol.runPrefix() + expectedKind.keySegment() + "/";
-			for (RunStoreObject object : this.objects.list(outputPrefix)) {
-				String suffix = object.key().substring(this.protocol.runPrefix().length());
-				Matcher match = OUTPUT.matcher(suffix);
-				if (!match.matches()) {
-					continue;
-				}
-				validate(object);
-				RunStoreOutputKind kind = RunStoreOutputKind.fromKeySegment(match.group(1));
-				if (kind != expectedKind || !kind.metadataValue().equals(object.metadata().get("skywright-kind"))) {
-					throw new RunStoreIntegrityException("RUN_STORE_METADATA_MISMATCH: object kind differs from key");
-				}
-				outputs
-					.add(new RunStoreOutput(kind, Long.parseLong(match.group(2)), decode(match.group(3)), object.key(),
-							object.bytes().length, object.contentType(), object.metadata().get("skywright-sha256")));
-			}
+	public RunStoreOutputPage listOutputs(RunStoreOutputKind kind, int limit, String continuation) {
+		if (limit < 1 || limit > 1000) {
+			throw new IllegalArgumentException("page limit must be 1..1000");
 		}
-		outputs.sort(Comparator.comparingLong(RunStoreOutput::step)
-			.thenComparing(RunStoreOutput::kind)
-			.thenComparing(RunStoreOutput::name));
-		return List.copyOf(outputs);
+		String prefix = this.protocol.runPrefix() + kind.keySegment() + "/";
+		RunStoreObjectPage page = this.objects.list(prefix, limit, continuation);
+		if (page.entries().size() > limit) {
+			throw new RunStoreIntegrityException("RUN_STORE_INVALID_PAGE");
+		}
+		var outputs = new ArrayList<RunStoreOutput>();
+		for (RunStoreObjectPage.Entry entry : page.entries()) {
+			if (!entry.key().startsWith(prefix)) {
+				throw new RunStoreIntegrityException("RUN_STORE_INVALID_KEY");
+			}
+			RunStoreObjectMetadata object = requireMetadata(entry.key());
+			validateIdentity(object);
+			if (entry.size() != object.size()) {
+				throw new RunStoreIntegrityException("RUN_STORE_METADATA_MISMATCH");
+			}
+			Matcher match = OUTPUT.matcher(object.key().substring(this.protocol.runPrefix().length()));
+			if (!match.matches()) {
+				throw new RunStoreIntegrityException("RUN_STORE_INVALID_KEY");
+			}
+			outputs.add(new RunStoreOutput(kind, Long.parseLong(match.group(2)), decode(match.group(3)), object.key(),
+					object.size(), object.contentType(), object.metadata().get("skywright-sha256")));
+		}
+		return new RunStoreOutputPage(outputs, page.continuation());
 	}
 
-	public RunStoreObject resolveCheckpoint(String reference) {
+	/**
+	 * Resolves immutable identity at the injected current location without reading State.
+	 */
+	public RunStoreObjectMetadata resolveCheckpoint(String reference) {
 		CheckpointReference checkpoint = CheckpointReference.parse(reference);
-		RunStoreObject object = require(this.protocol.checkpointKey(checkpoint.step(), checkpoint.digest()));
-		validate(object);
-		if (!checkpoint.digest().equals(object.metadata().get("skywright-sha256"))) {
-			throw new RunStoreIntegrityException("RUN_STORE_DIGEST_MISMATCH: reference differs from object");
-		}
+		RunStoreObjectMetadata object = requireMetadata(
+				this.protocol.checkpointKey(checkpoint.step(), checkpoint.digest()));
+		validateIdentity(object);
 		return object;
+	}
+
+	/**
+	 * Accepts bytes only after complete size and digest verification; owns one staged
+	 * file.
+	 */
+	public VerifiedRunStoreObject stageDownload(String key, Path directory, long maxBytes) {
+		if (maxBytes < 1) {
+			throw new IllegalArgumentException("maxBytes must be positive");
+		}
+		validateKey(key);
+		Path path = null;
+		try {
+			VerifiedRunStoreObject result;
+			try (RunStoreContent content = this.objects.open(key)) {
+				if (content == null) {
+					throw new RunStoreIntegrityException("RUN_STORE_MISSING_OBJECT: " + key);
+				}
+				RunStoreObjectMetadata descriptor = content.descriptor();
+				if (!descriptor.key().equals(key)) {
+					throw new RunStoreIntegrityException("RUN_STORE_INVALID_KEY");
+				}
+				validateIdentity(descriptor);
+				if (descriptor.size() > maxBytes
+						|| descriptor.size() > Files.getFileStore(directory).getUsableSpace()) {
+					throw new RunStoreIntegrityException("RUN_STORE_STAGING_BUDGET: object exceeds disk budget");
+				}
+				path = Files.createTempFile(directory, "skywright-read-", ".verified");
+				MessageDigest digest = newDigest();
+				long consumed = 0;
+				try (var output = Files.newOutputStream(path)) {
+					byte[] buffer = new byte[1024 * 1024];
+					int count;
+					while ((count = content.stream()
+						.read(buffer, 0, (int) Math.min(buffer.length, descriptor.size() - consumed + 1))) != -1) {
+						consumed += count;
+						if (consumed > descriptor.size()) {
+							throw new RunStoreIntegrityException("RUN_STORE_DIGEST_MISMATCH");
+						}
+						digest.update(buffer, 0, count);
+						output.write(buffer, 0, count);
+					}
+				}
+				if (consumed != descriptor.size() || !HexFormat.of()
+					.formatHex(digest.digest())
+					.equals(descriptor.metadata().get("skywright-sha256"))) {
+					throw new RunStoreIntegrityException("RUN_STORE_DIGEST_MISMATCH: " + key);
+				}
+				result = new VerifiedRunStoreObject(path, descriptor);
+			}
+			path = null;
+			return result;
+		}
+		catch (IOException failure) {
+			throw new UncheckedIOException(failure);
+		}
+		finally {
+			if (path != null) {
+				try {
+					Files.deleteIfExists(path);
+				}
+				catch (IOException failure) {
+					throw new UncheckedIOException(failure);
+				}
+			}
+		}
 	}
 
 	public ProgressRecord readProgress() {
@@ -79,21 +151,79 @@ public final class RunStoreAccess {
 		return progress;
 	}
 
-	public URI presignDownload(String key, int expiresInSeconds) {
-		String prefix = this.protocol.runPrefix();
-		if (!(key.startsWith(prefix + "checkpoints/") || key.startsWith(prefix + "artifacts/")
-				|| key.startsWith(prefix + "samples/")) || expiresInSeconds < 1 || expiresInSeconds > 3600) {
-			throw new IllegalArgumentException("only exact immutable outputs can be presigned for 1..3600 seconds");
+	public RunStoreDownloadLink presignDownload(String key, int expiresInSeconds) {
+		if (expiresInSeconds < 1 || expiresInSeconds > 3600) {
+			throw new IllegalArgumentException("downloads expire within 1..3600 seconds");
 		}
-		RunStoreObject object = require(key);
-		validate(object);
+		validateKey(key);
+		RunStoreObjectMetadata object = requireMetadata(key);
+		validateIdentity(object);
 		String contentType = object.metadata().getOrDefault("skywright-media-type", object.contentType());
 		String filename = decode(key.substring(key.lastIndexOf('/') + 1));
 		filename = filename.substring(filename.lastIndexOf('/') + 1);
 		if (filename.isBlank() || filename.chars().anyMatch(character -> character < 32)) {
 			filename = "skywright-output";
 		}
-		return this.objects.presignGet(key, expiresInSeconds, contentType, filename);
+		return new RunStoreDownloadLink(this.objects.presignGet(key, expiresInSeconds, contentType, filename), key,
+				object.size(), object.metadata().get("skywright-sha256"),
+				RunStoreDownloadLink.Verification.NOT_RECORDED);
+	}
+
+	private RunStoreObjectMetadata requireMetadata(String key) {
+		RunStoreObjectMetadata object = this.objects.head(key);
+		if (object == null) {
+			throw new RunStoreIntegrityException("RUN_STORE_MISSING_OBJECT: " + key);
+		}
+		if (!key.equals(object.key())) {
+			throw new RunStoreIntegrityException("RUN_STORE_INVALID_KEY");
+		}
+		validateMetadata(object);
+		return object;
+	}
+
+	private String validateKey(String key) {
+		if (!key.startsWith(this.protocol.runPrefix())) {
+			throw new RunStoreIntegrityException("RUN_STORE_INVALID_KEY");
+		}
+		String suffix = key.substring(this.protocol.runPrefix().length());
+		Matcher checkpoint = Pattern.compile("checkpoints/([0-9]{19})/([0-9a-f]{64})\\.safetensors").matcher(suffix);
+		if (checkpoint.matches()) {
+			Long.parseLong(checkpoint.group(1));
+			return "checkpoint";
+		}
+		Matcher output = OUTPUT.matcher(suffix);
+		if (!output.matches()) {
+			throw new RunStoreIntegrityException("RUN_STORE_INVALID_KEY");
+		}
+		Long.parseLong(output.group(2));
+		String name = decode(output.group(3));
+		if (name.isEmpty() || name.indexOf(0) >= 0 || !PercentCodec.encode(name).equals(output.group(3))) {
+			throw new RunStoreIntegrityException("RUN_STORE_INVALID_KEY: noncanonical output name");
+		}
+		return RunStoreOutputKind.fromKeySegment(output.group(1)).metadataValue();
+	}
+
+	private void validateIdentity(RunStoreObjectMetadata object) {
+		validateMetadata(object);
+		String kind = validateKey(object.key());
+		if (!kind.equals(object.metadata().get("skywright-kind"))) {
+			throw new RunStoreIntegrityException("RUN_STORE_METADATA_MISMATCH: object kind differs from key");
+		}
+		if (kind.equals("checkpoint")) {
+			String digest = object.key().substring(object.key().lastIndexOf('/') + 1).replace(".safetensors", "");
+			if (!digest.equals(object.metadata().get("skywright-sha256"))) {
+				throw new RunStoreIntegrityException("RUN_STORE_DIGEST_MISMATCH: reference differs from metadata");
+			}
+		}
+	}
+
+	private static void validateMetadata(RunStoreObjectMetadata object) {
+		Map<String, String> metadata = object.metadata();
+		if (object.size() < 0 || !Long.toString(object.size()).equals(metadata.get("skywright-size"))
+				|| !metadata.getOrDefault("skywright-sha256", "").matches("[0-9a-f]{64}")
+				|| !"v1".equals(metadata.get("skywright-schema"))) {
+			throw new RunStoreIntegrityException("RUN_STORE_METADATA_MISMATCH: " + object.key());
+		}
 	}
 
 	private RunStoreObject require(String key) {
@@ -114,13 +244,17 @@ public final class RunStoreAccess {
 		}
 	}
 
-	private static String sha256(byte[] bytes) {
+	private static MessageDigest newDigest() {
 		try {
-			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+			return MessageDigest.getInstance("SHA-256");
 		}
 		catch (NoSuchAlgorithmException impossible) {
 			throw new IllegalStateException(impossible);
 		}
+	}
+
+	private static String sha256(byte[] bytes) {
+		return HexFormat.of().formatHex(newDigest().digest(bytes));
 	}
 
 	private static String decode(String value) {
@@ -143,7 +277,15 @@ public final class RunStoreAccess {
 				throw new RunStoreIntegrityException("RUN_STORE_INVALID_KEY: raw reserved or non-ASCII output name");
 			}
 		}
-		return StandardCharsets.UTF_8.decode(java.nio.ByteBuffer.wrap(bytes.toByteArray())).toString();
+		try {
+			return StandardCharsets.UTF_8.newDecoder()
+				.onMalformedInput(CodingErrorAction.REPORT)
+				.decode(java.nio.ByteBuffer.wrap(bytes.toByteArray()))
+				.toString();
+		}
+		catch (java.nio.charset.CharacterCodingException failure) {
+			throw new RunStoreIntegrityException("RUN_STORE_INVALID_KEY: invalid UTF-8");
+		}
 	}
 
 	private static boolean isUpperHex(char value) {

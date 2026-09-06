@@ -304,7 +304,7 @@ def test_registered_descriptor_uses_standard_credentials_against_pinned_seaweedf
             if "/artifacts/" in item["Key"]
         )
         url = reader.presign_download(artifact_key, expires_in=60)
-        with urllib.request.urlopen(url, timeout=5) as response:
+        with urllib.request.urlopen(url.url, timeout=5) as response:
             assert response.read() == b"finished"
 
         upload = client.create_multipart_upload(Bucket=bucket, Key="incomplete")
@@ -745,3 +745,73 @@ def test_runtime_history_remains_bounded_while_real_s3_keeps_all_outputs() -> No
         assert evidence["persisted_observations_verified"] == 512
         assert evidence["max_live_output_records"] == 0
         assert evidence["max_live_metric_observations"] <= 4
+
+
+@pytest.mark.system
+def test_checkpoint_recovery_respects_memory_and_integrity_budgets(tmp_path) -> None:
+    import hashlib
+
+    with seaweedfs() as (endpoint, client):
+        bucket = "recovery-bounds-" + uuid.uuid4().hex
+        client.create_bucket(Bucket=bucket)
+        command = [
+            sys.executable,
+            str(Path(__file__).parent / "support/recovery_read_scenario.py"),
+        ]
+        arguments = ["--endpoint", endpoint, "--bucket", bucket, "--payload-mib", "32"]
+        subprocess.run(
+            [*command, "prepare", *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        recovered = subprocess.run(
+            [*command, "recover", "--expect-bounded", *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        evidence = json.loads(recovered.stdout)
+        assert evidence["state_verified"] and evidence["budget_passed"]
+        assert evidence["staged_disk_peak_bytes"] <= evidence["object_bytes"]
+
+        target = TargetStorage(
+            "seaweedfs", endpoint, bucket, "us-east-1", "project", "run"
+        )
+        reader = RunStoreReader(target, client=client, staging_directory=tmp_path)
+        key = reader.list_checkpoints()[0].key
+        reference = reader.list_checkpoints()[0].reference
+        original_metadata = client.head_object(Bucket=bucket, Key=key)["Metadata"]
+        # Same length and original expected digest: metadata-only signing is honest about its evidence.
+        content_length = int(original_metadata["skywright-size"])
+        client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=b"x" * content_length,
+            Metadata=original_metadata,
+            ContentType="application/octet-stream",
+        )
+        link = reader.presign_download(key)
+        assert link.verification == "not-recorded"
+        with pytest.raises(ValueError, match="RUN_STORE_DIGEST_MISMATCH"):
+            reader.read_exact(reference)
+        assert not list(tmp_path.iterdir())
+
+        malformed = b"invalid safetensors"
+        digest = hashlib.sha256(malformed).hexdigest()
+        bad_reference = str(CheckpointReference(2, digest))
+        bad_key = reader.protocol.checkpoint_key(2, digest)
+        metadata = {
+            "skywright-schema": "v1",
+            "skywright-kind": "checkpoint",
+            "skywright-size": str(len(malformed)),
+            "skywright-sha256": digest,
+        }
+        client.put_object(Bucket=bucket, Key=bad_key, Body=malformed, Metadata=metadata)
+        with pytest.raises(ValueError, match="RUN_STORE_MALFORMED_SAFETENSORS"):
+            reader.read_exact(bad_reference)
+        assert not list(tmp_path.iterdir())
+        metadata["skywright-size"] = "wrong"
+        client.put_object(Bucket=bucket, Key=bad_key, Body=malformed, Metadata=metadata)
+        with pytest.raises(ValueError, match="RUN_STORE_DIGEST_MISMATCH"):
+            reader.presign_download(bad_key)

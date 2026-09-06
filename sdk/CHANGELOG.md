@@ -2,6 +2,14 @@
 
 ## Next
 
+- Streams checkpoint recovery to one size-limited staged file and decodes tensor leaves
+  directly from disk. `RunStoreReader` accepts `staging_directory` and `max_checkpoint_bytes`,
+  defaulting to 64 GiB. Download streams close and staging is deleted on success or failure.
+- `presign_download()` now returns a `DownloadLink` with `.url`, expected size and SHA-256,
+  storage identity and `verification="not-recorded"`. It uses HEAD without reading content.
+  `download(key, destination, max_bytes=...)` verifies a staged output before replacing its
+  destination. Raw URL consumers must verify the link's expected size and digest themselves.
+
 - Releases published output and Metric Observation history from the production context and
   background sampler. `TrainingProcessResult` no longer contains `metric_observations`,
   `artifacts` or `samples`; read persisted Run Store history or use a test recorder.
