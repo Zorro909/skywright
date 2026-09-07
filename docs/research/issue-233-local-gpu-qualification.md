@@ -145,3 +145,14 @@ Git, OpenSSH clients, rsync, socat, netcat-openbsd and checksum-pinned kubectl
 creation, SSH key generation, local rsync and kubectl's client version as the
 unprivileged service user. This is image packaging; the SkyPilot Python packages
 are unchanged.
+
+SkyPilot accepted managed job 2 for UI Run
+`e3707b00-aa8c-4be8-8c70-8bee05a15cef` and created a pod requesting
+`amd.com/gpu: 1` with the exact published project digest. Setup then failed because
+the stock Kubernetes runner unconditionally chmods its installed rsync helper.
+The deployment now copies only that helper from the paired image to a 1 MiB memory
+volume and mounts it at the expected path. The source and mounted file both hash to
+`afc91c2380cc0b2b7648ab93f07b1e62a85a6b2bf27ea7faa8b2814303b76e59`.
+The copy belongs to UID/GID 10002, and the rest of the root filesystem remains
+read-only. No SDK source bytes change. The same managed job retried automatically
+and created another GPU pod after deployment replacement.

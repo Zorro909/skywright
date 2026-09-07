@@ -28,6 +28,20 @@ spec:
           type: RuntimeDefault
       terminationGracePeriodSeconds: 30
       initContainers:
+        - name: prepare-skypilot-rsync-helper
+          image: skywright-skypilot-api-server
+          command:
+            - cp
+            - /usr/local/lib/python3.12/site-packages/sky/utils/kubernetes/rsync_helper.sh
+            - /runtime-helper/rsync_helper.sh
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: skypilot-rsync-helper
+              mountPath: /runtime-helper
         - name: wait-for-skypilot-database
           image: skywright-skypilot-api-server
           command:
@@ -96,6 +110,10 @@ spec:
               port: http
             periodSeconds: 5
           volumeMounts:
+            # The unchanged SDK chmods this helper before each Kubernetes rsync.
+            - name: skypilot-rsync-helper
+              mountPath: /usr/local/lib/python3.12/site-packages/sky/utils/kubernetes/rsync_helper.sh
+              subPath: rsync_helper.sh
             - name: temporary-files
               mountPath: /tmp
             - name: retained-state
@@ -146,6 +164,10 @@ spec:
               mountPath: /var/lib/skypilot
               readOnly: true
       volumes:
+        - name: skypilot-rsync-helper
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
         - name: temporary-files
           emptyDir:
             medium: Memory
