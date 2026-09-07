@@ -75,4 +75,40 @@ describe('Run reads', () => {
       runApi.progress(runId, new AbortController().signal),
     ).rejects.toMatchObject({ outcome: { kind: 'network' } });
   });
+  it('preserves a parsed product Problem returned by the installed openapi client', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      Response.json(
+        {
+          type: 'about:blank',
+          title: 'Run not found',
+          status: 404,
+          detail: 'The accepted Run does not exist.',
+          errorCode: 'SKYWRIGHT_RUN_NOT_FOUND',
+          correlationId: 'body-correlation',
+          fieldViolations: [],
+          retryable: false,
+        },
+        {
+          status: 404,
+          headers: {
+            'Content-Type': 'application/problem+json',
+            'X-Correlation-ID': 'header-correlation',
+          },
+        },
+      ),
+    );
+    await expect(
+      runApi.get(runId, new AbortController().signal),
+    ).rejects.toMatchObject({
+      outcome: {
+        kind: 'problem',
+        problem: {
+          errorCode: 'SKYWRIGHT_RUN_NOT_FOUND',
+          detail: 'The accepted Run does not exist.',
+          correlationId: 'header-correlation',
+          retryable: false,
+        },
+      },
+    });
+  });
 });

@@ -40,6 +40,25 @@ class RunExecutionObservationTest {
 		assertThat(result.recoveryCount()).isNull();
 	}
 
+	@Test
+	void neverExtendsTerminalOrUnknownObservationsWithoutAnEndTimestamp() {
+		for (String status : List.of("SUCCEEDED", "FAILED", "FAILED_SETUP", "FAILED_PRECHECKS", "FAILED_NO_RESOURCE",
+				"FAILED_CONTROLLER", "CANCELLED", "UNKNOWN")) {
+			var live = job(status);
+			assertThat(RunExecutionObservation.read(live, List.of(), false, AT).spanMillis()).as(status).isNull();
+			assertThat(RunExecutionObservation.read(live, List.of(), false, AT.plusSeconds(60)).spanMillis()).as(status)
+				.isNull();
+		}
+		assertThat(RunExecutionObservation.read(job(null), List.of(), false, AT).spanMillis()).isNull();
+		assertThat(RunExecutionObservation.read(job("RUNNING"), List.of(), false, AT).spanMillis()).isPositive();
+		assertThat(RunExecutionObservation.read(job("RUNNING"), List.of(), true, AT).spanMillis()).isNull();
+	}
+
+	private de.zorro909.skywright.backend.orchestration.OperationOutcome.ManagedJobStatus job(String status) {
+		return new de.zorro909.skywright.backend.orchestration.OperationOutcome.ManagedJobStatus(42L, "skywright-run",
+				status, 0, 0, 100., 110., null, null, "generation", null, null, null, null, null, null);
+	}
+
 	private RetainedSkyPilotFact fact(RetainedSkyPilotFact.Kind kind, String identity, Map<String, String> payload) {
 		return new RetainedSkyPilotFact(UUID.fromString("00000000-0000-4000-8000-000000000083"), kind, identity,
 				payload, AT, true);

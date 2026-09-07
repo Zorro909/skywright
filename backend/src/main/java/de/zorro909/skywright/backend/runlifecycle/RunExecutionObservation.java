@@ -12,7 +12,12 @@ record RunExecutionObservation(Long spanMillis, String spanSource, Integer recov
 	static RunExecutionObservation read(ManagedJobStatus live, List<RetainedSkyPilotFact> facts, boolean terminal,
 			Instant at) {
 		if (live != null) {
-			Long span = span(live.startedAt(), live.endedAt() == null ? at.toEpochMilli() / 1000.0 : live.endedAt());
+			Double end = live.endedAt();
+			if (end == null && !terminal && live.status() != null
+					&& java.util.Set.of("PENDING", "SUBMITTED", "STARTING", "RUNNING", "RECOVERING", "CANCELLING")
+						.contains(live.status()))
+				end = at.toEpochMilli() / 1000.0;
+			Long span = span(live.startedAt(), end);
 			return new RunExecutionObservation(span, span == null ? "unavailable" : "live", live.recoveryCount(),
 					false);
 		}
