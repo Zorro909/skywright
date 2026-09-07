@@ -1213,6 +1213,7 @@ components:
         disposition: { type: string, description: Delivery progress, never a Run Lifecycle State. }
         projectedAt: { type: [string, 'null'], format: date-time }
         forceAfter: { type: [string, 'null'], format: date-time }
+        stopAttemptedAt: { type: [string, 'null'], format: date-time }
         lifecycle: { $ref: '#/components/schemas/RunLifecycleObservation' }
     RunPage:
       type: object

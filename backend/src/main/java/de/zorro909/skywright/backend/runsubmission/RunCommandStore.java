@@ -119,6 +119,15 @@ public class RunCommandStore implements RunControlDecisions {
 		return delivery.view(entities.find(RunCommandEntity.class, command.id()));
 	}
 
+	public RunCommand attemptStop(RunCommand command) {
+		var delivery = owned(command);
+		if (delivery == null)
+			return null;
+		if (delivery.stopAttemptedAt == null)
+			delivery.stopAttemptedAt = clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+		return delivery.view(entities.find(RunCommandEntity.class, command.id()));
+	}
+
 	public void finish(RunCommand command, String disposition, boolean reconcileAgain) {
 		if (!List
 			.of("projection-delivered", "delivery-unavailable", "handoff-uncertain", "source-observed",

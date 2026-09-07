@@ -9,12 +9,22 @@ PID 1 on port 46580.
 The root Maven property `skypilot.version` is the only SkyPilot version pin. The image installs the
 exact dependency set in `graalpy-environment/graalpy.lock`, which is also the backend GraalPy
 client's resolved environment. Maven validation stops the build if the lock does not contain the
-root pin exactly.
+root pin exactly. The shared environment also pins Kubernetes client 35.0.0, within
+SkyPilot 0.13.0's supported range, for the target-side pull helper.
 
 The runtime is CPython 3.12.11 on the immutable
 `python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7`
 base. The build accepts binary distributions only, so a locked native dependency without a wheel
 for that runtime fails packaging instead of compiling against an unqualified toolchain.
+
+## Runtime pull helper
+
+The same image supplies `/opt/skywright/runtime/runtime_pull.py`. The deployment runs it in
+an isolated container in the SkyPilot pod on private port 46581. It uses the SkyPilot role's
+separately rendered Kubernetes projection to install immutable Run-owned pull Secrets. Mount
+that projection into both containers when qualifying a local target. See
+[Run command delivery](../docs/reference/run-commands.md#private-ghcr-images) for configuration,
+credential boundaries, namespace pinning and restart behavior.
 
 ## Build and inspect
 

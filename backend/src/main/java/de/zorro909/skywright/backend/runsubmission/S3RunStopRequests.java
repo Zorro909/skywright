@@ -12,6 +12,8 @@ import java.util.concurrent.CompletionException;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
@@ -66,6 +68,7 @@ final class S3RunStopRequests implements RunStopRequests {
 					"when-supported".equals(target.compatibilityOptions().get("checksumCalculation"))
 							? RequestChecksumCalculation.WHEN_SUPPORTED : RequestChecksumCalculation.WHEN_REQUIRED)
 			.overrideConfiguration(ClientOverrideConfiguration.builder()
+				.retryStrategy(b -> b.maxAttempts(1))
 				.apiCallTimeout(Duration.ofSeconds(5))
 				.apiCallAttemptTimeout(Duration.ofSeconds(5))
 				.build())
@@ -85,20 +88,92 @@ final class S3RunStopRequests implements RunStopRequests {
 			}
 			// The same read verifies an uncertain previous publication and recovers
 			// its original timestamp; restarting cannot grant a new policy grace.
-			try (var content = client
-				.getObject(b -> b.bucket(target.bucket()).key(key), AsyncResponseTransformer.toBlockingInputStream())
-				.join()) {
-				var response = content.response();
-				if (response.contentLength() == null || response.contentLength() != body.length
-						|| !response.metadata().equals(metadata) || response.lastModified() == null
-						|| !Arrays.equals(content.readNBytes(body.length + 1), body))
-					throw new RunSubmissionException("RUN_STOP_PROJECTION_CONFLICT", 409);
-				return response.lastModified();
-			}
+			var content = client.getObject(b -> b.bucket(target.bucket()).key(key), new BoundedBody(body.length))
+				.join();
+			var response = content.response();
+			if (!response.metadata().equals(metadata) || response.lastModified() == null
+					|| !Arrays.equals(content.asByteArray(), body))
+				throw new RunSubmissionException("RUN_STOP_PROJECTION_CONFLICT", 409);
+			return response.lastModified();
 		}
-		catch (java.io.IOException failure) {
-			throw new IllegalStateException("Run stop projection unavailable", failure);
+	}
+
+	/** Completes only after the bounded body, so SDK timeouts cover verification. */
+	static final class BoundedBody
+			implements AsyncResponseTransformer<GetObjectResponse, ResponseBytes<GetObjectResponse>> {
+
+		private final int limit;
+
+		private final java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+
+		private final java.util.concurrent.CompletableFuture<ResponseBytes<GetObjectResponse>> result = new java.util.concurrent.CompletableFuture<>();
+
+		private volatile org.reactivestreams.Subscription subscription;
+
+		private GetObjectResponse response;
+
+		BoundedBody(int limit) {
+			this.limit = limit;
 		}
+
+		@Override
+		public java.util.concurrent.CompletableFuture<ResponseBytes<GetObjectResponse>> prepare() {
+			result.whenComplete((value, failure) -> {
+				if (failure != null && subscription != null)
+					subscription.cancel();
+			});
+			return result;
+		}
+
+		@Override
+		public void onResponse(GetObjectResponse value) {
+			response = value;
+			if (value.contentLength() == null || value.contentLength() != limit)
+				exceptionOccurred(new IllegalStateException("Invalid stop projection size"));
+		}
+
+		@Override
+		public void onStream(software.amazon.awssdk.core.async.SdkPublisher<java.nio.ByteBuffer> publisher) {
+			publisher.subscribe(new org.reactivestreams.Subscriber<java.nio.ByteBuffer>() {
+				public void onSubscribe(org.reactivestreams.Subscription value) {
+					subscription = value;
+					if (result.isDone())
+						value.cancel();
+					else
+						value.request(1);
+				}
+
+				public void onNext(java.nio.ByteBuffer value) {
+					if (result.isDone())
+						return;
+					if (value.remaining() > limit - bytes.size()) {
+						exceptionOccurred(new IllegalStateException("Oversized stop projection"));
+						return;
+					}
+					byte[] chunk = new byte[value.remaining()];
+					value.get(chunk);
+					bytes.writeBytes(chunk);
+					subscription.request(1);
+				}
+
+				public void onError(Throwable failure) {
+					exceptionOccurred(failure);
+				}
+
+				public void onComplete() {
+					if (bytes.size() != limit)
+						exceptionOccurred(new IllegalStateException("Truncated stop projection"));
+					else
+						result.complete(ResponseBytes.fromByteArray(response, bytes.toByteArray()));
+				}
+			});
+		}
+
+		@Override
+		public void exceptionOccurred(Throwable failure) {
+			result.completeExceptionally(failure);
+		}
+
 	}
 
 }

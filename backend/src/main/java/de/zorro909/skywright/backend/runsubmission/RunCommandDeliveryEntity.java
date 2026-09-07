@@ -21,6 +21,9 @@ class RunCommandDeliveryEntity {
 	@Column(name = "force_after")
 	Instant forceAfter;
 
+	@Column(name = "stop_attempted_at")
+	Instant stopAttemptedAt;
+
 	@Column(name = "next_attempt_at")
 	Instant nextAttemptAt;
 
@@ -46,7 +49,8 @@ class RunCommandDeliveryEntity {
 
 	RunCommand view(RunCommandEntity command) {
 		return new RunCommand(command.id, command.runId, RunCommand.Kind.valueOf(command.kind), command.acceptedAt,
-				command.evidence, disposition, projectedAt, forceAfter, nextAttemptAt, lease, attempts);
+				command.evidence, disposition, projectedAt, forceAfter, stopAttemptedAt, nextAttemptAt, lease,
+				attempts);
 	}
 
 }

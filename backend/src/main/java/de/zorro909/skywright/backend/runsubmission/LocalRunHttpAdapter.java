@@ -82,7 +82,9 @@ public class LocalRunHttpAdapter implements RunsApi {
 			.acceptedAt(command.acceptedAt().atOffset(ZoneOffset.UTC))
 			.disposition(command.disposition())
 			.projectedAt(command.projectedAt() == null ? null : command.projectedAt().atOffset(ZoneOffset.UTC))
-			.forceAfter(command.forceAfter() == null ? null : command.forceAfter().atOffset(ZoneOffset.UTC));
+			.forceAfter(command.forceAfter() == null ? null : command.forceAfter().atOffset(ZoneOffset.UTC))
+			.stopAttemptedAt(
+					command.stopAttemptedAt() == null ? null : command.stopAttemptedAt().atOffset(ZoneOffset.UTC));
 	}
 
 	private AcceptedLocalRun response(LocalRunSubmissions.Result result) {

@@ -114,16 +114,15 @@ public final class RunCommandDelivery {
 			var observed = lifecycle.read(run).lifecycle();
 			if (observed.state() != null
 					&& java.util.Set.of("finished", "failed", "cancelled").contains(observed.state())) {
-				boolean effected = command.projectedAt() != null && "cancelled".equals(observed
-					.state()) && (command.kind() == RunCommand.Kind.CANCELLATION_REQUEST
-							? !"policy_stopped".equals(observed.cause())
-							: observed.controlDecisions()
-								.stream()
-								.noneMatch(d -> d
-									.kind() == de.zorro909.skywright.backend.runlifecycle.RunControlDecisions.Kind.CANCELLATION_REQUEST));
+				boolean effected = (command.projectedAt() != null || command.stopAttemptedAt() != null)
+						&& "cancelled".equals(observed.state())
+						&& stopEffect(command.kind(), observed.cause(), observed.controlDecisions());
 				commands.finish(command, effected ? "effect-observed" : "no-stop-effected", false);
 				return;
 			}
+			command = commands.attemptStop(command);
+			if (command == null)
+				return;
 			RuntimeException projectionFailure = null;
 			if (command.projectedAt() == null) {
 				try {
@@ -153,6 +152,16 @@ public final class RunCommandDelivery {
 				Thread.currentThread().interrupt();
 			commands.finish(command, "delivery-unavailable", true);
 		}
+	}
+
+	static boolean stopEffect(RunCommand.Kind kind, String cause,
+			java.util.List<de.zorro909.skywright.backend.runlifecycle.RunControlDecisions.Decision> decisions) {
+		if (kind == RunCommand.Kind.CANCELLATION_REQUEST)
+			return !"policy_stopped".equals(cause);
+		return kind == RunCommand.Kind.CEILING_STOP && ("policy_stopped".equals(cause) || cause == null && decisions
+			.stream()
+			.noneMatch(d -> d
+				.kind() == de.zorro909.skywright.backend.runlifecycle.RunControlDecisions.Kind.CANCELLATION_REQUEST));
 	}
 
 	private CompletionStage<RunJobAdapter.Submission> launch(RunCommand command, AcceptedRun run,

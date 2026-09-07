@@ -35,6 +35,10 @@ class RunCommandsIT {
 
 	private static final Source SOURCE = new Source();
 
+	private static volatile boolean refuseProjection;
+
+	private static volatile boolean loseProjectionAcknowledgement;
+
 	private static UUID storageId;
 
 	private static String storageEndpoint;
@@ -163,6 +167,47 @@ class RunCommandsIT {
 				assertThat(stores.get(policyRun, policy.id()).disposition()).isEqualTo("no-stop-effected");
 				assertThat(SOURCE.launches).hasValue(2);
 
+				assertThat(backend.bean(RunCommands.class).ceilingStop(decision).id()).isEqualTo(policy.id());
+				// Cooperative delivery can fail while forced cancellation still succeeds.
+				UUID forcedRun = create(backend);
+				SOURCE.jobs = List.of(job(forcedRun, "RUNNING"));
+				var forced = stores.accept(forcedRun, UUID.randomUUID(), RunCommand.Kind.CANCELLATION_REQUEST, "{}");
+				refuseProjection = true;
+				try {
+					CLOCK.advance(31);
+					delivery.reconcile(forced.id());
+					assertThat(stores.get(forcedRun, forced.id()).projectedAt()).isNull();
+					assertThat(stores.get(forcedRun, forced.id()).stopAttemptedAt()).isNotNull();
+				}
+				finally {
+					refuseProjection = false;
+				}
+				backend.restart();
+				stores = backend.bean(RunCommandStore.class);
+				delivery = backend.bean(RunCommandDelivery.class);
+				SOURCE.jobs = List.of(job(forcedRun, "CANCELLED"));
+				CLOCK.advance(3);
+				delivery.reconcile(forced.id());
+				assertThat(stores.get(forcedRun, forced.id()).disposition()).isEqualTo("effect-observed");
+
+				UUID cooperativeRun = create(backend);
+				SOURCE.jobs = List.of(job(cooperativeRun, "RUNNING"));
+				var cooperative = stores.accept(cooperativeRun, UUID.randomUUID(), RunCommand.Kind.CANCELLATION_REQUEST,
+						"{}");
+				loseProjectionAcknowledgement = true;
+				try {
+					delivery.reconcile(cooperative.id());
+					assertThat(stores.get(cooperativeRun, cooperative.id()).projectedAt()).isNull();
+					assertThat(stores.get(cooperativeRun, cooperative.id()).stopAttemptedAt()).isNotNull();
+				}
+				finally {
+					loseProjectionAcknowledgement = false;
+				}
+				SOURCE.jobs = List.of(job(cooperativeRun, "CANCELLED"));
+				CLOCK.advance(3);
+				delivery.reconcile(cooperative.id());
+				assertThat(stores.get(cooperativeRun, cooperative.id()).disposition()).isEqualTo("effect-observed");
+
 				// A committed acceptance with no dispatch claim can be stopped
 				// atomically.
 				var input = new LocalRunRequest(UUID.randomUUID(), UUID.randomUUID(), VERSION, UUID.randomUUID(), null,
@@ -180,7 +225,7 @@ class RunCommandsIT {
 				delivery.reconcile(unlaunched.submissionId());
 				assertThat(stores.get(unlaunched.runId(), fence.id()).disposition()).isEqualTo("dispatch-prevented");
 				assertThat(lifecycle(backend, unlaunched.runId()).path("state").asText()).isEqualTo("cancelled");
-				assertThat(SOURCE.launches).hasValue(2);
+				assertThat(SOURCE.launches).hasValue(4);
 			}
 		}
 	}
@@ -210,6 +255,20 @@ class RunCommandsIT {
 	@Profile("run-commands-integration")
 	@Import(TargetStorageIntegrationTestConfiguration.class)
 	static class Boundaries {
+
+		@Bean
+		@Primary
+		RunStopRequests commandProjection(
+				@org.springframework.beans.factory.annotation.Qualifier("s3RunStopRequests") RunStopRequests actual) {
+			return (run, command) -> {
+				if (refuseProjection)
+					throw new IllegalStateException("storage unavailable");
+				var published = actual.deliver(run, command);
+				if (loseProjectionAcknowledgement)
+					throw new IllegalStateException("acknowledgement lost");
+				return published;
+			};
+		}
 
 		@Bean
 		@Primary

@@ -111,12 +111,6 @@ spec:
             capabilities:
               drop: [ALL]
             readOnlyRootFilesystem: true
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              memory: 256Mi
           readinessProbe:
             httpGet:
               path: /health

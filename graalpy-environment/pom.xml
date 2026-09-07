@@ -55,6 +55,7 @@
               <graalPyLockFile>${project.basedir}/graalpy.lock</graalPyLockFile>
               <packages>
                 <package>skypilot==${skypilot.version}</package>
+                <package>kubernetes==35.0.0</package>
                 <!-- Keep native dependencies on the GraalPy-compatible versions qualified here. -->
                 <package>numpy==2.2.4</package>
                 <package>pandas==2.2.3</package>

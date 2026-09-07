@@ -13,7 +13,9 @@ Each command has an immutable UUID, Run UUID, kind, acceptance time and evidence
 an identity with the same Run and content returns its existing receipt. Reusing an identity
 for different content, or requesting another command of the same kind for that Run, conflicts.
 A separate mutable delivery record holds attempts, progress, projection time and escalation
-deadline. It contains no SkyPilot operation handle and no derived Run status.
+deadline. The first stop-delivery attempt is retained separately, so an observed cancellation
+can satisfy the command after a lost acknowledgement or failed cooperative projection.
+This records delivery progress, without claiming a Training Process cause. It contains no SkyPilot operation handle and no derived Run status.
 
 Four workers and a queue of sixteen bound command delivery admission. A two-second sweep
 selects at most sixteen due records. A sixty-second database lease admits one worker for a
