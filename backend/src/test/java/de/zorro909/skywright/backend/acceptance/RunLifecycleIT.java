@@ -66,6 +66,7 @@ class RunLifecycleIT {
 				storageEndpoint = storage.endpoint().toString();
 				storageBucket = bucket;
 				UUID run = create(backend);
+				assertThat(progress(backend, run).path("availability").asText()).isEqualTo("absent");
 				SOURCE.jobs = List.of(job(run, "RUNNING"));
 				var running = lifecycle(backend, run);
 				assertThat(running.path("state").asText()).isEqualTo("running");
@@ -88,6 +89,14 @@ class RunLifecycleIT {
 				proveStopped(firstDirectory, run);
 				var completed = executeSdk(storage.endpoint().toString(), bucket, run, firstDirectory, "complete", 0);
 				assertThat(completed.path("step").asLong()).isEqualTo(2);
+				var progress = progress(backend, run);
+				assertThat(progress.path("availability").asText()).isEqualTo("available");
+				assertThat(progress.at("/record/currentStep").asLong()).isEqualTo(2);
+				assertThat(progress.at("/record/latestDurableStep").asLong()).isEqualTo(2);
+				assertThat(
+						progress.at("/record/targetStep").isNull() || progress.at("/record/targetStep").isMissingNode())
+					.isTrue();
+				assertThat(lifecycle(backend, run).path("attemptCount").asInt()).isEqualTo(2);
 				assertThat(lifecycle(backend, run).path("state").asText()).isEqualTo("finished");
 				SOURCE.jobs = List.of(job(run, "SUCCEEDED"));
 				assertThat(lifecycle(backend, run).path("terminalLatched").asBoolean()).isTrue();
@@ -107,6 +116,18 @@ class RunLifecycleIT {
 				assertThat(retained.path("state").asText()).isEqualTo("finished");
 				assertThat(retained.path("sourceAvailability").asText()).isEqualTo("unavailable");
 				assertThat(retained.path("cause").asText()).isEqualTo("completed");
+				assertThat(retained.path("executionSpanMillis").asLong()).isEqualTo(40_000);
+				assertThat(retained.path("executionSpanSource").asText()).isEqualTo("retained");
+				assertThat(progress(backend, run).path("availability").asText()).isEqualTo("available");
+				// A corrupt independent Progress Record cannot erase terminal evidence or
+				// identity.
+				String progressKey = "stable-project/" + run + "/v1/progress.json";
+				admin
+					.putObject(b -> b.bucket(bucket).key(progressKey),
+							software.amazon.awssdk.core.async.AsyncRequestBody.fromString("{}"))
+					.join();
+				assertThat(progress(backend, run).path("availability").asText()).isEqualTo("invalid");
+				assertThat(lifecycle(backend, run).path("state").asText()).isEqualTo("finished");
 				SOURCE.available = true;
 				SOURCE.jobs = List.of();
 				assertThat(lifecycle(backend, run).path("state").asText()).isEqualTo("finished");
@@ -281,6 +302,12 @@ class RunLifecycleIT {
 			if (child.isAlive())
 				child.destroyForcibly().waitFor();
 		}
+	}
+
+	private static JsonNode progress(BackendFixture backend, UUID run) throws Exception {
+		var response = backend.get("/api/v1/runs/" + run + "/progress");
+		assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+		return JSON.readTree(response.body());
 	}
 
 	private static void proveStopped(Path work, UUID run) throws Exception {

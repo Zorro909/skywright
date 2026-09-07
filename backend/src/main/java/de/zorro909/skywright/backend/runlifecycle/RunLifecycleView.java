@@ -7,7 +7,9 @@ import java.util.List;
 public record RunLifecycleView(String state, boolean terminalLatched, String cause, String sourceAvailability,
 		String processAvailability, Instant fetchedAt, Instant skyPilotReadAt, Instant runStoreReadAt,
 		LastSeen lastSeen, List<String> evidenceGaps, List<RetainedSkyPilotFact> facts,
-		List<RunLifecycleDerivation.Conflict> conflicts, List<RunControlDecisions.Decision> controlDecisions) {
+		List<RunLifecycleDerivation.Conflict> conflicts, List<RunControlDecisions.Decision> controlDecisions,
+		Integer attemptCount, Integer recoveryCount, String sourceStatus, Long executionSpanMillis,
+		boolean recoveryCountIsMinimum, String executionSpanSource) {
 
 	public RunLifecycleView {
 		evidenceGaps = List.copyOf(evidenceGaps);

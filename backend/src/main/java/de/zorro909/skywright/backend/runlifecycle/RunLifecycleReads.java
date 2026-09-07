@@ -95,11 +95,17 @@ public final class RunLifecycleReads {
 		Instant fetchedAt = Instant.now();
 		var result = derivation.derive(new RunLifecycleDerivation.Evidence(source.availability(), source.liveJobs(),
 				source.retainedFacts(), retained, evidence, decisions, fetchedAt, gaps));
+		var liveJob = source.availability() == RunJobAdapter.SourceAvailability.LIVE && source.liveJobs().size() == 1
+				? source.liveJobs().getFirst() : null;
+		var execution = RunExecutionObservation.read(liveJob, result.facts(), result.terminalLatched(), fetchedAt);
 		var seen = remember(run.runId(), result.state(), skyPilotReadAt, fetchedAt);
 		return new Read(run,
 				new RunLifecycleView(wire(result.state()), result.terminalLatched(), result.cause(),
 						wire(source.availability()), processAvailability, fetchedAt, skyPilotReadAt, runStoreReadAt,
-						seen, result.gaps(), result.facts(), result.conflicts(), decisions));
+						seen, result.gaps(), result.facts(), result.conflicts(), decisions,
+						evidence == null ? null : evidence.attempts().size(), execution.recoveryCount(),
+						liveJob == null ? null : liveJob.status(), execution.spanMillis(),
+						execution.minimumRecoveryCount(), execution.spanSource()));
 	}
 
 	public record Page(List<Read> items, UUID nextCursor) {

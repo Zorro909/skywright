@@ -1,0 +1,93 @@
+:host {
+  display: block;
+}
+h2 {
+  max-width: none;
+  font-size: clamp(2rem, 6vw, 4rem);
+}
+h3,
+h4 {
+  margin-block: 1.25rem 0.5rem;
+}
+code,
+dd,
+li,
+a {
+  overflow-wrap: anywhere;
+}
+p {
+  margin-block: 0.6rem;
+}
+.muted {
+  color: var(--muted-text);
+  font-size: 0.9rem;
+}
+.identity {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 1rem;
+}
+dt {
+  color: var(--muted-text);
+  font-size: 0.85rem;
+}
+dd {
+  margin: 0.25rem 0 0;
+}
+.run-card {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+  margin-block: 1rem;
+}
+.run-card h3 {
+  margin-top: 0;
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: end;
+  margin-block: 1rem;
+}
+label {
+  display: grid;
+  gap: 0.4rem;
+}
+input,
+select,
+button {
+  font: inherit;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--surface);
+  color: var(--text);
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.notice {
+  padding: 0.75rem;
+  border-inline-start: 0.25rem solid var(--accent);
+  background: var(--soft-surface);
+}
+details {
+  margin-block: 1rem;
+}
+summary {
+  cursor: pointer;
+  padding-block: 0.5rem;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 1rem;
+  background: var(--soft-surface);
+  max-height: 24rem;
+  overflow: auto;
+}
