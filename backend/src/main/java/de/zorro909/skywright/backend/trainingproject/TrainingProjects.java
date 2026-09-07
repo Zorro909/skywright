@@ -121,6 +121,18 @@ public class TrainingProjects {
 		return new ResolvedTrainingProjectBinding(project.id(), binding.revision(), binding.repository());
 	}
 
+	/**
+	 * Hold the active binding stable until the caller commits its artifact references.
+	 */
+	@Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+	public ResolvedTrainingProjectBinding resolveForAcceptance(UUID id) {
+		var project = this.repository.findForUpdate(id)
+			.orElseThrow(() -> new TrainingProjectException("TRAINING_PROJECT_NOT_FOUND",
+					"The Training Project does not exist."));
+		var binding = requireReady(currentView(project).activeBinding());
+		return new ResolvedTrainingProjectBinding(project.id, binding.revision(), binding.repository());
+	}
+
 	@Transactional(readOnly = true)
 	public void requireCurrentBindingRevision(UUID id, long bindingRevision) {
 		if (get(id).activeBinding().revision() != bindingRevision) {

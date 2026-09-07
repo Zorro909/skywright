@@ -3,6 +3,12 @@ databaseChangeLog:
       id: issue-232-run-acceptance
       author: skywright
       changes:
+        - sql:
+            sql: >-
+              ALTER TABLE skywright.registry_rebinding_artifact
+              DROP CONSTRAINT ck_registry_rebinding_artifact_kind,
+              ADD CONSTRAINT ck_registry_rebinding_artifact_kind
+              CHECK (kind IN ('VERSION_MANIFEST', 'IMAGE', 'CONTRACT', 'CONFIGURATION_CONTRACT', 'METRIC_CONTRACT'))
         - createTable:
             schemaName: skywright
             tableName: run_record
@@ -73,3 +79,9 @@ databaseChangeLog:
         - dropTable: { schemaName: skywright, tableName: retained_skypilot_fact }
         - dropTable: { schemaName: skywright, tableName: run_launch_claim }
         - dropTable: { schemaName: skywright, tableName: run_record }
+        - sql:
+            sql: >-
+              ALTER TABLE skywright.registry_rebinding_artifact
+              DROP CONSTRAINT ck_registry_rebinding_artifact_kind,
+              ADD CONSTRAINT ck_registry_rebinding_artifact_kind
+              CHECK (kind IN ('VERSION_MANIFEST', 'IMAGE', 'CONTRACT'))

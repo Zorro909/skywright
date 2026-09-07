@@ -76,7 +76,7 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 	@Override
 	public Prepared prepare(UUID runId, LocalRunRequest request) {
 		var target = settings.target(request.target());
-		var project = projects.resolveForNewWork(request.trainingProjectId());
+		var project = projects.resolveForAcceptance(request.trainingProjectId());
 		// The existing target-side private-pull helper has no backend delivery port yet.
 		// A private image must never be accepted with an uninstalled pull projection.
 		if (projects.requiresRuntimePullProjection(project.projectId()))
@@ -98,8 +98,11 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 					request.manifestArtifactDigest(), JSON.writeValueAsString(request.configuration()), reference,
 					targetRequest, new RunDefinitionStorageOverrides(request.executionStorageId(), null, null),
 					request.maximumRecoveryDebt(), null, null, false), null);
-		if (!resolution.accepted())
-			throw new RunSubmissionException("RUN_DEFINITION_INVALID", 422, resolution.failures());
+		if (!resolution.accepted()) {
+			boolean unavailable = resolution.failures().stream().anyMatch(f -> f.code().endsWith("_UNAVAILABLE"));
+			throw new RunSubmissionException(unavailable ? "RUN_ADMISSION_UNAVAILABLE" : "RUN_DEFINITION_INVALID",
+					unavailable ? 503 : 422, resolution.failures());
+		}
 		var definition = resolution.definition();
 		var read = datasets.selectForRun(request.datasetDefinitionId(), dataset.contentFingerprint(), runId,
 				request.preferredDatasetCopyId());
@@ -154,9 +157,14 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 					backend.path("metrics").asText()));
 		}
 
-		var credentials = broker.training(runId, selection(datasetAccess, "read-only"),
-				selection(outputAccess, "read-write-delete"), Instant.MAX);
-		return new Prepared(definition, task, credentials, artifacts);
+		try {
+			var credentials = broker.training(runId, selection(datasetAccess, "read-only"),
+					selection(outputAccess, "read-write-delete"), Instant.MAX);
+			return new Prepared(definition, task, credentials, artifacts);
+		}
+		catch (IllegalArgumentException failure) {
+			throw new RunSubmissionException("TRAINING_CREDENTIAL_ISOLATION_INVALID", 422);
+		}
 	}
 
 	private static String datasetDigest(String base64) {

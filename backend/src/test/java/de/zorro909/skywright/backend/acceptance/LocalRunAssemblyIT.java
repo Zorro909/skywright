@@ -39,6 +39,8 @@ class LocalRunAssemblyIT {
 
 	private static final UUID OUTPUT_BINDING = UUID.fromString("00000000-0000-0000-0000-000000000005");
 
+	private static final UUID SHARED_IDENTITY_BINDING = UUID.fromString("00000000-0000-0000-0000-000000000006");
+
 	private static URI vaultEndpoint;
 
 	private static Path tokenFile;
@@ -108,7 +110,38 @@ class LocalRunAssemblyIT {
 				String request = JSON.writeValueAsString(Map.of("submissionId", submission, "trainingProjectId",
 						projectId, "manifestArtifactDigest", "sha256:" + "9".repeat(64), "datasetDefinitionId",
 						definitionId, "target", "local/amd", "gpuCount", 1, "configuration", Map.of()));
-				var accepted = backend.post("/api/v1/runs", request);
+				var registry = backend.bean(Registry.class);
+				registry.holdAdmission = true;
+				var accepting = CompletableFuture.supplyAsync(() -> {
+					try {
+						return backend.post("/api/v1/runs", request);
+					}
+					catch (Exception failure) {
+						throw new RuntimeException(failure);
+					}
+				});
+				assertThat(registry.admissionEntered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+				var promoting = CompletableFuture.supplyAsync(() -> {
+					try {
+						return backend.post("/api/v1/training-projects/" + projectId + "/registry-rebindings",
+								"{\"expectedRevision\":1,\"candidate\":{\"repository\":\"ghcr.io/example/local-replacement\",\"accessMode\":\"public\"}}");
+					}
+					catch (Exception failure) {
+						throw new RuntimeException(failure);
+					}
+				});
+				try {
+					assertProjectLockBlocked(backend);
+					assertThat(promoting).isNotDone();
+				}
+				finally {
+					registry.releaseAdmission.countDown();
+				}
+				var accepted = accepting.get(20, java.util.concurrent.TimeUnit.SECONDS);
+				var promoted = promoting.get(20, java.util.concurrent.TimeUnit.SECONDS);
+				assertThat(promoted.statusCode()).as(promoted.body()).isEqualTo(201);
+				assertThat(JSON.readTree(promoted.body()).path("state").asText()).isEqualTo("promoted");
+				assertThat(JSON.readTree(promoted.body()).path("artifacts").size()).isEqualTo(5);
 				assertThat(accepted.statusCode()).as(accepted.body()).isEqualTo(202);
 				assertThat(accepted.body()).contains("\"handoff\":\"source-accepted\"")
 					.doesNotContain("reader-secret", "writer-secret", "fixture-token");
@@ -150,17 +183,65 @@ class LocalRunAssemblyIT {
 					refuseCredentials = false;
 				}
 
+				registry.unavailable = true;
+				try {
+					var refused = backend.post("/api/v1/runs",
+							request.replace(submission.toString(), UUID.randomUUID().toString()));
+					assertThat(refused.statusCode()).as(refused.body()).isEqualTo(503);
+					assertThat(refused.body()).contains("SKYWRIGHT_RUN_ADMISSION_UNAVAILABLE",
+							"PROJECT_REGISTRY_UNAVAILABLE", "\"retryable\":true");
+					assertThat(backend.bean(DatasetCatalog.class).get(definitionId).leases()).hasSize(1);
+				}
+				finally {
+					registry.unavailable = false;
+				}
+
+				String sharedBucket = "shared-identity-" + UUID.randomUUID();
+				admin.createBucket(b -> b.bucket(sharedBucket)).join();
+				UUID sharedStorage = register(backend, storage.endpoint(), sharedBucket, "run-output",
+						SHARED_IDENTITY_BINDING);
+				var sharedRequest = (tools.jackson.databind.node.ObjectNode) JSON.readTree(request);
+				sharedRequest.put("submissionId", UUID.randomUUID().toString());
+				sharedRequest.put("executionStorageId", sharedStorage.toString());
+				var shared = backend.post("/api/v1/runs", sharedRequest.toString());
+				assertThat(shared.statusCode()).as(shared.body()).isEqualTo(422);
+				assertThat(shared.body()).contains("SKYWRIGHT_TRAINING_CREDENTIAL_ISOLATION_INVALID");
+				assertThat(backend.bean(DatasetCatalog.class).get(definitionId).leases()).hasSize(1);
+
 				var invalid = backend.post("/api/v1/runs",
 						request.replace(submission.toString(), UUID.randomUUID().toString())
 							.replace("\"gpuCount\":1", "\"gpuCount\":2"));
 				assertThat(invalid.statusCode()).as(invalid.body()).isEqualTo(422);
 				assertThat(backend.bean(DatasetCatalog.class).get(definitionId).leases()).hasSize(1);
+				var afterPromotion = backend.post("/api/v1/runs",
+						request.replace(submission.toString(), UUID.randomUUID().toString()));
+				assertThat(afterPromotion.statusCode()).as(afterPromotion.body()).isEqualTo(202);
+				assertThat(source.task.resources().getFirst().imageId())
+					.startsWith("docker:ghcr.io/example/local-replacement@");
 			}
 		}
 		finally {
 			server.stop(0);
 			Files.deleteIfExists(tokenFile);
 		}
+	}
+
+	private static void assertProjectLockBlocked(BackendFixture backend) throws Exception {
+		long deadline = System.nanoTime() + java.time.Duration.ofSeconds(10).toNanos();
+		try (var connection = backend.bean(javax.sql.DataSource.class).getConnection();
+				var statement = connection.createStatement()) {
+			while (System.nanoTime() < deadline) {
+				try (var rows = statement
+					.executeQuery("select count(*) from pg_stat_activity where datname=current_database() "
+							+ "and wait_event_type='Lock' and query like '%training_project%'")) {
+					rows.next();
+					if (rows.getLong(1) > 0)
+						return;
+				}
+				Thread.sleep(25);
+			}
+		}
+		throw new AssertionError("Registry promotion did not wait for Run acceptance's project lock");
 	}
 
 	private static UUID register(BackendFixture backend, URI endpoint, String bucket, String purpose, UUID training)
@@ -216,7 +297,10 @@ class LocalRunAssemblyIT {
 		VaultBindings fixtureVault() {
 			return new VaultBindings(vaultEndpoint, "skywright", tokenFile,
 					List.of(binding(DATASET_BINDING, "dataset", "read-only"),
-							binding(OUTPUT_BINDING, "output", "read-write-delete")),
+							binding(OUTPUT_BINDING, "output", "read-write-delete"),
+							new CredentialBinding(SHARED_IDENTITY_BINDING, 1, "fixtures/shared",
+									CredentialBinding.Kind.S3, "shared-output", "training-process", "dataset", "bucket",
+									"read-write-delete", Instant.parse("2026-01-01T00:00:00Z"), null, true)),
 					Clock.systemUTC());
 		}
 
@@ -236,6 +320,14 @@ class LocalRunAssemblyIT {
 
 		String projectId;
 
+		volatile boolean unavailable;
+
+		volatile boolean holdAdmission;
+
+		final java.util.concurrent.CountDownLatch admissionEntered = new java.util.concurrent.CountDownLatch(1);
+
+		final java.util.concurrent.CountDownLatch releaseAdmission = new java.util.concurrent.CountDownLatch(1);
+
 		public List<ProjectVersionReference> listVersions(String repository) {
 			return List.of();
 		}
@@ -245,6 +337,20 @@ class LocalRunAssemblyIT {
 		}
 
 		public Optional<RegistryArtifact> pullArtifact(String repository, String digest) {
+			if (unavailable)
+				throw new IllegalStateException("Registry is offline");
+			if (holdAdmission && repository.equals("ghcr.io/example/local")) {
+				holdAdmission = false;
+				admissionEntered.countDown();
+				try {
+					if (!releaseAdmission.await(20, java.util.concurrent.TimeUnit.SECONDS))
+						throw new IllegalStateException("Admission was not released");
+				}
+				catch (InterruptedException failure) {
+					Thread.currentThread().interrupt();
+					throw new IllegalStateException(failure);
+				}
+			}
 			try {
 				if (digest.equals("sha256:" + "e".repeat(64)))
 					return Optional.of(new RegistryArtifact(digest, fixture("configuration.json")));

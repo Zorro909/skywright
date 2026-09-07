@@ -123,6 +123,34 @@ class LocalRunAcceptanceIT {
 	}
 
 	@Test
+	void acknowledgementAfterHttpTimeoutStillRetainsOperationFailure() throws Exception {
+		SOURCE.available = true;
+		SOURCE.jobs = List.of();
+		SOURCE.launches.set(0);
+		SOURCE.delayedSubmission = new CompletableFuture<>();
+		try (var backend = BackendFixture.startWith(Boundaries.class, "local-run-integration")) {
+			String request = request(UUID.randomUUID());
+			var response = backend.post("/api/v1/runs", request);
+			assertThat(response.statusCode()).as(response.body()).isEqualTo(202);
+			assertThat(response.body()).contains("\"handoff\":\"uncertain\"");
+			SOURCE.delayedSubmission
+				.complete(OrchestratorResult.accepted(new OrchestratorOperation("late", OperationKind.SUBMISSION)));
+			try (var connection = backend.bean(DataSource.class).getConnection();
+					var statement = connection.createStatement();
+					var rows = statement.executeQuery(
+							"select count(*) from skywright.retained_skypilot_fact where fact_kind='SUBMISSION_OPERATION_FAILURE'")) {
+				rows.next();
+				assertThat(rows.getLong(1)).isEqualTo(1);
+			}
+			assertThat(backend.post("/api/v1/runs", request).statusCode()).isEqualTo(202);
+			assertThat(SOURCE.launches).hasValue(1);
+		}
+		finally {
+			SOURCE.delayedSubmission = null;
+		}
+	}
+
+	@Test
 	void failedAdmissionRollsBackAndCrashAfterCommitDoesNotScheduleAnotherLaunch() throws Exception {
 		SOURCE.launches.set(0);
 		SOURCE.available = true;
@@ -235,6 +263,8 @@ class LocalRunAcceptanceIT {
 
 	static class Source implements Orchestrator {
 
+		volatile CompletableFuture<OrchestratorResult<OrchestratorOperation>> delayedSubmission;
+
 		final AtomicInteger launches = new AtomicInteger();
 
 		volatile boolean available;
@@ -243,6 +273,8 @@ class LocalRunAcceptanceIT {
 
 		public CompletionStage<OrchestratorResult<OrchestratorOperation>> submit(OrchestratorTaskSpecification task) {
 			launches.incrementAndGet();
+			if (delayedSubmission != null)
+				return delayedSubmission;
 			return CompletableFuture.failedFuture(new IllegalStateException("response lost after remote acceptance"));
 		}
 
@@ -262,6 +294,9 @@ class LocalRunAcceptanceIT {
 		}
 
 		public CompletionStage<OrchestratorResult<OperationOutcome>> complete(OrchestratorOperation operation) {
+			if (operation.kind() == OperationKind.SUBMISSION)
+				return CompletableFuture.completedFuture(OrchestratorResult
+					.accepted(new OperationOutcome.Failed("ResourcesUnavailableError", "capacity unavailable")));
 			return CompletableFuture.completedFuture(OrchestratorResult.accepted(new OperationOutcome.Observed(jobs)));
 		}
 

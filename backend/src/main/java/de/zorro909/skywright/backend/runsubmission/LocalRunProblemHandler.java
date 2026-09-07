@@ -27,19 +27,21 @@ class LocalRunProblemHandler {
 						.stream()
 						.map(item -> new FieldViolation(item.pointer(), item.code(), item.keyword()))
 						.toList(),
-					null, false));
+					null, failure.status() == 503));
 	}
 
 	@ExceptionHandler(de.zorro909.skywright.backend.datasetcatalog.DatasetCatalogException.class)
 	ResponseEntity<Problem> dataset(de.zorro909.skywright.backend.datasetcatalog.DatasetCatalogException failure,
 			HttpServletRequest request) {
-		return handle(new RunSubmissionException(failure.errorCode(), 422), request);
+		return handle(new RunSubmissionException(failure.errorCode(),
+				failure.errorCode().endsWith("_UNAVAILABLE") ? 503 : 422), request);
 	}
 
 	@ExceptionHandler(de.zorro909.skywright.backend.trainingproject.TrainingProjectException.class)
 	ResponseEntity<Problem> project(de.zorro909.skywright.backend.trainingproject.TrainingProjectException failure,
 			HttpServletRequest request) {
-		return handle(new RunSubmissionException(failure.code(), 422), request);
+		return handle(new RunSubmissionException(failure.code(), failure.code().endsWith("_UNAVAILABLE") ? 503 : 422),
+				request);
 	}
 
 	@ExceptionHandler(de.zorro909.skywright.backend.targetstorage.TargetStorageException.class)

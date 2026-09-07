@@ -71,11 +71,13 @@ public class LocalRunSubmissions {
 			var delivery = jobs.submit(run.runId(), run.task(), created.prepared().credentials());
 			delivery.whenComplete((result, failure) -> created.prepared().close());
 			releaseDeferred = true;
-			var result = delivery.toCompletableFuture().get(5, TimeUnit.SECONDS);
-			if (result instanceof RunJobAdapter.Submission.Initiated initiated) {
-				// Consume completion for retention; provisioning never blocks this
-				// response.
-				jobs.complete(run.runId(), initiated.operation());
+			// Retain completion even when acknowledgement arrives after the HTTP wait.
+			var result = delivery.thenApply(submission -> {
+				if (submission instanceof RunJobAdapter.Submission.Initiated initiated)
+					jobs.complete(run.runId(), initiated.operation());
+				return submission;
+			}).toCompletableFuture().get(5, TimeUnit.SECONDS);
+			if (result instanceof RunJobAdapter.Submission.Initiated) {
 				return new Result(run, "source-accepted", "not-observed", List.of());
 			}
 			if (result instanceof RunJobAdapter.Submission.Rediscovered rediscovered)
