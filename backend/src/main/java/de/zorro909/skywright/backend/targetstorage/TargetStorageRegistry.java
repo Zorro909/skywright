@@ -194,6 +194,20 @@ public class TargetStorageRegistry {
 		return new TargetStorageResolution(storage.descriptor(), selectedBinding);
 	}
 
+	TargetStorageResolution resolveRunOutputRead(UUID id) {
+		var storage = this.requireRunOutput(id);
+		if (storage.activeRevision() == null)
+			throw new TargetStorageIneligibleException("TARGET_STORAGE_NOT_QUALIFIED",
+					"Run Store reads require a qualified configuration");
+		var binding = storage.bindings()
+			.stream()
+			.filter(b -> b.role() == TargetStorageRole.BACKEND && b.readiness() == BindingReadiness.READY)
+			.findFirst()
+			.orElseThrow(() -> new TargetStorageIneligibleException("TARGET_STORAGE_BINDING_UNAVAILABLE",
+					"The backend read binding is unavailable"));
+		return new TargetStorageResolution(storage.descriptor(), binding);
+	}
+
 	TargetStorageResolution resolveDatasetMaintenance(UUID id, TargetStorageRole role) {
 		TargetStorageAggregate storage = this.storage(Objects.requireNonNull(id, "storageId"));
 		if (storage.purpose() != TargetStoragePurpose.DATASET || storage.activeRevision() == null) {

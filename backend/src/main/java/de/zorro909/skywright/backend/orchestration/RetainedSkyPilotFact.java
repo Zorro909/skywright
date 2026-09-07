@@ -6,7 +6,12 @@ import java.util.UUID;
 
 /** One immutable source event; observedAt resolves conflicts but is never in the key. */
 public record RetainedSkyPilotFact(UUID runId, Kind kind, String sourceEventIdentity, Map<String, String> payload,
-		Instant observedAt) {
+		Instant observedAt, boolean completeUniqueObservation) {
+
+	public RetainedSkyPilotFact(UUID runId, Kind kind, String sourceEventIdentity, Map<String, String> payload,
+			Instant observedAt) {
+		this(runId, kind, sourceEventIdentity, payload, observedAt, true);
+	}
 
 	public RetainedSkyPilotFact {
 		java.util.Objects.requireNonNull(runId);

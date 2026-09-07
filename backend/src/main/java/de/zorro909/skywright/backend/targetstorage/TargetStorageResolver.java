@@ -30,6 +30,24 @@ public final class TargetStorageResolver {
 			String runId) {
 		TargetStorageRole role = TargetStorageRole.fromWireValue(consumingRole);
 		TargetStorageResolution resolution = this.registry.resolveEligibleRunOutput(storageId, role);
+		return resolve(resolution, role, trainingProjectId, runId);
+	}
+
+	public ResolvedTargetStorage resolveRunOutputRead(tools.jackson.databind.JsonNode location,
+			String trainingProjectId, String runId) {
+		UUID storageId = UUID.fromString(location.path("storageId").asText());
+		var current = this.registry.resolveRunOutputRead(storageId);
+		var options = new java.util.HashMap<String, String>();
+		location.path("compatibilityOptions").properties().forEach(e -> options.put(e.getKey(), e.getValue().asText()));
+		var pinned = new TargetStorageDescriptor(storageId, java.net.URI.create(location.path("endpoint").asText()),
+				location.path("bucket").asText(), location.path("region").asText(),
+				location.path("addressingMode").asText().equals("path"), java.util.Map.copyOf(options));
+		return resolve(new TargetStorageResolution(pinned, current.binding()), TargetStorageRole.BACKEND,
+				trainingProjectId, runId);
+	}
+
+	private ResolvedTargetStorage resolve(TargetStorageResolution resolution, TargetStorageRole role,
+			String trainingProjectId, String runId) {
 		TargetStorageDescriptor descriptor = resolution.descriptor();
 		TargetStorageBinding binding = resolution.binding();
 		var provider = this.credentials()

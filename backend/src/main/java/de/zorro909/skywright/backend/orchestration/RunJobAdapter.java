@@ -254,10 +254,14 @@ public final class RunJobAdapter {
 				add(facts, gaps, runId, job, RetainedSkyPilotFact.Kind.TERMINATION, job.endedAt(), payload, now);
 			}
 		}
-		return this.retention.append(facts)
+		var qualifiedFacts = facts.stream()
+			.map(f -> new RetainedSkyPilotFact(f.runId(), f.kind(), f.sourceEventIdentity(), f.payload(),
+					f.observedAt(), availability == SourceAvailability.LIVE))
+			.toList();
+		return this.retention.append(qualifiedFacts)
 			.handle((ignored, failure) -> new Reconciliation(runId,
 					failure == null ? availability : SourceAvailability.RETENTION_UNAVAILABLE, jobs,
-					failure == null ? facts : List.of(), gaps, null));
+					failure == null ? qualifiedFacts : List.of(), gaps, null));
 	}
 
 	private static void put(Map<String, String> payload, String key, String value) {

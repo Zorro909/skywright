@@ -36,8 +36,10 @@ final class GraalPySkyPilotClientIT {
 	void oneNativeGraalPyContextExercisesCatalogueAndOrchestrationThroughTheApiServer() throws Exception {
 		var client = client();
 		client.probe();
+		var orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(2, 1, Duration.ofMillis(100)));
+		orchestrator.refreshAvailability().toCompletableFuture().get(10, TimeUnit.SECONDS);
 		assertCredentialTask(client);
-		assertSourceEvidenceDecoding(client);
+		assertSourceEvidenceDecoding(client, orchestrator);
 		assertConcurrentAuthorization(client);
 		apiServer.stop();
 		try {
@@ -68,7 +70,6 @@ final class GraalPySkyPilotClientIT {
 		assertThat(client.complete(status))
 			.isEqualTo(new OperationOutcome.Failed("ClusterNotUpError", "SkyPilot target is unavailable"));
 
-		var orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(2, 1, Duration.ofMillis(100)));
 		orchestrator.refreshAvailability().toCompletableFuture().get(10, TimeUnit.SECONDS);
 		var operation = orchestrator.submit(task()).toCompletableFuture().get(10, TimeUnit.SECONDS).value();
 		var held = orchestrator.complete(operation);
@@ -78,24 +79,27 @@ final class GraalPySkyPilotClientIT {
 		assertThat(held.toCompletableFuture()).isCompleted();
 	}
 
-	private static void assertSourceEvidenceDecoding(GraalPySkyPilotClient client) throws Exception {
+	private static void assertSourceEvidenceDecoding(GraalPySkyPilotClient client, SkyPilotOrchestrator orchestrator)
+			throws Exception {
 		var field = GraalPySkyPilotClient.class.getDeclaredField("context");
 		field.setAccessible(true);
 		var context = (org.graalvm.polyglot.Context) field.get(client);
-		context.eval("python", """
-				from sky.schemas.api.responses import ManagedJobRecord
-				from sky.jobs.state import ManagedJobStatus
-				_original_stream = sky.stream_and_get
-				_source_records = [ManagedJobRecord(job_id=42, job_name='evidence-job',
-				    status=ManagedJobStatus.FAILED, recovery_count=2, task_id=0,
-				    submitted_at=100., start_at=110., end_at=150., last_recovered_at=130.,
-				    run_timestamp='source-generation', cloud='kubernetes', region='local',
-				    cluster_resources='MI300X:1', failure_reason='application failed')]
-				sky.stream_and_get = lambda request: (_source_records, 1, {}, 1)
-				""");
+		context.eval("python",
+				"""
+						from sky.schemas.api.responses import ManagedJobRecord
+						from sky.jobs.state import ManagedJobStatus
+						_original_stream = sky.stream_and_get
+						_source_records = [ManagedJobRecord(job_id=42, job_name='skywright-123e4567-e89b-12d3-a456-426614174000',
+						    status=ManagedJobStatus.FAILED, recovery_count=2, task_id=0,
+						    submitted_at=100., start_at=110., end_at=150., last_recovered_at=130.,
+						    run_timestamp='source-generation', cloud='kubernetes', region='local',
+						    cluster_resources='MI300X:1', failure_reason='application failed')]
+						sky.stream_and_get = lambda request: (_source_records, 1, {}, 1)
+						""");
 		try {
 			var outcome = (OperationOutcome.Observed) client.complete(new OrchestratorOperation(
-					"{\"request_id\":\"synthetic-source-result\",\"names\":[\"evidence-job\"]}", OperationKind.STATUS));
+					"{\"request_id\":\"synthetic-source-result\",\"names\":[\"skywright-123e4567-e89b-12d3-a456-426614174000\"]}",
+					OperationKind.STATUS));
 			assertThat(outcome.complete()).isTrue();
 			var job = outcome.jobs().getFirst();
 			assertThat(job.jobId()).isEqualTo(42);
@@ -103,6 +107,24 @@ final class GraalPySkyPilotClientIT {
 			assertThat(job.recoveryCount()).isEqualTo(2);
 			assertThat(job.status()).isEqualTo("FAILED");
 			assertThat(job.cloud()).isEqualTo("kubernetes");
+			var runId = UUID.fromString("123e4567-e89b-12d3-a456-426614174000");
+			var facts = new java.util.ArrayList<RetainedSkyPilotFact>();
+			var adapter = new RunJobAdapter(orchestrator, (run, fingerprint) -> java.util.concurrent.CompletableFuture
+				.completedFuture(LaunchDispatchGate.Decision.ALREADY_DISPATCHED), batch -> {
+					facts.addAll(batch);
+					return java.util.concurrent.CompletableFuture.completedFuture(null);
+				}, java.time.Clock.systemUTC());
+			var observed = adapter.reconcile(runId).toCompletableFuture().get(10, TimeUnit.SECONDS);
+			assertThat(observed.availability()).isEqualTo(RunJobAdapter.SourceAvailability.LIVE);
+			var lifecycle = new de.zorro909.skywright.backend.runlifecycle.RunLifecycleDerivation()
+				.derive(new de.zorro909.skywright.backend.runlifecycle.RunLifecycleDerivation.Evidence(
+						observed.availability(), observed.liveJobs(), observed.retainedFacts(), facts,
+						new de.zorro909.skywright.backend.runstore.RunProcessEvidence(List.of(), null, 0, null),
+						List.of(), Instant.now(), observed.evidenceGaps()));
+			assertThat(lifecycle.state()).isEqualTo(de.zorro909.skywright.backend.runlifecycle.RunLifecycle.FAILED);
+			assertThat(lifecycle.cause()).isNull();
+			assertThat(lifecycle.terminalLatched()).isTrue();
+
 			context.eval("python", "sky.stream_and_get = lambda request: (_source_records, 1001, {}, 1001)");
 			assertThat(((OperationOutcome.Observed) client
 				.complete(new OrchestratorOperation("{\"request_id\":\"partial\",\"names\":[]}", OperationKind.STATUS)))

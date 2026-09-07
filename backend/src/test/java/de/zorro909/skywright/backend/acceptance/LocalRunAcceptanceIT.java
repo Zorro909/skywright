@@ -232,7 +232,8 @@ class LocalRunAcceptanceIT {
 
 		@Bean
 		@Primary
-		LocalRunAdmission fixtureAdmission(de.zorro909.skywright.backend.credential.LocalProjectionFacts facts) {
+		LocalRunAdmission fixtureAdmission(de.zorro909.skywright.backend.credential.LocalProjectionFacts facts,
+				de.zorro909.skywright.backend.targetstorage.TargetStorageRegistry storages) {
 			return (run, request) -> {
 				ADMISSIONS.incrementAndGet();
 				facts.begin(run, "dataset",
@@ -244,9 +245,13 @@ class LocalRunAcceptanceIT {
 				if (FAIL_PREPARE)
 					throw new IllegalStateException("crash before acceptance");
 				try {
-					var definition = RunDefinition
-						.decode(Files.readString(Path.of(System.getProperty("repository.root"),
-								"sdk/tests/fixtures/managed-runtime/definition.json")));
+					var document = JSON.readTree(Files.readString(Path.of(System.getProperty("repository.root"),
+							"sdk/tests/fixtures/managed-runtime/definition.json")));
+					var storageId = de.zorro909.skywright.backend.targetstorage.RunStoreReferenceFixture
+						.register(storages, run);
+					((tools.jackson.databind.node.ObjectNode) document.at("/storage/execution")).put("storageId",
+							storageId.toString());
+					var definition = RunDefinition.decode(document.toString());
 					var task = new OrchestratorTaskSpecification("skywright-" + run, null, "train",
 							List.of(new OrchestratorTaskSpecification.Resources("kubernetes/local", "8", "32",
 									"MI300X:1", "docker:fixture", false)),

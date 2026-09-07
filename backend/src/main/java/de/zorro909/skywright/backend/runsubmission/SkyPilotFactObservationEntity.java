@@ -24,13 +24,17 @@ class SkyPilotFactObservationEntity {
 	@Column(name = "observed_at", nullable = false, updatable = false)
 	Instant observedAt;
 
+	@Column(name = "complete_unique_observation", nullable = false, updatable = false)
+	boolean completeUniqueObservation;
+
 	protected SkyPilotFactObservationEntity() {
 	}
 
-	SkyPilotFactObservationEntity(UUID factId, Instant observedAt) {
+	SkyPilotFactObservationEntity(UUID factId, Instant observedAt, boolean completeUniqueObservation) {
 		id = UUID.randomUUID();
 		this.factId = factId;
 		this.observedAt = observedAt;
+		this.completeUniqueObservation = completeUniqueObservation;
 	}
 
 }

@@ -244,7 +244,7 @@ class LocalRunAssemblyIT {
 		throw new AssertionError("Registry promotion did not wait for Run acceptance's project lock");
 	}
 
-	private static UUID register(BackendFixture backend, URI endpoint, String bucket, String purpose, UUID training)
+	static UUID register(BackendFixture backend, URI endpoint, String bucket, String purpose, UUID training)
 			throws Exception {
 		String body = JSON
 			.writeValueAsString(Map.of(
