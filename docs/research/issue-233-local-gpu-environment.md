@@ -165,3 +165,63 @@ Publishing does not supply ongoing private runtime access. Provision these separ
 Outside Actions, GitHub documents classic PAT authentication with `read:packages` for private downloads. Vault binding metadata must describe actual distinct resource identities and paths; the resolver rejects two bindings with the same resource and identity. A short-lived publishing token must not be reused as a non-expiring runtime binding. The current local Run path requests `Instant.MAX`, so runtime credentials must honestly meet its declared non-expiring contract. [GitHub authentication](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry), [Vault binding validation](../../backend/src/main/java/de/zorro909/skywright/backend/credential/VaultBindings.java), [projection validity](../../backend/src/main/java/de/zorro909/skywright/backend/credential/LocalCredentialProjections.java)
 
 No existing eligible private GHCR reader credentials were found by the bounded inspection. Package publication may use CI authority, but private local execution remains blocked until the operator supplies suitable reader identities or identifies an already provisioned exact binding. Do not request tokens in chat; use the protected local/Vault delivery contract.
+
+## Pinned SkyPilot service accounts and global pod configuration
+
+Follow-up inspection confirmed SkyPilot 0.13.0 at `/usr/local/lib/python3.12/site-packages/sky/` in the running qualification server container `skypilot-api-server`. Hashes of `users/server.py` and `utils/config_utils.py` match the locally inspected pinned wheel at source commit `b1431e52d97c22e9bb8fa8b67f162543754ddaf5`. All operations described here use its existing HTTP APIs or ordinary configuration; no SDK edits are needed.
+
+The service-account creation operation is synchronous `POST /users/service-account-tokens` with:
+
+```json
+{"token_name":"skywright_backend","expires_in_days":0}
+```
+
+The response includes `token`, `token_id`, `service_account_user_id` and `expires_at`. Zero explicitly means no expiry and yields `expires_at: null`. The server returns the `sky_`-prefixed token only once; capture the complete response directly in a protected file and import just the token through the Vault binding contract. The signing secret and token metadata persist in SkyPilot's database. Reuse of a name is not an idempotent token retrieval. [Token endpoint](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/users/server.py), [token service](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/users/token_service.py)
+
+The endpoint requires an authenticated creator. For the current isolated server, the supported bootstrap sequence is:
+
+1. Before enabling Basic auth, use `POST /users/create` with protected JSON `{username, password, role: "admin"}` to create the operator account.
+2. Restart the server with `ENABLE_BASIC_AUTH=true` and `ENABLE_SERVICE_ACCOUNTS=true`. The former installs BasicAuthMiddleware; the latter permits Bearer service-account tokens. Without Basic auth enabled, a Basic header does not establish the creator identity.
+3. Submit the token request using that operator's HTTP Basic authentication. Use the pod's non-loopback IP or an allowed Service connection. BasicAuthMiddleware deliberately skips literal loopback requests before populating the authenticated user, so this token request through `127.0.0.1` can return 401 despite a valid Basic header.
+4. Store the resulting token under the Skywright `SKYPILOT/backend` binding for the exact API endpoint. The client already supports `SKYPILOT_SERVICE_ACCOUNT_TOKEN`; Skywright's broker supplies it transiently.
+
+For a script using curl, keep Basic credentials in a protected `--netrc-file`, request bodies in protected files passed with `--data-binary @FILE`, and use `--output FILE` for the one-time token response. Do not put credentials in arguments or print the response. [Basic and Bearer middleware](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/server/server.py), [loopback detection](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/server/auth/loopback.py), [client token contract](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/client/service_account_auth.py)
+
+The server's ordinary global configuration is database-backed because `SKYPILOT_DB_CONNECTION_URI` is set. `GET /workspaces/config` reads it and `POST /workspaces/config` with `{"config": FULL_DOCUMENT}` replaces it through SkyPilot's supported configuration service. Both are asynchronous requests: save `X-Skypilot-Request-ID`, await completion with the pinned client's `sky.get(request_id)`, then read back and verify. Preserve existing configuration keys and API endpoint; the update service rejects changing the endpoint. Do not write the SkyPilot database directly. A mounted multi-key global YAML file is not a substitute: the database-backed loader rejects file configuration with more than one top-level key and obtains the actual settings from the database. [Configuration endpoints](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/workspaces/server.py), [update semantics](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/workspaces/core.py), [config loading](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/skypilot_config.py)
+
+For a client, the ordinary configuration is `~/.sky/config.yaml`, or a file selected with `SKYPILOT_GLOBAL_CONFIG`. Client configuration is included in request bodies; paths themselves are removed. The backend's GraalPy environment inherits ordinary process environment, so a non-secret mounted client config selected by that variable is supported. `SKYPILOT_CONFIG` is an internal controller mechanism, explicitly not the public configuration interface. Prefer server configuration for qualification-wide pod policy and avoid a contradictory client override. [Client request configuration](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/server/requests/payloads.py), [GraalPy environment](../../backend/src/main/java/de/zorro909/skywright/backend/orchestration/GraalPySkyPilotClient.java)
+
+The following non-secret configuration shape restricts the target context and adds the ancillary device that the root agent's real GPU smoke test found necessary. Replace the namespace/context/SA names with the provisioned values; they are independent of the operator's kubeconfig context name.
+
+```yaml
+kubernetes:
+  allowed_contexts: [local-amd]
+  namespace: skywright-training
+  remote_identity: skywright-worker
+  pod_config:
+    spec:
+      serviceAccountName: skywright-worker
+      containers:
+        - name: ray-node
+          env:
+            - name: ROCR_VISIBLE_DEVICES
+              value: "0"
+          volumeMounts:
+            - name: rocm-ancillary-render
+              mountPath: /dev/dri/renderD129
+      volumes:
+        - name: rocm-ancillary-render
+          hostPath:
+            path: /dev/dri/renderD129
+            type: CharDevice
+```
+
+`ray-node` is the exact generated container name. Nested maps merge. Containers, volumes and env entries merge by `name`; volume mounts merge by `mountPath`. An unknown named container appends a new container, so using the obsolete illustrative name `ray` is wrong. An unnamed container override targets the first container for legacy compatibility, which is less explicit. The per-Run pull-secret override can coexist with these global fields. [Generated template](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/templates/kubernetes-ray.yml.j2), [merge implementation](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/utils/config_utils.py), [effective pod config](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/provision/kubernetes/utils.py)
+
+Global pod configuration also reaches other SkyPilot-created pods in this context. Keep this hostPath exception confined to the isolated qualification context; it is not a portable AMD deployment requirement. The root agent reports the real device-plugin allocation remains one discrete GPU and `ROCR_VISIBLE_DEVICES=0` selects it. Retain that measured evidence alongside the exception.
+
+The pinned upstream `generate_kubeconfig.sh` has a `SUPER_USER=0` mode, but it is a supported baseline, not resource-by-resource least privilege. It grants all resource operations inside one namespace plus cluster read access to nodes, runtimeclasses, ingressclasses, pods and RBAC definitions. Its default mode is cluster-admin and must not be used for this boundary. It also provisions optional `skypilot-system` permissions for FUSE; Skywright's API-based S3 path does not use FUSE. [Pinned RBAC generator](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/utils/kubernetes/generate_kubeconfig.sh)
+
+Pre-create the non-default `skywright-worker` ServiceAccount, its namespace Role/RoleBinding and required cluster-read RoleBinding. Setting `remote_identity` and `serviceAccountName` to that account makes stock `bootstrap_instances` skip creation of its default ServiceAccount, cluster roles/bindings and `skypilot-system` namespace. Apply bindings to both the API server's projected Kubernetes principal and the worker account, since the managed controller can provision from its own pod identity. [Bootstrap branch](https://github.com/skypilot-org/skypilot/blob/b1431e52d97c22e9bb8fa8b67f162543754ddaf5/sky/provision/kubernetes/config.py)
+
+The smallest upstream-supported permission boundary established by this investigation is namespace-wide writes plus the listed cluster reads. Node reads alone are insufficient for full accelerator availability and resource inspection. A narrower enumerated Role would need verification against actual managed launch, cancellation, exec/log collection, Secret delivery and controller recovery; this read-only investigation does not claim such a Role is already qualified.

@@ -155,6 +155,9 @@ class RenderedProfilesTest(unittest.TestCase):
         self.assertIn("image: postgres:18.1-bookworm@sha256:cc9f4143", manifest)
         self.assertIn("claimName: skywright-postgresql-data", manifest)
         self.assertIn("name: skywright-local-skypilot-database", manifest)
+        database = resource(manifest, "Deployment", "skywright-postgresql")
+        self.assertIn("type: Recreate", database)
+        self.assertRegex(database, r"(?s)pg_isready.*?--host.*?127\.0\.0\.1")
         initialization = resource(
             manifest, "ConfigMap", "skywright-postgresql-init"
         )

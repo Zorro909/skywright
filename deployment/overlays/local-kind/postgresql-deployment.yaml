@@ -7,6 +7,8 @@ metadata:
     app.kubernetes.io/part-of: skywright
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: skywright-postgresql
@@ -43,7 +45,7 @@ spec:
               containerPort: 5432
           readinessProbe:
             exec:
-              command: ["pg_isready", "--username", "postgres", "--dbname", "skywright"]
+              command: ["pg_isready", "--host", "127.0.0.1", "--username", "postgres", "--dbname", "skywright"]
             periodSeconds: 2
           volumeMounts:
             - name: data

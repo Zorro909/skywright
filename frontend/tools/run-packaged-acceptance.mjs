@@ -78,6 +78,8 @@ async function waitForPostgreSql() {
         'exec',
         containerName,
         'pg_isready',
+        '--host',
+        '127.0.0.1',
         '--username',
         'postgres',
         '--dbname',
