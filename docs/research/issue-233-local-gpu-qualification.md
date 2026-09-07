@@ -20,6 +20,18 @@ repository's ROCm Containerfile. Its anonymous GHCR pull identity is:
 ghcr.io/zorro909/skywright-ui-qualification-profile@sha256:e884b9a7cf6c06926cad50f97f7983dfea1e5ef040dd7dae9a686c45c068681a
 ```
 
+The [project workflow](https://github.com/Zorro909/skywright-ui-qualification/actions/runs/34136240787)
+published source `3ab143629356b64a076c209e215aaeaf4aafcfdf` with version artifact
+`sha256:36b2f8b264c5a8ba286dc4e90962b587f48a568bb06b9ed79331fe0fb2a568e2`
+and project image:
+
+```
+ghcr.io/zorro909/skywright-ui-qualification@sha256:b67df449b9f1adb611656a53059d46f05d5057005eafc4d357e00cb71f753651
+```
+
+An anonymous pull check succeeded. The backend assessed this exact version as
+runnable with no validation failures.
+
 The Dataset publisher submitted the repository's five-file, 3,478-byte synthetic
 MDS fixture through the installed SDK CLI and production backend. Publication
 `331b5728-667d-4ce3-bb13-1dded25d09c6` committed Definition
@@ -92,3 +104,44 @@ blob redirects. The qualification project definition uses its registered Project
 UUID, `e23aac30-f005-4c5b-8ea1-be6770f8c54e`.
 
 Private initialization material and raw logs remain outside the repository.
+
+## Managed UI check in progress
+
+The production UI rejected an invalid string at `/project/steps` with HTTP 422
+and the backend's schema diagnostic. Editing that rejected request created a new
+submission identity. The corrected request received HTTP 202 for Run
+`cdef8bd0-b135-437a-b1cf-4e5ed9bbebe4`, submission
+`e0df0fb6-7e86-4e39-8d46-c9e3b8820362`, at 15:15:10 UTC. Run details displayed its
+accepted definition, affirmative root lineage and unavailable execution evidence.
+The browser reported no script errors. No GPU Training Process has run yet.
+
+A separate GraalPy process inside the production backend image reproduced #250:
+the Fedora-built cryptography extension requires `OPENSSL_3.2.0`, absent from the
+Ubuntu image. The same service-account token successfully initiated a stock SDK
+status request under the SkyPilot server's CPython interpreter. The canonical image rebuilt with the unchanged `graalpy-resources` artifact from
+[CI run 34136866777](https://github.com/Zorro909/skywright/actions/runs/34136866777)
+imports the SDK and initiates an authenticated `sky.jobs.queue_v2` request. Its
+cryptography extension requires the available `OPENSSL_3.0.0`. This does not
+establish general host-built native-wheel portability or native-context shutdown.
+
+The first Run's claimed dispatch is never relaunched. The UI accepted cancellation
+request `62d98230-e759-415a-a0ef-da2c549c5ebf` and continued to distinguish intent
+from terminal evidence. A subsequent GPU check uses the explicit Create another
+Run action, preserving the original Run and command records.
+
+The rootless kind node initially had a 2,048-process budget, from which systemd
+assigned a 307-task default to container scopes. SkyPilot exhausted that limit
+and returned `BlockingIOError` / `can't start new thread` for queue requests. The
+isolated node now has 16,384 tasks and an explicit per-container default of 2,048.
+After restarting the API server, a complete stock SDK queue request returned an
+empty job list successfully. These settings belong to this qualification host.
+
+The third UI Run, `ec15e0e8-9cb3-4204-84b9-fef70b7b055f`, reached `/jobs/launch`.
+Request `3764aac4-57f7-4134-bb2a-b346ee533a1a` failed before pod creation because
+the server image lacked `git`. The subsequent supported `sky check` also required
+`socat` and `nc` for Kubernetes port-forward networking. The image now packages
+Git, OpenSSH clients, rsync, socat, netcat-openbsd and checksum-pinned kubectl
+1.36.3. A production image check exercises repository
+creation, SSH key generation, local rsync and kubectl's client version as the
+unprivileged service user. This is image packaging; the SkyPilot Python packages
+are unchanged.

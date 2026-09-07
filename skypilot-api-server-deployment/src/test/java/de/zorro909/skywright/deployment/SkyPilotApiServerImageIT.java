@@ -108,6 +108,30 @@ final class SkyPilotApiServerImageIT {
 
 	@Test
 	@Order(1)
+	void managedKubernetesLaunchExecutablesRunAsTheServiceUser() throws Exception {
+		assertThat(docker("exec", serverContainer, "python", "-I", "-c", """
+				import json, subprocess, tempfile
+				from pathlib import Path
+				with tempfile.TemporaryDirectory() as directory:
+				    root = Path(directory)
+				    subprocess.run(['git', 'init', str(root / 'repository')], check=True, capture_output=True)
+				    subprocess.run(['ssh', '-V'], check=True, capture_output=True)
+				    subprocess.run(['socat', '-V'], check=True, capture_output=True)
+				    subprocess.run(['nc', '-h'], check=True, capture_output=True)
+				    subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(root / 'key')], check=True)
+				    (root / 'source').write_text('managed-launch')
+				    subprocess.run(['rsync', str(root / 'source'), str(root / 'copy')], check=True)
+				    assert (root / 'copy').read_text() == 'managed-launch'
+				    version = json.loads(subprocess.check_output(['kubectl', 'version', '--client', '-o', 'json']))
+				    assert version['clientVersion']['gitVersion'] == 'v1.36.3'
+				from sky.provision.kubernetes.utils import check_port_forward_mode_dependencies
+				assert check_port_forward_mode_dependencies() is None
+				print('managed Kubernetes launch tools verified')
+				""")).contains("managed Kubernetes launch tools verified");
+	}
+
+	@Test
+	@Order(1)
 	void packagedPullHelperUsesThePinnedKubernetesClientAndPreservesImmutableSecrets() throws Exception {
 		assertThat(docker("exec", serverContainer, "python", "-I", "-c",
 				"""
