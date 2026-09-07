@@ -37,14 +37,21 @@ public class RunLogCaptureStore {
 
 	public Claim claim(UUID runId) {
 		Instant now = clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
-		entities
-			.createNativeQuery("INSERT INTO skywright.run_log_capture(run_id,checkpoint_json,next_attempt_at) "
-					+ "VALUES (:run,:checkpoint,:now) ON CONFLICT (run_id) DO NOTHING")
+		// The parent row exists before capture; lock it to serialize first-row creation.
+		entities.createQuery("select r from RunRecordEntity r where r.id = :run", Object.class)
 			.setParameter("run", runId)
-			.setParameter("checkpoint", JSON.writeValueAsString(RunLogCheckpoint.initial()))
-			.setParameter("now", now)
-			.executeUpdate();
-		var row = entities.find(RunLogCaptureEntity.class, runId, LockModeType.PESSIMISTIC_WRITE);
+			.setLockMode(LockModeType.PESSIMISTIC_WRITE)
+			.setHint("jakarta.persistence.lock.timeout", 0)
+			.getSingleResult();
+		var row = entities.find(RunLogCaptureEntity.class, runId, LockModeType.PESSIMISTIC_WRITE,
+				java.util.Map.of("jakarta.persistence.lock.timeout", 0));
+		if (row == null) {
+			row = new RunLogCaptureEntity();
+			row.runId = runId;
+			row.checkpoint = JSON.writeValueAsString(RunLogCheckpoint.initial());
+			row.nextAttemptAt = now;
+			entities.persist(row);
+		}
 		if (row.manifestSha256 != null || row.nextAttemptAt.isAfter(now)
 				|| row.leaseUntil != null && row.leaseUntil.isAfter(now))
 			return null;
@@ -54,7 +61,8 @@ public class RunLogCaptureStore {
 	}
 
 	void publish(Claim claim, Function<RunLogCheckpoint, Saved> publication) {
-		var row = entities.find(RunLogCaptureEntity.class, claim.runId(), LockModeType.PESSIMISTIC_WRITE);
+		var row = entities.find(RunLogCaptureEntity.class, claim.runId(), LockModeType.PESSIMISTIC_WRITE,
+				java.util.Map.of("jakarta.persistence.lock.timeout", 0));
 		if (row == null || !claim.token().equals(row.leaseToken) || row.manifestSha256 != null)
 			return;
 		var saved = publication.apply(JSON.readValue(row.checkpoint, RunLogCheckpoint.class));

@@ -87,7 +87,11 @@ with tempfile.TemporaryDirectory() as temporary:
                 assert query['tty'] == ['False'] or query['tty'] == ['false']
                 commands.append(command)
                 environment = dict(os.environ, HOME=str(directory), SKY_RUNTIME_DIR=str(directory))
-                process = subprocess.run(command, env=environment, capture_output=True, timeout=3, check=True)
+                # Validate the on-wire command above, then execute the same fixed
+                # reader with its JSON argument delivered as data on stdin.
+                launcher = 'import runpy,sys;sys.argv=["archive_read.py",sys.stdin.read(8193)];runpy.run_path("/opt/skywright/runtime/archive_read.py",run_name="__main__")'
+                process = subprocess.run([sys.executable, '-I', '-c', launcher], input=command[4].encode(),
+                                         env=environment, capture_output=True, timeout=3, check=True)
                 assert not process.stderr
                 if mode['stall'] == 'handshake':
                     time.sleep(20)
@@ -126,6 +130,7 @@ with tempfile.TemporaryDirectory() as temporary:
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     server.daemon_threads = True
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(cert, private)
     server.socket = tls.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
