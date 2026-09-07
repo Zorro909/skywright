@@ -56,6 +56,81 @@ def publish(writer, step):
     )
 
 
+@pytest.mark.parametrize("log_count", [1, 600])
+@pytest.mark.parametrize("orphan", [False, True])
+def test_setup_logs_do_not_prevent_first_training_attempt(tmp_path, log_count, orphan):
+    class PagedS3(MemoryS3):
+        def list_objects_v2(self, **request):
+            contents = super().list_objects_v2(**request)["Contents"]
+            start = int(request.get("ContinuationToken", "0"))
+            limit = request.get("MaxKeys", 1000)
+            end = start + limit
+            return {
+                "Contents": contents[start:end],
+                "IsTruncated": end < len(contents),
+                "NextContinuationToken": str(end),
+            }
+
+    memory = PagedS3()
+    for index in range(log_count):
+        memory.objects[f"project/run/v1/skypilot/logs/{index:06d}"] = (
+            b"setup",
+            {},
+            "text/plain",
+        )
+    if orphan:
+        memory.objects["project/run/v1/zzz-unrecognized"] = (
+            b"orphan",
+            {},
+            "text/plain",
+        )
+        with pytest.raises(
+            RecoveryAdmissionError, match="without a complete recovery journal"
+        ):
+            admit(memory, tmp_path)
+        return
+    writer, attempt = admit(memory, tmp_path)
+    assert writer.recovery_history(project_version="project@digest").attempts == (
+        attempt,
+    )
+
+
+def test_setup_logs_do_not_hide_other_records_without_a_journal(tmp_path):
+    memory = MemoryS3()
+    memory.objects["project/run/v1/skypilot/logs/setup"] = (b"setup", {}, "text/plain")
+    memory.objects["project/run/v1/progress.json"] = (b"{}", {}, "application/json")
+    with pytest.raises(
+        RecoveryAdmissionError, match="without a complete recovery journal"
+    ):
+        admit(memory, tmp_path)
+
+
+def test_oversized_prestart_inventory_is_unavailable(tmp_path):
+    memory = MemoryS3()
+    for index in range(257):
+        memory.objects[f"project/run/v1/skypilot/logs/{index:06d}"] = (
+            b"setup",
+            {},
+            "text/plain",
+        )
+    with pytest.raises(RecoveryAdmissionError, match="RECOVERY_HISTORY_UNAVAILABLE"):
+        admit(memory, tmp_path)
+    assert not memory.put_bodies
+
+
+def test_stalled_prestart_inventory_is_unavailable(tmp_path):
+    class StalledS3(MemoryS3):
+        def list_objects_v2(self, **request):
+            return {
+                "Contents": [{"Key": "project/run/v1/skypilot/logs/setup", "Size": 5}],
+                "IsTruncated": True,
+                "NextContinuationToken": "stuck",
+            }
+
+    with pytest.raises(RecoveryAdmissionError, match="RECOVERY_HISTORY_UNAVAILABLE"):
+        admit(StalledS3(), tmp_path)
+
+
 def test_default_three_recoveries_then_durable_idempotent_exhaustion(tmp_path):
     memory = MemoryS3()
     attempts = []

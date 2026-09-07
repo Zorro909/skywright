@@ -156,3 +156,17 @@ volume and mounts it at the expected path. The source and mounted file both hash
 The copy belongs to UID/GID 10002, and the rest of the root filesystem remains
 read-only. No SDK source bytes change. The same managed job retried automatically
 and created another GPU pod after deployment replacement.
+
+The retried pod entered the managed runtime, which refused startup because the
+qualification project had omitted its optional Dataset dependencies. The public
+project now locks that dependency set while retaining the profile's ROCm torch
+and torchvision. A local image imports the MDS reader and project entry point.
+The managed job failed before publishing an Execution Attempt or Training Step.
+
+Its setup logs also exposed a journal admission conflict. ADR 0018 permits
+backend-owned `v1/skypilot/logs/` objects before training begins. Both the SDK
+recorder and backend lifecycle reader now exclude only that namespace when
+establishing an empty training history. Unknown records still reject admission;
+inventory reads stop after 64 pages of at most 256 keys, and incomplete or
+nonadvancing reads remain unavailable. Regression coverage includes 600 setup
+logs, orphan records after those logs, stalled cursors and oversized pages.

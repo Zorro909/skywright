@@ -1266,7 +1266,7 @@ class RunStoreRecorder:
             read=read,
             immutable=immutable,
             exchange=exchange,
-            empty_store=lambda: not self._list_keys(self.protocol.run_prefix),
+            empty_store=self._empty_training_store,
             verify_attempt=verify_attempt,
             verify_report=verify_report,
         )
@@ -1617,6 +1617,43 @@ class RunStoreRecorder:
             if consumed != size or actual.hexdigest() != expected:
                 raise RunStoreIntegrityError(f"RUN_STORE_DIGEST_MISMATCH at {key}")
             return response["Metadata"]
+
+    def _empty_training_store(self) -> bool:
+        """Setup logs are backend-owned and may precede the first SDK journal."""
+        prefix = self.protocol.run_prefix
+        logs = prefix + "skypilot/logs/"
+        continuation: str | None = None
+        for _ in range(64):
+            request: dict[str, object] = {
+                "Bucket": self.target.bucket,
+                "Prefix": prefix,
+                "MaxKeys": 256,
+            }
+            if continuation is not None:
+                request["ContinuationToken"] = continuation
+            response = self._client.list_objects_v2(**request)
+            entries = response.get("Contents", ())
+            if len(entries) > 256:
+                raise RecoveryAdmissionError(
+                    "RECOVERY_HISTORY_UNAVAILABLE",
+                    "pre-start inventory page exceeds its key budget",
+                )
+            if any(not item["Key"].startswith(logs) for item in entries):
+                return False
+            if not response.get("IsTruncated"):
+                return True
+            next_token = response.get("NextContinuationToken")
+            if (
+                not isinstance(next_token, str)
+                or not next_token
+                or next_token == continuation
+            ):
+                break
+            continuation = next_token
+        raise RecoveryAdmissionError(
+            "RECOVERY_HISTORY_UNAVAILABLE",
+            "pre-start inventory exceeds its read budget or does not advance",
+        )
 
     def _list_keys(self, prefix: str) -> list[str]:
         result: list[str] = []

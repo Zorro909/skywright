@@ -102,7 +102,7 @@ class MemoryS3:
             "ContentType": content_type,
         }
 
-    def list_objects_v2(self, **request):
+    def list_objects_v2(self, **request) -> dict[str, Any]:
         prefix = request["Prefix"]
         return {
             "Contents": [
