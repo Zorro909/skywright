@@ -188,7 +188,9 @@ public final class RunStoreAccess {
 	}
 
 	public ProgressRecord readProgress() {
-		RunStoreObject object = require(this.protocol.progressKey());
+		RunStoreObject object = this.objects.get(this.protocol.progressKey(), 16 * 1024);
+		if (object == null)
+			throw new RunStoreIntegrityException("RUN_STORE_MISSING_OBJECT: Progress Record");
 		validate(object);
 		if (!"progress-record".equals(object.metadata().get("skywright-kind"))) {
 			throw new RunStoreIntegrityException("RUN_STORE_METADATA_MISMATCH: expected Progress Record");

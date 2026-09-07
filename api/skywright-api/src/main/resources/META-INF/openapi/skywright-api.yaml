@@ -61,6 +61,20 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AcceptedLocalRun' }
         '404': { $ref: '#/components/responses/Problem' }
+  /runs/{runId}/progress:
+    parameters:
+      - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      operationId: getRunProgress
+      summary: Read the small current Progress Record independently of lifecycle and other capabilities.
+      responses:
+        '200':
+          description: Source availability and, when readable, the aged Progress Record. Absence never means zero progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunProgressObservation' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /runs/{runId}/cancellations:
     parameters:
       - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
@@ -1229,6 +1243,10 @@ components:
       properties:
         state: { type: [string, 'null'], enum: [waiting, running, interrupted, finished, failed, cancelled, null] }
         terminalLatched: { type: boolean }
+        attemptCount: { type: [integer, 'null'], minimum: 0, description: Verified Run Store Execution Attempts; unavailable is never zero. }
+        recoveryCount: { type: [integer, 'null'], minimum: 0, description: Live SkyPilot recovery count, distinct from Execution Attempts. }
+        sourceStatus: { type: [string, 'null'], description: Current unique SkyPilot observation including setup/wait details; not a lifecycle state. }
+        executionSpanMillis: { type: [integer, 'null'], format: int64, minimum: 0, description: Elapsed source time from execution start to observed end or read time, including recovery waits. Not billed or active compute time. }
         cause: { type: [string, 'null'] }
         sourceAvailability: { type: string }
         processAvailability: { type: string, enum: [live, invalid, unavailable] }
@@ -1246,6 +1264,24 @@ components:
         facts: { type: array, items: { $ref: '#/components/schemas/RetainedRunSourceFact' } }
         conflicts: { type: array, items: { $ref: '#/components/schemas/RunSourceConflict' } }
         controlDecisions: { type: array, items: { $ref: '#/components/schemas/RunControlDecisionEvidence' } }
+    RunProgressObservation:
+      type: object
+      additionalProperties: false
+      required: [availability, fetchedAt]
+      properties:
+        availability: { type: string, enum: [available, absent, invalid, unavailable] }
+        fetchedAt: { type: string, format: date-time }
+        record: { $ref: '#/components/schemas/RunProgressRecord' }
+    RunProgressRecord:
+      type: object
+      additionalProperties: false
+      required: [currentStep, writtenAt]
+      properties:
+        currentStep: { type: integer, format: int64, minimum: 0 }
+        latestDurableStep: { type: [integer, 'null'], format: int64, minimum: 0 }
+        latestDurableCheckpoint: { type: [string, 'null'] }
+        targetStep: { type: [integer, 'null'], format: int64, minimum: 0 }
+        writtenAt: { type: string, format: date-time }
     LastSeenRunLifecycle:
       type: object
       additionalProperties: false

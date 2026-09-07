@@ -197,6 +197,11 @@ public final class S3RunStoreObjectStore implements RunStoreObjectStore, AutoClo
 		}
 		catch (RuntimeException failure) {
 			measure("GetObject", 0, "read", started, false);
+			Throwable cause = failure;
+			while (cause instanceof java.util.concurrent.CompletionException && cause.getCause() != null)
+				cause = cause.getCause();
+			if (cause instanceof software.amazon.awssdk.services.s3.model.NoSuchKeyException)
+				return null;
 			throw failure;
 		}
 	}

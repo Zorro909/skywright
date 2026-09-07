@@ -17,13 +17,18 @@ public interface RunStoreObjectStore {
 
 	/** Small control records only. Larger consumers must stream with open. */
 	default RunStoreObject get(String key) {
+		return get(key, 16 * 1024 * 1024);
+	}
+
+	default RunStoreObject get(String key, int limit) {
+		if (limit < 1 || limit > 16 * 1024 * 1024)
+			throw new IllegalArgumentException("Control-record limit must be within 1..16 MiB");
 		try (RunStoreContent content = open(key)) {
 			if (content == null) {
 				return null;
 			}
-			int limit = 16 * 1024 * 1024;
 			if (content.descriptor().size() > limit) {
-				throw new RunStoreIntegrityException("RUN_STORE_READ_BUDGET: control record exceeds 16 MiB");
+				throw new RunStoreIntegrityException("RUN_STORE_READ_BUDGET: control record exceeds read limit");
 			}
 			byte[] bytes = content.stream().readNBytes(limit + 1);
 			if (bytes.length > limit || bytes.length != content.descriptor().size()) {

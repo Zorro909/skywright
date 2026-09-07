@@ -26,8 +26,12 @@ public class LocalRunHttpAdapter implements RunsApi {
 
 	private final de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle;
 
+	private final de.zorro909.skywright.backend.runlifecycle.RunProgressReads progress;
+
 	LocalRunHttpAdapter(LocalRunSubmissions submissions, RunCommands commands,
-			de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle) {
+			de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle,
+			de.zorro909.skywright.backend.runlifecycle.RunProgressReads progress) {
+		this.progress = progress;
 		this.submissions = submissions;
 		this.commands = commands;
 		this.lifecycle = lifecycle;
@@ -42,6 +46,26 @@ public class LocalRunHttpAdapter implements RunsApi {
 		return ResponseEntity.accepted()
 			.location(URI.create("/api/v1/runs/" + result.run().runId()))
 			.body(response(result));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.RunProgressObservation> getRunProgress(
+			UUID runId) {
+		var read = progress.read(runId);
+		var result = new de.zorro909.skywright.backend.boundary.generated.model.RunProgressObservation()
+			.availability(de.zorro909.skywright.backend.boundary.generated.model.RunProgressObservation.AvailabilityEnum
+				.fromValue(read.availability()))
+			.fetchedAt(read.fetchedAt().atOffset(ZoneOffset.UTC));
+		if (read.record() != null) {
+			var record = read.record();
+			result.record(new de.zorro909.skywright.backend.boundary.generated.model.RunProgressRecord()
+				.currentStep(record.currentStep())
+				.latestDurableStep(record.latestDurableStep())
+				.latestDurableCheckpoint(record.latestDurableCheckpoint())
+				.targetStep(record.targetStep())
+				.writtenAt(record.writtenAt().atOffset(ZoneOffset.UTC)));
+		}
+		return ResponseEntity.ok(result);
 	}
 
 	@Override
@@ -105,6 +129,10 @@ public class LocalRunHttpAdapter implements RunsApi {
 		var result = new RunLifecycleObservation()
 			.state(view.state() == null ? null : RunLifecycleObservation.StateEnum.fromValue(view.state()))
 			.cause(view.cause())
+			.attemptCount(view.attemptCount())
+			.recoveryCount(view.recoveryCount())
+			.sourceStatus(view.sourceStatus())
+			.executionSpanMillis(view.executionSpanMillis())
 			.terminalLatched(view.terminalLatched())
 			.sourceAvailability(view.sourceAvailability())
 			.processAvailability(RunLifecycleObservation.ProcessAvailabilityEnum.fromValue(view.processAvailability()))
