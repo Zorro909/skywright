@@ -47,6 +47,11 @@ final class BackendFixture implements AutoCloseable {
 		return start(() -> new SpringApplicationBuilder(SkywrightBackendApplication.class, testConfiguration));
 	}
 
+	static BackendFixture startWith(Class<?> testConfiguration, String... profile) {
+		return start(() -> new SpringApplicationBuilder(SkywrightBackendApplication.class, testConfiguration)
+			.profiles(profile));
+	}
+
 	static BackendFixture startWithTargetStorageIntegration() {
 		return start(() -> new SpringApplicationBuilder(SkywrightBackendApplication.class,
 				TargetStorageIntegrationTestConfiguration.class, DatasetPublicationCommitGateTestConfiguration.class)

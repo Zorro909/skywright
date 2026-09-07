@@ -23,3 +23,5 @@ databaseChangeLog:
       file: db/changelog/versions/0011-currency-conversion-schedule.yaml
   - include:
       file: db/changelog/versions/0012-local-credential-projections.yaml
+  - include:
+      file: db/changelog/versions/0013-run-acceptance.yaml

@@ -177,7 +177,7 @@ public class RegistryRebindings {
 	}
 
 	private TrainingProjectEntity project(UUID id) {
-		return this.repository.find(id)
+		return this.repository.findForUpdate(id)
 			.orElseThrow(() -> new TrainingProjectException("TRAINING_PROJECT_NOT_FOUND",
 					"The Training Project does not exist."));
 	}

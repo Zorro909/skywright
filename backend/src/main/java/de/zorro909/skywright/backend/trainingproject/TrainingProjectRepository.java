@@ -24,6 +24,14 @@ class TrainingProjectRepository {
 		return Optional.ofNullable(this.entityManager.find(TrainingProjectEntity.class, id));
 	}
 
+	Optional<TrainingProjectEntity> findForUpdate(UUID id) {
+		var project = this.entityManager.find(TrainingProjectEntity.class, id,
+				jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+		if (project != null)
+			this.entityManager.refresh(project, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+		return Optional.ofNullable(project);
+	}
+
 	List<TrainingProjectEntity> findAll() {
 		return this.entityManager
 			.createQuery("select project from TrainingProjectEntity project order by lower(project.displayName)",
