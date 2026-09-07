@@ -94,7 +94,7 @@ The backend uses bounded five-second operations for projection and forced contro
 Private admission uses the #229 broker and the target-side `runtime_pull.py` helper. The
 helper runs in the SkyPilot pod as the SkyPilot OS identity, with the same separately rendered
 mode-0400 `SKYWRIGHT_KUBECONFIG` projection. Configure that mount and environment variable on
-both the `skypilot-api-server` and `runtime-pull` containers. The kubeconfig must identify one
+the `skypilot-api-server`, `runtime-pull` and `log-collector` containers. The kubeconfig must identify one
 static-token context, user and cluster with an embedded CA; no ambient in-cluster fallback is
 used. Its namespace (or `default`) is pinned in the accepted task and passed as SkyPilot's
 Kubernetes namespace override.

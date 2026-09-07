@@ -79,6 +79,9 @@ class RenderedProfilesTest(unittest.TestCase):
                 self.assertIn("type: ClusterIP", service)
                 self.assertIn("port: 46580", service)
                 self.assertIn("port: 46581", service)
+                self.assertIn("port: 46582", service)
+                self.assertIn("name: log-collector", server)
+                self.assertIn("readOnly: true", server)
                 self.assertIn("name: runtime-pull", server)
                 self.assertIn("/opt/skywright/runtime/runtime_pull.py", server)
                 self.assertIn("value: http://skywright-skypilot-api-server:46581", backend)
@@ -131,7 +134,7 @@ class RenderedProfilesTest(unittest.TestCase):
                     if profile == LOCAL
                     else "skywright-production-skypilot-database"
                 )
-                self.assertEqual(server.count(f"name: {database_secret}"), 2)
+                self.assertEqual(server.count(f"name: {database_secret}"), 3)
                 self.assertNotIn("name: skywright-skypilot-database\n", server)
                 self.assertNotIn("resources:", server)
                 self.assertNotIn("hostPort:", server)

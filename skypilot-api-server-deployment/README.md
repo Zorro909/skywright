@@ -117,3 +117,8 @@ sends only SIGTERM and verifies that the stopped container has no remaining PID.
 Delete `skypilot-api-server.env` when it is no longer needed. Keep the PostgreSQL database and
 `skywright-skypilot-state` volume across image replacement. Kubernetes ownership and release
 bundle integration belong to later deployment tickets.
+
+The read-only Run Log Archive collector runs in a separate container on private port
+46582, using the same protected Kubernetes projection and a read-only controller
+state mount. See [Run log archive](../docs/reference/run-log-archive.md) for its
+source qualification, resource bounds and complete/partial manifest contract.

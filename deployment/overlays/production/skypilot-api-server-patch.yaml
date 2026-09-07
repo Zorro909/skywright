@@ -21,3 +21,10 @@ spec:
                 secretKeyRef:
                   name: skywright-production-skypilot-database
                   key: connectionUri
+        - name: log-collector
+          env:
+            - name: SKYPILOT_DB_CONNECTION_URI
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-production-skypilot-database
+                  key: connectionUri

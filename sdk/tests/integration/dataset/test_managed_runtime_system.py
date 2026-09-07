@@ -162,6 +162,13 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
             if result["outcome"] == "startup-refused":
                 assert "Traceback" not in process.stderr
                 return directory, result
+            marker_prefix = "\x1eSKYWRIGHT_ATTEMPT_V1 "
+            assert marker_prefix in process.stdout
+            marker = json.loads(
+                process.stdout.split(marker_prefix, 1)[1].split("\x1f", 1)[0]
+            )
+            assert marker["attemptId"] == result["attempt_id"]
+            assert marker["runId"] == run_id
             result["step"] = result["last_committed_step"]
             result["reference"] = result["latest_durable_checkpoint"]
             # subprocess.run reaped the process; the private supervisor owns this evidence.

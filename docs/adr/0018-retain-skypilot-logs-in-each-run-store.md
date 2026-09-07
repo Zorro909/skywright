@@ -8,7 +8,20 @@ Every Run retains both SkyPilot task logs and its controller log in a **Run Log 
 
 ## Capture and addressing
 
-The backend's existing SkyPilot reconciliation path writes the archive. It reads both SkyPilot log surfaces through the pinned SDK integration and writes raw new bytes as immutable chunks in a SkyPilot-provenance partition of the Run Store. Capture is incremental during ordinary reconciliation, so a long-running or abruptly orphaned Run does not depend on a terminal-only fetch; the exact cadence is operational tuning. Numeric SkyPilot job identifiers are correlation evidence only—the Run identity addresses the archive.
+The backend's existing SkyPilot reconciliation path writes the archive. It reads
+task and controller log files through a separate Skywright-owned, read-only
+collector and writes raw new bytes as immutable chunks in a SkyPilot-provenance
+partition of the Run Store. On 2026-09-07 the owner approved this bounded
+transport after rejecting changes to the SkyPilot server and client SDK. The
+unmodified SDK's text transformations and unbounded download paths cannot meet
+the archive contract. Orchestration continues through the unchanged SDK under
+ADR 0009. The collector reads source files; it does not become another
+authoritative log store or a training-process-only sink.
+
+Capture is incremental during ordinary reconciliation, so a long-running or
+abruptly orphaned Run does not depend on a terminal-only fetch; the exact cadence
+is operational tuning. Numeric SkyPilot job identifiers are correlation evidence
+only, while the Run identity addresses the archive.
 
 SkyPilot exposes task output as one aggregate across setup and recoveries, but the useful reading unit is an Execution Attempt. After its Execution Attempt Record is durable and before project code runs, the library emits a schema-versioned boundary marker carrying that attempt's identity. The backend accepts a marker only when it names an existing record and uses it to index the following training output to that Execution Attempt.
 

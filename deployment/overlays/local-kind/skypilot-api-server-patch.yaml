@@ -23,3 +23,11 @@ spec:
                 secretKeyRef:
                   name: skywright-local-skypilot-database
                   key: connectionUri
+        - name: log-collector
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SKYPILOT_DB_CONNECTION_URI
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-local-skypilot-database
+                  key: connectionUri

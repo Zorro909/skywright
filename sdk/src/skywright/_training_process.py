@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
+from skywright._attempt_marker import emit_attempt_marker
 from skywright._cgroup_memory import read_cgroup_memory_usage
 from skywright._training_context import DefaultRunContext
 from skywright._training_environment import (
@@ -93,6 +94,7 @@ def run_training_process(
     monotonic_clock: Callable[[], float] = time.monotonic,
     cgroup_memory_reader: Callable[[], int | None] = read_cgroup_memory_usage,
     system_sampler_wait: SamplerWait = wait_for_sampling,
+    _archive_marker: bool = False,
 ) -> TrainingProcessResult:
     """Execute one Training Project through the process's sole Run Context."""
 
@@ -243,6 +245,8 @@ def run_training_process(
         raise
     except Exception as failure:
         return finish(unpublished_failure(attempt, failure, "construction"))
+    if _archive_marker:
+        emit_attempt_marker(attempt)
     try:
         if resolved_dataset is None:
             resolved_dataset = cast(
