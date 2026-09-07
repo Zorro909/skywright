@@ -257,6 +257,79 @@ final class SkyPilotApiServerImageIT {
 		assertThat(docker("logs", serverContainer)).doesNotContain(databasePassword, userPassword);
 	}
 
+	@Test
+	@Order(4)
+	void collectorReadsPinnedPostgresAndRawFilesWithReadOnlyStateAndNoSdkImport() throws Exception {
+		String run = "38c76a5b-7cba-400e-9595-7657b194ea83";
+		String seed = """
+				import os, sys, uuid
+				from pathlib import Path
+				sys.path.insert(0, '/opt/skywright/runtime')
+				from log_collector import cloud_name
+				from sky.utils.common_utils import make_cluster_name_on_cloud
+				from sky.utils import common_utils
+				import psycopg2
+				name = 'skywright-38c76a5b-7cba-400e-9595-7657b194ea83'
+				for i in range(100):
+				    candidate = 'skywright-' + str(uuid.UUID(int=i))
+				    expected = make_cluster_name_on_cloud(candidate, 30, add_user_hash=False)
+				    assert cloud_name(candidate, 30) == expected
+				    cluster = expected + '-' + str(91062 + i)
+				    assert cloud_name(cluster, 42, common_utils.get_user_hash()) == make_cluster_name_on_cloud(cluster, 42)
+				root = Path('/var/lib/skypilot/sky_logs')
+				(root / 'jobs_controller').mkdir(exist_ok=True)
+				raw = bytes([27, 91, 51, 49, 109, 255, 0, 13, 10, 120])
+				(root / 'jobs_controller/91062.log').write_bytes(raw)
+				snapshot = root / 'collector-fixture-run.log'
+				snapshot.write_bytes(raw)
+				with psycopg2.connect(os.environ['SKYPILOT_DB_CONNECTION_URI']) as connection, connection.cursor() as cursor:
+				    cursor.execute("INSERT INTO job_info(spot_job_id,name,schedule_state,user_hash) VALUES (91062,%s,'DONE','fixture')", (name,))
+				    cursor.execute("INSERT INTO spot(spot_job_id,task_id,task_name,status,end_at,local_log_file) VALUES (91062,0,%s,'FAILED_SETUP',1,%s)", (name,str(snapshot)))
+				print('fixture ready; naming protocol matches')
+				""";
+		assertThat(docker("exec", serverContainer, "python", "-I", "-c", seed)).contains("naming protocol matches");
+		String check = """
+				import sys, base64
+				sys.path.insert(0, '/opt/skywright/runtime')
+				from log_collector import Sources
+				assert 'sky' not in sys.modules
+				sources = Sources()
+				with sources._connection() as connection, connection.cursor() as cursor:
+				    cursor.execute('SHOW transaction_read_only')
+				    assert cursor.fetchone()[0] == 'on'
+				raw = bytes([27, 91, 51, 49, 109, 255, 0, 13, 10, 120])
+				for stream in ('task', 'controller'):
+				    cursor, captured, offset = {}, b'', 0
+				    for i in range(8):
+				        page = sources.page({'runId':'RUN_ID','stream':stream,'limit':3,'cursor':cursor,'offset':offset})
+				        captured += base64.b64decode(page['bytes'])
+				        cursor = page['cursor']
+				        offset = page['offset'] + len(base64.b64decode(page['bytes']))
+				        if page['sealed']:
+				            assert page['finalSource']
+				            break
+				    assert captured == raw, (stream, captured)
+				assert 'sky' not in sys.modules
+				print('read-only collector preserves raw bytes')
+				"""
+			.replace("RUN_ID", run);
+		String uri = "postgresql://skypilot:" + databasePassword + "@" + databaseContainer + ":5432/skypilot";
+		assertThat(docker("run", "--rm", "--read-only", "--network", network, "--volume",
+				stateVolume + ":/var/lib/skypilot:ro", "--tmpfs", "/tmp:rw,nosuid,size=32m", "--env",
+				"SKYPILOT_DB_CONNECTION_URI=" + uri, "--entrypoint", "python", imageName(), "-I", "-c", check))
+			.contains("read-only collector preserves raw bytes");
+	}
+
+	@Test
+	@Order(5)
+	void collectorUsesActualKubernetesTlsAndExecProtocolForTheFixedReadOnlyProgram() throws Exception {
+		String probe = java.nio.file.Files
+			.readString(java.nio.file.Path.of("src/test/resources/collector_kubernetes_probe.py"));
+		assertThat(docker("run", "--rm", "--read-only", "--network", "none", "--tmpfs", "/tmp:rw,nosuid,size=32m",
+				"--entrypoint", "python", imageName(), "-I", "-c", probe))
+			.contains("Kubernetes raw-byte protocol qualified");
+	}
+
 	private ArrayList<String> serverArguments(String container) {
 		var databaseUri = "postgresql://skypilot:" + databasePassword + "@" + databaseContainer + ":5432/skypilot";
 		return new ArrayList<>(List.of("run", "--detach", "--name", container, "--network", network, "--read-only",

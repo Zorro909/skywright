@@ -118,6 +118,33 @@ spec:
           volumeMounts:
             - name: temporary-files
               mountPath: /tmp
+        - name: log-collector
+          image: skywright-skypilot-api-server
+          command: ["python", "-I", "/opt/skywright/runtime/log_collector.py"]
+          ports:
+            - name: log-collector
+              containerPort: 46582
+          env:
+            - name: SKYPILOT_DB_CONNECTION_URI
+              valueFrom:
+                secretKeyRef:
+                  name: skywright-skypilot-database
+                  key: connectionUri
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: log-collector
+          volumeMounts:
+            - name: temporary-files
+              mountPath: /tmp
+            - name: retained-state
+              mountPath: /var/lib/skypilot
+              readOnly: true
       volumes:
         - name: temporary-files
           emptyDir:

@@ -48,7 +48,8 @@ class StopProjectionTimeoutTest {
 				.build()) {
 				long began = System.nanoTime();
 				assertThatThrownBy(() -> client
-					.getObject(b -> b.bucket("fixture").key("control"), new S3RunStopRequests.BoundedBody(1000))
+					.getObject(b -> b.bucket("fixture").key("control"),
+							new de.zorro909.skywright.backend.runstore.BoundedS3Body(1000))
 					.join()).isInstanceOf(CompletionException.class);
 				assertThat(Duration.ofNanos(System.nanoTime() - began)).isLessThan(Duration.ofSeconds(5));
 			}
@@ -61,7 +62,7 @@ class StopProjectionTimeoutTest {
 
 	@Test
 	void excessiveBodyFailsBeforeBufferingAndCancelsTheSubscription() {
-		var body = new S3RunStopRequests.BoundedBody(4);
+		var body = new de.zorro909.skywright.backend.runstore.BoundedS3Body(4);
 		var result = body.prepare();
 		body.onResponse(software.amazon.awssdk.services.s3.model.GetObjectResponse.builder().contentLength(4L).build());
 		var cancelled = new java.util.concurrent.atomic.AtomicBoolean();

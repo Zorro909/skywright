@@ -97,9 +97,18 @@ The installed source locations supporting these findings are relative to
 | `jobs/controller.py:2395` | Per-job consolidation-mode controller file |
 | `jobs/utils.py:1892` | Active task logs read from the execution cluster |
 
-An independent read-only collector with bounded remote-file access could be
-investigated without altering SkyPilot distributions. It would require a new
-architecture decision about transport and source access, followed by actual
-task/controller qualification. No such solution has been implemented or proven.
-Changing the archive contract to decoded SDK text alone would still leave the
-unbounded-line problem unresolved.
+The owner approved a separate Skywright-owned, read-only collector on 2026-09-07.
+ADR 0009 and ADR 0018 now record that exception. The implementation and its
+qualification are described in [Run log archive](../reference/run-log-archive.md).
+It leaves the SkyPilot distribution unchanged and uses bounded file reads through
+Kubernetes exec for active task logs and a read-only controller volume for retained
+logs. Unconfirmed source generations produce partial archives.
+
+The pinned source revealed two further constraints. `clusters.node_names` stores
+Kubernetes node hostnames, so the collector must find the head pod using the exact
+cluster/head labels and verify its logical cluster annotation. Importing SkyPilot's
+otherwise pure naming helper initializes `.sky/locks`; the collector instead owns
+the small deterministic naming protocol and tests equivalence against the packaged
+SDK. Terminal `local_log_file` paths do not retain pod UID, so matching prefixes do
+not establish generation identity. Copies of uncertain origin remain separate
+source generations with an explicit partial reason.

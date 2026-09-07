@@ -1,0 +1,23 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-62-run-log-capture
+      author: skywright
+      changes:
+        - createTable:
+            schemaName: skywright
+            tableName: run_log_capture
+            columns:
+              - column: { name: run_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: checkpoint_json, type: text, constraints: { nullable: false } }
+              - column: { name: lease_token, type: uuid }
+              - column: { name: lease_until, type: timestamp with time zone }
+              - column: { name: next_attempt_at, type: timestamp with time zone }
+              - column: { name: manifest_sha256, type: varchar(64) }
+              - column: { name: finalized_at, type: timestamp with time zone }
+        - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: run_log_capture, baseColumnNames: run_id, referencedTableSchemaName: skywright, referencedTableName: run_record, referencedColumnNames: id, constraintName: fk_run_log_capture_run }
+        - sql:
+            sql: >-
+              ALTER TABLE skywright.run_log_capture ADD CONSTRAINT ck_run_log_checkpoint_size CHECK (octet_length(checkpoint_json) <= 32768);
+              GRANT SELECT, INSERT, UPDATE ON skywright.run_log_capture TO "${runtimeRole}";
+      rollback:
+        - dropTable: { schemaName: skywright, tableName: run_log_capture }

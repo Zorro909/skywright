@@ -16,3 +16,6 @@ spec:
     - name: runtime-pull
       port: 46581
       targetPort: runtime-pull
+    - name: log-collector
+      port: 46582
+      targetPort: log-collector

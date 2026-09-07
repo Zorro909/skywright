@@ -3954,3 +3954,48 @@ print(json.dumps({"outcome": result.outcome.value,
     assert result["outcome"] == "completed", result
     assert (result["artifacts"], result["samples"]) == (260, 260)
     assert result["retained_bytes"] < 1024 * 1024
+
+
+@pytest.mark.parametrize("fail_publication", [False, True])
+def test_archive_marker_follows_durable_attempt_and_precedes_project(
+    fail_publication: bool,
+) -> None:
+    process = run_project(
+        """
+import io
+import json
+import uuid
+from contextlib import redirect_stdout
+from skywright import run_training_process
+
+output = io.StringIO()
+class Recorder(TestRecorder):
+    def publish_attempt(self, attempt):
+        assert output.getvalue() == ""
+        if FAIL_PUBLICATION:
+            raise OSError("publication unavailable")
+        super().publish_attempt(attempt)
+
+recorder = Recorder()
+entered = []
+def train(context):
+    marker = output.getvalue()
+    assert marker.startswith("\\x1eSKYWRIGHT_ATTEMPT_V1 ")
+    assert marker.endswith("\\x1f\\n")
+    value = json.loads(marker.split(" ", 1)[1][:-2])
+    assert value["attemptId"] == recorder.events[0][1].attempt_id
+    assert value["schemaVersion"] == 1
+    entered.append(True)
+    raise RuntimeError("project failure after marker")
+
+with redirect_stdout(output):
+    result = run_training_process(
+        train, run_id=str(uuid.uuid4()), project_version="project-v1",
+        configuration={}, dataset=TestDataset(), metric_contracts=TestMetricContracts(),
+        skywright_metric_schema="test-schema@1", recorder=recorder, seed=17, _archive_marker=True,
+    )
+assert bool(entered) is (not FAIL_PUBLICATION)
+assert bool(output.getvalue()) is (not FAIL_PUBLICATION)
+""".replace("FAIL_PUBLICATION", repr(fail_publication))
+    )
+    assert process.returncode == 0, process.stderr

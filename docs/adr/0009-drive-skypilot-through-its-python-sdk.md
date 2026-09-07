@@ -42,8 +42,10 @@ The API server is long-lived and Skywright-operated. A per-call server auto-star
 
 On 2026-09-07, the owner rejected modifying the SkyPilot server or client SDK for
 Run Log Archive capture in #62. Both must remain unchanged. This rules out the
-proposed paired raw-log patch; it does not relax ADR 0018's archive requirements
-or authorize bypassing the SDK integration.
+proposed paired raw-log patch. The owner subsequently approved a separate
+Skywright-owned, read-only log collector and its bounded transport for #62.
+That exception applies only to archive capture as recorded in ADR 0018;
+submission, status and control remain through the unchanged SDK.
 
 Because the SkyPilot client is now a dependency of the backend's own build while the API server deploys separately, the two can drift apart in a way `sky` and its server never can. They are therefore built from one pinned SkyPilot version and identified by digest, as ADR 0006 already does for training images, and upgrading SkyPilot is a deliberate paired deployment. The alternative is owning a compatibility matrix for a protocol whose version guarantees are undocumented.
 

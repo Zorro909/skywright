@@ -342,4 +342,5 @@ class ManagedRuntime:
                 source_run_id=self.source_run_id,
                 ordering_reset=value["orderingReset"],
                 accelerator=_accelerator or Accelerator("rocm", 0),
+                _archive_marker=True,
             )
