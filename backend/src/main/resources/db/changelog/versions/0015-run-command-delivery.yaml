@@ -1,0 +1,64 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-65-run-command-delivery
+      author: skywright
+      changes:
+        - addColumn:
+            schemaName: skywright
+            tableName: local_credential_projection
+            columns:
+              - column: { name: binding_metadata_json, type: jsonb }
+        - createTable:
+            schemaName: skywright
+            tableName: run_command
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: run_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: kind, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: accepted_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: evidence_json, type: text, constraints: { nullable: false } }
+        - addUniqueConstraint: { schemaName: skywright, tableName: run_command, columnNames: 'run_id, kind', constraintName: uq_run_command_kind }
+        - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: run_command, baseColumnNames: run_id, referencedTableSchemaName: skywright, referencedTableName: run_record, referencedColumnNames: id, constraintName: fk_run_command_run }
+        - createTable:
+            schemaName: skywright
+            tableName: run_command_delivery
+            columns:
+              - column: { name: command_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: disposition, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: projected_at, type: timestamp with time zone }
+              - column: { name: force_after, type: timestamp with time zone }
+              - column: { name: stop_attempted_at, type: timestamp with time zone }
+              - column: { name: next_attempt_at, type: timestamp with time zone }
+              - column: { name: lease_token, type: uuid }
+              - column: { name: lease_until, type: timestamp with time zone }
+              - column: { name: attempts, type: integer, constraints: { nullable: false } }
+        - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: run_command_delivery, baseColumnNames: command_id, referencedTableSchemaName: skywright, referencedTableName: run_command, referencedColumnNames: id, constraintName: fk_run_command_delivery }
+        - createIndex:
+            schemaName: skywright
+            tableName: run_command_delivery
+            indexName: ix_run_command_due
+            columns:
+              - column: { name: next_attempt_at }
+              - column: { name: command_id }
+        - createTable:
+            schemaName: skywright
+            tableName: run_dispatch_prevention
+            columns:
+              - column: { name: run_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: command_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: prevented_at, type: timestamp with time zone, constraints: { nullable: false } }
+        - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: run_dispatch_prevention, baseColumnNames: run_id, referencedTableSchemaName: skywright, referencedTableName: run_record, referencedColumnNames: id, constraintName: fk_run_dispatch_prevention_run }
+        - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: run_dispatch_prevention, baseColumnNames: command_id, referencedTableSchemaName: skywright, referencedTableName: run_command, referencedColumnNames: id, constraintName: fk_run_dispatch_prevention_command }
+        - sql:
+            sql: >-
+              INSERT INTO skywright.run_command (id, run_id, kind, accepted_at, evidence_json)
+              SELECT submission_id, id, 'SUBMISSION', accepted_at, '{}' FROM skywright.run_record;
+              INSERT INTO skywright.run_command_delivery (command_id, disposition, next_attempt_at, attempts)
+              SELECT id, 'handoff-uncertain', now(), 0 FROM skywright.run_command;
+              GRANT SELECT, INSERT ON skywright.run_command, skywright.run_dispatch_prevention TO "${runtimeRole}";
+              GRANT SELECT, INSERT, UPDATE ON skywright.run_command_delivery TO "${runtimeRole}";
+      rollback:
+        - dropColumn: { schemaName: skywright, tableName: local_credential_projection, columnName: binding_metadata_json }
+        - dropTable: { schemaName: skywright, tableName: run_dispatch_prevention }
+        - dropTable: { schemaName: skywright, tableName: run_command_delivery }
+        - dropTable: { schemaName: skywright, tableName: run_command }

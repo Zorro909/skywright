@@ -80,6 +80,10 @@ public final class RunLifecycleDerivation {
 					&& f.observedAt().equals(latestObservation.observedAt()))
 			.max(ORDER)
 			.orElse(null);
+		if (evidence.decisions().stream().anyMatch(RunControlDecisions.Decision::dispatchPrevented)) {
+			gaps.add("DISPATCH_PREVENTED; no launch was authorized");
+			return new Result(RunLifecycle.CANCELLED, true, null, selected, conflicts, gaps);
+		}
 		if (evidence.process() == null) {
 			gaps.add("RUN_STORE_EVIDENCE_UNAVAILABLE");
 			return new Result(null, false, null, selected, conflicts, gaps);
@@ -124,6 +128,16 @@ public final class RunLifecycleDerivation {
 		}
 		else {
 			state = null;
+		}
+		if (process.stopRefusal() != null) {
+			gaps.add("STARTUP_REFUSED_BY_STOP_REQUEST:" + process.stopRefusal().commandId());
+			// A refused prospective startup does not prove an earlier writer stopped.
+			// It explains a source-confirmed terminal result, never an in-flight one.
+			if (state != null && state.terminal() && process.exhaustedAt() == null
+					&& (cause == null || cause.equals("interrupted"))) {
+				state = RunLifecycle.CANCELLED;
+				cause = null;
+			}
 		}
 		if (attempt != null && cause == null)
 			gaps.add("TERMINATION_REPORT_ABSENT; cause unproven");

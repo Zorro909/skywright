@@ -1,11 +1,13 @@
 # Test subprocess inputs and boto3 responses are dynamically shaped.
 # pyright: reportMissingParameterType=false, reportUnknownParameterType=false
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import time
 from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
@@ -66,7 +68,14 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
         counter = 0
 
         def execute(
-            run_id, *, interrupt=-1, source=None, reset=False, changed=False, expected=0
+            run_id,
+            *,
+            interrupt=-1,
+            source=None,
+            reset=False,
+            changed=False,
+            expected=0,
+            stop=None,
         ):
             nonlocal counter
             directory = tmp_path / str(counter)
@@ -86,7 +95,7 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
                 SDK / "tests/support/managed_project/skywright_project.py", directory
             )
             launch = 'import sys,runpy;from pathlib import Path;sys.path[:0]=[sys.argv[1],str(Path.cwd())];import skywright;assert Path(skywright.__file__).is_relative_to(Path(sys.argv[1]));runpy.run_path(sys.argv[2],run_name="__main__")'
-            process = subprocess.run(
+            with subprocess.Popen(
                 [
                     sys.executable,
                     "-I",
@@ -96,11 +105,58 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
                     str(SDK / "tests/support/managed_runtime_scenario.py"),
                 ],
                 cwd=directory,
-                env={**environment, "FIXTURE_INTERRUPT_STEP": str(interrupt)},
-                capture_output=True,
+                env={
+                    **environment,
+                    "FIXTURE_INTERRUPT_STEP": str(interrupt),
+                    "FIXTURE_STOP_STEP": "4" if stop else "-1",
+                },
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=60,
-            )
+            ) as child:
+                try:
+                    if stop:
+                        deadline = time.monotonic() + 30
+                        while not (directory / "stop-ready").exists():
+                            assert child.poll() is None, child.communicate()
+                            assert time.monotonic() < deadline, (
+                                "project did not reach stop boundary"
+                            )
+                            time.sleep(0.02)
+                        requested = {
+                            "schemaVersion": 1,
+                            "runId": run_id,
+                            "projectVersion": d["trainingProjectVersion"][
+                                "manifestArtifactDigest"
+                            ],
+                            "commandId": str(uuid4()),
+                            "kind": stop,
+                            "requestedAt": "2026-09-07T00:00:00Z",
+                        }
+                        body = json.dumps(requested).encode()
+                        client.put_object(
+                            Bucket="outputs",
+                            Key=f"stable-project/{run_id}/v1/control/{stop}.json",
+                            Body=body,
+                            IfNoneMatch="*",
+                            Metadata={
+                                "skywright-schema": "v1",
+                                "skywright-kind": "run-stop-request",
+                                "skywright-size": str(len(body)),
+                                "skywright-sha256": hashlib.sha256(body).hexdigest(),
+                            },
+                        )
+                        # Allow the owned 1-second observer to receive the request before the next Safe Point.
+                        time.sleep(2.5)
+                        (directory / "stop-delivered").touch()
+                    stdout, stderr = child.communicate(timeout=60)
+                    process = subprocess.CompletedProcess(
+                        child.args, child.returncode, stdout, stderr
+                    )
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                        child.communicate()
             assert process.returncode == expected, (process.stdout, process.stderr)
             result = json.loads(process.stdout.splitlines()[-1])
             if result["outcome"] == "startup-refused":
@@ -145,6 +201,35 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
         )
         assert not (rejected_dir / "started.json").exists()
         assert rejected["outcome"] == "failed"
+
+        for kind in ("cancellation", "policy-stop"):
+            stopped_id = str(uuid4())
+            _stopped_dir, stopped = execute(stopped_id, stop=kind, expected=64)
+            assert stopped["outcome"] == "cancelled"
+            assert stopped["step"] == 4
+            if kind == "cancellation":
+                assert stopped["reference"] is None
+            else:
+                assert stopped["reference"] is not None
+            keys_before = {
+                item["Key"]
+                for item in client.list_objects_v2(
+                    Bucket="outputs", Prefix=f"stable-project/{stopped_id}/v1/"
+                ).get("Contents", [])
+            }
+            refused_dir, refusal = execute(stopped_id, expected=1)
+            assert refusal["outcome"] == "startup-refused"
+            assert refusal["code"] == "RUN_STOP_REQUESTED"
+            assert not (refused_dir / "started.json").exists()
+            keys_after = {
+                item["Key"]
+                for item in client.list_objects_v2(
+                    Bucket="outputs", Prefix=f"stable-project/{stopped_id}/v1/"
+                ).get("Contents", [])
+            }
+            assert keys_after - keys_before == {
+                f"stable-project/{stopped_id}/v1/control/startup-refusal.json"
+            }
 
         for fault in ("missing", "corrupt"):
             if fault == "missing":

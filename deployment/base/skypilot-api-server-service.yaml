@@ -13,3 +13,6 @@ spec:
     - name: http
       port: 46580
       targetPort: http
+    - name: runtime-pull
+      port: 46581
+      targetPort: runtime-pull

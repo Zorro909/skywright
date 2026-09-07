@@ -111,6 +111,38 @@ class RunStoreLifecycleTest {
 		assertThatThrownBy(missing::read).hasMessage("AccessDenied");
 	}
 
+	@Test
+	void validatesStartupRefusalAgainstItsExactStopRequestWithoutInventingAttemptHistory() {
+		var fixture = new Fixture();
+		fixture.objects.values.clear();
+		String id = java.util.UUID.randomUUID().toString();
+		var request = fixture.identity()
+			.put("commandId", id)
+			.put("kind", "cancellation")
+			.put("requestedAt", "2026-09-07T00:00:00Z");
+		var refusal = fixture.identity()
+			.put("commandId", id)
+			.put("kind", "cancellation")
+			.put("refusedAt", "2026-09-07T00:00:01Z");
+		fixture.objects.put(fixture.key("control/cancellation.json"), "run-stop-request",
+				JSON.writeValueAsBytes(request));
+		assertThat(fixture.read().attempts()).isEmpty();
+		fixture.objects.put(fixture.key("control/startup-refusal.json"), "run-stop-refusal",
+				JSON.writeValueAsBytes(refusal));
+		assertThat(fixture.read().stopRefusal().commandId()).isEqualTo(id);
+		assertThat(fixture.read().attempts()).isEmpty();
+		request.put("commandId", java.util.UUID.randomUUID().toString());
+		fixture.objects.put(fixture.key("control/cancellation.json"), "run-stop-request",
+				JSON.writeValueAsBytes(request));
+		assertThatThrownBy(fixture::read).isInstanceOf(RunStoreIntegrityException.class);
+		request.put("commandId", id).put("requestedAt", "invalid-timestamp");
+		fixture.objects.put(fixture.key("control/cancellation.json"), "run-stop-request",
+				JSON.writeValueAsBytes(request));
+		assertThatThrownBy(fixture::read).isInstanceOf(RunStoreIntegrityException.class);
+		fixture.objects.values.remove(fixture.key("control/cancellation.json"));
+		assertThatThrownBy(fixture::read).isInstanceOf(RunStoreIntegrityException.class);
+	}
+
 	private static class Fixture {
 
 		final RunStoreProtocol protocol = new RunStoreProtocol("project", RUN);

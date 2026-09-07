@@ -96,6 +96,16 @@ public final class VaultBindings {
 		if (binding.revision() != revision || !binding.role().equals(role)) {
 			return new Resolution<>(Status.INVALID, Optional.empty());
 		}
+		return resolveRecorded(binding, role, consumer);
+	}
+
+	/**
+	 * Only the projection broker may restore an immutable, previously qualified binding.
+	 */
+	<T> Resolution<T> resolveRecorded(CredentialBinding binding, String role, Function<JsonNode, T> consumer) {
+		if (!binding.role().equals(role))
+			return new Resolution<>(Status.INVALID, Optional.empty());
+		long revision = binding.revision();
 		if (binding.validatedAt().isAfter(this.clock.instant())) {
 			return new Resolution<>(Status.INVALID, Optional.empty());
 		}
@@ -111,7 +121,8 @@ public final class VaultBindings {
 				.header("X-Vault-Token", Files.readString(this.tokenFile).strip())
 				.GET()
 				.build();
-			var response = this.client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+			var response = this.client.send(request,
+					HttpResponse.BodyHandlers.limiting(HttpResponse.BodyHandlers.ofByteArray(), 1024 * 1024));
 			if (response.statusCode() == 404) {
 				return new Resolution<>(Status.MISSING, Optional.empty());
 			}

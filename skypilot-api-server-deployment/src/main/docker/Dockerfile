@@ -15,6 +15,7 @@ LABEL org.opencontainers.image.base.name="docker.io/library/python:3.12.11-slim-
 
 COPY maven/graalpy.lock /tmp/graalpy.lock
 COPY startup/launch.py /opt/skywright/runtime/launch.py
+COPY startup/runtime_pull.py /opt/skywright/runtime/runtime_pull.py
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes \
@@ -51,7 +52,7 @@ ENV HOME=/var/lib/skypilot \
     SKYPILOT_GRACE_PERIOD_SECONDS=10 \
     XDG_CACHE_HOME=/var/lib/skypilot/.cache
 
-EXPOSE 46580
+EXPOSE 46580 46581
 STOPSIGNAL SIGTERM
 
 ENTRYPOINT ["python", "-I", "-S", "/opt/skywright/runtime/launch.py"]

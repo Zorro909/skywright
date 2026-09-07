@@ -4,7 +4,14 @@ import java.time.Instant;
 import java.util.List;
 
 /** Verified process-originated evidence, read through without database replication. */
-public record RunProcessEvidence(List<Attempt> attempts, String historyHead, int recoveryDebt, Instant exhaustedAt) {
+public record RunProcessEvidence(List<Attempt> attempts, String historyHead, int recoveryDebt, Instant exhaustedAt,
+		StopRefusal stopRefusal) {
+
+	public RunProcessEvidence(List<Attempt> attempts, String historyHead, int recoveryDebt, Instant exhaustedAt) {
+		this(attempts, historyHead, recoveryDebt, exhaustedAt, null);
+	}
+	public record StopRefusal(String commandId, String kind, Instant refusedAt) {
+	}
 
 	public RunProcessEvidence {
 		attempts = List.copyOf(attempts);

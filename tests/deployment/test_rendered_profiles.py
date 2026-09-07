@@ -78,6 +78,10 @@ class RenderedProfilesTest(unittest.TestCase):
                 self.assertNotIn("SKYWRIGHT_DATABASE_RUNTIME_", server)
                 self.assertIn("type: ClusterIP", service)
                 self.assertIn("port: 46580", service)
+                self.assertIn("port: 46581", service)
+                self.assertIn("name: runtime-pull", server)
+                self.assertIn("/opt/skywright/runtime/runtime_pull.py", server)
+                self.assertIn("value: http://skywright-skypilot-api-server:46581", backend)
                 self.assertIn("targetPort: http", service)
                 self.assertIn("podSelector:", network_policy)
                 self.assertIn(
@@ -93,6 +97,7 @@ class RenderedProfilesTest(unittest.TestCase):
                 self.assertIn("policyTypes:\n  - Ingress", network_policy)
                 self.assertIn("protocol: TCP", network_policy)
                 self.assertIn("port: 46580", network_policy)
+                self.assertIn("port: 46581", network_policy)
                 self.assertEqual(server.count("path: /api/health"), 3)
                 self.assertIn("startupProbe:", server)
                 self.assertIn("livenessProbe:", server)

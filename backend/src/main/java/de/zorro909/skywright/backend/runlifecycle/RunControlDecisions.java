@@ -9,7 +9,10 @@ public interface RunControlDecisions {
 
 	List<Decision> read(UUID runId);
 
-	record Decision(UUID id, Kind kind, Instant decidedAt) {
+	record Decision(UUID id, Kind kind, Instant decidedAt, boolean dispatchPrevented) {
+		public Decision(UUID id, Kind kind, Instant decidedAt) {
+			this(id, kind, decidedAt, false);
+		}
 	}
 
 	enum Kind {

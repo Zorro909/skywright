@@ -27,8 +27,15 @@ public class RunAcceptanceStore
 
 	private final TransactionTemplate transactions;
 
-	RunAcceptanceStore(EntityManager entities, PlatformTransactionManager transactions) {
+	private final RunCommandStore commands;
+
+	private final java.time.Clock clock;
+
+	RunAcceptanceStore(EntityManager entities, PlatformTransactionManager transactions, RunCommandStore commands,
+			java.time.Clock clock) {
 		this.entities = entities;
+		this.commands = commands;
+		this.clock = clock;
 		this.transactions = new TransactionTemplate(transactions);
 	}
 
@@ -60,6 +67,10 @@ public class RunAcceptanceStore
 				throw new RunSubmissionException("RUN_STORE_LOCATION_UNAVAILABLE", 503);
 			return JsonMapper.builder().build().readTree(location.descriptor);
 		});
+	}
+
+	public boolean dispatchPrevented(UUID runId) {
+		return transactions.execute(ignored -> entities.find(RunDispatchPreventionEntity.class, runId) != null);
 	}
 
 	public List<UUID> page(UUID after, int limit) {
@@ -116,10 +127,12 @@ public class RunAcceptanceStore
 				UUID id = UUID.randomUUID();
 				var prepared = admission.prepare(id, request);
 				holder[0] = prepared;
-				var run = new AcceptedRun(id, request.submissionId(), requestDigest, Instant.now(),
-						prepared.definition(), prepared.task(), prepared.artifacts());
+				var run = new AcceptedRun(id, request.submissionId(), requestDigest,
+						clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS), prepared.definition(),
+						prepared.task(), prepared.artifacts());
 				entities.persist(new RunRecordEntity(run));
 				entities.persist(new RunStoreLocationEntity(run));
+				commands.submission(run);
 				entities.flush();
 				return new Creation(run, prepared);
 			});
@@ -144,6 +157,8 @@ public class RunAcceptanceStore
 				if (previous != null)
 					return previous.fingerprint.equals(taskFingerprint) ? Decision.ALREADY_DISPATCHED
 							: Decision.DEFINITION_CONFLICT;
+				if (entities.find(RunDispatchPreventionEntity.class, runId) != null)
+					return Decision.STOP_REQUESTED;
 				entities.persist(new LaunchClaimEntity(runId, taskFingerprint));
 				entities.flush();
 				return Decision.FIRST_DISPATCH;

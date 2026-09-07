@@ -22,16 +22,16 @@ public class LocalRunSubmissions {
 
 	private final Orchestrator orchestrator;
 
-	private final RunJobAdapter jobs;
+	private final RunCommandDelivery delivery;
 
 	private final de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle;
 
 	LocalRunSubmissions(RunAcceptanceStore store, LocalRunAdmission admission, Orchestrator orchestrator,
-			RunJobAdapter jobs, de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle) {
+			RunCommandDelivery delivery, de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle) {
 		this.store = store;
 		this.admission = admission;
 		this.orchestrator = orchestrator;
-		this.jobs = jobs;
+		this.delivery = delivery;
 		this.lifecycle = lifecycle;
 	}
 
@@ -74,29 +74,18 @@ public class LocalRunSubmissions {
 			throw failure;
 		}
 		var run = created.run();
-		boolean releaseDeferred = false;
 		try {
-			var delivery = jobs.submit(run.runId(), run.task(), created.prepared().credentials());
-			delivery.whenComplete((result, failure) -> created.prepared().close());
-			releaseDeferred = true;
-			// Retain completion even when acknowledgement arrives after the HTTP wait.
-			var result = delivery.thenApply(submission -> {
-				if (submission instanceof RunJobAdapter.Submission.Initiated initiated)
-					jobs.complete(run.runId(), initiated.operation());
-				return submission;
-			}).toCompletableFuture().get(5, TimeUnit.SECONDS);
-			if (result instanceof RunJobAdapter.Submission.Initiated) {
+			var result = delivery.submit(run, created.prepared()).toCompletableFuture().get(5, TimeUnit.SECONDS);
+			if (result instanceof RunJobAdapter.Submission.Initiated)
 				return new Result(run, "source-accepted", "not-observed", List.of());
-			}
-			if (result instanceof RunJobAdapter.Submission.Rediscovered rediscovered)
-				return observed(run, rediscovered.observation());
+			if (result instanceof RunJobAdapter.Submission.Rediscovered found)
+				return observed(run, found.observation());
 		}
 		catch (Exception failure) {
-			if (!releaseDeferred)
-				created.prepared().close();
 			if (failure instanceof InterruptedException)
 				Thread.currentThread().interrupt();
 		}
+
 		return new Result(run, "uncertain", "not-observed", List.of("HANDOFF_UNCERTAIN"));
 	}
 

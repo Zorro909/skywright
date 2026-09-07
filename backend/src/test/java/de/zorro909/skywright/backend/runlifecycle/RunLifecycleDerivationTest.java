@@ -49,6 +49,33 @@ class RunLifecycleDerivationTest {
 	}
 
 	@Test
+	void dispatchPreventionProvesNoWriterButStartupRefusalAloneDoesNotProveEarlierWriterStopped() {
+		var request = new RunControlDecisions.Decision(UUID.randomUUID(), RunControlDecisions.Kind.CANCELLATION_REQUEST,
+				NOW);
+		var prevented = new RunControlDecisions.Decision(request.id(), request.kind(), NOW, true);
+		var absent = new RunLifecycleDerivation.Evidence(RunJobAdapter.SourceAvailability.UNAVAILABLE, List.of(),
+				List.of(), List.of(), null, List.of(request), NOW, List.of());
+		assertThat(reducer.derive(absent).state()).isNull();
+		var proof = new RunLifecycleDerivation.Evidence(RunJobAdapter.SourceAvailability.UNAVAILABLE, List.of(),
+				List.of(), List.of(), null, List.of(prevented), NOW, List.of());
+		assertThat(reducer.derive(proof).state()).isEqualTo(RunLifecycle.CANCELLED);
+		assertThat(reducer.derive(proof).cause()).isNull();
+		var refusal = new RunProcessEvidence.StopRefusal(request.id().toString(), "cancellation", NOW);
+		var history = new RunProcessEvidence(process(null).attempts(), "head", 0, null, refusal);
+		assertThat(derive(RunJobAdapter.SourceAvailability.LIVE, "RUNNING", history, List.of(), List.of()).state())
+			.isEqualTo(RunLifecycle.RUNNING);
+		assertThat(derive(RunJobAdapter.SourceAvailability.UNAVAILABLE, null, history, List.of(), List.of()).state())
+			.isNull();
+		assertThat(derive(RunJobAdapter.SourceAvailability.LIVE, "FAILED", history, List.of(), List.of()).state())
+			.isEqualTo(RunLifecycle.CANCELLED);
+		for (String cause : List.of("completed", "training_project_failure", "policy_stopped")) {
+			var terminal = new RunProcessEvidence(process(cause).attempts(), "head", 0, null, refusal);
+			assertThat(derive(RunJobAdapter.SourceAvailability.LIVE, "FAILED", terminal, List.of(), List.of()).cause())
+				.isEqualTo(cause);
+		}
+	}
+
+	@Test
 	void requestsNeverAdvanceLifecycleAndExhaustionHasNoInventedProcessCause() {
 		var input = new RunLifecycleDerivation.Evidence(RunJobAdapter.SourceAvailability.LIVE, List.of(job("RUNNING")),
 				List.of(), List.of(), process(null), List.of(new RunControlDecisions.Decision(UUID.randomUUID(),

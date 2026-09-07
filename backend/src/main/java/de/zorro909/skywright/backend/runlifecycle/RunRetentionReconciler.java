@@ -31,7 +31,8 @@ public final class RunRetentionReconciler {
 				return;
 			for (var runId : page) {
 				try {
-					boolean terminal = new RunLifecycleDerivation().terminalRetention(runs.retainedFacts(runId));
+					boolean terminal = runs.dispatchPrevented(runId)
+							|| new RunLifecycleDerivation().terminalRetention(runs.retainedFacts(runId));
 					if (!terminal)
 						jobs.reconcile(runId).toCompletableFuture().get(5, TimeUnit.SECONDS);
 				}

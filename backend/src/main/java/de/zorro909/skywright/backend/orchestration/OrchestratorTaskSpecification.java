@@ -5,11 +5,16 @@ import java.util.Map;
 
 /** The finite SkyPilot task contract populated by Run projection in issue 55. */
 public record OrchestratorTaskSpecification(String name, String setup, String run, List<Resources> resources,
-		Map<String, String> environment, String runtimePullSecret) {
+		Map<String, String> environment, String runtimePullSecret, String runtimePullNamespace) {
 
 	public OrchestratorTaskSpecification(String name, String setup, String run, List<Resources> resources,
 			Map<String, String> environment) {
-		this(name, setup, run, resources, environment, null);
+		this(name, setup, run, resources, environment, null, null);
+	}
+
+	public OrchestratorTaskSpecification(String name, String setup, String run, List<Resources> resources,
+			Map<String, String> environment, String runtimePullSecret) {
+		this(name, setup, run, resources, environment, runtimePullSecret, null);
 	}
 
 	public OrchestratorTaskSpecification {
@@ -23,6 +28,10 @@ public record OrchestratorTaskSpecification(String name, String setup, String ru
 		if (environment.keySet().stream().anyMatch(OrchestratorTaskSpecification::credentialVariable)) {
 			throw new IllegalArgumentException("Credentials must not enter the task environment");
 		}
+
+		if (runtimePullNamespace != null
+				&& (runtimePullSecret == null || !runtimePullNamespace.matches("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")))
+			throw new IllegalArgumentException("Invalid runtime pull namespace");
 
 		if (runtimePullSecret != null && (!runtimePullSecret
 			.matches("skywright-pull-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")

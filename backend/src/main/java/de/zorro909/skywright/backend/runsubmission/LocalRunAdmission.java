@@ -13,9 +13,15 @@ public interface LocalRunAdmission {
 	Prepared prepare(UUID runId, LocalRunRequest request);
 
 	record Prepared(RunDefinition definition, OrchestratorTaskSpecification task, TrainingCredentials credentials,
-			java.util.Set<ReferencedProjectArtifact> artifacts) implements AutoCloseable {
+			java.util.Set<ReferencedProjectArtifact> artifacts,
+			de.zorro909.skywright.backend.credential.RuntimePullProjection runtimePull) implements AutoCloseable {
 		public Prepared {
 			artifacts = java.util.Set.copyOf(artifacts);
+		}
+
+		public Prepared(RunDefinition definition, OrchestratorTaskSpecification task, TrainingCredentials credentials,
+				java.util.Set<ReferencedProjectArtifact> artifacts) {
+			this(definition, task, credentials, artifacts, null);
 		}
 
 		public Prepared(RunDefinition definition, OrchestratorTaskSpecification task, TrainingCredentials credentials) {
@@ -25,6 +31,8 @@ public interface LocalRunAdmission {
 		public void close() {
 			if (credentials != null)
 				credentials.close();
+			if (runtimePull != null)
+				runtimePull.close();
 		}
 	}
 

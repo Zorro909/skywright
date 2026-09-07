@@ -36,12 +36,17 @@ public final class LocalRuntimeProjection {
 	}
 
 	public record TaskPlan(String jobName, String setupCommand, String trainingCommand,
-			List<OrchestratorTaskSpecification.Resources> candidates, Map<String, String> variables,
-			String pullSecret) {
+			List<OrchestratorTaskSpecification.Resources> candidates, Map<String, String> variables, String pullSecret,
+			String pullNamespace) {
 	}
 
 	public OrchestratorTaskSpecification project(RunDefinition definition, RuntimeMaterials materials, Target target,
 			String runtimePullSecret) {
+		return project(definition, materials, target, runtimePullSecret, null);
+	}
+
+	public OrchestratorTaskSpecification project(RunDefinition definition, RuntimeMaterials materials, Target target,
+			String runtimePullSecret, String runtimePullNamespace) {
 		var value = definition.value();
 		if (value.path("schemaVersion").asInt() != 2 || !value.propertyNames().equals(FIELDS))
 			throw new IllegalArgumentException("Unsupported local Run Definition shape");
@@ -82,7 +87,7 @@ public final class LocalRuntimeProjection {
 				target.cpus(), target.memory(), target.gpuModel() + ":" + request.path("gpuCount").asInt(),
 				"docker:" + image, false, new OrchestratorTaskSpecification.JobRecovery(0, List.of(75)));
 		return this.mapper.map(new TaskPlan("skywright-" + materials.runId(), null, command, List.of(resources),
-				Map.of(), runtimePullSecret));
+				Map.of(), runtimePullSecret, runtimePullNamespace));
 	}
 
 	private static String encoded(String value) {

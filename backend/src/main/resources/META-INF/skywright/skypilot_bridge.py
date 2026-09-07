@@ -452,6 +452,8 @@ def _task(specification, secrets=None):
                 }
             }
         }
+    if specification.get("runtimePullNamespace"):
+        runtime_options["_cluster_config_overrides"]["kubernetes"]["namespace"] = specification["runtimePullNamespace"]
     resources = [
         sky.Resources(
             infra=requested["infrastructure"],

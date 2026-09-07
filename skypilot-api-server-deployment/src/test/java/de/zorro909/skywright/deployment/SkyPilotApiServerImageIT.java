@@ -107,6 +107,56 @@ final class SkyPilotApiServerImageIT {
 	}
 
 	@Test
+	@Order(1)
+	void packagedPullHelperUsesThePinnedKubernetesClientAndPreservesImmutableSecrets() throws Exception {
+		assertThat(docker("exec", serverContainer, "python", "-I", "-c",
+				"""
+						import json, runpy, threading
+						from http.server import BaseHTTPRequestHandler, HTTPServer
+						module = runpy.run_path('/opt/skywright/runtime/runtime_pull.py')
+						stored = {}
+						class Handler(BaseHTTPRequestHandler):
+						    def log_message(self, *args): pass
+						    def do_POST(self):
+						        assert self.headers['Authorization'] == 'Bearer role-fixture'
+						        assert self.path == '/api/v1/namespaces/training/secrets'
+						        value = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+						        if stored:
+						            self.send_response(409); self.end_headers(); return
+						        stored.update(value)
+						        self.reply(value)
+						    def do_GET(self):
+						        assert self.path.endswith('/secrets/skywright-pull-fixture')
+						        self.reply(stored)
+						    def reply(self, value):
+						        body = json.dumps(value).encode()
+						        self.send_response(200)
+						        self.send_header('Content-Type', 'application/json')
+						        self.send_header('Content-Length', str(len(body)))
+						        self.end_headers(); self.wfile.write(body)
+						server = HTTPServer(('127.0.0.1', 0), Handler)
+						threading.Thread(target=server.serve_forever, daemon=True).start()
+						config = {'apiVersion': 'v1', 'kind': 'Config', 'current-context': 'local',
+						    'clusters': [{'name': 'cluster', 'cluster': {'server': 'http://127.0.0.1:' + str(server.server_port)}}],
+						    'contexts': [{'name': 'local', 'context': {'cluster': 'cluster', 'user': 'role'}}],
+						    'users': [{'name': 'role', 'user': {'token': 'role-fixture'}}]}
+						api = module['KubernetesSecrets'](config, 'local')
+						secret = {'apiVersion': 'v1', 'kind': 'Secret', 'immutable': True, 'type': 'kubernetes.io/dockerconfigjson',
+						    'metadata': {'name': 'skywright-pull-fixture', 'namespace': 'training'},
+						    'data': {'.dockerconfigjson': 'fixture'}}
+						try:
+						    api.create('training', secret)
+						    api.create('training', dict(secret, data={'.dockerconfigjson': 'changed'}))
+						    found = api.read('training', 'skywright-pull-fixture')
+						    assert found['immutable'] and found['data'] == secret['data']
+						    print('immutable helper delivery verified')
+						finally:
+						    api.close(); server.shutdown(); server.server_close()
+						"""))
+			.contains("immutable helper delivery verified");
+	}
+
+	@Test
 	@Order(2)
 	void missingExternalDatabaseConfigurationFailsSafely() throws Exception {
 		var container = name("missing-database");

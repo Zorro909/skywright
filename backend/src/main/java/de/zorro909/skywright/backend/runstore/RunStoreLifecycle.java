@@ -55,12 +55,16 @@ public final class RunStoreLifecycle {
 		}
 
 		RunProcessEvidence read() {
+			var refusal = stopRefusal();
 			var head = document("recovery/head.json", "recovery-head", 65536, false);
 			if (head == null) {
-				var page = objects.list(protocol.runPrefix(), 1, null);
-				if (!page.entries().isEmpty() || page.continuation() != null)
+				var page = objects.list(protocol.runPrefix(), 4, null);
+				var controls = Set.of(protocol.runPrefix() + "control/cancellation.json",
+						protocol.runPrefix() + "control/policy-stop.json",
+						protocol.runPrefix() + "control/startup-refusal.json");
+				if (page.entries().stream().anyMatch(e -> !controls.contains(e.key())) || page.continuation() != null)
 					throw invalid("HEAD_MISSING");
-				return new RunProcessEvidence(List.of(), null, 0, null);
+				return new RunProcessEvidence(List.of(), null, 0, null, refusal);
 			}
 			schema(head);
 			if (head.size() != 2)
@@ -218,7 +222,36 @@ public final class RunStoreLifecycle {
 			}
 			if (!head.equals(document("recovery/head.json", "recovery-head", 65536, true)))
 				throw invalid("HISTORY_CHANGED");
-			return new RunProcessEvidence(attempts, headDigest, (int) debt, exhaustedAt);
+			return new RunProcessEvidence(attempts, headDigest, (int) debt, exhaustedAt, refusal);
+		}
+
+		private RunProcessEvidence.StopRefusal stopRefusal() {
+			var value = document("control/startup-refusal.json", "run-stop-refusal", 65536, false);
+			if (value == null)
+				return null;
+			identity(value);
+			String kind = text(value, "kind"), command = text(value, "commandId");
+			if (value.size() != 6 || !Set.of("cancellation", "policy-stop").contains(kind))
+				throw invalid("STOP_REFUSAL");
+			try {
+				if (!UUID.fromString(command).toString().equals(command))
+					throw invalid("STOP_REFUSAL");
+			}
+			catch (IllegalArgumentException failure) {
+				throw invalid("STOP_REFUSAL");
+			}
+			var request = document("control/" + kind + ".json", "run-stop-request", 65536, true);
+			identity(request);
+			if (request.size() != 6 || !kind.equals(text(request, "kind"))
+					|| !command.equals(text(request, "commandId")))
+				throw invalid("STOP_REFUSAL");
+			try {
+				Instant.parse(text(request, "requestedAt"));
+				return new RunProcessEvidence.StopRefusal(command, kind, Instant.parse(text(value, "refusedAt")));
+			}
+			catch (java.time.DateTimeException failure) {
+				throw invalid("STOP_REFUSAL");
+			}
 		}
 
 		private RunProcessEvidence.Attempt report(String id, Map<Long, String> checkpoints) {

@@ -55,12 +55,15 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 
 	private final ObjectProvider<VaultBindings> vault;
 
+	private final RuntimePullDelivery pulls;
+
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	ResolvedLocalRunAdmission(TrainingProjects projects, TrainingProjectVersions versions,
 			ProjectVersionRegistry registry, DatasetCatalog datasets, TargetStorageRegistry storages,
 			ReportingCurrencyReader currency, CostQuoteReader quotes, LocalRunTargetSettings settings,
-			ObjectProvider<LocalCredentialProjections> projections, ObjectProvider<VaultBindings> vault) {
+			ObjectProvider<LocalCredentialProjections> projections, ObjectProvider<VaultBindings> vault,
+			RuntimePullDelivery pulls) {
 		this.projects = projects;
 		this.versions = versions;
 		this.registry = registry;
@@ -71,16 +74,15 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 		this.settings = settings;
 		this.projections = projections;
 		this.vault = vault;
+		this.pulls = pulls;
 	}
 
 	@Override
 	public Prepared prepare(UUID runId, LocalRunRequest request) {
 		var target = settings.target(request.target());
 		var project = projects.resolveForAcceptance(request.trainingProjectId());
-		// The existing target-side private-pull helper has no backend delivery port yet.
-		// A private image must never be accepted with an uninstalled pull projection.
-		if (projects.requiresRuntimePullProjection(project.projectId()))
-			throw new RunSubmissionException("RUNTIME_PULL_PROJECTION_UNAVAILABLE", 503);
+		var pullSelection = projects.runtimePullSelection(project.projectId());
+		String pullNamespace = pullSelection == null ? null : pulls.namespace(target.kubernetesContext());
 		var dataset = datasets.get(request.datasetDefinitionId()).definition();
 		var reference = new DatasetDefinitionReference(dataset.datasetId().toString(),
 				dataset.definitionId().toString(), dataset.contentFingerprint());
@@ -140,7 +142,8 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 							.getOrDefault("checksumCalculation", "when-required")
 							.replace('-', '_')),
 				null);
-		var task = new LocalRuntimeProjection().project(definition, materials, target, null);
+		var task = new LocalRuntimeProjection().project(definition, materials, target,
+				pullSelection == null ? null : "skywright-pull-" + runId, pullNamespace);
 		var broker = projections.getIfAvailable();
 		if (broker == null || vault.getIfAvailable() == null)
 			throw new RunSubmissionException("TRAINING_CREDENTIALS_UNAVAILABLE", 503);
@@ -160,7 +163,15 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 		try {
 			var credentials = broker.training(runId, selection(datasetAccess, "read-only"),
 					selection(outputAccess, "read-write-delete"), Instant.MAX);
-			return new Prepared(definition, task, credentials, artifacts);
+			try {
+				var pull = pullSelection == null ? null : broker.runtimePull(runId, pullSelection, Instant.MAX,
+						java.nio.file.Path.of(System.getProperty("java.io.tmpdir")));
+				return new Prepared(definition, task, credentials, artifacts, pull);
+			}
+			catch (RuntimeException failure) {
+				credentials.close();
+				throw failure;
+			}
 		}
 		catch (IllegalArgumentException failure) {
 			throw new RunSubmissionException("TRAINING_CREDENTIAL_ISOLATION_INVALID", 422);

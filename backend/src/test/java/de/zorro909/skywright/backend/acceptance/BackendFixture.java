@@ -94,7 +94,9 @@ final class BackendFixture implements AutoCloseable {
 		properties.add("skywright.deployment.environment=test");
 		properties.add("skywright.deployment.reporting-currency=EUR");
 		var arguments = properties.stream().map(property -> "--" + property).toArray(String[]::new);
-		return builder.web(WebApplicationType.SERVLET).run(arguments);
+		return builder.properties("skywright.run-commands.enabled=false")
+			.web(WebApplicationType.SERVLET)
+			.run(arguments);
 	}
 
 	BackendFixture restartWithTargetStorageIntegration() {

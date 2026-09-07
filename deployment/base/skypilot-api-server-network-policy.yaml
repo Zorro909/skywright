@@ -19,3 +19,5 @@ spec:
       ports:
         - protocol: TCP
           port: 46580
+        - protocol: TCP
+          port: 46581

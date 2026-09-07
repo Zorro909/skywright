@@ -17,6 +17,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from skywright._run_definition import RunDefinition
+from skywright._run_store.control import RunStopObservation
 from skywright._training import Accelerator, TrainingProcessResult, run_training_process
 from skywright._training_types import CheckpointSnapshot
 from skywright.configuration import ConfigurationContract
@@ -305,6 +306,9 @@ class ManagedRuntime:
             ).read_exact(self.source_reference)
 
         with ExitStack() as resources:
+            requests = RunStopObservation(self.target, self.project_version)
+            requests.start()
+            resources.callback(requests.close)
 
             def dataset_factory() -> MdsDatasetAccess:
                 return resources.enter_context(
@@ -332,6 +336,8 @@ class ManagedRuntime:
                 seed=seed,
                 maximum_recovery_debt=value["executionPolicy"]["maximumRecoveryDebt"],
                 previous_writer_verifier=_previous_writer_verifier,
+                cancellation_requested=requests.cancelled,
+                policy_stop_requested=requests.policy_stop,
                 resume_from=seed_checkpoint if self.source_run_id is not None else None,
                 source_run_id=self.source_run_id,
                 ordering_reset=value["orderingReset"],

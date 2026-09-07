@@ -27,3 +27,5 @@ databaseChangeLog:
       file: db/changelog/versions/0013-run-acceptance.yaml
   - include:
       file: db/changelog/versions/0014-run-store-location.yaml
+  - include:
+      file: db/changelog/versions/0015-run-command-delivery.yaml

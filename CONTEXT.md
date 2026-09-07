@@ -284,6 +284,10 @@ _Avoid_: SkyPilot log offset, line number, object key
 The ordered task-log output produced before an Execution Attempt begins. It may be linked to the following attempt as its preparation, but never belongs to that attempt; a setup failure may leave it unlinked at Run level.
 _Avoid_: Execution Attempt log, controller log, setup attempt
 
+**Run Command Delivery**:
+The durable identity, intent and delivery evidence for a Run submission, Cancellation Request or Ceiling Stop Decision. It survives backend replacement while keeping requested action distinct from observed effect.
+_Avoid_: Run Lifecycle State, Orchestrator Operation, submission queue
+
 **Orchestrator Operation**:
 One control action the backend has handed to the orchestrator and is waiting on. It exists only while the process that started it lives: it is never persisted, so losing it loses the view of an action, never the action itself.
 _Avoid_: Request id, job handle, pending action, command

@@ -62,7 +62,10 @@ The bridge passes these values to `sky.Task(secrets=...)`; the Run Definition an
 `OrchestratorTaskSpecification` contain no credential values. The task's ordinary environment
 cannot carry scalar storage credentials. SkyPilot retains the secret channel for Managed
 Jobs recovery. Recovery must rediscover that retained job, without invoking the broker again.
-A lost or rejected projection fails explicitly. Repair requires a new Run and new projection.
+An accepted Run with an unclaimed first dispatch can reconstruct its originally recorded
+projection from the immutable binding metadata and exact Vault revision, including after
+normal rotation. Vault deletion, revocation or expiry remains a failure. Repair of an invalid
+original requires a new Run and new projection.
 Do not retry a failed handoff by changing revisions under the same Run ID.
 
 `LocalProjectionFacts.forConsumer(runId)` reads durable usage evidence. Call `release(runId)`
@@ -72,6 +75,12 @@ repeating it preserves the original timestamp. Neither closing the broker's temp
 nor losing contact with SkyPilot proves that the Run released its credentials.
 
 ## Local private-image pull
+
+The Run API now automates this delivery through the target-side helper. See
+[durable Run commands](reference/run-commands.md#private-ghcr-images) for the helper container,
+namespace pin, immutable Secret ownership and restart behavior. The command below remains an
+operator tool; Secrets created without the automated helper's ownership metadata are not
+adopted by automated delivery.
 
 `LocalCredentialProjections.runtimePull` creates a mode-0400 Docker configuration in a private
 mode-0700 temporary directory. The broker hands that file to the local SkyPilot/target-side
