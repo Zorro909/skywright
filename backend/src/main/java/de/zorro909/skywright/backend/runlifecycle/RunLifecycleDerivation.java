@@ -68,8 +68,16 @@ public final class RunLifecycleDerivation {
 		var gaps = new ArrayList<>(evidence.gaps());
 		if (selected.stream().anyMatch(f -> f.kind() == RetainedSkyPilotFact.Kind.SUBMISSION_OPERATION_FAILURE))
 			gaps.add("SUBMISSION_OPERATION_FAILED; job outcome remains source-derived");
+		var latestObservation = selected.stream()
+			.filter(f -> f.kind() != RetainedSkyPilotFact.Kind.SUBMISSION_OPERATION_FAILURE)
+			.max(ORDER)
+			.orElse(null);
 		var terminalFact = selected.stream()
-			.filter(f -> f.kind() == RetainedSkyPilotFact.Kind.TERMINATION)
+			.filter(f -> f.kind() == RetainedSkyPilotFact.Kind.TERMINATION && f.completeUniqueObservation())
+			.filter(f -> sourceState(f.payload().get("status"), true) != null
+					&& sourceState(f.payload().get("status"), true).terminal())
+			.filter(f -> latestObservation != null && latestObservation.completeUniqueObservation()
+					&& f.observedAt().equals(latestObservation.observedAt()))
 			.max(ORDER)
 			.orElse(null);
 		if (evidence.process() == null) {
@@ -123,6 +131,12 @@ public final class RunLifecycleDerivation {
 		return new Result(state, latched, cause, selected, conflicts, gaps.stream().distinct().toList());
 	}
 
+	public boolean terminalRetention(List<RetainedSkyPilotFact> facts) {
+		return derive(new Evidence(SourceAvailability.MISSING, List.of(), List.of(), facts,
+				new RunProcessEvidence(List.of(), null, 0, null), List.of(), Instant.EPOCH, List.of()))
+			.terminalLatched();
+	}
+
 	private static RunLifecycle sourceState(String status, boolean started) {
 		if (status == null)
 			return null;
@@ -140,6 +154,7 @@ public final class RunLifecycleDerivation {
 	}
 
 	private static final Comparator<RetainedSkyPilotFact> ORDER = Comparator.comparing(RetainedSkyPilotFact::observedAt)
+		.thenComparing(f -> !f.completeUniqueObservation())
 		.thenComparing(RunLifecycleDerivation::payload)
 		.thenComparing(RetainedSkyPilotFact::sourceEventIdentity);
 

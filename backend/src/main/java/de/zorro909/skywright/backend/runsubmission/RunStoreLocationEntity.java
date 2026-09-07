@@ -20,11 +20,15 @@ class RunStoreLocationEntity {
 	@Column(name = "storage_id", nullable = false)
 	UUID storageId;
 
+	@Column(name = "descriptor_json", nullable = false, columnDefinition = "text")
+	String descriptor;
+
 	protected RunStoreLocationEntity() {
 	}
 
 	RunStoreLocationEntity(AcceptedRun run) {
 		runId = run.runId();
+		descriptor = run.definition().value().at("/storage/execution").toString();
 		storageId = UUID.fromString(run.definition().value().at("/storage/execution/storageId").asText());
 	}
 

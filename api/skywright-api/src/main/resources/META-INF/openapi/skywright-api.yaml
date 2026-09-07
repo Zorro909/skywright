@@ -1167,15 +1167,15 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/AcceptedLocalRun' } }
-        nextCursor: { type: string, format: uuid, nullable: true }
+        nextCursor: { type: [string, 'null'], format: uuid }
     RunLifecycleObservation:
       type: object
       additionalProperties: false
       required: [terminalLatched, sourceAvailability, processAvailability, fetchedAt, skyPilotReadAt, runStoreReadAt, evidenceGaps, facts, conflicts, controlDecisions]
       properties:
-        state: { type: string, nullable: true, enum: [waiting, running, interrupted, finished, failed, cancelled] }
+        state: { type: [string, 'null'], enum: [waiting, running, interrupted, finished, failed, cancelled, null] }
         terminalLatched: { type: boolean }
-        cause: { type: string, nullable: true }
+        cause: { type: [string, 'null'] }
         sourceAvailability: { type: string }
         processAvailability: { type: string, enum: [live, invalid, unavailable] }
         fetchedAt: { type: string, format: date-time }
@@ -1203,12 +1203,13 @@ components:
     RetainedRunSourceFact:
       type: object
       additionalProperties: false
-      required: [runId, kind, sourceEventIdentity, payload, observedAt]
+      required: [runId, kind, sourceEventIdentity, payload, observedAt, completeUniqueObservation]
       properties:
         runId: { $ref: '#/components/schemas/SkywrightId' }
         kind: { type: string }
         sourceEventIdentity: { type: string }
         payload: { type: object, additionalProperties: { type: string } }
+        completeUniqueObservation: { type: boolean, description: Whether this sighting came from a complete lookup matching exactly one job. }
         observedAt: { type: string, format: date-time }
     RunSourceConflict:
       type: object

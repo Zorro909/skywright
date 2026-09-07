@@ -82,6 +82,65 @@ final class DatabaseStartupIT {
 		}
 	}
 
+	@Test
+	void upgradePreservesAnAcceptedRunsDeletedStoragePointer(
+			@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+		var root = java.nio.file.Path.of(System.getProperty("repository.root"));
+		String master = java.nio.file.Files
+			.readString(root.resolve("backend/src/main/resources/db/changelog/db.changelog-master.yaml"));
+		var previous = directory.resolve("before-lifecycle.yaml");
+		java.nio.file.Files.writeString(previous, master.substring(0, master.lastIndexOf("  - include:")));
+		try (var database = PostgreSqlFixture.freshDatabase()) {
+			int port = BackendProcess.availablePort();
+			var args = java.util.Arrays.copyOf(arguments(database, port), arguments(database, port).length + 2);
+			args[args.length - 2] = "--spring.liquibase.change-log=" + previous.toUri();
+			args[args.length - 1] = "--spring.jpa.hibernate.ddl-auto=none";
+			try (var backend = BackendProcess.start(args)) {
+				awaitLiveness(backend, port, Duration.ofSeconds(30));
+				assertThat(database.countTables("skywright")).isEqualTo(37);
+			}
+			var runId = java.util.UUID.randomUUID();
+			String definition = java.nio.file.Files
+				.readString(root.resolve("sdk/tests/fixtures/managed-runtime/definition.json"));
+			try (var connection = java.sql.DriverManager.getConnection(database.jdbcUrl(), database.runtime(),
+					database.runtimePassword());
+					var insert = connection.prepareStatement(
+							"""
+									INSERT INTO skywright.run_record
+									(id, submission_id, principal_identity, project_identity, artifact_references_json, request_digest,
+									 accepted_at, definition_json, task_fingerprint, task_json)
+									VALUES (?, ?, 'built-in', 'stable-project', '[]', ?, now(), ?, ?, '{}')
+									""")) {
+				insert.setObject(1, runId);
+				insert.setObject(2, java.util.UUID.randomUUID());
+				insert.setString(3, "a".repeat(64));
+				insert.setString(4, definition);
+				insert.setString(5, "sha256:" + "b".repeat(64));
+				assertThat(insert.executeUpdate()).isEqualTo(1);
+			}
+			port = BackendProcess.availablePort();
+			try (var backend = BackendProcess.start(arguments(database, port))) {
+				BackendProcess.awaitReadiness(port, Duration.ofSeconds(30));
+				try (var connection = java.sql.DriverManager.getConnection(database.jdbcUrl(), database.runtime(),
+						database.runtimePassword());
+						var query = connection.prepareStatement(
+								"select storage_id, descriptor_json from skywright.run_store_location where run_id=?")) {
+					query.setObject(1, runId);
+					try (var row = query.executeQuery()) {
+						assertThat(row.next()).isTrue();
+						assertThat(row.getObject(1).toString()).isEqualTo("00000000-0000-0000-0000-000000000001");
+						assertThat(row.getString(2)).contains("https://runs.example", "configurationRevision");
+					}
+					assertThatThrownBy(() -> connection.createStatement()
+						.executeUpdate(
+								"UPDATE skywright.run_store_location SET storage_id = '00000000-0000-0000-0000-000000000003'"))
+						.isInstanceOf(SQLException.class)
+						.hasMessageContaining("fk_run_store_location_storage");
+				}
+			}
+		}
+	}
+
 	private void awaitLiveness(BackendProcess backend, int port, Duration timeout) throws Exception {
 		var deadline = java.time.Instant.now().plus(timeout);
 		while (java.time.Instant.now().isBefore(deadline)) {

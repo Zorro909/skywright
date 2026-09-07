@@ -146,6 +146,20 @@ class RunLifecycleDerivationTest {
 			.state()).isEqualTo(RunLifecycle.FAILED);
 	}
 
+	@Test
+	void ambiguousOrSupersededTerminalObservationsDoNotLatchRetention() {
+		var terminal = fact("SUCCEEDED", NOW);
+		var ambiguous = new RetainedSkyPilotFact(RUN, terminal.kind(), terminal.sourceEventIdentity(),
+				terminal.payload(), NOW.plusSeconds(1), false);
+		assertThat(reducer.terminalRetention(List.of(terminal))).isTrue();
+		assertThat(reducer.terminalRetention(List.of(terminal, ambiguous))).isFalse();
+		var laterNonterminal = new RetainedSkyPilotFact(RUN, RetainedSkyPilotFact.Kind.EXECUTION_STARTED,
+				"42:0:generation:110.0", Map.of("sourceTime", "110.0"), NOW.plusSeconds(1));
+		assertThat(reducer.terminalRetention(List.of(terminal, laterNonterminal))).isFalse();
+		var disambiguated = fact("FAILED", NOW.plusSeconds(2));
+		assertThat(reducer.terminalRetention(List.of(terminal, ambiguous, disambiguated))).isTrue();
+	}
+
 	private RunLifecycleDerivation.Result derive(RunJobAdapter.SourceAvailability availability, String status,
 			RunProcessEvidence process, List<RetainedSkyPilotFact> live, List<RetainedSkyPilotFact> retained) {
 		return reducer.derive(new RunLifecycleDerivation.Evidence(availability,

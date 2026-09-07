@@ -35,6 +35,10 @@ class RunLifecycleIT {
 
 	private static UUID storageId;
 
+	private static String storageEndpoint;
+
+	private static String storageBucket;
+
 	private static final String VERSION = "sha256:" + "9".repeat(64);
 
 	@TempDir
@@ -59,6 +63,8 @@ class RunLifecycleIT {
 					"target-storage-integration")) {
 				storageId = LocalRunAssemblyIT.register(backend, storage.endpoint(), bucket, "run-output",
 						UUID.randomUUID());
+				storageEndpoint = storage.endpoint().toString();
+				storageBucket = bucket;
 				UUID run = create(backend);
 				SOURCE.jobs = List.of(job(run, "RUNNING"));
 				var running = lifecycle(backend, run);
@@ -138,6 +144,40 @@ class RunLifecycleIT {
 					.sweep();
 				assertThat(SOURCE.observations.get()).isEqualTo(after);
 				assertThat(SOURCE.launches.get()).isEqualTo(3);
+				SOURCE.available = true;
+				UUID ambiguousRun = create(backend);
+				SOURCE.available = true;
+				SOURCE.jobs = List.of(job(ambiguousRun, "SUCCEEDED"), job(ambiguousRun, "RUNNING"));
+				assertThat(lifecycle(backend, ambiguousRun).path("state").isNull()).isTrue();
+				SOURCE.available = false;
+				assertThat(lifecycle(backend, ambiguousRun).path("state").isNull()).isTrue();
+				SOURCE.available = true;
+				SOURCE.jobs = List.of(job(ambiguousRun, "FAILED"));
+				new RunRetentionReconciler(backend.bean(RunAcceptanceStore.class), backend.bean(RunJobAdapter.class))
+					.sweep();
+				SOURCE.available = false;
+				assertThat(lifecycle(backend, ambiguousRun).path("state").asText()).isEqualTo("failed");
+				try (var replacement = SeaweedFsFixture.start();
+						var replacementAdmin = S3AsyncClient.builder()
+							.endpointOverride(replacement.endpoint())
+							.region(Region.US_EAST_1)
+							.credentialsProvider(StaticCredentialsProvider
+								.create(AwsBasicCredentials.create("test-key", "test-secret")))
+							.serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
+							.build()) {
+					replacement.awaitReady(replacementAdmin);
+					replacementAdmin.createBucket(b -> b.bucket(bucket)).join();
+					var registration = JSON.readTree(backend.get("/api/v1/target-storages/" + storageId).body());
+					var promoted = backend.post("/api/v1/target-storages/" + storageId + "/revisions",
+							JSON.writeValueAsString(Map.of("expectedRegistrationRevision",
+									registration.path("registrationRevision").asLong(), "configuration",
+									Map.of("endpoint", replacement.endpoint(), "region", "us-east-1", "pathStyleAccess",
+											true, "compatibilityOptions", Map.of()))));
+					assertThat(promoted.statusCode()).as(promoted.body()).isEqualTo(200);
+					assertThat(JSON.readTree(promoted.body()).path("activeRevision").asLong()).isEqualTo(2);
+					assertThat(lifecycle(backend, run).path("state").asText()).isEqualTo("finished");
+				}
+				assertThat(lifecycle(backend, run).path("state").asText()).isEqualTo("finished");
 				String relocatedBucket = "relocated-" + UUID.randomUUID();
 				admin.createBucket(b -> b.bucket(relocatedBucket)).join();
 				UUID relocatedStorage = LocalRunAssemblyIT.register(backend, storage.endpoint(), relocatedBucket,
@@ -161,10 +201,14 @@ class RunLifecycleIT {
 				// Exercise the location reader's seam; #53 owns the verified move
 				// protocol.
 				try (var connection = backend.bean(javax.sql.DataSource.class).getConnection();
-						var update = connection
-							.prepareStatement("update skywright.run_store_location set storage_id=? where run_id=?")) {
+						var update = connection.prepareStatement(
+								"update skywright.run_store_location set storage_id=?, descriptor_json=? where run_id=?")) {
 					update.setObject(1, relocatedStorage);
-					update.setObject(2, run);
+					var moved = (tools.jackson.databind.node.ObjectNode) backend.bean(RunAcceptanceStore.class)
+						.currentStorage(run);
+					moved.put("storageId", relocatedStorage.toString()).put("bucket", relocatedBucket);
+					update.setString(2, moved.toString());
+					update.setObject(3, run);
 					assertThat(update.executeUpdate()).isEqualTo(1);
 				}
 				for (var record : records)
@@ -287,6 +331,12 @@ class RunLifecycleIT {
 							"sdk/tests/fixtures/managed-runtime/definition.json")));
 					((tools.jackson.databind.node.ObjectNode) document.at("/storage/execution")).put("storageId",
 							storageId.toString());
+					var execution = (tools.jackson.databind.node.ObjectNode) document.at("/storage/execution");
+					execution.put("endpoint", storageEndpoint)
+						.put("bucket", storageBucket)
+						.put("region", "us-east-1")
+						.put("addressingMode", "path");
+					execution.set("compatibilityOptions", JSON.createObjectNode());
 					((tools.jackson.databind.node.ObjectNode) document.path("executionPolicy"))
 						.put("maximumRecoveryDebt", 1);
 					var task = new OrchestratorTaskSpecification("skywright-" + run, null, "train",

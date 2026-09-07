@@ -1,9 +1,7 @@
 package de.zorro909.skywright.backend.runlifecycle;
 
-import de.zorro909.skywright.backend.orchestration.RetainedSkyPilotFact;
 import de.zorro909.skywright.backend.orchestration.RunJobAdapter;
 import de.zorro909.skywright.backend.runsubmission.RunAcceptanceStore;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -14,9 +12,6 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnProperty(name = "skywright.run-retention.enabled", matchIfMissing = true)
 public final class RunRetentionReconciler {
-
-	private static final Set<String> TERMINAL = Set.of("SUCCEEDED", "CANCELLED", "FAILED", "FAILED_SETUP",
-			"FAILED_PRECHECKS", "FAILED_NO_RESOURCE", "FAILED_CONTROLLER");
 
 	private final RunAcceptanceStore runs;
 
@@ -36,10 +31,7 @@ public final class RunRetentionReconciler {
 				return;
 			for (var runId : page) {
 				try {
-					boolean terminal = runs.retainedFacts(runId)
-						.stream()
-						.anyMatch(f -> f.kind() == RetainedSkyPilotFact.Kind.TERMINATION
-								&& f.payload().get("status") != null && TERMINAL.contains(f.payload().get("status")));
+					boolean terminal = new RunLifecycleDerivation().terminalRetention(runs.retainedFacts(runId));
 					if (!terminal)
 						jobs.reconcile(runId).toCompletableFuture().get(5, TimeUnit.SECONDS);
 				}

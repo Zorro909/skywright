@@ -53,12 +53,12 @@ public class RunAcceptanceStore
 		});
 	}
 
-	public UUID currentStorage(UUID runId) {
+	public tools.jackson.databind.JsonNode currentStorage(UUID runId) {
 		return transactions.execute(ignored -> {
 			var location = entities.find(RunStoreLocationEntity.class, runId);
 			if (location == null)
 				throw new RunSubmissionException("RUN_STORE_LOCATION_UNAVAILABLE", 503);
-			return location.storageId;
+			return JsonMapper.builder().build().readTree(location.descriptor);
 		});
 	}
 
@@ -79,9 +79,8 @@ public class RunAcceptanceStore
 			var result = new java.util.ArrayList<RetainedSkyPilotFact>();
 			long bytes = 0;
 			try (var rows = entities
-				.createQuery(
-						"select f, max(o.observedAt) from SkyPilotFactEntity f "
-								+ "join SkyPilotFactObservationEntity o on o.factId=f.id where f.runId=:run group by f",
+				.createQuery("select f, max(o.observedAt), o.completeUniqueObservation from SkyPilotFactEntity f "
+						+ "join SkyPilotFactObservationEntity o on o.factId=f.id where f.runId=:run group by f, o.completeUniqueObservation",
 						Object[].class)
 				.setParameter("run", runId)
 				.setHint("org.hibernate.fetchSize", 100)
@@ -100,7 +99,7 @@ public class RunAcceptanceStore
 								.readValue(fact.payload,
 										new tools.jackson.core.type.TypeReference<java.util.Map<String, String>>() {
 										}),
-							(Instant) row[1]));
+							(Instant) row[1], (Boolean) row[2]));
 				}
 			}
 			return List.copyOf(result);
@@ -191,14 +190,16 @@ public class RunAcceptanceStore
 					}
 					var observedAt = fact.observedAt().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
 					var seen = entities.createQuery(
-							"select o.id from SkyPilotFactObservationEntity o where o.factId=:fact and o.observedAt=:at",
+							"select o.id from SkyPilotFactObservationEntity o where o.factId=:fact and o.observedAt=:at and o.completeUniqueObservation=:qualified",
 							UUID.class)
 						.setParameter("fact", stored.id)
 						.setParameter("at", observedAt)
+						.setParameter("qualified", fact.completeUniqueObservation())
 						.setMaxResults(1)
 						.getResultList();
 					if (seen.isEmpty())
-						entities.persist(new SkyPilotFactObservationEntity(stored.id, observedAt));
+						entities.persist(new SkyPilotFactObservationEntity(stored.id, observedAt,
+								fact.completeUniqueObservation()));
 				}
 			});
 			return CompletableFuture.completedFuture(null);

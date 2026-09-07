@@ -3,22 +3,35 @@ databaseChangeLog:
       id: issue-63-run-store-location
       author: skywright
       changes:
+        - addColumn:
+            schemaName: skywright
+            tableName: skypilot_fact_observation
+            columns:
+              - column: { name: complete_unique_observation, type: boolean, defaultValueBoolean: false, constraints: { nullable: false } }
+        - dropUniqueConstraint: { schemaName: skywright, tableName: skypilot_fact_observation, constraintName: uq_skypilot_fact_observation }
+        - addUniqueConstraint: { schemaName: skywright, tableName: skypilot_fact_observation, columnNames: "fact_id, observed_at, complete_unique_observation", constraintName: uq_skypilot_fact_observation }
         - createTable:
             schemaName: skywright
             tableName: run_store_location
             columns:
               - column: { name: run_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
               - column: { name: storage_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: descriptor_json, type: text, constraints: { nullable: false } }
         - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: run_store_location, baseColumnNames: run_id, referencedTableSchemaName: skywright, referencedTableName: run_record, referencedColumnNames: id, constraintName: fk_run_store_location_run }
         - sql:
             sql: >-
-              INSERT INTO skywright.run_store_location (run_id, storage_id)
-              SELECT id, (definition_json::jsonb #>> '{storage,execution,storageId}')::uuid
+              INSERT INTO skywright.run_store_location (run_id, storage_id, descriptor_json)
+              SELECT id, (definition_json::jsonb #>> '{storage,execution,storageId}')::uuid, (definition_json::jsonb #> '{storage,execution}')::text
               FROM skywright.run_record
-        - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: run_store_location, baseColumnNames: storage_id, referencedTableSchemaName: skywright, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_run_store_location_storage }
+        # Preserve orphaned historical pointers; enforce the FK for all new writes.
+        - sql:
+            sql: ALTER TABLE skywright.run_store_location ADD CONSTRAINT fk_run_store_location_storage FOREIGN KEY (storage_id) REFERENCES skywright.target_storage(id) NOT VALID
         - sql:
             sql: GRANT SELECT, INSERT ON skywright.run_store_location TO "${runtimeRole}"
         - sql:
-            sql: GRANT UPDATE (storage_id) ON skywright.run_store_location TO "${runtimeRole}"
+            sql: GRANT UPDATE (storage_id, descriptor_json) ON skywright.run_store_location TO "${runtimeRole}"
       rollback:
+        - dropUniqueConstraint: { schemaName: skywright, tableName: skypilot_fact_observation, constraintName: uq_skypilot_fact_observation }
+        - dropColumn: { schemaName: skywright, tableName: skypilot_fact_observation, columnName: complete_unique_observation }
+        - addUniqueConstraint: { schemaName: skywright, tableName: skypilot_fact_observation, columnNames: "fact_id, observed_at", constraintName: uq_skypilot_fact_observation }
         - dropTable: { schemaName: skywright, tableName: run_store_location }

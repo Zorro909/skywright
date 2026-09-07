@@ -51,9 +51,12 @@ covered facts; it does not store a second mutable job-status snapshot.
 
 A source event's natural identity is Run + kind + source event identity.
 Distinct payload digests preserve conflicting versions of that event, while
-observation rows preserve repeated sightings of the same payload. The latest
+observation rows preserve repeated sightings of the same payload and whether
+each lookup was complete and matched exactly one job. Legacy observations lack
+that qualification and cannot latch retention until refreshed. The latest
 observation selects a retained variant. Equal observation timestamps break ties
-by canonical JSON payload with sorted keys, then source event identity.
+by preferring an unqualified sighting conservatively, then canonical JSON payload
+with sorted keys and source event identity.
 Every currently returned live fact wins over its retained variants. Conflicting
 alternatives remain available on the side channel.
 
@@ -79,15 +82,24 @@ errors are not mistaken for an absent object.
 The journal retains publication evidence after checkpoint payload pruning.
 Lifecycle reads therefore download control records, never checkpoint tensors.
 The current Run Store location is a separate database reference, initially set
-atomically with acceptance. Reads follow it and continue to work when an already
+atomically with acceptance, including the complete pinned storage descriptor.
+Later endpoint/configuration promotions do not redirect existing Runs.
+Reads follow the current location and continue to work when an already
 qualified storage is deactivated for new placements. A referenced storage cannot
-be deleted. The verified move protocol and pointer switch belong to #53.
+be deleted. Upgrade preserves historical orphaned pointers with their original
+descriptor. Their missing registration remains an explicit read failure. The
+foreign key enforces new writes without rejecting those existing orphans.
+The verified move protocol and pointer switch belong to #53.
 
 A dedicated daily reconciler scans accepted Run IDs in bounded pages, rebuilding
 its work from durable facts on every sweep and after restart. It fetches Runs
 whose SkyPilot terminal outcome has not been retained, including processes that
-already wrote a terminal report. A retained terminal outcome completes the
-SkyPilot retention obligation. Each covered fetch also captures intermediate
+already wrote a terminal report. A terminal outcome completes the SkyPilot
+retention obligation only when the
+latest retained observation was complete and unambiguous. A later nonterminal or
+ambiguous observation prevents that latch. The reconciler uses the same
+conflict-selection rules as lifecycle reads. Each covered fetch also captures
+intermediate
 recovery and infrastructure facts. The first sweep starts one minute after
 startup; the subsequent 24-hour delay follows ADR 0005's retention horizon.
 It does not implement freshness polling. Operators must retain controllers until
@@ -112,6 +124,6 @@ observations, requests, missing reports and live-source loss.
 `RunStoreLifecycleTest` rejects malformed, oversized, foreign or corrupt
 evidence. `RunLifecycleIT` executes the actual Python runtime against S3 and
 derives its records in Java with PostgreSQL retention, recovery, exhaustion,
-payload pruning, restart, location changes and source outage.
+payload pruning, restart, configuration promotion, location changes and source outage.
 `GraalPySkyPilotClientIT` passes real packaged SDK status decoding through the
 Run Job adapter into the reducer.
