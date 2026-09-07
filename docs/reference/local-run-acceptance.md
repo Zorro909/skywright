@@ -52,7 +52,7 @@ The owner moved private-image integration from #232 to #65 on 2026-09-07. Privat
 
 ## Browser actions and accepted lineage
 
-`GET /api/v1/local-run-target` returns operator-configured GPU capacity and a bounded submission-source observation. It reserves no capacity. The creation page uses the generated product contract and backend diagnostics. Before its first POST it stores the exact request and submission UUID in browser-local storage, serialized across tabs. Lost responses and reloads offer replay of that same request. Confirmed acceptance retains the Run link; a structured 422 rejection permits deliberate editing with a new identity. Corrupt or unavailable browser storage disables new submissions.
+`GET /api/v1/local-run-target` returns operator-configured GPU capacity and a bounded submission-source observation. It reserves no capacity. The creation page uses the generated product contract and backend diagnostics. Before its first POST it stores the exact request and submission UUID in browser-local storage, serialized across tabs. Lost responses and reloads offer replay of that same request. Confirmed acceptance retains the Run link; a structured preacceptance 400, 404 or 422 rejection permits deliberate editing with a new identity. Corrupt or unavailable browser storage disables new submissions.
 
 Run detail keeps cancellation intent, receipt delivery progress and escalation timestamps separate from the observed lifecycle. Request UUIDs survive reloads. The backend's terminal evidence determines the final outcome, including completion racing with cancellation.
 

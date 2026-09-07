@@ -122,10 +122,14 @@ test('local submission diagnostics, uncertain replay, lineage and cancellation r
   });
   await page.goto('/runs/new');
   await page
-    .getByLabel('Training Project', { exact: true })
+    .getByRole('combobox', { name: 'Training Project', exact: true })
     .selectOption(project);
-  await page.getByLabel('Published Project Version').selectOption(digest);
-  await page.getByLabel('Published Dataset Definition').selectOption(dataset);
+  await page
+    .getByRole('combobox', { name: 'Published Project Version' })
+    .selectOption(digest);
+  await page
+    .getByRole('combobox', { name: 'Published Dataset Definition' })
+    .selectOption(dataset);
   await page
     .getByLabel('Configuration JSON')
     .fill('{"project":{"rate":"invalid"}}');

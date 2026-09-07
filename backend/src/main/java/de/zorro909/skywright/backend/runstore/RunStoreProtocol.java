@@ -36,6 +36,14 @@ public final class RunStoreProtocol {
 		return this.runPrefix + "checkpoints/" + step(step) + "/" + digest(digest) + ".safetensors";
 	}
 
+	public String ownedSeedKey(String predecessorRunId, long step, String digest) {
+		String predecessor = attempt(predecessorRunId);
+		if (predecessor.equals(this.runId))
+			throw new IllegalArgumentException("Owned seed requires a distinct predecessor");
+		return this.runPrefix.substring(0, this.runPrefix.length() - 3) + "seed-v1/" + predecessor + "/checkpoints/"
+				+ step(step) + "/" + digest(digest) + ".safetensors";
+	}
+
 	public String metricSegmentKey(String attemptId, long segment) {
 		return this.runPrefix + "metrics/" + attempt(attemptId) + "/events.out.tfevents." + step(segment)
 				+ ".skywright";

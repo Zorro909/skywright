@@ -1,20 +1,18 @@
 package de.zorro909.skywright.backend.runsubmission;
 
 import de.zorro909.skywright.backend.runstore.*;
+import de.zorro909.skywright.backend.worker.TransferObjects;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.Map;
 import software.amazon.awssdk.auth.credentials.*;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
-import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
-import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.*;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -73,7 +71,8 @@ public final class LocalSeedWorkerMain {
 			// An acknowledgement may have been lost after immutable publication.
 			try {
 				var head = destination.headObject(b -> b.bucket(job.destination().bucket()).key(key)).join();
-				verify(destination, job.destination().bucket(), key, head.contentLength(), reference.digest());
+				verify(destination, job.destination().bucket(), key, head.contentLength(), reference.digest(),
+						directory, job, reference.step());
 				return new Receipt(key, head.contentLength(), reference.digest(), source.runId(), job.projectVersion());
 			}
 			catch (java.util.concurrent.CompletionException failure) {
@@ -124,7 +123,8 @@ public final class LocalSeedWorkerMain {
 									b -> b.bucket(job.destination().bucket()).key(key).uploadId(upload.uploadId()))
 							.join();
 				}
-				verify(destination, job.destination().bucket(), key, staged.descriptor().size(), reference.digest());
+				verify(destination, job.destination().bucket(), key, staged.descriptor().size(), reference.digest(),
+						directory, job, reference.step());
 				return new Receipt(key, staged.descriptor().size(), reference.digest(), source.runId(),
 						job.projectVersion());
 			}
@@ -150,42 +150,37 @@ public final class LocalSeedWorkerMain {
 		}
 	}
 
-	private static void verify(S3AsyncClient client, String bucket, String key, long size, String digest)
-			throws Exception {
+	private static void verify(S3AsyncClient client, String bucket, String key, long size, String digest,
+			Path directory, LocalSeedWorkerJob job, long step) throws Exception {
 		if (size < 1 || size > MAX_BYTES)
 			throw new IllegalArgumentException("SEED_SIZE_BUDGET");
-		try (var body = client
-			.getObject(b -> b.bucket(bucket).key(key), AsyncResponseTransformer.toBlockingInputStream())
-			.join()) {
-			var response = body.response();
-			var metadata = response.metadata();
-			if (response.contentLength() != size || !Long.toString(size).equals(metadata.get("skywright-size"))
-					|| !digest.equals(metadata.get("skywright-sha256"))
-					|| !"v1".equals(metadata.get("skywright-schema"))
-					|| !"checkpoint".equals(metadata.get("skywright-kind")))
-				throw new IllegalArgumentException("SEED_METADATA_MISMATCH");
-			var hash = java.security.MessageDigest.getInstance("SHA-256");
-			byte[] buffer = new byte[1024 * 1024];
-			long count = 0;
-			int read;
-			while ((read = body.read(buffer, 0, (int) Math.min(buffer.length, size - count + 1))) != -1) {
-				count += read;
-				if (count > size)
-					throw new IllegalArgumentException("SEED_SIZE_MISMATCH");
-				hash.update(buffer, 0, read);
+		var body = client.getObject(b -> b.bucket(bucket).key(key), AsyncResponseTransformer.toBlockingInputStream())
+			.join();
+		Path copy = null;
+		try {
+			copy = Files.createTempFile(directory, "seed-verify-", ".checkpoint");
+			try (var output = Files.newOutputStream(copy)) {
+				var response = body.response();
+				var metadata = response.metadata();
+				if (response.contentLength() != size || !Long.toString(size).equals(metadata.get("skywright-size"))
+						|| !digest.equals(metadata.get("skywright-sha256"))
+						|| !"v1".equals(metadata.get("skywright-schema"))
+						|| !"checkpoint".equals(metadata.get("skywright-kind")))
+					throw new IllegalArgumentException("SEED_METADATA_MISMATCH");
+				TransferObjects.verify(body, size, digest, output);
+				output.flush();
+				validateHeader(copy, job, step);
 			}
-			if (count != size || !digest.equals(HexFormat.of().formatHex(hash.digest())))
-				throw new IllegalArgumentException("SEED_DIGEST_MISMATCH");
+		}
+		finally {
+			body.abort();
+			if (copy != null)
+				Files.deleteIfExists(copy);
 		}
 	}
 
 	private static void abortAbandoned(S3AsyncClient client, String bucket, String key) {
-		var uploads = client.listMultipartUploads(b -> b.bucket(bucket).prefix(key).maxUploads(100)).join();
-		if (Boolean.TRUE.equals(uploads.isTruncated()))
-			throw new IllegalArgumentException("SEED_UPLOAD_CLEANUP_BUDGET");
-		for (var upload : uploads.uploads())
-			if (upload.key().equals(key))
-				client.abortMultipartUpload(b -> b.bucket(bucket).key(key).uploadId(upload.uploadId())).join();
+		TransferObjects.abortUploads(client, bucket, key, key::equals, 100);
 	}
 
 	private static ResolvedTargetStorage resolved(LocalSeedWorkerJob.Storage storage, Credential credential,
@@ -196,18 +191,11 @@ public final class LocalSeedWorkerMain {
 	}
 
 	private static S3AsyncClient client(LocalSeedWorkerJob.Storage storage, Credential credential) {
-		return S3AsyncClient.builder()
-			.endpointOverride(storage.endpoint())
-			.region(Region.of(storage.region()))
-			.credentialsProvider(credential.provider())
-			.httpClientBuilder(NettyNioAsyncHttpClient.builder().readTimeout(Duration.ofSeconds(30)))
-			.serviceConfiguration(S3Configuration.builder()
-				.pathStyleAccessEnabled(storage.pathStyle())
-				.chunkedEncodingEnabled("enabled".equals(storage.options().get("chunkedEncoding")))
-				.build())
-			.requestChecksumCalculation(software.amazon.awssdk.core.checksums.RequestChecksumCalculation.WHEN_REQUIRED)
-			.overrideConfiguration(ClientOverrideConfiguration.builder().apiCallTimeout(Duration.ofSeconds(30)).build())
-			.build();
+		return TransferObjects.client(storage.endpoint(), storage.region(), credential.provider(), storage.pathStyle(),
+				"enabled".equals(storage.options().get("chunkedEncoding")),
+				software.amazon.awssdk.core.checksums.RequestChecksumCalculation.WHEN_REQUIRED,
+				ClientOverrideConfiguration.builder().apiCallTimeout(Duration.ofSeconds(30)).build(),
+				Duration.ofSeconds(30));
 	}
 
 }

@@ -233,7 +233,7 @@ export class NewRunPage {
         if (
           saved &&
           error.outcome.kind === 'problem' &&
-          error.outcome.response.status === 422
+          [400, 404, 422].includes(error.outcome.response.status)
         ) {
           this.saved.set({ ...saved, rejected: true });
           try {

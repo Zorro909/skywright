@@ -147,48 +147,51 @@ describe('Local Run actions', () => {
     ).not.toBeNull();
     expect(restoredRoot.textContent).toContain('Handoff: uncertain');
   });
-  it('shows backend field diagnostics and permits deliberate editing after rejection', async () => {
-    const create = vi.fn().mockRejectedValue(
-      new ApiRequestFailure({
-        kind: 'problem',
-        response: new Response('', { status: 422 }),
-        problem: {
-          errorCode: 'SKYWRIGHT_RUN_DEFINITION_INVALID',
-          correlationId: 'validation-233',
-          detail: 'Invalid configuration.',
-          fieldViolations: [
-            {
-              field: '/configuration/project/rate',
-              code: 'TYPE',
-              message: 'Expected a number.',
-            },
-          ],
-        },
-      }),
-    );
-    const { fixture, root } = await creation(create);
-    await fill(root);
-    root
-      .querySelector('form')
-      ?.dispatchEvent(new Event('submit', { cancelable: true }));
-    await vi.waitFor(() =>
-      expect(root.textContent).toContain('Expected a number'),
-    );
-    expect(root.textContent).toContain('/configuration/project/rate');
-    expect(root.textContent).toContain('validation-233');
-    await vi.waitFor(() =>
-      expect(
-        Array.from(root.querySelectorAll('button')).find((b) =>
-          b.textContent?.includes('Edit rejected request'),
-        )?.disabled,
-      ).toBe(false),
-    );
-    click(root, 'Edit rejected request');
-    await fixture.whenStable();
-    await vi.waitFor(() =>
-      expect(root.querySelector('fieldset')?.disabled).toBe(false),
-    );
-  });
+  it.each([400, 404, 422])(
+    'allows correcting a definitive backend rejection (%s)',
+    async (status) => {
+      const create = vi.fn().mockRejectedValue(
+        new ApiRequestFailure({
+          kind: 'problem',
+          response: new Response('', { status }),
+          problem: {
+            errorCode: 'SKYWRIGHT_RUN_DEFINITION_INVALID',
+            correlationId: 'validation-233',
+            detail: 'Invalid configuration.',
+            fieldViolations: [
+              {
+                field: '/configuration/project/rate',
+                code: 'TYPE',
+                message: 'Expected a number.',
+              },
+            ],
+          },
+        }),
+      );
+      const { fixture, root } = await creation(create);
+      await fill(root);
+      root
+        .querySelector('form')
+        ?.dispatchEvent(new Event('submit', { cancelable: true }));
+      await vi.waitFor(() =>
+        expect(root.textContent).toContain('Expected a number'),
+      );
+      expect(root.textContent).toContain('/configuration/project/rate');
+      expect(root.textContent).toContain('validation-233');
+      await vi.waitFor(() =>
+        expect(
+          Array.from(root.querySelectorAll('button')).find((b) =>
+            b.textContent?.includes('Edit rejected request'),
+          )?.disabled,
+        ).toBe(false),
+      );
+      click(root, 'Edit rejected request');
+      await fixture.whenStable();
+      await vi.waitFor(() =>
+        expect(root.querySelector('fieldset')?.disabled).toBe(false),
+      );
+    },
+  );
   it('preserves an accepted link when catalogues become unavailable on refresh', async () => {
     const { api, fixture, root } = await creation();
     await fill(root);

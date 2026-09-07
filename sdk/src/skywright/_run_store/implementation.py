@@ -184,6 +184,15 @@ class RunStoreProtocol:
             f"{self.run_prefix}checkpoints/{_step(step)}/{_digest(digest)}.safetensors"
         )
 
+    def owned_seed_key(self, predecessor_run_id: str, step: int, digest: str) -> str:
+        predecessor = str(uuid.UUID(predecessor_run_id))
+        if predecessor != predecessor_run_id or predecessor == self._run:
+            raise ValueError("owned seed requires a distinct canonical predecessor")
+        return (
+            f"{self._project}/{self._run}/seed-v1/{predecessor}/checkpoints/"
+            f"{_step(step)}/{_digest(digest)}.safetensors"
+        )
+
     def metric_segment_key(self, attempt_id: str, segment: int) -> str:
         return (
             f"{self.run_prefix}metrics/{_attempt(attempt_id)}/"
@@ -1880,17 +1889,10 @@ class RunStoreReader:
         self, source_run_id: str, reference: str, *, project_version: str
     ) -> CheckpointSnapshot:
         """Read an exact predecessor snapshot physically owned by this child Run."""
-        source = str(uuid.UUID(source_run_id))
-        if source != source_run_id or source == self.target.run_id:
-            raise ValueError("owned seed requires a distinct canonical predecessor")
         parsed = CheckpointReference.parse(reference)
-        stable = self.protocol.run_prefix.removesuffix("v1/")
-        key = (
-            f"{stable}seed-v1/{source}/checkpoints/"
-            f"{_step(parsed.step)}/{parsed.digest}.safetensors"
-        )
+        key = self.protocol.owned_seed_key(source_run_id, parsed.step, parsed.digest)
         return self._read_checkpoint(
-            reference, key, source, project_version, None, owned_seed=True
+            reference, key, source_run_id, project_version, None, owned_seed=True
         )
 
     def _read_checkpoint(

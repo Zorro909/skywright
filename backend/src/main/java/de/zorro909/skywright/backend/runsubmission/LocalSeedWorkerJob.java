@@ -22,8 +22,7 @@ public record LocalSeedWorkerJob(Storage source, Storage destination, UUID proje
 
 	String destinationKey() {
 		var reference = de.zorro909.skywright.backend.runstore.CheckpointReference.parse(checkpointReference);
-		String stable = new RunStoreProtocol(projectId.toString(), runId.toString()).runPrefix();
-		return stable.substring(0, stable.length() - 3) + "seed-v1/" + predecessorRunId + "/checkpoints/"
-				+ "%019d".formatted(reference.step()) + "/" + reference.digest() + ".safetensors";
+		return new RunStoreProtocol(projectId.toString(), runId.toString()).ownedSeedKey(predecessorRunId.toString(),
+				reference.step(), reference.digest());
 	}
 }
