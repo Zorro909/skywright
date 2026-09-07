@@ -61,3 +61,45 @@ The byte-fidelity, bounded capture and honest terminal-finalization requirements
 remain canonical. A supported unmodified-SDK path still needs qualification;
 these findings do not authorize relaxing the archive contract or bypassing the
 SDK through another transport.
+
+## Unmodified-SDK follow-up
+
+A second source review found no supported binary-range or bounded binary-sink
+log API in the pinned SDK. `tail_offset` skips lines from the end of the current
+file. Even `tail=1` permits an arbitrarily large line, so it cannot supply a
+stable byte cursor or a memory bound.
+
+The download path has a further fidelity limit. Controller download uses rsync,
+but task download runs `ManagedJobCodeGen.stream_logs(follow=False)` and saves
+its text output. That source can hide content before SkyPilot's start marker
+and decode task files before the downloader receives them.
+
+SkyPilot has supported plugin hooks for server routes and node logging agents.
+A plugin route serving API-server files alone is insufficient: consolidation-mode
+controller logs are local, while active task logs live on execution clusters.
+The controller downloads task snapshots during terminal cleanup, after recording
+terminal status. Those snapshots do not provide incremental active capture or
+independent proof of successful final capture.
+
+The installed source locations supporting these findings are relative to
+`.graalpy/resources/venv/lib/python3.12/site-packages/sky/`:
+
+| Source | Relevant behavior |
+| --- | --- |
+| `jobs/client/sdk.py:473`, `:622`, `:747` | The three managed-log SDK paths and their parameters |
+| `utils/rich_utils.py:325` | Text decoding, unfinished-line buffering and CRLF rewriting |
+| `skylet/log_lib.py:500` | Reverse line-tail accumulation without a byte cap |
+| `client/common.py:67` | Whole ZIP download and unbounded member extraction |
+| `backends/cloud_vm_ray_backend.py:5167` | Controller rsync versus task text-stream download |
+| `server/plugins.py:39` | Supported server plugin contexts and route registration |
+| `logs/agent.py:13` | Supported node logging-agent hook |
+| `jobs/controller.py:838` | Terminal state precedes best-effort task-log download |
+| `jobs/controller.py:2395` | Per-job consolidation-mode controller file |
+| `jobs/utils.py:1892` | Active task logs read from the execution cluster |
+
+An independent read-only collector with bounded remote-file access could be
+investigated without altering SkyPilot distributions. It would require a new
+architecture decision about transport and source access, followed by actual
+task/controller qualification. No such solution has been implemented or proven.
+Changing the archive contract to decoded SDK text alone would still leave the
+unbounded-line problem unresolved.
