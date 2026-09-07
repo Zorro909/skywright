@@ -73,6 +73,12 @@ nor losing contact with SkyPilot proves that the Run released its credentials.
 
 ## Local private-image pull
 
+The Run API now automates this delivery through the target-side helper. See
+[durable Run commands](reference/run-commands.md#private-ghcr-images) for the helper container,
+namespace pin, immutable Secret ownership and restart behavior. The command below remains an
+operator tool; Secrets created without the automated helper's ownership metadata are not
+adopted by automated delivery.
+
 `LocalCredentialProjections.runtimePull` creates a mode-0400 Docker configuration in a private
 mode-0700 temporary directory. The broker hands that file to the local SkyPilot/target-side
 operator boundary. On that side run:

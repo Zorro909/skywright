@@ -61,6 +61,40 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AcceptedLocalRun' }
         '404': { $ref: '#/components/responses/Problem' }
+  /runs/{runId}/cancellations:
+    parameters:
+      - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    post:
+      operationId: cancelRun
+      summary: Retain a Cancellation Request and begin bounded delivery.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRunCancellation' }
+      responses:
+        '202':
+          description: Accepted intent; observed Run state remains separate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunCommandReceipt' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /runs/{runId}/commands/{commandId}:
+    parameters:
+      - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+      - { name: commandId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      operationId: getRunCommand
+      summary: Read durable delivery progress beside live lifecycle evidence.
+      responses:
+        '200':
+          description: Delivery evidence and the ordinary source-backed Run read.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunCommandReceipt' }
+        '404': { $ref: '#/components/responses/Problem' }
   /price-sources:
     get:
       operationId: listPriceSources
@@ -1161,6 +1195,25 @@ components:
         definition: { type: object, additionalProperties: true }
         evidenceGaps: { type: array, items: { type: string } }
         lifecycle: { $ref: '#/components/schemas/RunLifecycleObservation' }
+    CreateRunCancellation:
+      type: object
+      additionalProperties: false
+      required: [requestId]
+      properties:
+        requestId: { $ref: '#/components/schemas/SkywrightId' }
+    RunCommandReceipt:
+      type: object
+      additionalProperties: false
+      required: [id, runId, kind, acceptedAt, disposition]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        runId: { $ref: '#/components/schemas/SkywrightId' }
+        kind: { type: string, enum: [SUBMISSION, CANCELLATION_REQUEST, CEILING_STOP] }
+        acceptedAt: { type: string, format: date-time }
+        disposition: { type: string, description: Delivery progress, never a Run Lifecycle State. }
+        projectedAt: { type: [string, 'null'], format: date-time }
+        forceAfter: { type: [string, 'null'], format: date-time }
+        lifecycle: { $ref: '#/components/schemas/RunLifecycleObservation' }
     RunPage:
       type: object
       additionalProperties: false
@@ -1223,10 +1276,11 @@ components:
     RunControlDecisionEvidence:
       type: object
       additionalProperties: false
-      required: [id, kind, decidedAt]
+      required: [id, kind, decidedAt, dispatchPrevented]
       properties:
         id: { $ref: '#/components/schemas/SkywrightId' }
         kind: { type: string, enum: [CANCELLATION_REQUEST, CEILING_STOP] }
+        dispatchPrevented: { type: boolean, description: An atomic fence proves no first launch was authorized. }
         decidedAt: { type: string, format: date-time }
     PriceSourceKind:
       type: string

@@ -15,6 +15,7 @@ public interface LocalTaskMapper {
 	@Mapping(target = "resources", source = "candidates")
 	@Mapping(target = "environment", source = "variables")
 	@Mapping(target = "runtimePullSecret", source = "pullSecret")
+	@Mapping(target = "runtimePullNamespace", source = "pullNamespace")
 	OrchestratorTaskSpecification map(LocalRuntimeProjection.TaskPlan plan);
 
 }

@@ -12,7 +12,7 @@ The database enforces uniqueness on the built-in Principal Identity and submissi
 
 After commit, the backend immediately asks `RunJobAdapter` to submit. A database transaction locks the accepted Run and records its first-dispatch claim before any remote launch. The claim must match the accepted task's canonical fingerprint. Concurrent workers cannot both receive authorization. Transient request IDs never enter the database.
 
-A lost response, a crash after acceptance, or an expired operation can leave handoff uncertain. Replays use observation only, even while a lookup is empty. A crash between acceptance and dispatch may leave a Run unlaunched; there is no background launch queue. #65 consumes these records to add the remaining command-delivery and cancellation behavior without assuming remote name-based deduplication.
+A lost response, a crash after acceptance, or an expired operation can leave handoff uncertain. Replays use observation only, even while a lookup is empty. The durable command reconciler can recover the original projections and make a still-unclaimed first dispatch. Once the first-dispatch claim exists, even a missing job stays uncertain and cannot trigger another launch. See [Run commands](run-commands.md) for delivery and cancellation recovery.
 
 A source outage before admission returns 503 without creating a Run. A late acknowledgement still consumes operation completion for retention after the HTTP wait expires. An outage after commit cannot revoke accepted intent; the response remains 202 with uncertain handoff. Clients should preserve their submission UUID across retries.
 
@@ -42,7 +42,7 @@ Missing qualification reports unavailable admission. This is a declared target c
 
 Storage defaults must be assigned for the requested local target class. Dataset and Run Store require separate qualified destinations and training-process Credential Bindings. Basic submissions have no runtime ceiling, so their credentials must be declared non-expiring; the broker checks against `Instant.MAX` instead of inventing a finite lifetime.
 
-The owner approved public-image-only acceptance for #232 on 2026-09-07. Private GHCR images report unavailable admission until #65 connects the existing credential broker and target-side pull helper to automated delivery of the immutable Run-owned Secret. That integration remains required before #235 local GPU qualification; registry credentials stay outside the Training Process.
+The owner moved private-image integration from #232 to #65 on 2026-09-07. Private GHCR admission now qualifies the target-side helper and pins its namespace, then records the original pull credential revision. Delivery installs the immutable Run-owned Secret before first dispatch. An unavailable helper still refuses private admission; registry credentials stay outside the Training Process. See [private GHCR delivery](run-commands.md#private-ghcr-images).
 
 ## Validation
 

@@ -100,6 +100,30 @@ spec:
               mountPath: /tmp
             - name: retained-state
               mountPath: /var/lib/skypilot
+        - name: runtime-pull
+          image: skywright-skypilot-api-server
+          command: ["python", "-I", "/opt/skywright/runtime/runtime_pull.py"]
+          ports:
+            - name: runtime-pull
+              containerPort: 46581
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: runtime-pull
+          volumeMounts:
+            - name: temporary-files
+              mountPath: /tmp
       volumes:
         - name: temporary-files
           emptyDir:

@@ -41,6 +41,10 @@ class LocalRunAssemblyIT {
 
 	private static final UUID SHARED_IDENTITY_BINDING = UUID.fromString("00000000-0000-0000-0000-000000000006");
 
+	private static final UUID RESOLVER_BINDING = UUID.fromString("00000000-0000-0000-0000-000000000007");
+
+	private static final UUID PULL_BINDING = UUID.fromString("00000000-0000-0000-0000-000000000008");
+
 	private static URI vaultEndpoint;
 
 	private static Path tokenFile;
@@ -59,8 +63,11 @@ class LocalRunAssemblyIT {
 				return;
 			}
 			String identity = exchange.getRequestURI().getPath().endsWith("dataset") ? "dataset-reader" : "run-writer";
-			byte[] body = JSON.writeValueAsBytes(Map.of("data", Map.of("metadata", Map.of("version", 1), "data",
-					Map.of("accessKeyId", identity, "secretAccessKey", identity + "-secret"))));
+			byte[] body = JSON.writeValueAsBytes(Map.of("data",
+					Map.of("metadata", Map.of("version", 1), "data",
+							exchange.getRequestURI().getPath().endsWith("registry")
+									? Map.of("username", "pull-reader", "token", "registry-sentinel")
+									: Map.of("accessKeyId", identity, "secretAccessKey", identity + "-secret"))));
 			exchange.sendResponseHeaders(200, body.length);
 			exchange.getResponseBody().write(body);
 			exchange.close();
@@ -218,12 +225,105 @@ class LocalRunAssemblyIT {
 				assertThat(afterPromotion.statusCode()).as(afterPromotion.body()).isEqualTo(202);
 				assertThat(source.task.resources().getFirst().imageId())
 					.startsWith("docker:ghcr.io/example/local-replacement@");
+				privateDelivery(backend, request, projectId);
+
 			}
 		}
 		finally {
 			server.stop(0);
 			Files.deleteIfExists(tokenFile);
 		}
+	}
+
+	private static void privateDelivery(BackendFixture backend, String publicRequest, String publicProject)
+			throws Exception {
+		Path directory = Files.createTempDirectory("runtime-pull-fixture");
+		Process helper = null;
+		try {
+			helper = startPullHelper(directory);
+			// Runtime helper endpoint is operator configuration read at backend startup.
+			backend.restart();
+			var privateProject = backend.post("/api/v1/training-projects",
+					JSON.writeValueAsString(Map.of("displayName", "Private project", "registry",
+							Map.of("repository", "ghcr.io/example/private", "accessMode", "private",
+									"resolverCredentialBindingId", RESOLVER_BINDING, "executionCredentialBindingId",
+									PULL_BINDING))));
+			assertThat(privateProject.statusCode()).as(privateProject.body()).isEqualTo(201);
+			String project = JSON.readTree(privateProject.body()).path("id").asText();
+			backend.bean(Registry.class).projectId = project;
+			var input = (tools.jackson.databind.node.ObjectNode) JSON
+				.readTree(publicRequest.replace(publicProject, project));
+			UUID submission = UUID.randomUUID();
+			input.put("submissionId", submission.toString());
+			Files.createFile(directory.resolve("offline"));
+			var accepted = backend.post("/api/v1/runs", input.toString());
+			assertThat(accepted.statusCode()).as(accepted.body()).isEqualTo(202);
+			assertThat(accepted.body()).contains("\"handoff\":\"uncertain\"").doesNotContain("registry-sentinel");
+			UUID run = UUID.fromString(JSON.readTree(accepted.body()).path("runId").asText());
+			var commands = backend.bean(de.zorro909.skywright.backend.runsubmission.RunCommandStore.class);
+			assertThat(commands.submissionClaimed(run)).isFalse();
+			assertThat(backend.bean(AssemblySource.class).launches).hasValue(0);
+			assertThat(backend.bean(LocalProjectionFacts.class).forConsumer(run)).hasSize(3);
+			Files.delete(directory.resolve("offline"));
+			Files.createFile(directory.resolve("lost-ack"));
+			Thread.sleep(2100);
+			backend.bean(de.zorro909.skywright.backend.runsubmission.RunCommandDelivery.class).reconcile(submission);
+			assertThat(commands.submissionClaimed(run)).isFalse();
+			Path secret = directory.resolve("skywright-pull-" + run + ".json");
+			assertThat(secret).exists();
+			String original = Files.readString(secret);
+			Files.delete(directory.resolve("lost-ack"));
+			helper.destroy();
+			helper.waitFor();
+			helper = startPullHelper(directory);
+			backend.restart();
+			Thread.sleep(2100);
+			try (var workers = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+				var delivery = backend.bean(de.zorro909.skywright.backend.runsubmission.RunCommandDelivery.class);
+				var first = workers.submit(() -> delivery.reconcile(submission));
+				var second = workers.submit(() -> delivery.reconcile(submission));
+				first.get();
+				second.get();
+			}
+			assertThat(backend.bean(AssemblySource.class).launches).hasValue(1);
+			var task = backend.bean(AssemblySource.class).task;
+			assertThat(task.runtimePullNamespace()).isEqualTo("training");
+			assertThat(task.runtimePullSecret()).isEqualTo("skywright-pull-" + run);
+			assertThat(JSON.writeValueAsString(task)).doesNotContain("registry-sentinel", "pull-reader");
+			assertThat(Files.readString(secret)).isEqualTo(original);
+			assertThat(backend.post("/api/v1/runs", input.toString()).statusCode()).isEqualTo(202);
+			assertThat(backend.bean(AssemblySource.class).launches).hasValue(1);
+			assertThat(backend.bean(LocalProjectionFacts.class).forConsumer(run)).hasSize(3);
+			backend.restart();
+			Thread.sleep(2100);
+			backend.bean(de.zorro909.skywright.backend.runsubmission.RunCommandDelivery.class).reconcile(submission);
+			assertThat(backend.bean(AssemblySource.class).launches).hasValue(0);
+			assertThat(Files.readString(secret)).isEqualTo(original);
+		}
+		finally {
+			System.clearProperty("skywright.runtime-pull.endpoint");
+			if (helper != null) {
+				helper.destroyForcibly();
+				helper.waitFor();
+			}
+			try (var files = Files.walk(directory)) {
+				for (var path : files.sorted(java.util.Comparator.reverseOrder()).toList())
+					Files.deleteIfExists(path);
+			}
+		}
+	}
+
+	private static Process startPullHelper(Path directory) throws Exception {
+		String root = System.getProperty("repository.root");
+		var process = new ProcessBuilder("python3",
+				Path.of(root, "tests/deployment/runtime_pull_fixture.py").toString(), root, directory.toString())
+			.redirectError(directory.resolve("helper-errors").toFile())
+			.start();
+		String port = process.inputReader().readLine();
+		if (port == null)
+			throw new AssertionError(Files.readString(directory.resolve("helper-errors")));
+		System.setProperty("skywright.runtime-pull.endpoint", "http://127.0.0.1:" + Integer.parseInt(port));
+		return process;
 	}
 
 	private static void assertProjectLockBlocked(BackendFixture backend) throws Exception {
@@ -296,7 +396,9 @@ class LocalRunAssemblyIT {
 		@Bean
 		VaultBindings fixtureVault() {
 			return new VaultBindings(vaultEndpoint, "skywright", tokenFile,
-					List.of(binding(DATASET_BINDING, "dataset", "read-only"),
+					List.of(registryBinding(RESOLVER_BINDING, "backend-resolver"),
+							registryBinding(PULL_BINDING, "execution-target-pull"),
+							binding(DATASET_BINDING, "dataset", "read-only"),
 							binding(OUTPUT_BINDING, "output", "read-write-delete"),
 							new CredentialBinding(SHARED_IDENTITY_BINDING, 1, "fixtures/shared",
 									CredentialBinding.Kind.S3, "shared-output", "training-process", "dataset", "bucket",
@@ -307,6 +409,12 @@ class LocalRunAssemblyIT {
 		@Bean
 		LocalCredentialProjections fixtureCredentialBroker(VaultBindings bindings, LocalProjectionFacts facts) {
 			return new LocalCredentialProjections(bindings, facts);
+		}
+
+		private static CredentialBinding registryBinding(UUID id, String role) {
+			return new CredentialBinding(id, 1, "fixtures/" + role + "-registry", CredentialBinding.Kind.GHCR,
+					"ghcr.io/example/private", role, role, "repository", "read-only",
+					Instant.parse("2026-01-01T00:00:00Z"), null, true);
 		}
 
 		private static CredentialBinding binding(UUID id, String name, String profile) {
@@ -388,6 +496,7 @@ class LocalRunAssemblyIT {
 		@Override
 		public CompletionStage<OrchestratorResult<OrchestratorOperation>> submit(OrchestratorTaskSpecification task,
 				TrainingCredentials credentials) {
+			launches.incrementAndGet();
 			this.task = task;
 			separateCredentials = credentials
 				.send(values -> values.get("SKYWRIGHT_DATASET_ACCESS_KEY_ID").equals("dataset-reader")

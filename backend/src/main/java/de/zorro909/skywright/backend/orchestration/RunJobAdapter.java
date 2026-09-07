@@ -110,6 +110,7 @@ public final class RunJobAdapter {
 		return this.dispatch.claim(runId, taskFingerprint(task)).<Submission>thenCompose(decision -> switch (decision) {
 			case DEFINITION_CONFLICT ->
 				CompletableFuture.completedFuture(new Submission.Refused("RUN_JOB_DEFINITION_CONFLICT"));
+			case STOP_REQUESTED -> CompletableFuture.completedFuture(new Submission.Refused("RUN_STOP_REQUESTED"));
 			case UNAVAILABLE ->
 				CompletableFuture.completedFuture(new Submission.Refused("DISPATCH_AUTHORITY_UNAVAILABLE"));
 			case ALREADY_DISPATCHED -> reconcile(runId).thenApply(Submission.Rediscovered::new);

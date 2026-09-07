@@ -22,11 +22,14 @@ public class LocalRunHttpAdapter implements RunsApi {
 
 	private final LocalRunSubmissions submissions;
 
+	private final RunCommands commands;
+
 	private final de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle;
 
-	LocalRunHttpAdapter(LocalRunSubmissions submissions,
+	LocalRunHttpAdapter(LocalRunSubmissions submissions, RunCommands commands,
 			de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle) {
 		this.submissions = submissions;
+		this.commands = commands;
 		this.lifecycle = lifecycle;
 	}
 
@@ -53,6 +56,33 @@ public class LocalRunHttpAdapter implements RunsApi {
 		return ResponseEntity.ok(new de.zorro909.skywright.backend.boundary.generated.model.RunPage(
 				page.items().stream().map(LocalRunSubmissions::observed).map(this::response).toList())
 			.nextCursor(page.nextCursor()));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.RunCommandReceipt> cancelRun(
+			UUID runId, de.zorro909.skywright.backend.boundary.generated.model.CreateRunCancellation request) {
+		var command = commands.cancel(runId, request.getRequestId());
+		return ResponseEntity.accepted()
+			.location(URI.create("/api/v1/runs/" + runId + "/commands/" + command.id()))
+			.body(command(command));
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.RunCommandReceipt> getRunCommand(
+			UUID runId, UUID commandId) {
+		var read = commands.read(runId, commandId);
+		return ResponseEntity.ok(command(read.command()).lifecycle(lifecycle(read.lifecycle())));
+	}
+
+	private de.zorro909.skywright.backend.boundary.generated.model.RunCommandReceipt command(RunCommand command) {
+		return new de.zorro909.skywright.backend.boundary.generated.model.RunCommandReceipt().id(command.id())
+			.runId(command.runId())
+			.kind(de.zorro909.skywright.backend.boundary.generated.model.RunCommandReceipt.KindEnum
+				.fromValue(command.kind().name()))
+			.acceptedAt(command.acceptedAt().atOffset(ZoneOffset.UTC))
+			.disposition(command.disposition())
+			.projectedAt(command.projectedAt() == null ? null : command.projectedAt().atOffset(ZoneOffset.UTC))
+			.forceAfter(command.forceAfter() == null ? null : command.forceAfter().atOffset(ZoneOffset.UTC));
 	}
 
 	private AcceptedLocalRun response(LocalRunSubmissions.Result result) {
@@ -88,9 +118,10 @@ public class LocalRunHttpAdapter implements RunsApi {
 				.toList())
 			.controlDecisions(view.controlDecisions()
 				.stream()
-				.map(d -> new RunControlDecisionEvidence(d.id(),
-						RunControlDecisionEvidence.KindEnum.fromValue(d.kind().name()),
-						d.decidedAt().atOffset(ZoneOffset.UTC)))
+				.map(d -> new RunControlDecisionEvidence().id(d.id())
+					.kind(RunControlDecisionEvidence.KindEnum.fromValue(d.kind().name()))
+					.decidedAt(d.decidedAt().atOffset(ZoneOffset.UTC))
+					.dispatchPrevented(d.dispatchPrevented()))
 				.toList());
 		if (view.lastSeen() != null) {
 			var seen = view.lastSeen();

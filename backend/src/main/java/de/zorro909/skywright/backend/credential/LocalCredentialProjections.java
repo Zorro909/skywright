@@ -83,6 +83,45 @@ public class LocalCredentialProjections {
 		return projection;
 	}
 
+	/** Restore only the originally recorded revisions before an unclaimed dispatch. */
+	public TrainingCredentials restoreTraining(UUID runId) {
+		var dataset = recorded(runId, "dataset", CredentialBinding.Kind.S3, "training-process", "read-only");
+		var output = recorded(runId, "run-store", CredentialBinding.Kind.S3, "training-process", "read-write-delete");
+		if (dataset.id().equals(output.id()) || dataset.resource().equals(output.resource())
+				|| dataset.identity().equals(output.identity()))
+			throw new IllegalStateException("Recorded Training Process credentials are not isolated");
+		var values = new LinkedHashMap<String, String>();
+		resolveTrainingValues(dataset, "SKYWRIGHT_DATASET", values);
+		resolveTrainingValues(output, "SKYWRIGHT_RUN_STORE", values);
+		return new TrainingCredentials(values);
+	}
+
+	public RuntimePullProjection restoreRuntimePull(UUID runId, java.nio.file.Path temporaryDirectory) {
+		var binding = recorded(runId, "runtime-pull", CredentialBinding.Kind.GHCR, "execution-target-pull",
+				"read-only");
+		var material = this.vault
+			.resolve(binding.id(), binding.revision(), binding.role(),
+					secret -> java.util.List.of(secret.path("username").asText(), secret.path("token").asText()))
+			.value()
+			.orElseThrow(() -> new IllegalStateException("Recorded runtime pull binding is unavailable"));
+		return new RuntimePullProjection(temporaryDirectory, material.get(0), material.get(1));
+	}
+
+	private CredentialBinding recorded(UUID runId, String slot, CredentialBinding.Kind kind, String role,
+			String profile) {
+		var fact = this.facts.forConsumer(runId)
+			.stream()
+			.filter(f -> f.slot().equals(slot) && f.releasedAt() == null)
+			.findFirst()
+			.orElseThrow(() -> new IllegalStateException("Recorded Credential Projection is unavailable"));
+		return this.vault.definitions()
+			.stream()
+			.filter(b -> b.id().equals(fact.bindingId()) && b.revision() == fact.revision() && b.kind() == kind
+					&& b.role().equals(role) && b.accessProfile().equals(profile))
+			.findFirst()
+			.orElseThrow(() -> new IllegalStateException("Original Credential Binding revision is unavailable"));
+	}
+
 	private CredentialBinding trainingBinding(Selection selection) {
 		return this.vault.definitions()
 			.stream()
@@ -99,6 +138,10 @@ public class LocalCredentialProjections {
 			throw new IllegalStateException("Credential validity does not cover the Run recovery window");
 		}
 		this.facts.begin(runId, slot, binding);
+		resolveTrainingValues(binding, prefix, values);
+	}
+
+	private void resolveTrainingValues(CredentialBinding binding, String prefix, LinkedHashMap<String, String> values) {
 		var result = this.vault.resolve(binding.id(), binding.revision(), "training-process", secret -> {
 			values.put(prefix + "_ACCESS_KEY_ID", secret.path("accessKeyId").asText());
 			values.put(prefix + "_SECRET_ACCESS_KEY", secret.path("secretAccessKey").asText());

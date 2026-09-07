@@ -110,8 +110,12 @@ public class TrainingProjects {
 	}
 
 	@Transactional(readOnly = true)
-	public boolean requiresRuntimePullProjection(UUID id) {
-		return requireReady(get(id).activeBinding()).accessMode() == RegistryAccessMode.PRIVATE;
+	public de.zorro909.skywright.backend.credential.LocalCredentialProjections.Selection runtimePullSelection(UUID id) {
+		var binding = requireReady(get(id).activeBinding());
+		return binding.accessMode() == RegistryAccessMode.PRIVATE
+				? new de.zorro909.skywright.backend.credential.LocalCredentialProjections.Selection(
+						binding.executionCredentialBindingId(), binding.repository(), "read-only")
+				: null;
 	}
 
 	@Transactional(readOnly = true)

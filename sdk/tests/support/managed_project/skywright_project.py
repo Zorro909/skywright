@@ -6,6 +6,7 @@
 import json
 import os
 import signal
+import time
 from pathlib import Path
 
 
@@ -43,6 +44,13 @@ def train(context):
                     os.environ.get("FIXTURE_INTERRUPT_STEP", "-1")
                 ):
                     os.kill(os.getpid(), signal.SIGTERM)
+                if context.step + 1 == int(os.environ.get("FIXTURE_STOP_STEP", "-1")):
+                    Path("stop-ready").touch()
+                    deadline = time.monotonic() + 20
+                    while not Path("stop-delivered").exists():
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError("stop fixture delivery timed out")
+                        time.sleep(0.02)
                 context.commit_step(batch)
                 Path("committed.json").write_text(json.dumps(state.ordinals))
                 if context.step >= int(os.environ.get("FIXTURE_TOTAL_STEPS", "12")):
