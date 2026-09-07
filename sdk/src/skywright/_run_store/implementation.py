@@ -1868,7 +1868,42 @@ class RunStoreReader:
         ordering_fingerprint: str | None = None,
     ) -> CheckpointSnapshot:
         parsed = CheckpointReference.parse(reference)
-        key = self.protocol.checkpoint_key(parsed.step, parsed.digest)
+        return self._read_checkpoint(
+            reference,
+            self.protocol.checkpoint_key(parsed.step, parsed.digest),
+            self.target.run_id,
+            project_version,
+            ordering_fingerprint,
+        )
+
+    def read_owned_seed(
+        self, source_run_id: str, reference: str, *, project_version: str
+    ) -> CheckpointSnapshot:
+        """Read an exact predecessor snapshot physically owned by this child Run."""
+        source = str(uuid.UUID(source_run_id))
+        if source != source_run_id or source == self.target.run_id:
+            raise ValueError("owned seed requires a distinct canonical predecessor")
+        parsed = CheckpointReference.parse(reference)
+        stable = self.protocol.run_prefix.removesuffix("v1/")
+        key = (
+            f"{stable}seed-v1/{source}/checkpoints/"
+            f"{_step(parsed.step)}/{parsed.digest}.safetensors"
+        )
+        return self._read_checkpoint(
+            reference, key, source, project_version, None, owned_seed=True
+        )
+
+    def _read_checkpoint(
+        self,
+        reference: str,
+        key: str,
+        expected_run_id: str,
+        project_version: str | None,
+        ordering_fingerprint: str | None,
+        *,
+        owned_seed: bool = False,
+    ) -> CheckpointSnapshot:
+        parsed = CheckpointReference.parse(reference)
         descriptor, name = tempfile.mkstemp(
             prefix="skywright-read-", suffix=".safetensors", dir=self._staging_directory
         )
@@ -1882,6 +1917,7 @@ class RunStoreReader:
                     self._max_checkpoint_bytes,
                     parsed.digest,
                     available_disk=shutil.disk_usage(path.parent).free,
+                    expected_kind="checkpoint" if owned_seed else None,
                 )
             try:
                 checkpoint = self._codec.deserialize(
@@ -1902,7 +1938,7 @@ class RunStoreReader:
                 ) from failure
         finally:
             path.unlink(missing_ok=True)
-        if checkpoint.run_id != self.target.run_id:
+        if checkpoint.run_id != expected_run_id:
             raise RunStoreError(
                 "RUN_STORE_WRONG_RUN: Checkpoint belongs to another Run"
             )
@@ -2147,11 +2183,12 @@ class RunStoreReader:
         digest: str | None = None,
         *,
         available_disk: int | None = None,
+        expected_kind: str | None = None,
     ) -> Mapping[str, Any]:
         response = self._client.get_object(Bucket=self.target.bucket, Key=key)
         with response["Body"] as body:
             size, expected = _validated_metadata(key, response, digest)
-            expected_kind = (
+            expected_kind = expected_kind or (
                 "progress-record"
                 if key == self.protocol.progress_key()
                 else self._immutable_identity(key)[0]

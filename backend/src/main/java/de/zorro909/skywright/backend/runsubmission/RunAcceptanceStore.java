@@ -29,10 +29,13 @@ public class RunAcceptanceStore
 
 	private final RunCommandStore commands;
 
+	private final LocalSeedPreparations seeds;
+
 	private final java.time.Clock clock;
 
 	RunAcceptanceStore(EntityManager entities, PlatformTransactionManager transactions, RunCommandStore commands,
-			java.time.Clock clock) {
+			java.time.Clock clock, LocalSeedPreparations seeds) {
+		this.seeds = seeds;
 		this.entities = entities;
 		this.commands = commands;
 		this.clock = clock;
@@ -66,6 +69,20 @@ public class RunAcceptanceStore
 			if (location == null)
 				throw new RunSubmissionException("RUN_STORE_LOCATION_UNAVAILABLE", 503);
 			return JsonMapper.builder().build().readTree(location.descriptor);
+		});
+	}
+
+	public record Lineage(UUID runId, boolean available, Instant observedAt, UUID predecessorRunId,
+			String checkpointReference, Instant seedVerifiedAt) {
+	}
+
+	public Lineage lineage(UUID runId) {
+		return transactions.execute(ignored -> {
+			if (entities.find(RunRecordEntity.class, runId) == null)
+				throw new RunSubmissionException("RUN_NOT_FOUND", 404);
+			var row = entities.find(RunLineageEntity.class, runId);
+			return row == null ? new Lineage(runId, false, clock.instant(), null, null, null) : new Lineage(runId, true,
+					clock.instant(), row.predecessorRunId, row.checkpointReference, row.seedVerifiedAt);
 		});
 	}
 
@@ -121,10 +138,11 @@ public class RunAcceptanceStore
 	}
 
 	Creation accept(LocalRunRequest request, String requestDigest, LocalRunAdmission admission) {
+		UUID seedRunId = request.checkpointSeed() == null ? null : seeds.reserve(request, requestDigest);
 		var holder = new LocalRunAdmission.Prepared[1];
 		try {
 			return transactions.execute(ignored -> {
-				UUID id = UUID.randomUUID();
+				UUID id = seedRunId == null ? UUID.randomUUID() : seedRunId;
 				var prepared = admission.prepare(id, request);
 				holder[0] = prepared;
 				var run = new AcceptedRun(id, request.submissionId(), requestDigest,
@@ -132,6 +150,8 @@ public class RunAcceptanceStore
 						prepared.task(), prepared.artifacts());
 				entities.persist(new RunRecordEntity(run));
 				entities.persist(new RunStoreLocationEntity(run));
+				entities.persist(new RunLineageEntity(id, request.checkpointSeed(),
+						request.checkpointSeed() == null ? null : seeds.verifiedAt(request.submissionId())));
 				commands.submission(run);
 				entities.flush();
 				return new Creation(run, prepared);

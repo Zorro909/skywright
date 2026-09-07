@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -232,24 +231,8 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 	}
 
 	private static java.util.List<String> command(Path job, Path result) {
-		String executable = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-		String classPath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
-		var command = new ArrayList<String>();
-		command.add(executable);
-		if (classPath.endsWith(".jar") && !classPath.contains(System.getProperty("path.separator"))) {
-			command.add("-Dloader.main=" + DatasetPublicationWorkerMain.class.getName());
-			command.add("-cp");
-			command.add(classPath);
-			command.add("org.springframework.boot.loader.launch.PropertiesLauncher");
-		}
-		else {
-			command.add("-cp");
-			command.add(classPath);
-			command.add(DatasetPublicationWorkerMain.class.getName());
-		}
-		command.add(job.toString());
-		command.add(result.toString());
-		return command;
+		return de.zorro909.skywright.backend.worker.WorkerProcessCommand.command(DatasetPublicationWorkerMain.class,
+				java.util.List.of(job.toString(), result.toString()));
 	}
 
 	static DatasetPublicationWorkerResult failure() {

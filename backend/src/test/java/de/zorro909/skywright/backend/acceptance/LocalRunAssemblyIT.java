@@ -229,6 +229,7 @@ class LocalRunAssemblyIT {
 				assertThat(afterPromotion.statusCode()).as(afterPromotion.body()).isEqualTo(202);
 				assertThat(source.task.resources().getFirst().imageId())
 					.startsWith("docker:ghcr.io/example/local-replacement@");
+				seededAcceptance(backend, admin, storage.endpoint(), outputBucket, request, projectId, run);
 				privateDelivery(backend, request, projectId);
 
 			}
@@ -236,6 +237,80 @@ class LocalRunAssemblyIT {
 		finally {
 			server.stop(0);
 			Files.deleteIfExists(tokenFile);
+		}
+	}
+
+	private static void seededAcceptance(BackendFixture backend, S3AsyncClient admin, URI endpoint, String bucket,
+			String original, String project, UUID predecessor) throws Exception {
+		var settings = new java.util.HashMap<String, Object>();
+		settings.put("endpoint", endpoint.toString());
+		settings.put("bucket", bucket);
+		settings.put("project", project);
+		settings.put("run", predecessor.toString());
+		settings.put("version", "sha256:" + "9".repeat(64));
+		settings.put("mode", "publish");
+		String reference = seedSdk(settings).path("reference").asText();
+		var input = (tools.jackson.databind.node.ObjectNode) JSON.readTree(original);
+		input.put("submissionId", UUID.randomUUID().toString());
+		input.set("checkpointSeed",
+				JSON.valueToTree(Map.of("predecessorRunId", predecessor, "checkpointReference", reference)));
+		var accepted = backend.post("/api/v1/runs", input.toString());
+		assertThat(accepted.statusCode()).as(accepted.body()).isEqualTo(202);
+		String child = JSON.readTree(accepted.body()).path("runId").asText();
+		var lineage = backend.get("/api/v1/runs/" + child + "/lineage");
+		assertThat(lineage.statusCode()).as(lineage.body()).isEqualTo(200);
+		var relationship = JSON.readTree(lineage.body());
+		assertThat(relationship.path("availability").asText()).isEqualTo("available");
+		assertThat(relationship.path("predecessorRunId").asText()).isEqualTo(predecessor.toString());
+		assertThat(relationship.path("checkpointReference").asText()).isEqualTo(reference);
+		assertThat(relationship.path("seedVerifiedAt").asText()).isNotBlank();
+		assertThat(JSON.readTree(backend.get("/api/v1/runs/" + predecessor + "/lineage").body())
+			.path("predecessorRunId")
+			.isNull()).isTrue();
+		var parsed = de.zorro909.skywright.backend.runstore.CheckpointReference.parse(reference);
+		String sourceKey = new de.zorro909.skywright.backend.runstore.RunStoreProtocol(project, predecessor.toString())
+			.checkpointKey(parsed.step(), parsed.digest());
+		admin.deleteObject(b -> b.bucket(bucket).key(sourceKey)).join();
+		var replay = backend.post("/api/v1/runs", input.toString());
+		assertThat(replay.statusCode()).as(replay.body()).isEqualTo(202);
+		assertThat(JSON.readTree(replay.body()).path("runId").asText()).isEqualTo(child);
+		settings.put("mode", "recover");
+		settings.put("run", child);
+		settings.put("predecessor", predecessor.toString());
+		settings.put("reference", reference);
+		assertThat(seedSdk(settings).path("recovered").asBoolean()).isTrue();
+		var changed = input.deepCopy();
+		changed.put("gpuCount", 2);
+		assertThat(backend.post("/api/v1/runs", changed.toString()).statusCode()).isEqualTo(409);
+		backend.restart();
+		backend.bean(Registry.class).projectId = project;
+		assertThat(JSON.readTree(backend.get("/api/v1/runs/" + child + "/lineage").body())
+			.path("checkpointReference")
+			.asText()).isEqualTo(reference);
+	}
+
+	private static tools.jackson.databind.JsonNode seedSdk(Map<String, Object> settings) throws Exception {
+		Path output = Files.createTempFile("seed-sdk-", ".log");
+		var root = Path.of(System.getProperty("repository.root"));
+		var process = new ProcessBuilder("uv", "run", "--locked", "--group", "ml-test", "python",
+				"tests/support/local_seed_scenario.py")
+			.directory(root.resolve("sdk").toFile())
+			.redirectErrorStream(true)
+			.redirectOutput(output.toFile())
+			.start();
+		try {
+			try (var stdin = process.getOutputStream()) {
+				stdin.write(JSON.writeValueAsBytes(settings));
+			}
+			assertThat(process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+			String text = Files.readString(output);
+			assertThat(process.exitValue()).as(text).isZero();
+			return JSON.readTree(text.lines().filter(line -> line.startsWith("{")).reduce((a, b) -> b).orElseThrow());
+		}
+		finally {
+			if (process.isAlive())
+				process.destroyForcibly();
+			Files.deleteIfExists(output);
 		}
 	}
 

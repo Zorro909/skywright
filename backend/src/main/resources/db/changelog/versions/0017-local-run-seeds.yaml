@@ -1,0 +1,72 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-233-local-run-lineage
+      author: skywright
+      changes:
+        - createTable:
+            schemaName: skywright
+            tableName: run_lineage
+            columns:
+              - column: { name: run_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: predecessor_run_id, type: uuid }
+              - column: { name: checkpoint_reference, type: varchar(128) }
+              - column: { name: seed_verified_at, type: timestamp with time zone }
+        - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: run_lineage, baseColumnNames: run_id, referencedTableSchemaName: skywright, referencedTableName: run_record, referencedColumnNames: id, constraintName: fk_run_lineage_run }
+        - sql:
+            sql: >-
+              ALTER TABLE skywright.run_lineage ADD CONSTRAINT ck_run_lineage_seed CHECK
+              ((predecessor_run_id IS NULL AND checkpoint_reference IS NULL AND seed_verified_at IS NULL) OR
+               (predecessor_run_id IS NOT NULL AND predecessor_run_id <> run_id AND checkpoint_reference IS NOT NULL AND seed_verified_at IS NOT NULL));
+              GRANT SELECT, INSERT ON skywright.run_lineage TO "${runtimeRole}";
+      rollback:
+        - dropTable: { schemaName: skywright, tableName: run_lineage }
+  - changeSet:
+      id: issue-233-seed-preparation-ownership
+      author: skywright
+      changes:
+        - createTable:
+            schemaName: skywright
+            tableName: local_seed_preparation
+            columns:
+              - column: { name: submission_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: run_id, type: uuid, constraints: { unique: true, nullable: false } }
+              - column: { name: request_digest, type: varchar(64), constraints: { nullable: false } }
+              - column: { name: predecessor_run_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: checkpoint_reference, type: varchar(128), constraints: { nullable: false } }
+              - column: { name: definition_json, type: text }
+              - column: { name: lease_token, type: uuid }
+              - column: { name: lease_until, type: timestamp with time zone }
+              - column: { name: verified_at, type: timestamp with time zone }
+              - column: { name: receipt_json, type: text }
+        - sql:
+            sql: >-
+              ALTER TABLE skywright.local_seed_preparation ADD CONSTRAINT ck_seed_preparation_documents CHECK
+              (octet_length(definition_json) <= 16777216 AND octet_length(receipt_json) <= 16384);
+              GRANT SELECT, INSERT, UPDATE ON skywright.local_seed_preparation TO "${runtimeRole}";
+      rollback:
+        - dropTable: { schemaName: skywright, tableName: local_seed_preparation }
+  - changeSet:
+      id: issue-233-seed-worker-projection-facts
+      author: skywright
+      changes:
+        - createTable:
+            schemaName: skywright
+            tableName: local_seed_worker_event
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: operation_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: kind, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: recorded_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: payload, type: text, constraints: { nullable: false } }
+        - createIndex:
+            schemaName: skywright
+            tableName: local_seed_worker_event
+            indexName: ix_seed_worker_operation
+            columns:
+              - column: { name: operation_id }
+        - sql:
+            sql: >-
+              ALTER TABLE skywright.local_seed_worker_event ADD CONSTRAINT ck_seed_worker_payload_size CHECK (octet_length(payload) <= 16384);
+              GRANT SELECT, INSERT ON skywright.local_seed_worker_event TO "${runtimeRole}";
+      rollback:
+        - dropTable: { schemaName: skywright, tableName: local_seed_worker_event }

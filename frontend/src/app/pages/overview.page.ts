@@ -21,6 +21,7 @@ import { RunEvidence, definitionText } from '../shared/run-evidence';
       <p class="eyebrow">Runs</p>
       <h2 id="overview-heading">Overview</h2>
       <p>Inspect accepted Runs and their source-backed observations.</p>
+      <a routerLink="/runs/new">Create Run</a>
       <div class="controls">
         <label
           >Filter this page

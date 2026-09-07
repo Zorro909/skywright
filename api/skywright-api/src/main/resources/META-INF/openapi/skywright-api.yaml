@@ -17,6 +17,17 @@ servers:
   - url: /api/v1
     description: Version 1 product API
 paths:
+  /local-run-target:
+    get:
+      operationId: getLocalRunTarget
+      summary: Inspect the operator-qualified local target and current submission-source availability.
+      responses:
+        '200':
+          description: Configured capability, not a reservation or free-capacity claim. Admission rechecks it.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LocalRunTarget' }
+        '503': { $ref: '#/components/responses/Problem' }
   /runs:
     get:
       operationId: listRuns
@@ -61,6 +72,20 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AcceptedLocalRun' }
         '404': { $ref: '#/components/responses/Problem' }
+  /runs/{runId}/lineage:
+    parameters:
+      - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      operationId: getRunLineage
+      summary: Read the accepted predecessor and verified owned seed independently of execution sources.
+      responses:
+        '200':
+          description: Available records affirm root or exact seed lineage. Legacy absence is unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunLineage' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /runs/{runId}/progress:
     parameters:
       - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
@@ -1180,6 +1205,35 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
 components:
   schemas:
+    LocalRunTarget:
+      type: object
+      additionalProperties: false
+      required: [identity, gpuModel, maximumGpuCount, gpuMemoryBytes, submissionAvailable, observedAt]
+      properties:
+        identity: { type: string }
+        gpuModel: { type: string }
+        maximumGpuCount: { type: integer, minimum: 1 }
+        gpuMemoryBytes: { type: integer, format: int64, minimum: 1 }
+        submissionAvailable: { type: boolean }
+        observedAt: { type: string, format: date-time }
+    LocalCheckpointSeed:
+      type: object
+      additionalProperties: false
+      required: [predecessorRunId, checkpointReference]
+      properties:
+        predecessorRunId: { $ref: '#/components/schemas/SkywrightId' }
+        checkpointReference: { type: string, maxLength: 128, pattern: '^skywright-checkpoint:v1:(0|[1-9][0-9]*):sha256:[0-9a-f]{64}$' }
+    RunLineage:
+      type: object
+      additionalProperties: false
+      required: [runId, availability, observedAt, predecessorRunId, checkpointReference, seedVerifiedAt]
+      properties:
+        runId: { $ref: '#/components/schemas/SkywrightId' }
+        availability: { type: string, enum: [available, unavailable] }
+        observedAt: { type: string, format: date-time }
+        predecessorRunId: { type: [string, 'null'], format: uuid }
+        checkpointReference: { type: [string, 'null'] }
+        seedVerifiedAt: { type: [string, 'null'], format: date-time }
     CreateLocalRun:
       type: object
       additionalProperties: false
@@ -1195,6 +1249,7 @@ components:
         gpuCount: { type: integer, minimum: 1, maximum: 1024 }
         configuration: { type: object, additionalProperties: true }
         maximumRecoveryDebt: { type: integer, minimum: 1, maximum: 2147483647 }
+        checkpointSeed: { $ref: '#/components/schemas/LocalCheckpointSeed' }
     AcceptedLocalRun:
       type: object
       additionalProperties: false

@@ -57,13 +57,19 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 
 	private final RuntimePullDelivery pulls;
 
+	private final RunAcceptanceStore runs;
+
+	private final LocalSeedTransfer seeds;
+
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	ResolvedLocalRunAdmission(TrainingProjects projects, TrainingProjectVersions versions,
 			ProjectVersionRegistry registry, DatasetCatalog datasets, TargetStorageRegistry storages,
 			ReportingCurrencyReader currency, CostQuoteReader quotes, LocalRunTargetSettings settings,
 			ObjectProvider<LocalCredentialProjections> projections, ObjectProvider<VaultBindings> vault,
-			RuntimePullDelivery pulls) {
+			RuntimePullDelivery pulls, RunAcceptanceStore runs, LocalSeedTransfer seeds) {
+		this.runs = runs;
+		this.seeds = seeds;
 		this.projects = projects;
 		this.versions = versions;
 		this.registry = registry;
@@ -95,17 +101,26 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 				() -> new TargetEligibilityAssessment(List.of(new EligibleTarget(target.identity(), targetClass, "rocm",
 						target.gpuModel(), target.maximumGpuCount(), target.gpuMemoryBytes())), List.of()),
 				new TargetStorageRunDefinitionReader(storages), currency, quotes);
+		var source = request.checkpointSeed() == null ? null
+				: runs.get(request.checkpointSeed().predecessorRunId()).definition();
+		var seedFacts = source == null ? null
+				: new de.zorro909.skywright.backend.rundefinition.CheckpointSeedFacts(source, true);
 		var resolution = resolver
 			.resolve(new RunSubmission(new TrainingProjectBinding(project.projectId().toString(), project.repository()),
 					request.manifestArtifactDigest(), JSON.writeValueAsString(request.configuration()), reference,
 					targetRequest, new RunDefinitionStorageOverrides(request.executionStorageId(), null, null),
-					request.maximumRecoveryDebt(), null, null, false), null);
+					request.maximumRecoveryDebt(), null, null, false), seedFacts);
 		if (!resolution.accepted()) {
 			boolean unavailable = resolution.failures().stream().anyMatch(f -> f.code().endsWith("_UNAVAILABLE"));
 			throw new RunSubmissionException(unavailable ? "RUN_ADMISSION_UNAVAILABLE" : "RUN_DEFINITION_INVALID",
 					unavailable ? 503 : 422, resolution.failures());
 		}
 		var definition = resolution.definition();
+		// This local seed slice admits identical resolved configuration only; full
+		// editable clones belong to #58.
+		if (source != null && !source.value().path("configuration").equals(definition.value().path("configuration")))
+			throw new RunSubmissionException("SEED_CONFIGURATION_DIFFERS", 422);
+		var ownedSeed = seeds.prepare(runId, request, definition);
 		var read = datasets.selectForRun(request.datasetDefinitionId(), dataset.contentFingerprint(), runId,
 				request.preferredDatasetCopyId());
 		var datasetAccess = storages.trainingAccess(read.targetStorageId(), true);
@@ -141,7 +156,7 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 						location.compatibilityOptions()
 							.getOrDefault("checksumCalculation", "when-required")
 							.replace('-', '_')),
-				null);
+				ownedSeed);
 		var task = new LocalRuntimeProjection().project(definition, materials, target,
 				pullSelection == null ? null : "skywright-pull-" + runId, pullNamespace);
 		var broker = projections.getIfAvailable();

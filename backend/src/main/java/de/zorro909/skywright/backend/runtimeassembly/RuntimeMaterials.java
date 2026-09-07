@@ -43,6 +43,10 @@ public record RuntimeMaterials(int materialsVersion, UUID runId, String image, S
 		}
 	}
 
-	public record SourceCheckpoint(UUID runId, String reference, SourceStorage storage) {
+	public record SourceCheckpoint(UUID runId, String reference, SourceStorage storage,
+			@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) UUID ownedByRunId) {
+		public SourceCheckpoint(UUID runId, String reference, SourceStorage storage) {
+			this(runId, reference, storage, null);
+		}
 	}
 }

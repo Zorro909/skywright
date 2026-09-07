@@ -12,6 +12,12 @@ export const routes: Routes = [
     title: 'Overview · Skywright',
   },
   {
+    path: 'runs/new',
+    loadComponent: () =>
+      import('./pages/new-run.page').then((module) => module.NewRunPage),
+    title: 'Create Run · Skywright',
+  },
+  {
     path: 'runs/:runId',
     loadComponent: () =>
       import('./pages/run-detail.page').then((module) => module.RunDetailPage),

@@ -105,6 +105,7 @@ class ManagedRuntime:
     source_reference: str | None
     source_target: TargetStorage | None
     image: str
+    source_owned: bool = False
 
     @classmethod
     def decode(
@@ -231,10 +232,15 @@ class ManagedRuntime:
         source = materials["sourceCheckpoint"]
         source_run = source_reference = None
         source_target = None
+        source_owned = False
         if source is not None:
-            source = _object(
-                source, {"runId", "reference", "storage"}, "source checkpoint"
-            )
+            fields = {"runId", "reference", "storage"}
+            if isinstance(source, dict) and "ownedByRunId" in source:
+                fields.add("ownedByRunId")
+                if source["ownedByRunId"] != run_id:
+                    raise ValueError("seed ownership differs from the accepted Run")
+                source_owned = True
+            source = _object(cast(dict[str, Any], source), fields, "source checkpoint")
             source_run = str(UUID(source["runId"]))
             source_reference = source["reference"]
             source_target = _storage(
@@ -253,8 +259,12 @@ class ManagedRuntime:
                     "source storage",
                 ),
                 project["projectIdentity"],
-                source_run,
+                run_id if source_owned else source_run,
             )
+            if source_owned and source["storage"] != value["storage"]["execution"]:
+                raise ValueError(
+                    "owned seed location differs from the accepted Run Store"
+                )
             if (
                 source_run == run_id
                 or not isinstance(source_reference, str)
@@ -276,6 +286,7 @@ class ManagedRuntime:
             source_reference,
             source_target,
             image,
+            source_owned,
         )
 
     def run(
@@ -301,9 +312,16 @@ class ManagedRuntime:
 
         def seed_checkpoint() -> CheckpointSnapshot:
             assert self.source_run_id is not None and self.source_reference is not None
-            return RunStoreReader(
+            reader = RunStoreReader(
                 self.source_target or replace(self.target, run_id=self.source_run_id)
-            ).read_exact(self.source_reference)
+            )
+            if self.source_owned:
+                return reader.read_owned_seed(
+                    self.source_run_id,
+                    self.source_reference,
+                    project_version=self.project_version,
+                )
+            return reader.read_exact(self.source_reference)
 
         with ExitStack() as resources:
             requests = RunStopObservation(self.target, self.project_version)

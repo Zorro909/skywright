@@ -10,11 +10,12 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { RUN_API, type Run } from '../api/run.api';
 import { ApiRequestFailure, type ApiFailure } from '../api/api-failure';
 import { RequestFailure } from '../shared/request-failure';
+import { RunCancellation } from '../shared/run-cancellation';
 import { RunEvidence } from '../shared/run-evidence';
 
 @Component({
   selector: 'sky-run-detail-page',
-  imports: [RouterLink, RequestFailure, RunEvidence],
+  imports: [RouterLink, RequestFailure, RunEvidence, RunCancellation],
   template: `
     <a routerLink="/">Back to overview</a>
     <section aria-labelledby="run-heading">
@@ -34,6 +35,11 @@ import { RunEvidence } from '../shared/run-evidence';
         <sky-request-failure [failure]="failure" />
       }
       @if (run(); as run) {
+        <sky-run-cancellation
+          [run]="run"
+          [historical]="loading() || !!failure()"
+          (refreshRun)="load()"
+        />
         <h3>Run observations</h3>
         <sky-run-evidence
           [run]="run"

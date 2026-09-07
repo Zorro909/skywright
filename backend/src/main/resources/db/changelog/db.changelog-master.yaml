@@ -31,3 +31,5 @@ databaseChangeLog:
       file: db/changelog/versions/0015-run-command-delivery.yaml
   - include:
       file: db/changelog/versions/0016-run-log-capture.yaml
+  - include:
+      file: db/changelog/versions/0017-local-run-seeds.yaml
