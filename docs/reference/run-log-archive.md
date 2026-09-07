@@ -15,7 +15,8 @@ single managed task. Ambiguous matches are unavailable.
 The collector derives the pinned cluster names, verifies the database's user,
 workspace and Kubernetes context, and selects exactly one head pod using
 `ray-cluster-name` and `ray-node-type`. It verifies the logical cluster annotation
-and pod UID. A fixed Python program runs in the `ray-node` container through
+and pod UID. An isolated worker process enforces the request deadline across the Kubernetes
+client's websocket connection and frame reads. A fixed Python program runs in the `ray-node` container through
 non-TTY Kubernetes exec. That program reads the existing SQLite job database in
 read-only mode and opens only regular log files below `~/sky_logs`, without following
 symlinks. It returns raw file ranges as base64. No shell command, path or SQL comes
@@ -36,9 +37,9 @@ completion uses that barrier too.
 
 If the pod has gone, SkyPilot's retained `local_log_file` may supply raw task bytes.
 That path does not record the original pod UID. When active capture already exists,
-the collector preserves this copy as a separate source generation and records
-`SOURCE_GENERATION_UNCONFIRMED`. It does not discard a matching prefix on the
-assumption that two files came from the same generation. An initially discovered
+the collector refuses to splice this copy into the ordered stream and finalizes
+the verified capture as partial with `SOURCE_GENERATION_UNCONFIRMED`. Matching
+prefix bytes cannot establish whether the copy belongs to the same generation. An initially discovered
 copy with previous recoveries records `EARLIER_GENERATIONS_UNAVAILABLE`.
 
 ## Publication and restart
@@ -84,9 +85,10 @@ Relocation must wait for this fact; archive production cannot resume afterward.
 | Collector request / response | 8 KiB / 2 MiB |
 | Kubernetes metadata response | 256 KiB |
 | Capture concurrency / queue | 2 workers / 8 queued Runs |
-| Collector concurrency / backlog | 2 handlers / 4 connections |
+| Collector concurrency / backlog | 2 handlers and 2 worker processes / 4 connections |
+| Worker address space / CPU | 512 MiB / 8 CPU seconds |
 | Sweep / per-Run next attempt | 5 seconds; at most 16 queued candidates per sweep |
-| HTTP fetch | 10 seconds |
+| HTTP fetch / enforced source worker deadline | 10 seconds / 8 seconds plus at most 2 seconds to reap |
 | Kubernetes request | 1-second connect, 2-second read; exec loop 5 seconds |
 | PostgreSQL query / lock | 1 second / 250 milliseconds |
 | S3 request | 5 seconds, one attempt |
@@ -126,5 +128,6 @@ lost cursor acknowledgement, setup failure, recovery boundaries, source loss,
 terminal retries, immutable authority handoff and raw binary/ANSI/CRLF fidelity.
 The packaged image tests qualify read-only state access, equivalence with the
 pinned SDK's cluster naming and the actual Kubernetes TLS/exec client against a
-controlled API executing the fixed reader. These are source-protocol tests. The
+controlled API executing the fixed reader, including stalled websocket handshakes
+and incomplete frames. These are source-protocol tests. The
 real LOCAL GPU workflow remains #235.

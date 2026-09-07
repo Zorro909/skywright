@@ -72,9 +72,9 @@ def regular_page(path, root, offset, limit, *, identity=None, anchor=None):
         next_offset = offset + len(data)
         following = os.pread(descriptor, min(next_offset, 64), max(0, next_offset - 64))
         return {
-            "offset": offset, "size": before.st_size, "bytes": base64.b64encode(data).decode("ascii"),
+            "offset": offset, "size": after.st_size, "bytes": base64.b64encode(data).decode("ascii"),
             "sha256": hashlib.sha256(data).hexdigest(), "identity": file_identity,
-            "anchor": hashlib.sha256(following).hexdigest(), "endOfFile": next_offset == before.st_size,
+            "anchor": hashlib.sha256(following).hexdigest(), "endOfFile": next_offset == after.st_size,
         }
     finally:
         os.close(descriptor)
@@ -120,6 +120,15 @@ def task_page(request, *, home=None):
             "AND length(log_dir)<=4096 ORDER BY job_id LIMIT 1",
             (name, previous_id + int(after)),
         ).fetchall()
+        if not rows and after and previous_id:
+            # Keep the last sealed generation readable until the managed
+            # controller supplies its later DONE finalization barrier.
+            rows = connection.execute(
+                "SELECT job_id,run_timestamp,status,pid,log_dir FROM jobs "
+                "WHERE job_name=? AND job_id=? AND length(run_timestamp)<=256 AND length(log_dir)<=4096 LIMIT 1",
+                (name, previous_id),
+            ).fetchall()
+            after = False
         later = bool(rows) and connection.execute("SELECT 1 FROM jobs WHERE job_name=? AND job_id>? LIMIT 1", (name, rows[0][0])).fetchone() is not None
     if not rows:
         raise Unavailable("SOURCE_NOT_YET_AVAILABLE")
@@ -134,13 +143,13 @@ def task_page(request, *, home=None):
     same = previous_id == job_id and not after
     if same and cursor.get("runTimestamp") != timestamp:
         raise Unavailable("SOURCE_REPLACED")
+    # Establish writer closure before reading any page that may be final.
+    sealed = status_value in TERMINAL and driver_stopped(pid or 0, job_id)
     result = regular_page(
         path, home / "sky_logs", cursor.get("offset", 0) if same else 0,
         request.get("limit", MAX_BYTES), identity=cursor.get("identity") if same else None,
         anchor=cursor.get("anchor") if same else None,
     )
-    # A terminal job row precedes the driver's final output. Check its process.
-    sealed = status_value in TERMINAL and driver_stopped(pid or 0, job_id)
     result.update({
         "generation": f"{job_id}:{timestamp}", "sealed": sealed and result["endOfFile"],
         "jobId": job_id, "runTimestamp": timestamp, "status": status_value, "lastGeneration": not later,

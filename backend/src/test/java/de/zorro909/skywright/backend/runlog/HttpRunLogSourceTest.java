@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 class HttpRunLogSourceTest {
 
 	@Test
-	void preservesUnconfirmedSnapshotAsDistinctGenerationWithoutDiscardingAnIdenticalPrefix() throws Exception {
+	void rejectsUnconfirmedSnapshotWithoutDuplicatingAnIdenticalPrefix() throws Exception {
 		for (boolean emptyPrefix : java.util.List.of(false, true)) {
 			var objects = new ArchiveJournalTest.Objects();
 			var journal = new ArchiveJournal(objects, ArchiveJournalTest.RUN, ArchiveJournalTest.VERSION);
@@ -51,16 +51,12 @@ class HttpRunLogSourceTest {
 			server.start();
 			try {
 				var source = new HttpRunLogSource("http://127.0.0.1:" + server.getAddress().getPort());
-				var fetched = source.fetch(ArchiveJournalTest.RUN, "task", prior);
-				assertThat(fetched).isNotNull();
-				assertThat(fetched.generation()).isEqualTo("snapshot:1");
-				assertThat(fetched.bytes()).isEqualTo(whole);
+				var captured = prior;
+				assertThatThrownBy(() -> source.fetch(ArchiveJournalTest.RUN, "task", captured))
+					.isInstanceOf(RunLogSource.Unavailable.class)
+					.hasMessage("SOURCE_GENERATION_UNCONFIRMED");
 				assertThat(requests).hasValue(1);
-				var appended = journal
-					.append(archive.append("task", prior, fetched, true, ArchiveJournalTest.NOW, ignored -> false));
-				assertThat(appended.bytes()).isEqualTo(prefix.length + whole.length);
-				assertThat(appended.ready()).isTrue();
-				assertThat(appended.partialReason()).isNotNull();
+
 			}
 			finally {
 				server.stop(0);

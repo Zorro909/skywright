@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 import sys
+import subprocess
 
 # Only Skywright-owned sibling modules are added under isolated Python.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -201,17 +202,17 @@ class Sources:
                     return live
                 except Exception:
                     pass
+            if previous.get("podUid"):
+                raise Unavailable("SOURCE_GENERATION_UNCONFIRMED")
             path = Path(os.path.expanduser(job["snapshot"]))
-            # SkyPilot does not persist the source pod UID with this copy.
-            # Retain it as a separate generation if live capture already began.
+            # A first source may use the retained copy; existing live capture
+            # cannot be spliced without proof of its pod generation.
             offset = request.get("offset", 0) if previous.get("snapshotIdentity") else 0
             raw = regular_page(path, self.root, offset, limit,
                                identity=previous.get("snapshotIdentity"))
             raw.update({"generation": f"snapshot:{job_id}:{raw['identity']}",
                         "sealed": raw["endOfFile"], "snapshot": True,
                         "cursor": {"snapshotIdentity": raw["identity"], "recoveries": job["recoveries"]}})
-            if previous.get("podUid"):
-                raw["gap"] = "SOURCE_GENERATION_UNCONFIRMED"
             if not previous and job["recoveries"]:
                 raw["gap"] = "EARLIER_GENERATIONS_UNAVAILABLE"
         else:
@@ -221,12 +222,53 @@ class Sources:
         return raw
 
 
+def capture_page(request):
+    """Enforce the deadline outside Kubernetes' unbounded websocket client."""
+    body = json.dumps(request, separators=(",", ":")).encode("ascii")
+    if len(body) > MAX_REQUEST:
+        raise Unavailable("INVALID_REQUEST")
+    process = subprocess.Popen([sys.executable, "-I", str(Path(__file__).resolve()), "--page"],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        output, _ = process.communicate(body, timeout=8)
+        if process.returncode != 0 or len(output) > MAX_RESPONSE:
+            raise Unavailable("SOURCE_WORKER_FAILED")
+        envelope = json.loads(output)
+        if envelope.get("unavailable"):
+            raise Unavailable(envelope["unavailable"])
+        return envelope["page"]
+    except subprocess.TimeoutExpired:
+        raise Unavailable("SOURCE_DEADLINE") from None
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=2)
+
+
+def worker():
+    import resource
+    resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
+    resource.setrlimit(resource.RLIMIT_CPU, (8, 8))
+    try:
+        data = sys.stdin.buffer.read(MAX_REQUEST + 1)
+        if len(data) > MAX_REQUEST:
+            raise Unavailable("INVALID_REQUEST")
+        page = Sources().page(json.loads(data))
+        body = json.dumps({"schemaVersion": 1, "page": page}, separators=(",", ":")).encode("ascii")
+        if len(body) > MAX_RESPONSE:
+            raise Unavailable("SOURCE_RESPONSE_TOO_LARGE")
+        sys.stdout.buffer.write(body)
+    except Unavailable as failure:
+        print(json.dumps({"schemaVersion": 1, "unavailable": str(failure)}))
+    except Exception:
+        print(json.dumps({"schemaVersion": 1, "unavailable": "SOURCE_UNAVAILABLE"}))
+
+
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 4
 
-    def __init__(self, address, sources):
-        self.sources = sources
+    def __init__(self, address):
         self.slots = threading.BoundedSemaphore(2)
         super().__init__(address, Handler)
 
@@ -276,7 +318,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not chunk:
                     raise Unavailable("INVALID_REQUEST")
                 data.extend(chunk)
-            page = self.server.sources.page(json.loads(data))
+            page = capture_page(json.loads(data))
             self.reply(200, {"schemaVersion": 1, "page": page})
         except Unavailable as failure:
             self.reply(503, {"schemaVersion": 1, "unavailable": str(failure)})
@@ -285,4 +327,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    Server(("0.0.0.0", 46582), Sources()).serve_forever(poll_interval=0.25)
+    if sys.argv[1:] == ["--page"]:
+        worker()
+    else:
+        Server(("0.0.0.0", 46582)).serve_forever(poll_interval=0.25)

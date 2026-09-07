@@ -325,8 +325,9 @@ final class SkyPilotApiServerImageIT {
 	void collectorUsesActualKubernetesTlsAndExecProtocolForTheFixedReadOnlyProgram() throws Exception {
 		String probe = java.nio.file.Files
 			.readString(java.nio.file.Path.of("src/test/resources/collector_kubernetes_probe.py"));
-		assertThat(docker("run", "--rm", "--read-only", "--network", "none", "--tmpfs", "/tmp:rw,nosuid,size=32m",
-				"--entrypoint", "python", imageName(), "-I", "-c", probe))
+		String uri = "postgresql://skypilot:" + databasePassword + "@" + databaseContainer + ":5432/skypilot";
+		assertThat(docker("run", "--rm", "--read-only", "--network", network, "--tmpfs", "/tmp:rw,nosuid,size=32m",
+				"--env", "SKYPILOT_DB_CONNECTION_URI=" + uri, "--entrypoint", "python", imageName(), "-I", "-c", probe))
 			.contains("Kubernetes raw-byte protocol qualified");
 	}
 

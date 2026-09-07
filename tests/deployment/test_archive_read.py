@@ -77,6 +77,28 @@ class ArchiveReadTest(unittest.TestCase):
         self.assertEqual(base64.b64decode(last["bytes"]), b"\nepilogue\n")
         self.assertTrue(last["sealed"])
 
+    def test_last_sealed_generation_remains_readable_until_controller_done(self):
+        self.job(3, b"final", status="SUCCEEDED", pid=2147483647)
+        first = reader.task_page({"taskName": NAME}, home=self.home)
+        final = reader.task_page({"taskName": NAME, "cursor": first["cursor"]}, home=self.home)
+        self.assertEqual(final["generation"], first["generation"])
+        self.assertEqual(final["offset"], len(b"final"))
+        self.assertEqual(base64.b64decode(final["bytes"]), b"")
+        self.assertTrue(final["sealed"])
+        self.assertTrue(final["lastGeneration"])
+
+    def test_driver_final_append_is_read_before_the_generation_is_sealed(self):
+        from unittest.mock import patch
+        path = self.job(3, b"initial", status="SUCCEEDED", pid=2147483647)
+        def stopped(pid, job_id):
+            with path.open("ab") as stream:
+                stream.write(b" final epilogue")
+            return True
+        with patch.object(reader, "driver_stopped", stopped):
+            final = reader.task_page({"taskName": NAME}, home=self.home)
+        self.assertEqual(base64.b64decode(final["bytes"]), b"initial final epilogue")
+        self.assertTrue(final["sealed"])
+
     def test_replacement_and_same_offset_change_are_explicit(self):
         path = self.job(3, b"first bytes")
         first = reader.task_page({"taskName": NAME, "limit": 5}, home=self.home)

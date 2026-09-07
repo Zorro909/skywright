@@ -15,6 +15,9 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
+
+import psycopg2
 from urllib.parse import parse_qs, urlsplit
 
 from cryptography import x509
@@ -51,7 +54,7 @@ with tempfile.TemporaryDirectory() as temporary:
     cert.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
     private = directory / 'key.pem'
     private.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
-    mode = {'replace': False, 'annotation': CLUSTER}
+    mode = {'replace': False, 'annotation': CLUSTER, 'stall': None}
     commands = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -86,6 +89,10 @@ with tempfile.TemporaryDirectory() as temporary:
                 environment = dict(os.environ, HOME=str(directory), SKY_RUNTIME_DIR=str(directory))
                 process = subprocess.run(command, env=environment, capture_output=True, timeout=3, check=True)
                 assert not process.stderr
+                if mode['stall'] == 'handshake':
+                    time.sleep(20)
+                    self.close_connection = True
+                    return
                 self.send_response(101)
                 self.send_header('Upgrade', 'websocket')
                 self.send_header('Connection', 'Upgrade')
@@ -98,6 +105,12 @@ with tempfile.TemporaryDirectory() as temporary:
                     header = bytes([0x82, length]) if length < 126 else bytes([0x82, 126]) + struct.pack('!H', length)
                     self.wfile.write(header + payload)
                     self.wfile.flush()
+                if mode['stall'] == 'frame':
+                    self.wfile.write(bytes([0x82, 100]) + b'\x01x')
+                    self.wfile.flush()
+                    time.sleep(20)
+                    self.close_connection = True
+                    return
                 frame(b'\x01' + process.stdout[:17])
                 frame(b'\x01' + process.stdout[17:])
                 frame(b'\x03' + b'{"status":"Success"}')
@@ -111,6 +124,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 raise AssertionError(parsed.path)
 
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    server.daemon_threads = True
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.load_cert_chain(cert, private)
     server.socket = tls.wrap_socket(server.socket, server_side=True)
@@ -124,14 +138,16 @@ with tempfile.TemporaryDirectory() as temporary:
         'contexts': [{'name': 'local', 'context': {'user': 'role', 'cluster': 'cluster', 'namespace': 'training'}}]}))
     config.chmod(0o400)
     os.environ['SKYWRIGHT_KUBECONFIG'] = str(config)
-    class Sources(collector.Sources):
-        def head(self, job, job_id): return CLUSTER, CLOUD, 'local'
-    sources = Sources()
-    job = {'taskName': NAME, 'recoveries': 0}
+    with psycopg2.connect(os.environ['SKYPILOT_DB_CONNECTION_URI']) as connection, connection.cursor() as cursor:
+        cursor.execute("UPDATE job_info SET user_hash='12345678',workspace=NULL,schedule_state='RUNNING' WHERE spot_job_id=91062")
+        cursor.execute("UPDATE spot SET status='RUNNING',end_at=NULL,local_log_file=NULL WHERE spot_job_id=91062")
+        cursor.execute("INSERT INTO clusters(name,user_hash,workspace,cloud,region,status) VALUES (%s,'12345678',NULL,'Kubernetes','local','UP')", (CLUSTER,))
+    def capture(cursor):
+        return collector.capture_page({'runId': NAME.removeprefix('skywright-'), 'stream': 'task', 'cursor': cursor, 'limit': 7})
     try:
         cursor, captured = {}, b''
         for i in range(10):
-            page = sources.remote(job, 91062, cursor, 7)
+            page = capture(cursor)
             captured += base64.b64decode(page['bytes'])
             cursor = page['cursor']
             assert not page['sealed']
@@ -139,21 +155,38 @@ with tempfile.TemporaryDirectory() as temporary:
         assert captured == RAW
         with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("UPDATE jobs SET status='FAILED_SETUP',pid=2147483647")
-        page = sources.remote(job, 91062, cursor, 7)
+        page = capture(cursor)
         assert page['sealed'] and page['lastGeneration']
         mode['replace'] = True
         try:
-            sources.remote(job, 91062, {}, 7)
+            capture({})
             raise AssertionError('replacement accepted')
         except collector.Unavailable as error:
             assert str(error) == 'SOURCE_REPLACED'
         mode['replace'] = False
         mode['annotation'] = 'unrelated'
         try:
-            sources.remote(job, 91062, {}, 7)
+            capture({})
             raise AssertionError('unrelated pod accepted')
         except collector.Unavailable as error:
             assert str(error) == 'SOURCE_HEAD_UNCONFIRMED'
+        mode['annotation'] = CLUSTER
+        for failure in ('handshake', 'frame'):
+            mode['stall'] = failure
+            started = time.monotonic()
+            try:
+                capture({})
+                raise AssertionError('stalled websocket was accepted')
+            except collector.Unavailable as error:
+                assert str(error) == 'SOURCE_DEADLINE', str(error)
+            assert time.monotonic() - started < 10
+            mode['stall'] = None
+            assert base64.b64decode(capture({})['bytes']) == RAW[:7]
+        try:
+            os.waitpid(-1, os.WNOHANG)
+            raise AssertionError('collector worker was not reaped')
+        except ChildProcessError:
+            pass
         assert 'sky' not in sys.modules
         print('Kubernetes raw-byte protocol qualified')
     finally:

@@ -110,5 +110,7 @@ cluster/head labels and verify its logical cluster annotation. Importing SkyPilo
 otherwise pure naming helper initializes `.sky/locks`; the collector instead owns
 the small deterministic naming protocol and tests equivalence against the packaged
 SDK. Terminal `local_log_file` paths do not retain pod UID, so matching prefixes do
-not establish generation identity. Copies of uncertain origin remain separate
-source generations with an explicit partial reason.
+not establish generation identity. Copies of uncertain origin cannot be spliced into the ordered stream; verified
+capture instead finalizes with an explicit partial reason. The Kubernetes client's
+non-preloaded websocket timeout does not bound connection or frame reception. A
+Skywright-owned worker process enforces the whole fetch deadline.

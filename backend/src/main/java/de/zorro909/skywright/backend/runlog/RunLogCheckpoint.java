@@ -7,10 +7,15 @@ record RunLogCheckpoint(RunLogArchive.Cursor task, RunLogArchive.Cursor controll
 	}
 
 	RunLogArchive.Cursor stream(String name) {
-		return name.equals("task") ? task : controller;
+		return switch (name) {
+			case "task" -> task;
+			case "controller" -> controller;
+			default -> throw new IllegalArgumentException("Invalid archive stream");
+		};
 	}
 
 	RunLogCheckpoint with(String name, RunLogArchive.Cursor value) {
+		stream(name);
 		return name.equals("task") ? new RunLogCheckpoint(value, controller, terminalAt, markerAfter, markersVerified)
 				: new RunLogCheckpoint(task, value, terminalAt, markerAfter, markersVerified);
 	}

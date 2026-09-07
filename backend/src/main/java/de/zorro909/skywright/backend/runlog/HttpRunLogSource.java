@@ -53,6 +53,9 @@ final class HttpRunLogSource implements RunLogSource {
 				|| JSON.writeValueAsBytes(response.path("cursor")).length > 3500)
 			throw new Unavailable("SOURCE_RESPONSE_INVALID");
 		String generation = response.required("generation").asText();
+		if (response.path("snapshot").asBoolean() && prior.generation() != null
+				&& !generation.equals(prior.generation()))
+			throw new Unavailable("SOURCE_GENERATION_UNCONFIRMED");
 		ObjectNode nextCollector = (ObjectNode) response.required("cursor");
 		byte[] bytes;
 		try {
