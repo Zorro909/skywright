@@ -4,10 +4,15 @@ A Training Project commits one `skywright-project.json` definition. The reposito
 GitHub Action accepts publication only from a clean CI checkout whose reported source revision
 equals `HEAD`.
 
+Register the Training Project through `POST /api/v1/training-projects` first. Set
+`projectIdentity` to the returned Project UUID; the backend requires each published
+version to identify that exact registration. The display name and registry repository
+are separate from this stable identity.
+
 ```json
 {
   "definitionVersion": 1,
-  "projectIdentity": "stable-project",
+  "projectIdentity": "00000000-0000-4000-8000-000000000001",
   "registryRepository": "ghcr.io/example/stable-project",
   "configurationContract": "project-configuration.json",
   "metricContract": "project-metrics.json",

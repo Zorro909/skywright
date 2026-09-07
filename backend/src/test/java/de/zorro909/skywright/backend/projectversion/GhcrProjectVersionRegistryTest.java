@@ -71,7 +71,7 @@ final class GhcrProjectVersionRegistryTest {
 			server.start();
 			URI endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
 			var registry = new GhcrProjectVersionRegistry(HttpClient.newHttpClient(), endpoint,
-					repository -> Optional.empty());
+					repository -> Optional.of("Bearer test-token"));
 
 			assertThatThrownBy(() -> registry.listVersions("ghcr.io/example/project"))
 				.isInstanceOf(ProjectVersionException.class)
@@ -126,6 +126,133 @@ final class GhcrProjectVersionRegistryTest {
 					.hasMessage("PROJECT_REGISTRY_RESPONSE_INVALID");
 				assertThat(calls).hasValue(1);
 			}
+		}
+		finally {
+			server.stop(0);
+		}
+	}
+
+	@Test
+	void discoversPublishedContentAddressedVersionsWithAnonymousTokensAndSignedBlobDelivery() throws Exception {
+		String label = "3".repeat(40) + "-github-123-1";
+		String digest = "sha256:" + "4".repeat(64);
+		String tag = "sha256-" + "5".repeat(64) + ".skywright-version.v1";
+		var requests = new ArrayList<String>();
+		var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		try {
+			server.createContext("/", exchange -> {
+				String path = exchange.getRequestURI().getPath();
+				String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+				requests.add(path + " " + authorization);
+				if (path.equals("/token")) {
+					assertThat(authorization).isNull();
+					assertThat(exchange.getRequestURI().getQuery())
+						.isEqualTo("service=ghcr.io&scope=repository:example/project:pull");
+					body(exchange, 200, "{\"token\":\"anonymous-pull\"}");
+				}
+				else if (path.equals("/signed-blob")) {
+					assertThat(authorization).isNull();
+					body(exchange, 200, "published-content");
+				}
+				else {
+					assertThat(authorization).isEqualTo("Bearer anonymous-pull");
+					if (path.endsWith("/tags/list")) {
+						body(exchange, 200, "{\"tags\":[\"" + tag + "\",\"staging\"]}");
+					}
+					else if (path.contains("/manifests/")) {
+						exchange.getResponseHeaders().add("Docker-Content-Digest", digest);
+						body(exchange, 200,
+								"{\"artifactType\":\"application/vnd.skywright.project.version.v1+json\","
+										+ "\"annotations\":{\"org.skywright.version.label\":\"" + label + "\"},"
+										+ "\"layers\":[{\"digest\":\"sha256:" + "5".repeat(64) + "\"}]}");
+					}
+					else {
+						exchange.getResponseHeaders().add("Location", "/signed-blob");
+						exchange.sendResponseHeaders(307, -1);
+						exchange.close();
+					}
+				}
+			});
+			server.start();
+			var endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+			var registry = new GhcrProjectVersionRegistry(HttpClient.newHttpClient(), endpoint,
+					repository -> Optional.empty());
+			assertThat(registry.listVersions("ghcr.io/example/project"))
+				.containsExactly(new ProjectVersionReference(label, digest));
+			assertThat(registry.pullArtifact("ghcr.io/example/project", digest))
+				.contains(new RegistryArtifact(digest, "published-content"));
+			assertThat(requests).contains("/signed-blob null");
+		}
+		finally {
+			server.stop(0);
+		}
+	}
+
+	@Test
+	void rejectsBlobRedirectsOutsideTheRegistryAndGithubCdn() throws Exception {
+		var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		try {
+			server.createContext("/", exchange -> {
+				exchange.getResponseHeaders().add("Location", "https://example.invalid/steal");
+				exchange.sendResponseHeaders(307, -1);
+				exchange.close();
+			});
+			server.start();
+			var endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+			var http = new RegistryHttp(HttpClient.newHttpClient(), endpoint);
+			assertThatThrownBy(() -> http.blob(java.net.http.HttpRequest.newBuilder(endpoint)
+				.header("Authorization", "Bearer private-token")
+				.GET()
+				.build())).isInstanceOf(IllegalStateException.class).hasMessage("registry blob redirect rejected");
+		}
+		finally {
+			server.stop(0);
+		}
+	}
+
+	@Test
+	void malformedSignedBlobRedirectDoesNotEscapeThroughTheExceptionChain() throws Exception {
+		var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		try {
+			server.createContext("/", exchange -> {
+				exchange.getResponseHeaders()
+					.add("Location", "https://pkg-containers.githubusercontent.com/blob?signature=private value");
+				exchange.sendResponseHeaders(307, -1);
+				exchange.close();
+			});
+			server.start();
+			var endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+			var http = new RegistryHttp(HttpClient.newHttpClient(), endpoint);
+			assertThatThrownBy(() -> http.blob(java.net.http.HttpRequest.newBuilder(endpoint).GET().build()))
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessage("registry blob redirect invalid")
+				.hasNoCause();
+		}
+		finally {
+			server.stop(0);
+		}
+	}
+
+	@Test
+	void transportFailureOmitsSecretBearingRequestDetails() throws Exception {
+		var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		try {
+			server.createContext("/", exchange -> {
+				exchange.sendResponseHeaders(200, 100);
+				exchange.getResponseBody().write(1);
+				exchange.close();
+			});
+			server.start();
+			var endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+			var http = new RegistryHttp(HttpClient.newHttpClient(), endpoint);
+			assertThatThrownBy(
+					() -> http.send(java.net.http.HttpRequest.newBuilder(endpoint.resolve("/blob?signature=private"))
+						.timeout(java.time.Duration.ofSeconds(2))
+						.GET()
+						.build()))
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessage("registry unavailable")
+				.hasNoCause();
 		}
 		finally {
 			server.stop(0);

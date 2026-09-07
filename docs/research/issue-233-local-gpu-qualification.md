@@ -83,4 +83,12 @@ now adds the qualified profile directory through `site.addsitedir`, including it
 profile packages from the project interpreter successfully. The public workflow
 pins Action revision `1f530785e14e38c3f85fc6c0384f40342057551a`.
 
+The published project image is anonymously readable. Live GHCR also exposed three
+reader incompatibilities: public repositories require an anonymous pull bearer token,
+version artifacts use the publisher's content-addressed tags and provenance
+annotations, and blob downloads redirect to GitHub's CDN. The registry reader now
+handles these forms, bounds requests and strips registry authorization from signed
+blob redirects. The qualification project definition uses its registered Project
+UUID, `e23aac30-f005-4c5b-8ea1-be6770f8c54e`.
+
 Private initialization material and raw logs remain outside the repository.
