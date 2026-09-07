@@ -60,4 +60,19 @@ describe('Run reads', () => {
     ).rejects.toMatchObject({ outcome: { kind: 'network' } });
     expect(fetch).toHaveBeenCalledOnce();
   });
+  it('classifies a response body failure after headers as a capability failure', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new TypeError('socket lost during body'));
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    await expect(
+      runApi.progress(runId, new AbortController().signal),
+    ).rejects.toMatchObject({ outcome: { kind: 'network' } });
+  });
 });

@@ -75,6 +75,19 @@ test('Run source loss preserves identity, durable progress, conflicts and termin
   await expect(
     page.getByText(/Terminal supported by durable evidence/u),
   ).toBeVisible();
+  await page.route(`**/api/v1/runs/${runId}/progress`, (route) =>
+    route.abort('connectionrefused'),
+  );
+  await page.getByRole('button', { name: 'Refresh progress' }).click();
+  await expect(
+    page.getByText('Progress unavailable.', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText('Last-seen Progress Record', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText('Observed lifecycle: finished', { exact: true }),
+  ).toBeVisible();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 

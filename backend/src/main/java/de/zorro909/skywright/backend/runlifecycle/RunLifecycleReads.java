@@ -97,20 +97,15 @@ public final class RunLifecycleReads {
 				source.retainedFacts(), retained, evidence, decisions, fetchedAt, gaps));
 		var liveJob = source.availability() == RunJobAdapter.SourceAvailability.LIVE && source.liveJobs().size() == 1
 				? source.liveJobs().getFirst() : null;
-		Long executionSpan = null;
-		if (liveJob != null && liveJob.startedAt() != null) {
-			double end = liveJob.endedAt() == null ? fetchedAt.toEpochMilli() / 1000.0 : liveJob.endedAt();
-			double start = liveJob.startedAt();
-			if (Double.isFinite(start) && Double.isFinite(end) && start >= 0 && end >= start
-					&& (end - start) * 1000 < Long.MAX_VALUE)
-				executionSpan = (long) ((end - start) * 1000);
-		}
+		var execution = RunExecutionObservation.read(liveJob, result.facts(), result.terminalLatched(), fetchedAt);
 		var seen = remember(run.runId(), result.state(), skyPilotReadAt, fetchedAt);
-		return new Read(run, new RunLifecycleView(wire(result.state()), result.terminalLatched(), result.cause(),
-				wire(source.availability()), processAvailability, fetchedAt, skyPilotReadAt, runStoreReadAt, seen,
-				result.gaps(), result.facts(), result.conflicts(), decisions,
-				evidence == null ? null : evidence.attempts().size(), liveJob == null ? null : liveJob.recoveryCount(),
-				liveJob == null ? null : liveJob.status(), executionSpan));
+		return new Read(run,
+				new RunLifecycleView(wire(result.state()), result.terminalLatched(), result.cause(),
+						wire(source.availability()), processAvailability, fetchedAt, skyPilotReadAt, runStoreReadAt,
+						seen, result.gaps(), result.facts(), result.conflicts(), decisions,
+						evidence == null ? null : evidence.attempts().size(), execution.recoveryCount(),
+						liveJob == null ? null : liveJob.status(), execution.spanMillis(),
+						execution.minimumRecoveryCount(), execution.spanSource()));
 	}
 
 	public record Page(List<Read> items, UUID nextCursor) {

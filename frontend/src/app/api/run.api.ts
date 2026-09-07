@@ -17,14 +17,19 @@ export type Lifecycle = components['schemas']['RunLifecycleObservation'];
 
 const api = createClient<paths>({
   baseUrl: '/api/v1',
-  fetch: async (request) => {
-    try {
-      return await globalThis.fetch(request);
-    } catch (failure) {
-      throw new ApiRequestFailure(classifyRequestFailure(failure));
-    }
-  },
+  fetch: (request) => globalThis.fetch(request),
 });
+
+async function transport<T>(response: Promise<T>): Promise<T> {
+  try {
+    return await response;
+  } catch (failure) {
+    if (failure instanceof ApiRequestFailure) throw failure;
+    if (failure instanceof TypeError || failure instanceof DOMException)
+      throw new ApiRequestFailure(classifyRequestFailure(failure));
+    throw failure;
+  }
+}
 
 async function read<T>(
   result: { data?: string; error?: unknown; response: Response },
@@ -51,11 +56,13 @@ async function read<T>(
 export const runApi = {
   async page(after: string | undefined, signal: AbortSignal): Promise<RunPage> {
     return read(
-      await api.GET('/runs', {
-        params: { query: { ...(after ? { after } : {}), limit: 10 } },
-        signal,
-        parseAs: 'text',
-      }),
+      await transport(
+        api.GET('/runs', {
+          params: { query: { ...(after ? { after } : {}), limit: 10 } },
+          signal,
+          parseAs: 'text',
+        }),
+      ),
       (value) =>
         object(value) &&
         Array.isArray(value['items']) &&
@@ -66,21 +73,25 @@ export const runApi = {
   },
   async get(runId: string, signal: AbortSignal): Promise<Run> {
     return read(
-      await api.GET('/runs/{runId}', {
-        params: { path: { runId } },
-        signal,
-        parseAs: 'text',
-      }),
+      await transport(
+        api.GET('/runs/{runId}', {
+          params: { path: { runId } },
+          signal,
+          parseAs: 'text',
+        }),
+      ),
       (value) => isRun(value) && value.runId === runId,
     );
   },
   async progress(runId: string, signal: AbortSignal): Promise<Progress> {
     return read(
-      await api.GET('/runs/{runId}/progress', {
-        params: { path: { runId } },
-        signal,
-        parseAs: 'text',
-      }),
+      await transport(
+        api.GET('/runs/{runId}/progress', {
+          params: { path: { runId } },
+          signal,
+          parseAs: 'text',
+        }),
+      ),
       isProgress,
     );
   },
@@ -146,6 +157,12 @@ export function isLifecycle(value: unknown): value is Lifecycle {
       (key) => value[key] == null || count(value[key]),
     ) &&
     nullableText(value['sourceStatus']) &&
+    (value['recoveryCountIsMinimum'] === undefined ||
+      typeof value['recoveryCountIsMinimum'] === 'boolean') &&
+    (value['executionSpanSource'] === undefined ||
+      ['live', 'retained', 'unavailable'].includes(
+        text(value['executionSpanSource']) ? value['executionSpanSource'] : '',
+      )) &&
     (value['lastSeen'] == null ||
       (object(value['lastSeen']) &&
         text(value['lastSeen']['state']) &&

@@ -34,6 +34,7 @@ import { RunEvidence } from '../shared/run-evidence';
         <sky-request-failure [failure]="failure" />
       }
       @if (run(); as run) {
+        <h3>Run observations</h3>
         <sky-run-evidence
           [run]="run"
           [detail]="true"

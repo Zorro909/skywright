@@ -5,7 +5,6 @@ import {
   input,
 } from '@angular/core';
 import { DatePipe, JsonPipe } from '@angular/common';
-import { RouterLink } from '@angular/router';
 import { isLifecycle, object, type Run } from '../api/run.api';
 import { RunProgress } from './run-progress';
 import { ObservationAge } from './observation-age';
@@ -19,7 +18,7 @@ export function definitionText(run: Run, section: string, key: string): string {
 
 @Component({
   selector: 'sky-run-evidence',
-  imports: [DatePipe, JsonPipe, RouterLink, RunProgress, ObservationAge],
+  imports: [DatePipe, JsonPipe, RunProgress, ObservationAge],
   template: `
     <dl class="identity">
       <div>
@@ -88,7 +87,15 @@ export function definitionText(run: Run, section: string, key: string): string {
         </div>
         <div>
           <dt>SkyPilot recoveries</dt>
-          <dd>{{ observation.recoveryCount ?? 'Unavailable' }}</dd>
+          <dd>
+            @if (observation.recoveryCountIsMinimum) {
+              At least
+            }
+            {{ observation.recoveryCount ?? 'Unavailable' }}
+            @if (observation.recoveryCountIsMinimum) {
+              · retained recovery evidence
+            }
+          </dd>
         </div>
         <div>
           <dt>Runtime (execution span)</dt>
@@ -99,6 +106,9 @@ export function definitionText(run: Run, section: string, key: string): string {
                 ? 'Unavailable'
                 : span(observation.executionSpanMillis)
             }}
+            @if (observation.executionSpanSource === 'retained') {
+              · retained source timestamps
+            }
           </dd>
         </div>
       </dl>
@@ -168,17 +178,12 @@ export function definitionText(run: Run, section: string, key: string): string {
     }
     <sky-run-progress [runId]="run().runId" />
     @if (detail()) {
-      <section aria-label="Run lineage">
-        <h3>Lineage</h3>
-        @if (parent(); as parent) {
-          <p>
-            Parent Run: <a [routerLink]="['/runs', parent]">{{ parent }}</a>
-          </p>
-        } @else {
-          <p>
-            No parent Run reference is recorded in this accepted definition.
-          </p>
-        }
+      <section aria-label="Run lineage unavailable">
+        <h3>Lineage unavailable</h3>
+        <p>
+          The predecessor Run and seed checkpoint reader is not available in
+          this view. No lineage can be established from this read.
+        </p>
         <p>
           Submission: <code>{{ run().submissionId }}</code>
         </p>
@@ -218,13 +223,6 @@ export class RunEvidence {
   protected readonly target = computed(() =>
     definitionText(this.run(), 'targetRequest', 'target'),
   );
-  protected readonly parent = computed(() => {
-    const reference: unknown = this.run().definition['parentRunId'];
-    return typeof reference === 'string' &&
-      /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(reference)
-      ? reference
-      : undefined;
-  });
   protected readonly capabilities = [
     {
       name: 'Logs',

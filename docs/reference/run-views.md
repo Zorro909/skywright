@@ -17,9 +17,10 @@ Execution Attempt counts come from verified Run Store history. SkyPilot recovery
 counts and setup/wait observations come only from a complete, uniquely correlated
 live response. Runtime is explicitly an execution span from the source's start to
 its end or this read; it includes recovery waits, and is neither active compute
-nor billed duration. Missing source fields are unavailable, not zero. Retained
-source timestamps remain inspectable in the detail evidence even when there is
-no current runtime observation.
+nor billed duration. For a terminal Run during source loss, matching retained start/end timestamps
+supply the span and are labelled as retained evidence. A retained recovery count
+is a labelled lower bound, never an inferred zero. Missing source fields remain
+unavailable. Retained facts and conflicts stay inspectable beside these values.
 
 Progress has a separate read and refresh operation,
 `GET /api/v1/runs/{runId}/progress`. It resolves the current registered Run Store

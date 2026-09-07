@@ -133,6 +133,10 @@ public class LocalRunHttpAdapter implements RunsApi {
 			.recoveryCount(view.recoveryCount())
 			.sourceStatus(view.sourceStatus())
 			.executionSpanMillis(view.executionSpanMillis())
+			.recoveryCountIsMinimum(view.recoveryCountIsMinimum())
+			.executionSpanSource(
+					de.zorro909.skywright.backend.boundary.generated.model.RunLifecycleObservation.ExecutionSpanSourceEnum
+						.fromValue(view.executionSpanSource()))
 			.terminalLatched(view.terminalLatched())
 			.sourceAvailability(view.sourceAvailability())
 			.processAvailability(RunLifecycleObservation.ProcessAvailabilityEnum.fromValue(view.processAvailability()))

@@ -116,6 +116,8 @@ class RunLifecycleIT {
 				assertThat(retained.path("state").asText()).isEqualTo("finished");
 				assertThat(retained.path("sourceAvailability").asText()).isEqualTo("unavailable");
 				assertThat(retained.path("cause").asText()).isEqualTo("completed");
+				assertThat(retained.path("executionSpanMillis").asLong()).isEqualTo(40_000);
+				assertThat(retained.path("executionSpanSource").asText()).isEqualTo("retained");
 				assertThat(progress(backend, run).path("availability").asText()).isEqualTo("available");
 				// A corrupt independent Progress Record cannot erase terminal evidence or
 				// identity.

@@ -1246,6 +1246,8 @@ components:
         attemptCount: { type: [integer, 'null'], minimum: 0, description: Verified Run Store Execution Attempts; unavailable is never zero. }
         recoveryCount: { type: [integer, 'null'], minimum: 0, description: Live SkyPilot recovery count, distinct from Execution Attempts. }
         sourceStatus: { type: [string, 'null'], description: Current unique SkyPilot observation including setup/wait details; not a lifecycle state. }
+        recoveryCountIsMinimum: { type: boolean, description: Retained recovery observations establish a lower bound, never an inferred final zero. }
+        executionSpanSource: { type: string, enum: [live, retained, unavailable] }
         executionSpanMillis: { type: [integer, 'null'], format: int64, minimum: 0, description: Elapsed source time from execution start to observed end or read time, including recovery waits. Not billed or active compute time. }
         cause: { type: [string, 'null'] }
         sourceAvailability: { type: string }
