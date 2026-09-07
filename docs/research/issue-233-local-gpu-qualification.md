@@ -141,7 +141,7 @@ Request `3764aac4-57f7-4134-bb2a-b346ee533a1a` failed before pod creation becaus
 the server image lacked `git`. The subsequent supported `sky check` also required
 `socat` and `nc` for Kubernetes port-forward networking. The image now packages
 Git, OpenSSH clients, rsync, socat, netcat-openbsd and checksum-pinned kubectl
-1.36.3. A production image check exercises repository
+1.37.0. A production image check exercises repository
 creation, SSH key generation, local rsync and kubectl's client version as the
 unprivileged service user. This is image packaging; the SkyPilot Python packages
 are unchanged.

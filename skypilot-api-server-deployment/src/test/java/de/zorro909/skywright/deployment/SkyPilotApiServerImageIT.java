@@ -123,7 +123,7 @@ final class SkyPilotApiServerImageIT {
 				    subprocess.run(['rsync', str(root / 'source'), str(root / 'copy')], check=True)
 				    assert (root / 'copy').read_text() == 'managed-launch'
 				    version = json.loads(subprocess.check_output(['kubectl', 'version', '--client', '-o', 'json']))
-				    assert version['clientVersion']['gitVersion'] == 'v1.36.3'
+				    assert version['clientVersion']['gitVersion'] == 'v1.37.0'
 				from sky.provision.kubernetes.utils import check_port_forward_mode_dependencies
 				assert check_port_forward_mode_dependencies() is None
 				print('managed Kubernetes launch tools verified')

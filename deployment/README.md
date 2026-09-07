@@ -84,7 +84,7 @@ image into a 1 MiB memory volume owned by the service user. The server mounts th
 copy at the original helper path, preserving its exact bytes and allowing the SDK's
 permission change. The remaining root filesystem stays read-only; no SDK source is
 patched. The server image includes Git, OpenSSH clients, rsync, socat, netcat and
-checksum-pinned kubectl 1.36.3 for managed Kubernetes launches.
+checksum-pinned kubectl 1.37.0 for managed Kubernetes launches.
 
 The two application pods are independent. Use these commands for a routine replacement and wait
 for each command to finish before diagnosing the result:

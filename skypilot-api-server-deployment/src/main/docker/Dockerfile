@@ -23,12 +23,12 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
         ca-certificates curl git netcat-openbsd openssh-client rsync socat \
     && case "$(dpkg --print-architecture)" in \
-        amd64) kubectl_arch=amd64; kubectl_sha=ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336 ;; \
-        arm64) kubectl_arch=arm64; kubectl_sha=3d86f24401c41ae5a46ac50eef8865fe891d3647d324a0836f6c63757a126e62 ;; \
+        amd64) kubectl_arch=amd64; kubectl_sha=6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f ;; \
+        arm64) kubectl_arch=arm64; kubectl_sha=922df28df248cc00a9e025f947704f1d1482de64ece54cfe57e61f19eaf1eef3 ;; \
         *) exit 1 ;; \
        esac \
     && curl --fail --location --silent --show-error \
-        "https://dl.k8s.io/release/v1.36.3/bin/linux/${kubectl_arch}/kubectl" \
+        "https://dl.k8s.io/release/v1.37.0/bin/linux/${kubectl_arch}/kubectl" \
         --output /usr/local/bin/kubectl \
     && printf '%s  /usr/local/bin/kubectl\n' "$kubectl_sha" | sha256sum --check --status \
     && chmod 0755 /usr/local/bin/kubectl \
