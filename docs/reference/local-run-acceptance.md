@@ -42,7 +42,7 @@ Missing qualification reports unavailable admission. This is a declared target c
 
 Storage defaults must be assigned for the requested local target class. Dataset and Run Store require separate qualified destinations and training-process Credential Bindings. Basic submissions have no runtime ceiling, so their credentials must be declared non-expiring; the broker checks against `Instant.MAX` instead of inventing a finite lifetime.
 
-Private GHCR images currently report unavailable admission. Their existing pull helper executes at the target side, and the backend has no delivery port to install the immutable Run-owned Secret. The division of that remaining delivery work between #232 and #65 needs an owner decision before this slice is considered complete.
+The owner approved public-image-only acceptance for #232 on 2026-09-07. Private GHCR images report unavailable admission until #65 connects the existing credential broker and target-side pull helper to automated delivery of the immutable Run-owned Secret. That integration remains required before #235 local GPU qualification; registry credentials stay outside the Training Process.
 
 ## Validation
 
