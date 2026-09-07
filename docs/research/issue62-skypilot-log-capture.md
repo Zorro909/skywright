@@ -50,28 +50,14 @@ sink could constrain the local file, but would not fix those other properties.
 These findings come from the installed package, not an unpinned upstream branch.
 No production code or acceptance criteria have been changed for #62.
 
-## Proposed dependency decision
+## Owner decision, 2026-09-07
 
-Add a small, versioned patch to the paired SkyPilot client and API-server build
-for bounded raw log reads. Keep Java calling the patched Python SDK through
-GraalPy, and include the patch identity in both packaged artifacts and their
-cache identities. Do not add Java calls to SkyPilot HTTP endpoints.
+The owner rejected direct modifications to the SkyPilot server or client SDK.
+The proposed paired raw-log patch is withdrawn. Both dependencies must remain
+unchanged, and runtime monkey-patching is not an alternative to that constraint.
+Issue #62 and ADR 0009 record the decision.
 
-The patched SDK contract would identify one exact managed job and one stream,
-accept an absolute source byte offset and a maximum response size, and return
-raw bytes with source identity, the observed end offset and fetch outcome.
-Changed/truncated sources and unavailable final bytes must be explicit.
-Server reads must use binary files and bounded buffers. Initial limits would be
-1 MiB per fetch and a 5-second fetch deadline, with archive finalization allowed
-three failed fetch attempts across backend restart. Productive page capture
-would not consume that failure budget.
-
-The archive itself would retain immutable chunks addressed by Run identity,
-validate attempt markers against durable SDK records, and publish a single
-immutable complete-or-partial manifest after terminal reconciliation. Repatriation
-would consume the manifest's finalization evidence through the current Storage
-Location. Live transport and actual relocation remain in their existing issues.
-
-This preserves the requested byte-fidelity contract but adds ownership of a
-SkyPilot patch to the existing paired-deployment responsibility. That ownership
-decision remains open; this note is a proposal, not an accepted ADR decision.
+The byte-fidelity, bounded capture and honest terminal-finalization requirements
+remain canonical. A supported unmodified-SDK path still needs qualification;
+these findings do not authorize relaxing the archive contract or bypassing the
+SDK through another transport.
