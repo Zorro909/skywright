@@ -29,6 +29,10 @@ class LocalProjectionRecord {
 	@Column(name = "consumer_role", nullable = false)
 	String consumerRole;
 
+	@org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+	@Column(name = "binding_metadata_json", columnDefinition = "jsonb")
+	String bindingMetadata;
+
 	@Column(name = "projected_at", nullable = false)
 	Instant projectedAt;
 
@@ -41,6 +45,7 @@ class LocalProjectionRecord {
 		this.slot = slot;
 		this.bindingId = binding.id();
 		this.bindingRevision = binding.revision();
+		this.bindingMetadata = tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(binding);
 		this.consumerRole = binding.role();
 		this.projectedAt = projectedAt;
 	}

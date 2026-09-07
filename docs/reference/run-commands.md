@@ -112,7 +112,12 @@ with Run ownership and binding identity annotations. An existing Secret must mat
 type, immutability and binding revision; repeated installation also checks exact payload.
 Neither delivery failures nor lost acknowledgements authorize replacement. A recovered worker
 can confirm an already installed Secret without resolving newer registry credentials. If no
-Secret exists, it must restore the originally recorded revision or remain unavailable.
+Secret exists, it restores the originally recorded revision using the immutable non-secret
+binding metadata captured at acceptance. Normal rotation does not require the old revision
+to remain configured as current. Vault still checks the exact version, deletion/revocation,
+value shape and original expiry; a missing or revoked original never falls back to the new
+revision. Legacy projection rows without a metadata snapshot can restore only when their
+exact revision remains configured.
 
 The task stores only the Secret name and namespace. Registry material never enters the task
 payload, ordinary environment or Training Process. Helper concurrency is capped at four, with
@@ -121,7 +126,8 @@ provider exceptions and credentials. The existing operator release command remai
 for deleting a Secret only when every dependent use has ended; losing source visibility is not
 release evidence.
 
-Migration 0015 backfills submission commands for existing Runs, adds command delivery and
+Migration 0015 adds the non-secret binding snapshot to new projection records, backfills
+submission commands for existing Runs, adds command delivery and
 dispatch-prevention tables, and grants runtime updates only on the delivery table. Rollback
 removes these tables; quiesce delivery before rolling back to software without this protocol.
 

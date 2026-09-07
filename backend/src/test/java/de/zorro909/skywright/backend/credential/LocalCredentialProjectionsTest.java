@@ -82,6 +82,15 @@ class LocalCredentialProjectionsTest {
 			var nextStore = revision(store, 2);
 			var next = new LocalCredentialProjections(new VaultBindings(endpoint, "skywright", token,
 					List.of(nextDataset, nextStore), Clock.fixed(NOW, ZoneOffset.UTC)), facts);
+			try (var restored = next.restoreTraining(runId)) {
+				assertThat(restored.<String>send(values -> values.get("SKYWRIGHT_DATASET_ACCESS_KEY_ID")))
+					.isEqualTo("key-1");
+				assertThat(restored.<String>send(values -> values.get("SKYWRIGHT_RUN_STORE_ACCESS_KEY_ID")))
+					.isEqualTo("key-1");
+			}
+			status.set(404);
+			assertThatThrownBy(() -> next.restoreTraining(runId)).hasMessage("Training Credential Binding is MISSING");
+			status.set(200);
 			var projection = next.training(UUID.randomUUID(), selection(nextDataset), selection(nextStore),
 					NOW.plusSeconds(60));
 			assertThat(projection.<String>send(values -> values.get("SKYWRIGHT_DATASET_ACCESS_KEY_ID")))
@@ -145,6 +154,8 @@ class LocalCredentialProjectionsTest {
 
 		private final Set<String> slots = new HashSet<>();
 
+		private final java.util.Map<String, CredentialBinding> metadata = new java.util.HashMap<>();
+
 		MemoryFacts() {
 			super(null, Clock.systemUTC());
 		}
@@ -154,6 +165,22 @@ class LocalCredentialProjectionsTest {
 			if (!this.slots.add(consumerId + "/" + slot)) {
 				throw new IllegalStateException("Already projected");
 			}
+			metadata.put(consumerId + "/" + slot, binding);
+		}
+
+		@Override
+		public java.util.Optional<CredentialBinding> recordedBinding(UUID consumer, String slot) {
+			return java.util.Optional.ofNullable(metadata.get(consumer + "/" + slot));
+		}
+
+		@Override
+		public List<Fact> forConsumer(UUID consumer) {
+			return metadata.entrySet()
+				.stream()
+				.filter(e -> e.getKey().startsWith(consumer + "/"))
+				.map(e -> new Fact(consumer, e.getKey().substring(37), e.getValue().id(), e.getValue().revision(),
+						e.getValue().role(), NOW, null))
+				.toList();
 		}
 
 	}

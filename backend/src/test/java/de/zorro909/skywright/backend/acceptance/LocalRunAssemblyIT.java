@@ -51,6 +51,8 @@ class LocalRunAssemblyIT {
 
 	private static volatile boolean refuseCredentials;
 
+	private static volatile long credentialRevision = 1;
+
 	@Test
 	void productionAdmissionResolvesContractsLeasesStorageAndSeparateCredentialChannels() throws Exception {
 		var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
@@ -62,11 +64,13 @@ class LocalRunAssemblyIT {
 				exchange.close();
 				return;
 			}
-			String identity = exchange.getRequestURI().getPath().endsWith("dataset") ? "dataset-reader" : "run-writer";
+			long revision = Long.parseLong(exchange.getRequestURI().getQuery().substring("version=".length()));
+			String identity = (exchange.getRequestURI().getPath().endsWith("dataset") ? "dataset-reader" : "run-writer")
+					+ (revision == 1 ? "" : "-v" + revision);
 			byte[] body = JSON.writeValueAsBytes(Map.of("data",
-					Map.of("metadata", Map.of("version", 1), "data",
+					Map.of("metadata", Map.of("version", revision), "data",
 							exchange.getRequestURI().getPath().endsWith("registry")
-									? Map.of("username", "pull-reader", "token", "registry-sentinel")
+									? Map.of("username", "pull-reader", "token", "registry-sentinel-v" + revision)
 									: Map.of("accessKeyId", identity, "secretAccessKey", identity + "-secret"))));
 			exchange.sendResponseHeaders(200, body.length);
 			exchange.getResponseBody().write(body);
@@ -264,6 +268,12 @@ class LocalRunAssemblyIT {
 			assertThat(commands.submissionClaimed(run)).isFalse();
 			assertThat(backend.bean(AssemblySource.class).launches).hasValue(0);
 			assertThat(backend.bean(LocalProjectionFacts.class).forConsumer(run)).hasSize(3);
+			credentialRevision = 2;
+			backend.restart();
+			commands = backend.bean(de.zorro909.skywright.backend.runsubmission.RunCommandStore.class);
+			assertThat(backend.bean(VaultBindings.class).definitions())
+				.allMatch(b -> b.revision() == 2 || b.id().equals(SHARED_IDENTITY_BINDING));
+
 			Files.delete(directory.resolve("offline"));
 			Files.createFile(directory.resolve("lost-ack"));
 			Thread.sleep(2100);
@@ -272,6 +282,12 @@ class LocalRunAssemblyIT {
 			Path secret = directory.resolve("skywright-pull-" + run + ".json");
 			assertThat(secret).exists();
 			String original = Files.readString(secret);
+			var docker = JSON
+				.readTree(Base64.getDecoder().decode(JSON.readTree(original).at("/data/.dockerconfigjson").asText()));
+			assertThat(new String(Base64.getDecoder().decode(docker.at("/auths/ghcr.io/auth").asText()),
+					java.nio.charset.StandardCharsets.UTF_8))
+				.contains("registry-sentinel-v1")
+				.doesNotContain("registry-sentinel-v2");
 			Files.delete(directory.resolve("lost-ack"));
 			helper.destroy();
 			helper.waitFor();
@@ -286,6 +302,7 @@ class LocalRunAssemblyIT {
 				second.get();
 			}
 			assertThat(backend.bean(AssemblySource.class).launches).hasValue(1);
+			assertThat(backend.bean(AssemblySource.class).separateCredentials).isTrue();
 			var task = backend.bean(AssemblySource.class).task;
 			assertThat(task.runtimePullNamespace()).isEqualTo("training");
 			assertThat(task.runtimePullSecret()).isEqualTo("skywright-pull-" + run);
@@ -301,6 +318,7 @@ class LocalRunAssemblyIT {
 			assertThat(Files.readString(secret)).isEqualTo(original);
 		}
 		finally {
+			credentialRevision = 1;
 			System.clearProperty("skywright.runtime-pull.endpoint");
 			if (helper != null) {
 				helper.destroyForcibly();
@@ -412,14 +430,14 @@ class LocalRunAssemblyIT {
 		}
 
 		private static CredentialBinding registryBinding(UUID id, String role) {
-			return new CredentialBinding(id, 1, "fixtures/" + role + "-registry", CredentialBinding.Kind.GHCR,
-					"ghcr.io/example/private", role, role, "repository", "read-only",
+			return new CredentialBinding(id, credentialRevision, "fixtures/" + role + "-registry",
+					CredentialBinding.Kind.GHCR, "ghcr.io/example/private", role, role, "repository", "read-only",
 					Instant.parse("2026-01-01T00:00:00Z"), null, true);
 		}
 
 		private static CredentialBinding binding(UUID id, String name, String profile) {
-			return new CredentialBinding(id, 1, "fixtures/" + name, CredentialBinding.Kind.S3, name, "training-process",
-					name, "bucket", profile, Instant.parse("2026-01-01T00:00:00Z"), null, true);
+			return new CredentialBinding(id, credentialRevision, "fixtures/" + name, CredentialBinding.Kind.S3, name,
+					"training-process", name, "bucket", profile, Instant.parse("2026-01-01T00:00:00Z"), null, true);
 		}
 
 	}

@@ -3,6 +3,11 @@ databaseChangeLog:
       id: issue-65-run-command-delivery
       author: skywright
       changes:
+        - addColumn:
+            schemaName: skywright
+            tableName: local_credential_projection
+            columns:
+              - column: { name: binding_metadata_json, type: jsonb }
         - createTable:
             schemaName: skywright
             tableName: run_command
@@ -53,6 +58,7 @@ databaseChangeLog:
               GRANT SELECT, INSERT ON skywright.run_command, skywright.run_dispatch_prevention TO "${runtimeRole}";
               GRANT SELECT, INSERT, UPDATE ON skywright.run_command_delivery TO "${runtimeRole}";
       rollback:
+        - dropColumn: { schemaName: skywright, tableName: local_credential_projection, columnName: binding_metadata_json }
         - dropTable: { schemaName: skywright, tableName: run_dispatch_prevention }
         - dropTable: { schemaName: skywright, tableName: run_command_delivery }
         - dropTable: { schemaName: skywright, tableName: run_command }

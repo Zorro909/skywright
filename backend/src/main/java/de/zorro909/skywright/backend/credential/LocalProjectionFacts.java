@@ -43,6 +43,30 @@ public class LocalProjectionFacts {
 		}
 	}
 
+	/** Non-secret acceptance metadata is immutable even when active bindings rotate. */
+	@Transactional(readOnly = true)
+	public java.util.Optional<CredentialBinding> recordedBinding(UUID consumerId, String slot) {
+		if (this.entities.find(LocalProjectionRelease.class, consumerId) != null)
+			return java.util.Optional.empty();
+		return this.entities
+			.createQuery("select p from LocalProjectionRecord p where p.consumerId=:consumer and p.slot=:slot",
+					LocalProjectionRecord.class)
+			.setParameter("consumer", consumerId)
+			.setParameter("slot", slot)
+			.getResultStream()
+			.findFirst()
+			.filter(p -> p.bindingMetadata != null)
+			.map(p -> {
+				var binding = tools.jackson.databind.json.JsonMapper.builder()
+					.build()
+					.readValue(p.bindingMetadata, CredentialBinding.class);
+				if (!binding.id().equals(p.bindingId) || binding.revision() != p.bindingRevision
+						|| !binding.role().equals(p.consumerRole))
+					throw new IllegalStateException("Recorded Credential Binding identity differs");
+				return binding;
+			});
+	}
+
 	@Transactional(readOnly = true)
 	public List<Fact> forConsumer(UUID consumerId) {
 		var release = this.entities.find(LocalProjectionRelease.class, consumerId);
