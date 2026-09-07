@@ -1,0 +1,24 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-63-run-store-location
+      author: skywright
+      changes:
+        - createTable:
+            schemaName: skywright
+            tableName: run_store_location
+            columns:
+              - column: { name: run_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: storage_id, type: uuid, constraints: { nullable: false } }
+        - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: run_store_location, baseColumnNames: run_id, referencedTableSchemaName: skywright, referencedTableName: run_record, referencedColumnNames: id, constraintName: fk_run_store_location_run }
+        - sql:
+            sql: >-
+              INSERT INTO skywright.run_store_location (run_id, storage_id)
+              SELECT id, (definition_json::jsonb #>> '{storage,execution,storageId}')::uuid
+              FROM skywright.run_record
+        - addForeignKeyConstraint: { baseTableSchemaName: skywright, baseTableName: run_store_location, baseColumnNames: storage_id, referencedTableSchemaName: skywright, referencedTableName: target_storage, referencedColumnNames: id, constraintName: fk_run_store_location_storage }
+        - sql:
+            sql: GRANT SELECT, INSERT ON skywright.run_store_location TO "${runtimeRole}"
+        - sql:
+            sql: GRANT UPDATE (storage_id) ON skywright.run_store_location TO "${runtimeRole}"
+      rollback:
+        - dropTable: { schemaName: skywright, tableName: run_store_location }

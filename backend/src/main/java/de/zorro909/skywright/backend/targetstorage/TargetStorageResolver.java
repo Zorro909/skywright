@@ -30,6 +30,16 @@ public final class TargetStorageResolver {
 			String runId) {
 		TargetStorageRole role = TargetStorageRole.fromWireValue(consumingRole);
 		TargetStorageResolution resolution = this.registry.resolveEligibleRunOutput(storageId, role);
+		return resolve(resolution, role, trainingProjectId, runId);
+	}
+
+	public ResolvedTargetStorage resolveRunOutputRead(UUID storageId, String trainingProjectId, String runId) {
+		return resolve(this.registry.resolveRunOutputRead(storageId), TargetStorageRole.BACKEND, trainingProjectId,
+				runId);
+	}
+
+	private ResolvedTargetStorage resolve(TargetStorageResolution resolution, TargetStorageRole role,
+			String trainingProjectId, String runId) {
 		TargetStorageDescriptor descriptor = resolution.descriptor();
 		TargetStorageBinding binding = resolution.binding();
 		var provider = this.credentials()

@@ -84,7 +84,12 @@ class JpaTargetStorageRepository implements TargetStorageRepository {
 				Long.class)
 			.setParameter("id", id)
 			.getSingleResult();
-		return references > 0L || datasetCopies > 0L;
+		Long runs = this.entityManager
+			.createQuery("select count(location) from RunStoreLocationEntity location where location.storageId=:id",
+					Long.class)
+			.setParameter("id", id)
+			.getSingleResult();
+		return references > 0L || datasetCopies > 0L || runs > 0L;
 	}
 
 	@Override

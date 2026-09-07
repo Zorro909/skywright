@@ -18,6 +18,19 @@ servers:
     description: Version 1 product API
 paths:
   /runs:
+    get:
+      operationId: listRuns
+      summary: Read a bounded page of Runs with live lifecycle evidence.
+      parameters:
+        - { name: after, in: query, schema: { $ref: '#/components/schemas/SkywrightId' } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: Each returned Run was read live. Pages may stop at their read budget; follow nextCursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunPage' }
+        '503': { $ref: '#/components/responses/Problem' }
     post:
       operationId: createLocalRun
       summary: Accept and immediately hand off a fully resolved local AMD Run.
@@ -1147,6 +1160,73 @@ components:
         sourceAvailability: { type: string, enum: [live, missing, incomplete, ambiguous, unavailable, retention-unavailable, not-observed] }
         definition: { type: object, additionalProperties: true }
         evidenceGaps: { type: array, items: { type: string } }
+        lifecycle: { $ref: '#/components/schemas/RunLifecycleObservation' }
+    RunPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AcceptedLocalRun' } }
+        nextCursor: { type: string, format: uuid, nullable: true }
+    RunLifecycleObservation:
+      type: object
+      additionalProperties: false
+      required: [terminalLatched, sourceAvailability, processAvailability, fetchedAt, skyPilotReadAt, runStoreReadAt, evidenceGaps, facts, conflicts, controlDecisions]
+      properties:
+        state: { type: string, nullable: true, enum: [waiting, running, interrupted, finished, failed, cancelled] }
+        terminalLatched: { type: boolean }
+        cause: { type: string, nullable: true }
+        sourceAvailability: { type: string }
+        processAvailability: { type: string, enum: [live, invalid, unavailable] }
+        fetchedAt: { type: string, format: date-time }
+        skyPilotReadAt:
+          type: string
+          format: date-time
+          description: Start of this live SkyPilot read; fetchedAt is the completion of the combined observation.
+        runStoreReadAt:
+          type: string
+          format: date-time
+          description: Start of the Run Store read, including journal integrity validation.
+        lastSeen: { $ref: '#/components/schemas/LastSeenRunLifecycle' }
+        evidenceGaps: { type: array, items: { type: string } }
+        facts: { type: array, items: { $ref: '#/components/schemas/RetainedRunSourceFact' } }
+        conflicts: { type: array, items: { $ref: '#/components/schemas/RunSourceConflict' } }
+        controlDecisions: { type: array, items: { $ref: '#/components/schemas/RunControlDecisionEvidence' } }
+    LastSeenRunLifecycle:
+      type: object
+      additionalProperties: false
+      required: [state, observedAt, ageMillis]
+      properties:
+        state: { type: string }
+        observedAt: { type: string, format: date-time }
+        ageMillis: { type: integer, format: int64, minimum: 0 }
+    RetainedRunSourceFact:
+      type: object
+      additionalProperties: false
+      required: [runId, kind, sourceEventIdentity, payload, observedAt]
+      properties:
+        runId: { $ref: '#/components/schemas/SkywrightId' }
+        kind: { type: string }
+        sourceEventIdentity: { type: string }
+        payload: { type: object, additionalProperties: { type: string } }
+        observedAt: { type: string, format: date-time }
+    RunSourceConflict:
+      type: object
+      additionalProperties: false
+      required: [kind, sourceEventIdentity, selected, alternatives]
+      properties:
+        kind: { type: string }
+        sourceEventIdentity: { type: string }
+        selected: { $ref: '#/components/schemas/RetainedRunSourceFact' }
+        alternatives: { type: array, items: { $ref: '#/components/schemas/RetainedRunSourceFact' } }
+    RunControlDecisionEvidence:
+      type: object
+      additionalProperties: false
+      required: [id, kind, decidedAt]
+      properties:
+        id: { $ref: '#/components/schemas/SkywrightId' }
+        kind: { type: string, enum: [CANCELLATION_REQUEST, CEILING_STOP] }
+        decidedAt: { type: string, format: date-time }
     PriceSourceKind:
       type: string
       enum: [operator-schedule, provider-api, skypilot-catalog]

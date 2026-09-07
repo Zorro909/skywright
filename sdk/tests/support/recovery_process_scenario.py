@@ -33,20 +33,21 @@ def main():
     settings = json.load(sys.stdin)
     directory = Path(settings["directory"])
     mode = settings["mode"]
+    project_version = settings.get("project_version", "project@digest")
     target = TargetStorage(
         "fixture",
         settings["endpoint"],
         settings["bucket"],
         "us-east-1",
-        "project",
+        settings.get("project_id", "project"),
         settings["run_id"],
     )
     real = boto3.client(
         "s3",
         endpoint_url=settings["endpoint"],
         region_name="us-east-1",
-        aws_access_key_id="test-access-key",
-        aws_secret_access_key="test-secret-key",
+        aws_access_key_id=settings.get("access_key", "test-access-key"),
+        aws_secret_access_key=settings.get("secret_key", "test-secret-key"),
         config=Config(s3={"addressing_style": "path"}),
     )
 
@@ -170,7 +171,7 @@ def main():
                 )
                 deadline = time.monotonic() + 30
                 while True:
-                    history = store.recovery_history(project_version="project@digest")
+                    history = store.recovery_history(project_version=project_version)
                     if (
                         history.checkpoints
                         and history.checkpoints[-1].step == context.step
@@ -198,7 +199,7 @@ def main():
         result = run_training_process(
             train,
             run_id=target.run_id,
-            project_version="project@digest",
+            project_version=project_version,
             configuration={"checkpoint": {"cadence": 1}},
             dataset=Dataset(),
             metric_contracts=Contracts(),
@@ -210,6 +211,7 @@ def main():
             if settings.get("source_run_id")
             else None,
             previous_writer_verifier=proof,
+            maximum_recovery_debt=settings.get("maximum_debt", 3),
             interruption_requested=lambda: (
                 mode in {"interrupted", "upload-loss", "report-loss"}
             ),

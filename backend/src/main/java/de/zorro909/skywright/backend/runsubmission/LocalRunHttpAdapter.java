@@ -15,8 +15,12 @@ public class LocalRunHttpAdapter implements RunsApi {
 
 	private final LocalRunSubmissions submissions;
 
-	LocalRunHttpAdapter(LocalRunSubmissions submissions) {
+	private final de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle;
+
+	LocalRunHttpAdapter(LocalRunSubmissions submissions,
+			de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle) {
 		this.submissions = submissions;
+		this.lifecycle = lifecycle;
 	}
 
 	@Override
@@ -35,6 +39,15 @@ public class LocalRunHttpAdapter implements RunsApi {
 		return ResponseEntity.ok(response(submissions.get(runId)));
 	}
 
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.RunPage> listRuns(UUID after,
+			Integer limit) {
+		var page = lifecycle.page(after, limit == null ? 20 : limit);
+		return ResponseEntity.ok(new de.zorro909.skywright.backend.boundary.generated.model.RunPage(
+				page.items().stream().map(LocalRunSubmissions::observed).map(this::response).toList())
+			.nextCursor(page.nextCursor()));
+	}
+
 	private AcceptedLocalRun response(LocalRunSubmissions.Result result) {
 		var run = result.run();
 		java.util.Map<String, Object> definition = JsonMapper.builder()
@@ -45,7 +58,12 @@ public class LocalRunHttpAdapter implements RunsApi {
 		return new AcceptedLocalRun(run.runId(), run.submissionId(), run.acceptedAt().atOffset(ZoneOffset.UTC),
 				AcceptedLocalRun.AcceptedIntentEnum.SUBMIT, AcceptedLocalRun.HandoffEnum.fromValue(result.handoff()),
 				AcceptedLocalRun.SourceAvailabilityEnum.fromValue(result.sourceAvailability()), definition,
-				result.evidenceGaps());
+				result.evidenceGaps())
+			.lifecycle(result.lifecycle() == null ? null
+					: JsonMapper.builder()
+						.build()
+						.convertValue(result.lifecycle(),
+								de.zorro909.skywright.backend.boundary.generated.model.RunLifecycleObservation.class));
 	}
 
 }

@@ -24,15 +24,23 @@ public class LocalRunSubmissions {
 
 	private final RunJobAdapter jobs;
 
+	private final de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle;
+
 	LocalRunSubmissions(RunAcceptanceStore store, LocalRunAdmission admission, Orchestrator orchestrator,
-			RunJobAdapter jobs) {
+			RunJobAdapter jobs, de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle) {
 		this.store = store;
 		this.admission = admission;
 		this.orchestrator = orchestrator;
 		this.jobs = jobs;
+		this.lifecycle = lifecycle;
 	}
 
-	public record Result(AcceptedRun run, String handoff, String sourceAvailability, List<String> evidenceGaps) {
+	public record Result(AcceptedRun run, String handoff, String sourceAvailability, List<String> evidenceGaps,
+			de.zorro909.skywright.backend.runlifecycle.RunLifecycleView lifecycle) {
+		public Result(AcceptedRun run, String handoff, String sourceAvailability, List<String> evidenceGaps) {
+			this(run, handoff, sourceAvailability, evidenceGaps, null);
+		}
+
 		public Result {
 			evidenceGaps = List.copyOf(evidenceGaps);
 		}
@@ -103,14 +111,13 @@ public class LocalRunSubmissions {
 	}
 
 	private Result observe(AcceptedRun run) {
-		try {
-			return observed(run, jobs.reconcile(run.runId()).toCompletableFuture().get(5, TimeUnit.SECONDS));
-		}
-		catch (Exception failure) {
-			if (failure instanceof InterruptedException)
-				Thread.currentThread().interrupt();
-			return new Result(run, "uncertain", "unavailable", List.of("SOURCE_UNAVAILABLE"));
-		}
+		return observed(lifecycle.read(run));
+	}
+
+	static Result observed(de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads.Read read) {
+		var view = read.lifecycle();
+		return new Result(read.run(), view.sourceAvailability().equals("live") ? "source-observed" : "uncertain",
+				view.sourceAvailability(), view.evidenceGaps(), view);
 	}
 
 	private static Result observed(AcceptedRun run, RunJobAdapter.Reconciliation result) {
