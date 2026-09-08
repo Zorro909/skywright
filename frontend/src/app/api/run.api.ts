@@ -11,8 +11,15 @@ import {
 } from './api-failure';
 
 export type Run = components['schemas']['AcceptedLocalRun'];
+export type Lineage = components['schemas']['RunLineage'];
 export type RunPage = components['schemas']['RunPage'];
 export type Progress = components['schemas']['RunProgressObservation'];
+export type CreateRun = components['schemas']['CreateLocalRun'];
+export type CommandReceipt = components['schemas']['RunCommandReceipt'];
+export type LocalTarget = components['schemas']['LocalRunTarget'];
+export type Project = components['schemas']['TrainingProject'];
+export type Versions = components['schemas']['TrainingProjectVersionDiscovery'];
+export type DatasetPage = components['schemas']['DatasetCatalogPage'];
 export type Lifecycle = components['schemas']['RunLifecycleObservation'];
 
 const api = createClient<paths>({
@@ -54,6 +61,155 @@ async function read<T>(
 }
 
 export const runApi = {
+  async lineage(runId: string, signal: AbortSignal): Promise<Lineage> {
+    return read(
+      await transport(
+        api.GET('/runs/{runId}/lineage', {
+          params: { path: { runId } },
+          signal,
+          parseAs: 'text',
+        }),
+      ),
+      (value) =>
+        object(value) &&
+        value['runId'] === runId &&
+        time(value['observedAt']) &&
+        ['available', 'unavailable'].includes(String(value['availability'])) &&
+        (value['predecessorRunId'] === null
+          ? value['checkpointReference'] === null &&
+            value['seedVerifiedAt'] === null
+          : value['availability'] === 'available' &&
+            text(value['predecessorRunId']) &&
+            value['predecessorRunId'] !== runId &&
+            text(value['checkpointReference']) &&
+            time(value['seedVerifiedAt'])),
+    );
+  },
+  async create(body: CreateRun, signal: AbortSignal): Promise<Run> {
+    return read(
+      await transport(api.POST('/runs', { body, signal, parseAs: 'text' })),
+      (value) => isRun(value) && value.submissionId === body.submissionId,
+    );
+  },
+  async cancel(
+    runId: string,
+    requestId: string,
+    signal: AbortSignal,
+  ): Promise<CommandReceipt> {
+    return read(
+      await transport(
+        api.POST('/runs/{runId}/cancellations', {
+          params: { path: { runId } },
+          body: { requestId },
+          signal,
+          parseAs: 'text',
+        }),
+      ),
+      (value) =>
+        isCommand(value) &&
+        value.runId === runId &&
+        value.id === requestId &&
+        value.kind === 'CANCELLATION_REQUEST',
+    );
+  },
+  async command(
+    runId: string,
+    commandId: string,
+    signal: AbortSignal,
+  ): Promise<CommandReceipt> {
+    return read(
+      await transport(
+        api.GET('/runs/{runId}/commands/{commandId}', {
+          params: { path: { runId, commandId } },
+          signal,
+          parseAs: 'text',
+        }),
+      ),
+      (value) =>
+        isCommand(value) && value.runId === runId && value.id === commandId,
+    );
+  },
+  async target(signal: AbortSignal): Promise<LocalTarget> {
+    return read(
+      await transport(
+        api.GET('/local-run-target', { signal, parseAs: 'text' }),
+      ),
+      (value) =>
+        object(value) &&
+        text(value['identity']) &&
+        text(value['gpuModel']) &&
+        count(value['maximumGpuCount']) &&
+        Number(value['maximumGpuCount']) > 0 &&
+        count(value['gpuMemoryBytes']) &&
+        Number(value['gpuMemoryBytes']) > 0 &&
+        typeof value['submissionAvailable'] === 'boolean' &&
+        time(value['observedAt']),
+    );
+  },
+  async projects(signal: AbortSignal): Promise<Project[]> {
+    return read(
+      await transport(
+        api.GET('/training-projects', { signal, parseAs: 'text' }),
+      ),
+      (value) =>
+        Array.isArray(value) &&
+        value.every(
+          (p) => object(p) && text(p['id']) && text(p['displayName']),
+        ),
+    );
+  },
+  async versions(projectId: string, signal: AbortSignal): Promise<Versions> {
+    return read(
+      await transport(
+        api.GET('/training-projects/{projectId}/versions', {
+          params: { path: { projectId } },
+          signal,
+          parseAs: 'text',
+        }),
+      ),
+      (value) =>
+        object(value) &&
+        typeof value['registryAvailable'] === 'boolean' &&
+        time(value['observedAt']) &&
+        Array.isArray(value['versions']) &&
+        value['versions'].every(
+          (v) =>
+            object(v) && text(v['versionLabel']) && text(v['manifestDigest']),
+        ) &&
+        Array.isArray(value['failures']) &&
+        value['failures'].every(
+          (f) => object(f) && text(f['code']) && text(f['pointer']),
+        ),
+    );
+  },
+  async datasets(
+    cursor: string | undefined,
+    signal: AbortSignal,
+  ): Promise<DatasetPage> {
+    return read(
+      await transport(
+        api.GET('/dataset-catalog', {
+          params: { query: { limit: 20, ...(cursor ? { cursor } : {}) } },
+          signal,
+          parseAs: 'text',
+        }),
+      ),
+      (value) =>
+        object(value) &&
+        nullableText(value['nextCursor']) &&
+        Array.isArray(value['items']) &&
+        value['items'].length <= 20 &&
+        value['items'].every(
+          (item) =>
+            object(item) &&
+            object(item['definition']) &&
+            text(item['definition']['definitionId']) &&
+            text(item['definition']['datasetId']) &&
+            nullableText(item['definition']['versionLabel']) &&
+            text(item['definition']['contentFingerprint']),
+        ),
+    );
+  },
   async page(after: string | undefined, signal: AbortSignal): Promise<RunPage> {
     return read(
       await transport(
@@ -228,5 +384,21 @@ function isProgress(value: unknown): value is Progress {
       : count(record['latestDurableStep']) &&
         Number(record['latestDurableStep']) <= Number(record['currentStep']) &&
         text(record['latestDurableCheckpoint']))
+  );
+}
+
+function isCommand(value: unknown): value is CommandReceipt {
+  return (
+    object(value) &&
+    text(value['id']) &&
+    text(value['runId']) &&
+    ['SUBMISSION', 'CANCELLATION_REQUEST', 'CEILING_STOP'].includes(
+      String(value['kind']),
+    ) &&
+    time(value['acceptedAt']) &&
+    text(value['disposition']) &&
+    ['projectedAt', 'forceAfter', 'stopAttemptedAt'].every(
+      (key) => value[key] == null || time(value[key]),
+    )
   );
 }

@@ -209,6 +209,27 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
         assert not (rejected_dir / "started.json").exists()
         assert rejected["outcome"] == "failed"
 
+        # Production local acceptance copies only this checkpoint into the child's stable inventory.
+        # Exercise the installed CLI with predecessor storage gone, preserving original byte identity.
+        owned_id = str(uuid4())
+        reference_parts = seed["reference"].split(":")
+        seed_step, seed_digest = int(reference_parts[2]), reference_parts[4]
+        source_key = f"stable-project/{resumed_id}/v1/checkpoints/{seed_step:019d}/{seed_digest}.safetensors"
+        owned_key = f"stable-project/{owned_id}/seed-v1/{resumed_id}/checkpoints/{seed_step:019d}/{seed_digest}.safetensors"
+        client.copy_object(
+            Bucket="outputs",
+            Key=owned_key,
+            CopySource={"Bucket": "outputs", "Key": source_key},
+        )
+        client.delete_object(Bucket="outputs", Key=source_key)
+        owned_source = {**source, "ownedByRunId": owned_id}
+        owned_dir, owned_result = execute(owned_id, source=owned_source)
+        assert owned_result["step"] == 12
+        assert json.loads((owned_dir / "started.json").read_text())["step"] == seed_step
+        assert (
+            json.loads((owned_dir / "committed.json").read_text()) == expected_ordinals
+        )
+
         for kind in ("cancellation", "policy-stop"):
             stopped_id = str(uuid4())
             _stopped_dir, stopped = execute(stopped_id, stop=kind, expected=64)

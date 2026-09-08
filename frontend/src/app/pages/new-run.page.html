@@ -1,0 +1,254 @@
+<a routerLink="/">Back to overview</a>
+<section aria-labelledby="create-heading">
+  <p class="eyebrow">Local AMD target</p>
+  <h2 id="create-heading">Create Run</h2>
+  <p>
+    Select exact published versions. The backend validates and resolves the Run
+    Definition when accepting this request.
+  </p>
+  @if (storageFailure()) {
+    <p role="alert">
+      Browser request storage is unavailable or invalid. Submission is disabled
+      because its identity cannot be safely retained. Keep any displayed Run
+      link and request identity.
+    </p>
+  }
+  @if (saved(); as saved) {
+    <p>
+      Saved submission: <code>{{ saved.request.submissionId }}</code>
+    </p>
+    @if (saved.acceptedRunId; as runId) {
+      <p role="status">
+        Run accepted.
+        <a [routerLink]="['/runs', runId]">Open Run {{ runId }}</a>
+      </p>
+      @if (accepted(); as run) {
+        <p>
+          Handoff: {{ run.handoff }}. Source: {{ run.sourceAvailability }}.
+          Acceptance does not establish that training has started.
+        </p>
+      }
+      <button
+        type="button"
+        [disabled]="storageFailure() || busy()"
+        (click)="another()"
+      >
+        Create another Run
+      </button>
+    } @else if (saved.rejected) {
+      <p role="status">
+        The backend rejected this request. Review the diagnostics before
+        editing.
+      </p>
+      <button
+        type="button"
+        [disabled]="storageFailure() || busy()"
+        (click)="another()"
+      >
+        Edit rejected request
+      </button>
+    } @else {
+      <p role="status">
+        Acceptance is unresolved. Replay this saved request to recover its Run
+        identity. Refreshing or reconnecting preserves the exact request.
+      </p>
+      <button
+        type="button"
+        [disabled]="storageFailure() || busy()"
+        (click)="submit()"
+      >
+        Replay saved submission
+      </button>
+    }
+    <details>
+      <summary>Saved request</summary>
+      <pre>{{ saved.request | json }}</pre>
+    </details>
+  }
+  @if (failure(); as failure) {
+    <sky-request-failure [failure]="failure" />
+  }
+  @if (validation()) {
+    <p role="alert">{{ validation() }}</p>
+  }
+  @if (busy()) {
+    <p role="status">Submitting the saved request…</p>
+  }
+  <h3>Published inputs</h3>
+  <button
+    type="button"
+    [disabled]="pending().length > 0"
+    (click)="refreshCatalogues()"
+  >
+    Refresh catalogues
+  </button>
+  @if (pending().length) {
+    <p role="status">Reading {{ pending().join(', ') }}…</p>
+  }
+  @for (entry of catalogueErrors(); track entry[0]) {
+    <h4>{{ entry[0] }} unavailable</h4>
+    <sky-request-failure [failure]="entry[1]" />
+  }
+  @if (target(); as target) {
+    <p>
+      {{ target.identity }} · {{ target.gpuModel }} · configured maximum
+      {{ target.maximumGpuCount }} GPUs. Submission source
+      {{ target.submissionAvailable ? 'available' : 'unavailable' }} as of
+      {{ target.observedAt | date: 'medium' }}. This is configured capacity;
+      admission rechecks availability.
+    </p>
+  }
+  <form (submit)="submit($event)">
+    <fieldset [disabled]="!!saved() || busy() || storageFailure()">
+      <legend>Run request</legend>
+      <label
+        >Training Project
+        <select
+          #project
+          required
+          [value]="projectId()"
+          (change)="chooseProject(project.value)"
+        >
+          <option value="">Select a Project</option>
+          @for (project of projects(); track project.id) {
+            <option [value]="project.id">
+              {{ project.displayName }} · {{ project.id }}
+            </option>
+          }
+        </select>
+      </label>
+      <label
+        >Published Project Version
+        <select
+          #version
+          required
+          [value]="manifest()"
+          (change)="manifest.set(version.value)"
+        >
+          <option value="">Select an exact version</option>
+          @for (
+            version of versions()?.versions ?? [];
+            track version.manifestDigest
+          ) {
+            <option [value]="version.manifestDigest">
+              {{ version.versionLabel }} · {{ version.manifestDigest }}
+            </option>
+          }
+        </select>
+      </label>
+      @if (versions(); as versions) {
+        <p>
+          Registry
+          {{ versions.registryAvailable ? 'available' : 'unavailable' }} as of
+          {{ versions.observedAt | date: 'medium' }}.
+        </p>
+        @for (failure of versions.failures; track $index) {
+          <p>{{ failure.pointer }}: {{ failure.code }}</p>
+        }
+      }
+      <label
+        >Published Dataset Definition
+        <select
+          #dataset
+          required
+          [value]="datasetId()"
+          (change)="datasetId.set(dataset.value)"
+        >
+          <option value="">Select an exact Dataset Definition</option>
+          @for (
+            item of datasets()?.items ?? [];
+            track item.definition.definitionId
+          ) {
+            <option [value]="item.definition.definitionId">
+              {{ item.definition.versionLabel ?? item.definition.datasetId }} ·
+              {{ item.definition.definitionId }}
+            </option>
+          }
+        </select>
+      </label>
+      <p>
+        Up to 20 Dataset Definitions per page. Selected identity:
+        {{ datasetId() || 'none' }}.
+      </p>
+      @if (datasets()?.nextCursor; as cursor) {
+        <button
+          type="button"
+          [disabled]="pending().includes('Datasets')"
+          (click)="loadDatasets(cursor)"
+        >
+          Next Dataset page
+        </button>
+      }
+      <details>
+        <summary>Seed from an exact predecessor checkpoint, optional</summary>
+        <p>
+          Use the same published Project Version, Dataset and resolved
+          configuration as the predecessor. A Transfer Worker verifies a
+          child-owned copy before acceptance. The local copy budget is 32 MiB.
+        </p>
+        <label
+          >Predecessor Run UUID
+          <input
+            [value]="predecessor()"
+            (input)="predecessor.set($event.target.value)"
+        /></label>
+        <label
+          >Exact checkpoint reference
+          <input
+            [value]="checkpoint()"
+            (input)="checkpoint.set($event.target.value)"
+        /></label>
+      </details>
+      <label
+        >GPU count
+        <input
+          type="number"
+          required
+          min="1"
+          [max]="target()?.maximumGpuCount ?? 1024"
+          [value]="gpuCount()"
+          (input)="gpuCount.set($event.target.value)"
+      /></label>
+      <label
+        >Configuration JSON
+        <textarea
+          #configurationInput
+          required
+          rows="12"
+          [value]="configuration()"
+          (input)="configuration.set(configurationInput.value)"
+        ></textarea>
+      </label>
+      <p>
+        Backend diagnostics identify invalid fields and document locations.
+        Configuration values are saved in this browser with the request.
+      </p>
+      <label
+        >Execution Target Storage UUID, optional
+        <input
+          [value]="executionStorage()"
+          (input)="executionStorage.set($event.target.value)"
+      /></label>
+      <p>Leave storage blank to use the backend's registered default.</p>
+      <label
+        >Maximum Recovery Debt, optional
+        <input
+          type="number"
+          min="1"
+          max="2147483647"
+          [value]="maximumDebt()"
+          (input)="maximumDebt.set($event.target.value)"
+      /></label>
+      <button
+        type="submit"
+        [disabled]="
+          !target()?.submissionAvailable ||
+          !!catalogFailures()['Local target'] ||
+          pending().length > 0
+        "
+      >
+        Accept and submit Run
+      </button>
+    </fieldset>
+  </form>
+</section>

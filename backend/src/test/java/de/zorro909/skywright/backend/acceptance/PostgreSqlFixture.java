@@ -88,10 +88,9 @@ final class PostgreSqlFixture {
 			String runtimePassword) implements AutoCloseable {
 
 		List<String> backendArguments() {
-			return List.of("--spring.datasource.url=" + jdbcUrl + "&currentSchema=" + SCHEMA,
-					"--spring.datasource.username=" + runtime, "--spring.datasource.password=" + runtimePassword,
-					"--spring.liquibase.url=" + jdbcUrl, "--spring.liquibase.user=" + migrator,
-					"--spring.liquibase.password=" + migratorPassword);
+			return List.of("--spring.datasource.url=" + jdbcUrl, "--spring.datasource.username=" + runtime,
+					"--spring.datasource.password=" + runtimePassword, "--spring.liquibase.url=" + jdbcUrl,
+					"--spring.liquibase.user=" + migrator, "--spring.liquibase.password=" + migratorPassword);
 		}
 
 		String[] springProperties() {

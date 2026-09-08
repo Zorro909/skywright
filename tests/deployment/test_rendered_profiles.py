@@ -114,6 +114,15 @@ class RenderedProfilesTest(unittest.TestCase):
                 self.assertIn("automountServiceAccountToken: false", server)
                 self.assertIn("allowPrivilegeEscalation: false", server)
                 self.assertIn("readOnlyRootFilesystem: true", server)
+                self.assertIn("name: prepare-skypilot-rsync-helper", server)
+                self.assertIn("subPath: rsync_helper.sh", server)
+                self.assertIn("sizeLimit: 1Mi", server)
+                self.assertEqual(
+                    server.count(
+                        "/usr/local/lib/python3.12/site-packages/sky/utils/kubernetes/rsync_helper.sh"
+                    ),
+                    2,
+                )
                 self.assertRegex(server, r"drop:\n\s+- ALL")
                 self.assertIn("terminationGracePeriodSeconds: 30", server)
                 self.assertIn("mountPath: /tmp", server)
@@ -155,6 +164,9 @@ class RenderedProfilesTest(unittest.TestCase):
         self.assertIn("image: postgres:18.1-bookworm@sha256:cc9f4143", manifest)
         self.assertIn("claimName: skywright-postgresql-data", manifest)
         self.assertIn("name: skywright-local-skypilot-database", manifest)
+        database = resource(manifest, "Deployment", "skywright-postgresql")
+        self.assertIn("type: Recreate", database)
+        self.assertRegex(database, r"(?s)pg_isready.*?--host.*?127\.0\.0\.1")
         initialization = resource(
             manifest, "ConfigMap", "skywright-postgresql-init"
         )

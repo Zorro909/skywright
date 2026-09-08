@@ -111,3 +111,27 @@ def test_rejects_incompatible_source_storage_shape(mutation):
         ValueError, match="source storage has missing or unsupported fields"
     ):
         ManagedRuntime.decode(json.dumps(definition), json.dumps(materials))
+
+
+def test_owned_seed_requires_child_location_and_keeps_predecessor_identity():
+    definition, materials = documents()
+    materials["sourceCheckpoint"] = {
+        "runId": "00000000-0000-0000-0000-000000000302",
+        "reference": "skywright-checkpoint:v1:4:sha256:" + "a" * 64,
+        "storage": deepcopy(definition["storage"]["execution"]),
+        "ownedByRunId": materials["runId"],
+    }
+    runtime = ManagedRuntime.decode(json.dumps(definition), json.dumps(materials))
+    assert runtime.source_owned
+    assert runtime.source_target is not None
+    assert runtime.source_target.run_id == materials["runId"]
+    assert runtime.source_run_id == materials["sourceCheckpoint"]["runId"]
+    source = materials["sourceCheckpoint"]
+    storage = source["storage"]
+    assert isinstance(storage, dict)
+    storage["bucket"] = "predecessor-only"
+    with pytest.raises(ValueError, match="owned seed location differs"):
+        ManagedRuntime.decode(json.dumps(definition), json.dumps(materials))
+    materials["sourceCheckpoint"]["ownedByRunId"] = runtime.source_run_id
+    with pytest.raises(ValueError, match="seed ownership differs"):
+        ManagedRuntime.decode(json.dumps(definition), json.dumps(materials))

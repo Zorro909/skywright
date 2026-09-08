@@ -1,10 +1,10 @@
 package de.zorro909.skywright.backend.projectversion;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -25,22 +25,24 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
-	private final HttpClient client;
+	private final RegistryHttp http;
 
 	private final URI endpoint;
 
 	private final RegistryAuthorization authorization;
 
 	public GhcrProjectVersionRegistry() {
-		this(HttpClient.newHttpClient(), URI.create("https://ghcr.io"), repository -> Optional.empty());
+		this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build(), URI.create("https://ghcr.io"),
+				repository -> Optional.empty());
 	}
 
 	public GhcrProjectVersionRegistry(RegistryAuthorization authorization) {
-		this(HttpClient.newHttpClient(), URI.create("https://ghcr.io"), authorization);
+		this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build(), URI.create("https://ghcr.io"),
+				authorization);
 	}
 
 	GhcrProjectVersionRegistry(HttpClient client, URI endpoint, RegistryAuthorization authorization) {
-		this.client = client;
+		this.http = new RegistryHttp(client, endpoint);
 		this.endpoint = endpoint;
 		this.authorization = authorization;
 	}
@@ -48,13 +50,29 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 	@Override
 	public List<ProjectVersionReference> listVersions(String repository) {
 		String name = name(repository);
-		Optional<String> authorization = this.authorization.authorization(repository);
+		Optional<String> authorization = this.http.authorize(repository, this.authorization.authorization(repository));
 		List<ProjectVersionReference> versions = new ArrayList<>();
 		URI page = this.endpoint.resolve("/v2/" + name + "/tags/list?n=100");
 		while (page != null) {
 			HttpResponse<String> tags = send(request(page, repository, authorization).GET().build(), 200);
 			for (JsonNode tagNode : json(tags.body()).path("tags")) {
 				String tag = tagNode.asText();
+				if (tag.matches("sha256-[0-9a-f]{64}\\.skywright-version\\.v1")) {
+					var manifest = send(request("/v2/" + name + "/manifests/" + tag, repository, authorization)
+						.header("Accept", MANIFEST_ACCEPT)
+						.GET()
+						.build(), 200);
+					var document = json(manifest.body());
+					String label = document.path("annotations").path("org.skywright.version.label").asText();
+					if (!"application/vnd.skywright.project.version.v1+json"
+						.equals(document.path("artifactType").asText()) || !VERSION_LABEL.matcher(label).matches()) {
+						throw new ProjectVersionException(
+								new ProjectVersionFailure("PROJECT_REGISTRY_RESPONSE_INVALID", ""));
+					}
+					versions.add(new ProjectVersionReference(label,
+							requireDigest(manifest.headers().firstValue("Docker-Content-Digest").orElse(""))));
+					continue;
+				}
 				if (!VERSION_LABEL.matcher(tag).matches()) {
 					continue;
 				}
@@ -78,7 +96,7 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 	@Override
 	public Optional<RegistryArtifact> pullArtifact(String repository, String reference) {
 		String name = name(repository);
-		Optional<String> authorization = this.authorization.authorization(repository);
+		Optional<String> authorization = this.http.authorize(repository, this.authorization.authorization(repository));
 		HttpResponse<String> manifest = sendAllowMissing(
 				request("/v2/" + name + "/manifests/" + reference, repository, authorization).GET()
 					.header("Accept", MANIFEST_ACCEPT)
@@ -93,15 +111,16 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 					new ProjectVersionFailure("PROJECT_REGISTRY_RESPONSE_INVALID", ""))));
 		JsonNode descriptor = contentDescriptor(json(manifest.body()));
 		String blobDigest = requireDigest(descriptor.path("digest").asText());
-		HttpResponse<String> blob = send(
-				request("/v2/" + name + "/blobs/" + blobDigest, repository, authorization).GET().build(), 200);
+		HttpResponse<String> blob = this.http
+			.blob(request("/v2/" + name + "/blobs/" + blobDigest, repository, authorization).GET().build());
+		requireStatus(blob, 200);
 		return Optional.of(new RegistryArtifact(digest, blob.body()));
 	}
 
 	@Override
 	public boolean imageAvailable(String repository, String digest) {
 		String name = name(repository);
-		Optional<String> authorization = this.authorization.authorization(repository);
+		Optional<String> authorization = this.http.authorize(repository, this.authorization.authorization(repository));
 		HttpResponse<String> response = sendAllowMissing(
 				request("/v2/" + name + "/manifests/" + digest, repository, authorization)
 					.method("HEAD", HttpRequest.BodyPublishers.noBody())
@@ -127,7 +146,7 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 				|| !uri.normalize().getPath().startsWith("/v2/" + name(repository) + "/")) {
 			throw new ProjectVersionException(new ProjectVersionFailure("PROJECT_REGISTRY_RESPONSE_INVALID", ""));
 		}
-		HttpRequest.Builder request = HttpRequest.newBuilder(uri);
+		HttpRequest.Builder request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10));
 		authorization.ifPresent(value -> request.header("Authorization", value));
 		return request;
 	}
@@ -150,16 +169,7 @@ public final class GhcrProjectVersionRegistry implements ProjectVersionRegistry 
 	}
 
 	private HttpResponse<String> sendAllowMissing(HttpRequest request) {
-		try {
-			return this.client.send(request, HttpResponse.BodyHandlers.ofString());
-		}
-		catch (IOException error) {
-			throw new IllegalStateException("registry unavailable", error);
-		}
-		catch (InterruptedException error) {
-			Thread.currentThread().interrupt();
-			throw new IllegalStateException("registry request interrupted", error);
-		}
+		return this.http.send(request);
 	}
 
 	private static String requireDigest(String value) {

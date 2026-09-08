@@ -2,6 +2,9 @@ package de.zorro909.skywright.backend.datasetpublication;
 
 import de.zorro909.skywright.backend.datasetcatalog.DatasetManifestEntry;
 import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.io.OutputStream;
+import de.zorro909.skywright.backend.worker.TransferObjects;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,11 +30,7 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
-import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
-import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
-import software.amazon.awssdk.services.s3.S3Configuration;
-import software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.Delete;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -157,32 +156,7 @@ public final class DatasetPublicationWorkerMain {
 	}
 
 	private static void abortMultipartUploads(S3AsyncClient client, String bucket, String prefix) {
-		String keyMarker = null;
-		String uploadIdMarker = null;
-		do {
-			var page = client
-				.listMultipartUploads(ListMultipartUploadsRequest.builder()
-					.bucket(bucket)
-					.prefix(prefix)
-					.keyMarker(keyMarker)
-					.uploadIdMarker(uploadIdMarker)
-					.build())
-				.join();
-			page.uploads()
-				.forEach(upload -> client
-					.abortMultipartUpload(AbortMultipartUploadRequest.builder()
-						.bucket(bucket)
-						.key(upload.key())
-						.uploadId(upload.uploadId())
-						.build())
-					.join());
-			if (page.isTruncated() && (page.nextKeyMarker() == null || page.nextUploadIdMarker() == null)) {
-				throw new WorkerFailure("DATASET_CLEANUP_UNAVAILABLE", true);
-			}
-			keyMarker = page.isTruncated() ? page.nextKeyMarker() : null;
-			uploadIdMarker = page.isTruncated() ? page.nextUploadIdMarker() : null;
-		}
-		while (keyMarker != null);
+		TransferObjects.abortUploads(client, bucket, prefix, key -> key.startsWith(prefix), 100_000);
 	}
 
 	private static boolean hasMultipartUploads(S3AsyncClient client, String bucket, String prefix) {
@@ -321,27 +295,16 @@ public final class DatasetPublicationWorkerMain {
 			if (response.response().contentLength() != object.byteCount()) {
 				throw mismatch();
 			}
-			MessageDigest digest = sha256();
-			byte[] buffer = new byte[1024 * 1024];
-			long consumed = 0;
-			int count;
-			while ((count = response.read(buffer, 0,
-					(int) Math.min(buffer.length - 1L, object.byteCount() - consumed) + 1)) != -1) {
-				if (Thread.currentThread().isInterrupted()) {
-					throw new WorkerFailure("DATASET_VERIFICATION_INTERRUPTED", true);
-				}
-				consumed += count;
-				if (consumed > object.byteCount()) {
-					throw mismatch();
-				}
-				digest.update(buffer, 0, count);
-			}
-			if (consumed != object.byteCount()
-					|| !("sha256:" + HexFormat.of().formatHex(digest.digest())).equals(object.sha256())) {
-				throw mismatch();
-			}
+			TransferObjects.verify(response, object.byteCount(), object.sha256().substring(7),
+					OutputStream.nullOutputStream());
 			return new DatasetManifestEntry(object.objectKey(), object.byteCount(),
 					Base64.getEncoder().encodeToString(HexFormat.of().parseHex(object.sha256().substring(7))));
+		}
+		catch (TransferObjects.IntegrityMismatch failure) {
+			throw mismatch();
+		}
+		catch (InterruptedIOException failure) {
+			throw new WorkerFailure("DATASET_VERIFICATION_INTERRUPTED", true);
 		}
 		catch (IOException failure) {
 			throw new WorkerFailure("DATASET_VERIFICATION_UNAVAILABLE", true);
@@ -372,18 +335,9 @@ public final class DatasetPublicationWorkerMain {
 				? AwsBasicCredentials.create(credential.accessKeyId(), credential.secretAccessKey())
 				: AwsSessionCredentials.create(credential.accessKeyId(), credential.secretAccessKey(),
 						credential.sessionToken());
-		return S3AsyncClient.builder()
-			.httpClientBuilder(NettyNioAsyncHttpClient.builder())
-			.overrideConfiguration(workerConfiguration(job.action()))
-			.endpointOverride(job.endpoint())
-			.region(Region.of(job.region()))
-			.credentialsProvider(StaticCredentialsProvider.create(awsCredential))
-			.serviceConfiguration(S3Configuration.builder()
-				.pathStyleAccessEnabled(job.pathStyleAccess())
-				.chunkedEncodingEnabled(job.chunkedEncoding())
-				.build())
-			.requestChecksumCalculation(RequestChecksumCalculation.WHEN_SUPPORTED)
-			.build();
+		return TransferObjects.client(job.endpoint(), job.region(), StaticCredentialsProvider.create(awsCredential),
+				job.pathStyleAccess(), job.chunkedEncoding(), RequestChecksumCalculation.WHEN_SUPPORTED,
+				workerConfiguration(job.action()), null);
 	}
 
 	private static ClientOverrideConfiguration workerConfiguration(DatasetPublicationWorkerAction action) {

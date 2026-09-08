@@ -24,13 +24,16 @@ public class LocalRunHttpAdapter implements RunsApi {
 
 	private final RunCommands commands;
 
+	private final RunAcceptanceStore runs;
+
 	private final de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle;
 
 	private final de.zorro909.skywright.backend.runlifecycle.RunProgressReads progress;
 
 	LocalRunHttpAdapter(LocalRunSubmissions submissions, RunCommands commands,
 			de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle,
-			de.zorro909.skywright.backend.runlifecycle.RunProgressReads progress) {
+			de.zorro909.skywright.backend.runlifecycle.RunProgressReads progress, RunAcceptanceStore runs) {
+		this.runs = runs;
 		this.progress = progress;
 		this.submissions = submissions;
 		this.commands = commands;
@@ -38,11 +41,29 @@ public class LocalRunHttpAdapter implements RunsApi {
 	}
 
 	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.RunLineage> getRunLineage(UUID runId) {
+		var lineage = runs.lineage(runId);
+		var body = new de.zorro909.skywright.backend.boundary.generated.model.RunLineage().runId(runId)
+			.availability(lineage.available()
+					? de.zorro909.skywright.backend.boundary.generated.model.RunLineage.AvailabilityEnum.AVAILABLE
+					: de.zorro909.skywright.backend.boundary.generated.model.RunLineage.AvailabilityEnum.UNAVAILABLE)
+			.observedAt(lineage.observedAt().atOffset(ZoneOffset.UTC))
+			.predecessorRunId(lineage.predecessorRunId())
+			.checkpointReference(lineage.checkpointReference())
+			.seedVerifiedAt(
+					lineage.seedVerifiedAt() == null ? null : lineage.seedVerifiedAt().atOffset(ZoneOffset.UTC));
+		return ResponseEntity.ok(body);
+	}
+
+	@Override
 	public ResponseEntity<AcceptedLocalRun> createLocalRun(CreateLocalRun request) {
 		var result = submissions.create(new LocalRunRequest(request.getSubmissionId(), request.getTrainingProjectId(),
 				request.getManifestArtifactDigest(), request.getDatasetDefinitionId(),
 				request.getPreferredDatasetCopyId(), request.getExecutionStorageId(), request.getTarget(),
-				request.getGpuCount(), request.getConfiguration(), request.getMaximumRecoveryDebt()));
+				request.getGpuCount(), request.getConfiguration(), request.getMaximumRecoveryDebt(),
+				request.getCheckpointSeed() == null ? null
+						: new LocalRunRequest.CheckpointSeed(request.getCheckpointSeed().getPredecessorRunId(),
+								request.getCheckpointSeed().getCheckpointReference())));
 		return ResponseEntity.accepted()
 			.location(URI.create("/api/v1/runs/" + result.run().runId()))
 			.body(response(result));

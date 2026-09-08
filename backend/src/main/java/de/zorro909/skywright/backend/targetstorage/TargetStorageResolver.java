@@ -35,15 +35,22 @@ public final class TargetStorageResolver {
 
 	public ResolvedTargetStorage resolveRunOutputRead(tools.jackson.databind.JsonNode location,
 			String trainingProjectId, String runId) {
+		return resolveRunOutputLocation(location, "backend", trainingProjectId, runId);
+	}
+
+	public ResolvedTargetStorage resolveRunOutputLocation(tools.jackson.databind.JsonNode location,
+			String consumingRole, String trainingProjectId, String runId) {
+		var role = TargetStorageRole.fromWireValue(consumingRole);
+		if (role != TargetStorageRole.BACKEND && role != TargetStorageRole.TRANSFER_WORKER)
+			throw new IllegalArgumentException("Location reads require a backend or Transfer Worker role");
 		UUID storageId = UUID.fromString(location.path("storageId").asText());
-		var current = this.registry.resolveRunOutputRead(storageId);
+		var current = this.registry.resolveRunOutputRead(storageId, role);
 		var options = new java.util.HashMap<String, String>();
 		location.path("compatibilityOptions").properties().forEach(e -> options.put(e.getKey(), e.getValue().asText()));
 		var pinned = new TargetStorageDescriptor(storageId, java.net.URI.create(location.path("endpoint").asText()),
 				location.path("bucket").asText(), location.path("region").asText(),
 				location.path("addressingMode").asText().equals("path"), java.util.Map.copyOf(options));
-		return resolve(new TargetStorageResolution(pinned, current.binding()), TargetStorageRole.BACKEND,
-				trainingProjectId, runId);
+		return resolve(new TargetStorageResolution(pinned, current.binding()), role, trainingProjectId, runId);
 	}
 
 	private ResolvedTargetStorage resolve(TargetStorageResolution resolution, TargetStorageRole role,

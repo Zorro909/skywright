@@ -102,7 +102,7 @@ class MemoryS3:
             "ContentType": content_type,
         }
 
-    def list_objects_v2(self, **request):
+    def list_objects_v2(self, **request) -> dict[str, Any]:
         prefix = request["Prefix"]
         return {
             "Contents": [
@@ -1901,3 +1901,50 @@ def test_immutable_retry_uses_one_bounded_verified_get(tmp_path) -> None:
     assert [item.operation for item in measurements] == ["put_object", "get_object"]
     assert measurements[1].bytes == len(artifact.data)
     assert measurements[1].succeeded
+
+
+def test_owned_seed_reads_child_bytes_and_preserves_exact_predecessor(tmp_path):
+    from dataclasses import replace
+
+    memory = MemoryS3()
+    parent = "00000000-0000-4000-8000-000000000001"
+    child = "00000000-0000-4000-8000-000000000002"
+    codec = CheckpointCodec(staging_directory=tmp_path)
+    encoded = codec.serialize(
+        CheckpointSnapshot(
+            4,
+            {"weight": np.array([1, 2], dtype=np.int64)},
+            run_id=parent,
+            project_version="project@digest",
+        )
+    )
+    try:
+        body = encoded.path.read_bytes()
+        digest = hashlib.sha256(body).hexdigest()
+        key = f"project/{child}/seed-v1/{parent}/checkpoints/{4:019d}/{digest}.safetensors"
+        metadata = {
+            "skywright-schema": "v1",
+            "skywright-kind": "checkpoint",
+            "skywright-size": str(len(body)),
+            "skywright-sha256": digest,
+        }
+        memory.objects[key] = (body, metadata, "application/octet-stream")
+    finally:
+        encoded.path.unlink(missing_ok=True)
+    target = replace(recorder(memory, tmp_path).target, run_id=child)
+    reader = RunStoreReader(target, client=memory, checkpoint_codec=codec)
+    reference = str(CheckpointReference(4, digest))
+    snapshot = reader.read_owned_seed(
+        parent, reference, project_version="project@digest"
+    )
+    assert snapshot.run_id == parent
+    assert snapshot.step == 4
+    np.testing.assert_array_equal(snapshot.state["weight"], np.array([1, 2]))
+    assert list(memory.objects) == [key]  # There is no predecessor storage to read.
+    with pytest.raises(Exception, match="MISSING_OBJECT"):
+        reader.read_exact(reference)
+    with pytest.raises(ValueError, match="distinct canonical predecessor"):
+        reader.read_owned_seed(child, reference, project_version="project@digest")
+    memory.objects[key] = (body + b"corruption", metadata, "application/octet-stream")
+    with pytest.raises(Exception, match="DIGEST_MISMATCH"):
+        reader.read_owned_seed(parent, reference, project_version="project@digest")

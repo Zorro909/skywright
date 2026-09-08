@@ -47,6 +47,13 @@ Skywright-owned, read-only log collector and its bounded transport for #62.
 That exception applies only to archive capture as recorded in ADR 0018;
 submission, status and control remain through the unchanged SDK.
 
+On 2026-09-08, the owner approved `tini` as PID 1 for the server image in
+#71 and #199. The unchanged SkyPilot server entry point runs as its child.
+Tini reaps adopted children, forwards SIGTERM to the server and preserves its
+exit status. This addresses the orphaned zombie processes observed during #233
+qualification. Fixed non-root execution and bounded graceful shutdown remain
+required, including checks that server descendants exit before the deadline.
+
 Because the SkyPilot client is now a dependency of the backend's own build while the API server deploys separately, the two can drift apart in a way `sky` and its server never can. They are therefore built from one pinned SkyPilot version and identified by digest, as ADR 0006 already does for training images, and upgrading SkyPilot is a deliberate paired deployment. The alternative is owning a compatibility matrix for a protocol whose version guarantees are undocumented.
 
 Availability follows ADR 0005 unchanged, with one addition: a failure to reach SkyPilot is a single condition regardless of where it occurred. A user can do nothing differently on learning that a bridging process rather than the API server is down, and keeping the two indistinct is what stops the GraalPy-versus-service fork from leaking out of deployment and into the domain model.

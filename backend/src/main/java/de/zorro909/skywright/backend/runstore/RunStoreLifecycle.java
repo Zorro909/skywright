@@ -58,11 +58,7 @@ public final class RunStoreLifecycle {
 			var refusal = stopRefusal();
 			var head = document("recovery/head.json", "recovery-head", 65536, false);
 			if (head == null) {
-				var page = objects.list(protocol.runPrefix(), 4, null);
-				var controls = Set.of(protocol.runPrefix() + "control/cancellation.json",
-						protocol.runPrefix() + "control/policy-stop.json",
-						protocol.runPrefix() + "control/startup-refusal.json");
-				if (page.entries().stream().anyMatch(e -> !controls.contains(e.key())) || page.continuation() != null)
+				if (!emptyTrainingStore())
 					throw invalid("HEAD_MISSING");
 				return new RunProcessEvidence(List.of(), null, 0, null, refusal);
 			}
@@ -252,6 +248,26 @@ public final class RunStoreLifecycle {
 			catch (java.time.DateTimeException failure) {
 				throw invalid("STOP_REFUSAL");
 			}
+		}
+
+		private boolean emptyTrainingStore() {
+			var prefix = protocol.runPrefix();
+			var controls = Set.of(prefix + "control/cancellation.json", prefix + "control/policy-stop.json",
+					prefix + "control/startup-refusal.json");
+			String continuation = null;
+			for (int i = 0; i < 64; i++) {
+				var page = objects.list(prefix, 256, continuation);
+				if (page.entries()
+					.stream()
+					.anyMatch(e -> !controls.contains(e.key()) && !e.key().startsWith(prefix + "skypilot/logs/")))
+					return false;
+				if (page.continuation() == null)
+					return true;
+				if (page.continuation().equals(continuation))
+					break;
+				continuation = page.continuation();
+			}
+			throw new IllegalStateException("Pre-start inventory exceeds its read budget or does not advance");
 		}
 
 		private RunProcessEvidence.Attempt report(String id, Map<Long, String> checkpoints) {

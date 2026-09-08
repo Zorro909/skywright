@@ -12,7 +12,18 @@ describe('Run evidence', () => {
         provideRouter([]),
         {
           provide: RUN_API,
-          useValue: { progress: () => Promise.resolve(progress()) },
+          useValue: {
+            progress: () => Promise.resolve(progress()),
+            lineage: (id: string) =>
+              Promise.resolve({
+                runId: id,
+                availability: 'unavailable',
+                observedAt: '2026-09-07T14:00:00Z',
+                predecessorRunId: null,
+                checkpointReference: null,
+                seedVerifiedAt: null,
+              }),
+          },
         },
       ],
     }).compileComponents();

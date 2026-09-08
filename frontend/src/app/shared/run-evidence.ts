@@ -1,3 +1,4 @@
+import { RunLineage } from './run-lineage';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -18,7 +19,7 @@ export function definitionText(run: Run, section: string, key: string): string {
 
 @Component({
   selector: 'sky-run-evidence',
-  imports: [DatePipe, JsonPipe, RunProgress, ObservationAge],
+  imports: [RunLineage, DatePipe, JsonPipe, RunProgress, ObservationAge],
   template: `
     <dl class="identity">
       <div>
@@ -178,16 +179,10 @@ export function definitionText(run: Run, section: string, key: string): string {
     }
     <sky-run-progress [runId]="run().runId" />
     @if (detail()) {
-      <section aria-label="Run lineage unavailable">
-        <h3>Lineage unavailable</h3>
-        <p>
-          The predecessor Run and seed checkpoint reader is not available in
-          this view. No lineage can be established from this read.
-        </p>
-        <p>
-          Submission: <code>{{ run().submissionId }}</code>
-        </p>
-      </section>
+      <sky-run-lineage [runId]="run().runId" />
+      <p>
+        Submission: <code>{{ run().submissionId }}</code>
+      </p>
       <details>
         <summary>Accepted Run Definition</summary>
         <pre>{{ run().definition | json }}</pre>

@@ -1,8 +1,8 @@
 # SkyPilot API server image
 
 This module builds the separate SkyPilot API server used by the private Skywright control plane.
-It is not a backend sidecar. The image runs SkyPilot's supported server entry point directly as
-PID 1 on port 46580.
+It is not a backend sidecar. The image runs `tini` as PID 1 and SkyPilot's unchanged
+supported server entry point as its child on port 46580. Tini reaps adopted children and forwards SIGTERM to the server.
 
 ## Version pairing
 
@@ -50,7 +50,7 @@ Use `verify` to build the production image and run its packaged-process tests:
 ```
 
 The tests use the repository-pinned PostgreSQL image. They run the server with a read-only root
-filesystem, check `/api/health`, verify fixed non-root PID 1 execution and safe failure output,
+filesystem, check `/api/health`, verify fixed non-root execution, orphan reaping and safe failure output,
 record PID 1 and its server descendants, send SIGTERM without a force-kill fallback, require every
 recorded process to exit inside 25 seconds, replace the container, and read PostgreSQL-backed user
 state and an uploaded file through supported SkyPilot endpoints.
@@ -64,8 +64,10 @@ malformed external database configuration stops startup with exit code 78, and d
 print the URI.
 
 An isolated Python bootstrap performs this preflight without reading operator `PYTHONPATH` values,
-then replaces itself with `python -m sky.server.server`. It is not a supervisor. SkyPilot remains
-PID 1 and receives SIGTERM directly.
+then replaces itself with `python -m sky.server.server`. Tini forwards SIGTERM to that
+server process and preserves its exit status. No shell supervisor or SDK patch is involved.
+The image test creates twenty orphaned children and requires their process entries to
+disappear, covering the zombie accumulation found during #233 qualification.
 
 The image uses these writable paths:
 

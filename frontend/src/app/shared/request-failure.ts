@@ -10,7 +10,7 @@ import type { ApiFailure } from '../api/api-failure';
 @Component({
   selector: 'sky-request-failure',
   template: `
-    <section class="request-failure" aria-label="Request failure">
+    <div class="request-failure">
       @switch (failure().kind) {
         @case ('problem') {
           @if (problem(); as problem) {
@@ -62,7 +62,7 @@ import type { ApiFailure } from '../api/api-failure';
       <p class="copy-status" role="status" aria-live="polite">
         {{ copyStatus() }}
       </p>
-    </section>
+    </div>
   `,
   styles: `
     .request-failure {

@@ -26,7 +26,19 @@ describe('Run views', () => {
         provideRouter([]),
         {
           provide: RUN_API,
-          useValue: { page, progress: () => Promise.resolve(progress()) },
+          useValue: {
+            lineage: (id: string) =>
+              Promise.resolve({
+                runId: id,
+                availability: 'unavailable',
+                observedAt: '2026-09-07T14:00:00Z',
+                predecessorRunId: null,
+                checkpointReference: null,
+                seedVerifiedAt: null,
+              }),
+            page,
+            progress: () => Promise.resolve(progress()),
+          },
         },
       ],
     }).compileComponents();
@@ -57,7 +69,21 @@ describe('Run views', () => {
       imports: [OverviewPage],
       providers: [
         provideRouter([]),
-        { provide: RUN_API, useValue: { page: () => pending.promise } },
+        {
+          provide: RUN_API,
+          useValue: {
+            lineage: (id: string) =>
+              Promise.resolve({
+                runId: id,
+                availability: 'unavailable',
+                observedAt: '2026-09-07T14:00:00Z',
+                predecessorRunId: null,
+                checkpointReference: null,
+                seedVerifiedAt: null,
+              }),
+            page: () => pending.promise,
+          },
+        },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(OverviewPage);
@@ -77,7 +103,19 @@ describe('Run views', () => {
         provideRouter([{ path: 'runs/:runId', component: RunDetailPage }]),
         {
           provide: RUN_API,
-          useValue: { get, progress: () => Promise.resolve(progress()) },
+          useValue: {
+            lineage: (id: string) =>
+              Promise.resolve({
+                runId: id,
+                availability: 'unavailable',
+                observedAt: '2026-09-07T14:00:00Z',
+                predecessorRunId: null,
+                checkpointReference: null,
+                seedVerifiedAt: null,
+              }),
+            get,
+            progress: () => Promise.resolve(progress()),
+          },
         },
       ],
     }).compileComponents();
@@ -116,7 +154,19 @@ describe('Run views', () => {
         provideRouter([{ path: 'runs/:runId', component: RunDetailPage }]),
         {
           provide: RUN_API,
-          useValue: { get, progress: () => Promise.resolve(progress()) },
+          useValue: {
+            lineage: (id: string) =>
+              Promise.resolve({
+                runId: id,
+                availability: 'unavailable',
+                observedAt: '2026-09-07T14:00:00Z',
+                predecessorRunId: null,
+                checkpointReference: null,
+                seedVerifiedAt: null,
+              }),
+            get,
+            progress: () => Promise.resolve(progress()),
+          },
         },
       ],
     }).compileComponents();

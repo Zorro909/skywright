@@ -53,6 +53,37 @@ class RunStoreLifecycleTest {
 	}
 
 	@Test
+	void setupLogsDoNotInventAnAttemptOrHideUnjournaledTrainingRecords() {
+		var objects = new Memory();
+		var protocol = new RunStoreProtocol("project", RUN);
+		for (int i = 0; i < 600; i++)
+			objects.put(protocol.runPrefix() + "skypilot/logs/" + i, "run-log-raw",
+					"setup".getBytes(StandardCharsets.UTF_8));
+		var lifecycle = new RunStoreLifecycle(protocol, objects);
+		assertThat(lifecycle.read(VERSION, 1).attempts()).isEmpty();
+		objects.put(protocol.progressKey(), "progress-record", "{}".getBytes(StandardCharsets.UTF_8));
+		assertThatThrownBy(() -> lifecycle.read(VERSION, 1)).hasMessageContaining("HEAD_MISSING");
+		objects.values.remove(protocol.progressKey());
+		objects.put(protocol.runPrefix() + "zzz-unrecognized", "unknown", new byte[0]);
+		assertThatThrownBy(() -> lifecycle.read(VERSION, 1)).hasMessageContaining("HEAD_MISSING");
+	}
+
+	@Test
+	void stalledPrestartInventoryIsUnavailableInsteadOfFabricatingAnEmptyHistory() {
+		var protocol = new RunStoreProtocol("project", RUN);
+		var objects = new Memory() {
+			@Override
+			public RunStoreObjectPage list(String prefix, int limit, String continuation) {
+				return new RunStoreObjectPage(List.of(new RunStoreObjectPage.Entry(prefix + "skypilot/logs/setup", 5)),
+						"stuck");
+			}
+		};
+		assertThatThrownBy(() -> new RunStoreLifecycle(protocol, objects).read(VERSION, 1))
+			.isInstanceOf(IllegalStateException.class)
+			.hasMessageContaining("does not advance");
+	}
+
+	@Test
 	void reportValidationRejectsForeignIdentityUnknownCauseAndIncompleteFinalization() {
 		for (var mutation : Map
 			.<String, JsonNode>of("runId", JSON.valueToTree("another-run"), "schemaVersion", JSON.valueToTree(2),
@@ -259,12 +290,13 @@ class RunStoreLifecycleTest {
 
 		@Override
 		public RunStoreObjectPage list(String prefix, int limit, String continuation) {
-			return new RunStoreObjectPage(values.keySet()
+			var keys = values.keySet().stream().filter(k -> k.startsWith(prefix)).sorted().toList();
+			int start = continuation == null ? 0 : Integer.parseInt(continuation);
+			int end = Math.min(start + limit, keys.size());
+			return new RunStoreObjectPage(keys.subList(start, end)
 				.stream()
-				.filter(k -> k.startsWith(prefix))
-				.limit(limit)
 				.map(k -> new RunStoreObjectPage.Entry(k, values.get(k).bytes().length))
-				.toList(), null);
+				.toList(), end < keys.size() ? Integer.toString(end) : null);
 		}
 
 		@Override

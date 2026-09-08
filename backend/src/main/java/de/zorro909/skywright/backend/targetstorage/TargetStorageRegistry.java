@@ -195,13 +195,17 @@ public class TargetStorageRegistry {
 	}
 
 	TargetStorageResolution resolveRunOutputRead(UUID id) {
+		return resolveRunOutputRead(id, TargetStorageRole.BACKEND);
+	}
+
+	TargetStorageResolution resolveRunOutputRead(UUID id, TargetStorageRole role) {
 		var storage = this.requireRunOutput(id);
 		if (storage.activeRevision() == null)
 			throw new TargetStorageIneligibleException("TARGET_STORAGE_NOT_QUALIFIED",
 					"Run Store reads require a qualified configuration");
 		var binding = storage.bindings()
 			.stream()
-			.filter(b -> b.role() == TargetStorageRole.BACKEND && b.readiness() == BindingReadiness.READY)
+			.filter(b -> b.role() == role && b.readiness() == BindingReadiness.READY)
 			.findFirst()
 			.orElseThrow(() -> new TargetStorageIneligibleException("TARGET_STORAGE_BINDING_UNAVAILABLE",
 					"The backend read binding is unavailable"));

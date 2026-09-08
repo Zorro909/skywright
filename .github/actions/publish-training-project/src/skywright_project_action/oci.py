@@ -17,6 +17,7 @@ from email.message import Message
 from pathlib import Path
 from typing import Protocol, cast
 
+from skywright_project_action.environment import project_environment_script
 from skywright_project_action.identity import sha256_bytes
 from skywright_project_action.publication import ArtifactRegistry, ProjectImageBuilder
 from skywright_project_action.version import (
@@ -431,8 +432,10 @@ class DockerProjectImageBuilder(ProjectImageBuilder):
                     f"LABEL org.skywright.pipeline={json.dumps(self._pipeline)}",
                     f"LABEL org.skywright.environment-profile={json.dumps(profile)}",
                     f"COPY {json.dumps([lock, '/tmp/skywright-project.lock'])}",
-                    "RUN python -m venv --system-site-packages /opt/skywright-project && "
-                    "/opt/skywright-project/bin/python -m pip install --no-deps "
+                    "RUN python -c "
+                    + shlex.quote(project_environment_script("/opt/skywright-project"))
+                    + " && "
+                    + "/opt/skywright-project/bin/python -m pip install --no-deps "
                     "--require-hashes -r /tmp/skywright-project.lock",
                     'COPY [".","/workspace"]',
                     "WORKDIR /workspace",
