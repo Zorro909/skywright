@@ -369,13 +369,16 @@ class Node:
             "cgroup_chain": self.cgroup_chain(process["cgroup"]),
         }
 
-    def stopped(self, record):
+    def validate_custody(self, record):
         # Kernel reboot evidence is deliberately not inferred by this first implementation.
         if (
             record["boot_id"] != self.boot_id
             or identity(self.cgroups) != record["cgroup_root"]
         ):
             raise Uncertain()
+
+    def stopped(self, record):
+        self.validate_custody(record)
         inspected = runtime_json(["inspect", record["container_id"]])
         status = inspected["status"]
         if (

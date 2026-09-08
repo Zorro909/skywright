@@ -7,12 +7,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from deployment.local_writer.common import Uncertain
+from deployment.local_writer.authority import Authority
+from deployment.local_writer.common import Uncertain, identity
 from deployment.local_writer.custody import (
     Custody,
     validate_proof,
     validate_registration,
 )
+from deployment.local_writer.node import Node
 
 FIXTURE = Path(__file__).parent / "fixtures/local-writer-registration.json"
 
@@ -89,6 +91,42 @@ class WriterEvidenceTest(unittest.TestCase):
             proof_path.write_text(json.dumps(proof))
             with self.assertRaises(Uncertain):
                 Custody(directory, record["owner"]["node_uid"])
+
+    @unittest.skipUnless(os.geteuid() == 0, "requires root-owned custody")
+    def test_retained_proof_refuses_changed_boot_or_cgroup_root(self):
+        record = registration()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            cgroups = directory / "cgroups"
+            cgroups.mkdir()
+            state = directory / "custody"
+            state.mkdir(mode=0o700)
+            record["cgroup_root"] = identity(cgroups)
+            (state / "authority.json").write_text(json.dumps(record["owner"]))
+            custody = Custody(state, record["owner"]["node_uid"])
+            try:
+                custody.register(record)
+                key = custody.key(record["run_id"], record["attempt_id"])
+                custody.prove(key, observation(record))
+            finally:
+                custody.close()
+            custody = Custody(state, record["owner"]["node_uid"])
+            try:
+                node = object.__new__(Node)
+                node.boot_id = record["boot_id"]
+                node.cgroups = cgroups
+                authority = Authority(custody, node)
+                self.assertEqual(authority.observe(key), custody.response(key))
+                node.boot_id = "00000000-0000-0000-0000-000000000001"
+                with self.assertRaises(Uncertain):
+                    authority.observe(key)
+                node.boot_id = record["boot_id"]
+                cgroups.rename(directory / "old-cgroups")
+                cgroups.mkdir()
+                with self.assertRaises(Uncertain):
+                    authority.observe(key)
+            finally:
+                custody.close()
 
 
 class WriterMountTest(unittest.TestCase):

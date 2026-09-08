@@ -25,6 +25,7 @@ class Authority:
         self.custody, self.node = custody, node
 
     def observe(self, key):
+        self.node.validate_custody(self.custody.registrations[key])
         if key not in self.custody.proofs:
             self.custody.prove(key, self.node.stopped(self.custody.registrations[key]))
         return self.custody.response(key)
