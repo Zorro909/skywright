@@ -71,6 +71,23 @@
             <version>${exec-maven.version}</version>
             <executions>
               <execution>
+                <id>discard-derived-environment-bytecode</id>
+                <phase>process-resources</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>python3</executable>
+                  <timeout>180000</timeout>
+                  <arguments>
+                    <argument>${maven.multiModuleProjectDirectory}/scripts/graalpy-environment</argument>
+                    <argument>prune-bytecode</argument>
+                    <argument>--resources</argument>
+                    <argument>${graalpy.external.directory}</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+              <execution>
                 <id>seal-environment-observation</id>
                 <phase>process-resources</phase>
                 <goals>

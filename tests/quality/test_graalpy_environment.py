@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import py_compile
 from pathlib import Path
 import shutil
 import sys
@@ -76,12 +77,32 @@ class EnvironmentIdentityTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'payload differs'):
             self.invoke('verify')
 
-    def test_bytecode_tampering_is_rejected(self):
-        bytecode = self.library / '__pycache__/package.pyc'
-        bytecode.parent.mkdir()
-        bytecode.write_bytes(b'original')
+    def test_generated_and_planted_bytecode_is_removed_before_verification(self):
+        source = self.library / 'package.py'
+        source.write_text('value = 1')
         self.seal()
-        bytecode.write_bytes(b'changed')
+        generated = Path(py_compile.compile(str(source), doraise=True))
+        planted = self.library / 'package.pyc'
+        planted.write_bytes(b'unqualified executable bytecode')
+        self.invoke('verify')
+        self.assertFalse(generated.exists())
+        self.assertFalse(planted.exists())
+
+    def test_bytecode_cleanup_does_not_follow_external_symlink(self):
+        outside = self.root / 'outside'
+        outside.mkdir()
+        sentinel = outside / 'keep.pyc'
+        sentinel.write_bytes(b'outside environment')
+        (self.library / '__pycache__').symlink_to(outside, target_is_directory=True)
+        self.seal()
+        self.assertTrue(sentinel.exists())
+        self.assertFalse((self.library / '__pycache__').exists())
+
+    def test_changed_native_binary_is_rejected(self):
+        native = self.library / 'package.so'
+        native.write_bytes(b'qualified native code')
+        self.seal()
+        native.write_bytes(b'changed native code')
         with self.assertRaisesRegex(ValueError, 'payload differs'):
             self.invoke('verify')
 

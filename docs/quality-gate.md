@@ -88,6 +88,9 @@ unrelated application sources. Progressive wheel caches use the same identity wi
 fallback. Changing an identity input starts a new dependency build.
 
 A restored environment must match that identity and a digest of its installed dependency files.
+Preparation discards generated interpreter bytecode before validation and packaging, retaining
+source and native binaries in the digest. This lets ordinary imports regenerate caches without
+invalidating unchanged dependencies or allowing an ignored bytecode file to reach the probe.
 Every preparation and prebuilt Maven build then launches the current Maven-resolved GraalPy runtime,
 checks installed versions against the lock, and imports the native smoke packages. Validation uses
 the embedding API so a relocated environment does not execute its cached absolute-path launcher or

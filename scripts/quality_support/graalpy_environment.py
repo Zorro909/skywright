@@ -8,6 +8,7 @@ import os
 import platform
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -144,6 +145,21 @@ def verify_observation(root: Path, versions: dict[str, str], observed: dict) -> 
         raise ValueError("Locked GraalPy version differs from the effective Maven version")
 
 
+def prune_bytecode(resources: Path) -> None:
+    """Discard mutable interpreter output without following dependency symlinks."""
+    library = resources / "venv/lib"
+    if library.is_symlink() or not library.is_dir():
+        raise ValueError("Packaged environment library is missing or linked externally")
+    for path in list(library.rglob("__pycache__")):
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+    for path in library.rglob("*.py[co]"):
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+
+
 def payload_digest(resources: Path) -> str:
     """Hash installed dependencies, not relocatable launchers."""
     library = resources / "venv/lib"
@@ -194,6 +210,7 @@ def verify_record(root: Path, resources: Path, versions: dict[str, str], expecte
     if record.get("identitySha256") != digest(canonical(recorded)):
         raise ValueError("Packaged environment identity digest is invalid")
     verify_observation(root, versions, record.get("observed", {}))
+    prune_bytecode(resources)
     if record.get("payloadSha256") != payload_digest(resources):
         raise ValueError("Packaged environment payload differs from its qualified record")
     return record
@@ -201,7 +218,7 @@ def verify_record(root: Path, resources: Path, versions: dict[str, str], expecte
 
 def main(arguments: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("identity", "seal", "verify", "stamp", "provenance"))
+    parser.add_argument("command", choices=("identity", "prune-bytecode", "seal", "verify", "stamp", "provenance"))
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("--resources", type=Path)
     parser.add_argument("--graalpy-version")
@@ -216,6 +233,9 @@ def main(arguments: list[str] | None = None) -> int:
     args = parser.parse_args(arguments)
     root = args.root.resolve()
     resources = args.resources or root / ".graalpy/resources"
+    if args.command == "prune-bytecode":
+        prune_bytecode(resources)
+        return 0
     if bool(args.graalpy_version) != bool(args.skypilot_version):
         raise ValueError("Both effective versions must be supplied together")
     versions = {"graalpy": args.graalpy_version, "skypilot": args.skypilot_version} if args.graalpy_version else effective_versions(root)
@@ -239,6 +259,7 @@ def main(arguments: list[str] | None = None) -> int:
         value = identity(root, versions)
         if expected is not None and value != expected:
             raise ValueError("Build inputs changed during environment preparation")
+        prune_bytecode(resources)
         record = {"identity": value, "identitySha256": digest(canonical(value)),
                   "observed": observed, "payloadSha256": payload_digest(resources)}
         write_document(resources / RECORD, record)
