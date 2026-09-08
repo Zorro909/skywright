@@ -193,28 +193,39 @@ export const runLogApi = {
       for (;;) {
         const result = await reader.read();
         if (result.done) return;
-        pending += decoder.decode(result.value, { stream: true });
-        if (pending.length > MAX_FRAME)
-          throw new Error('Archive event exceeds its bound');
-        for (;;) {
-          const boundary = /\r?\n\r?\n/u.exec(pending);
-          if (!boundary) break;
-          const event = pending.slice(0, boundary.index);
-          pending = pending.slice(boundary.index + boundary[0].length);
-          const lines = event.split(/\r?\n/u);
-          if (!lines.includes('event: archive')) continue;
-          const data = lines
-            .filter((line) => line.startsWith('data: '))
-            .map((line) => line.slice(6))
-            .join('\n');
-          const page = logPage(JSON.parse(data) as unknown, runId, stream);
-          if (signal.aborted) return;
-          await consume(page);
-          if (
-            page.archiveState === 'finalized' &&
-            page.nextCursor === page.endCursor
-          )
-            return;
+        // Transport reads may coalesce many valid events. Decode a bounded slice
+        // at a time and apply the event limit after draining complete frames.
+        for (let offset = 0; offset < result.value.length; offset += 8192) {
+          pending += decoder.decode(
+            result.value.subarray(offset, offset + 8192),
+            {
+              stream: true,
+            },
+          );
+          for (;;) {
+            const boundary = /\r?\n\r?\n/u.exec(pending);
+            if (!boundary) break;
+            if (boundary.index > MAX_FRAME)
+              throw new Error('Archive event exceeds its bound');
+            const event = pending.slice(0, boundary.index);
+            pending = pending.slice(boundary.index + boundary[0].length);
+            const lines = event.split(/\r?\n/u);
+            if (!lines.includes('event: archive')) continue;
+            const data = lines
+              .filter((line) => line.startsWith('data: '))
+              .map((line) => line.slice(6))
+              .join('\n');
+            const page = logPage(JSON.parse(data) as unknown, runId, stream);
+            if (signal.aborted) return;
+            await consume(page);
+            if (
+              page.archiveState === 'finalized' &&
+              page.nextCursor === page.endCursor
+            )
+              return;
+          }
+          if (pending.length > MAX_FRAME)
+            throw new Error('Archive event exceeds its bound');
         }
       }
     } finally {

@@ -43,8 +43,10 @@ public final class RunLogReads {
 				var target = storages.resolveRunOutputRead(runs.currentStorage(runId),
 						definition.path("projectIdentity").asText(), runId.toString());
 				try (var objects = new S3ArchiveObjects(target)) {
-					return new ArchiveReader(objects, runId, definition.path("manifestArtifactDigest").asText())
-						.read(stream, cursor, before, captures.checkpoint(runId), clock.instant());
+					var saved = captures.snapshot(runId);
+					return new ArchiveReader(objects, runId, definition.path("manifestArtifactDigest").asText(),
+							saved.manifestDigest())
+						.read(stream, cursor, before, saved.checkpoint(), clock.instant());
 				}
 			}
 			catch (ArchiveReader.InvalidCursor invalid) {
@@ -70,8 +72,10 @@ public final class RunLogReads {
 				var target = storages.resolveRunOutputRead(runs.currentStorage(runId),
 						definition.path("projectIdentity").asText(), runId.toString());
 				try (var objects = new S3ArchiveObjects(target)) {
-					return new ArchiveReader(objects, runId, definition.path("manifestArtifactDigest").asText())
-						.navigation(cursor, captures.checkpoint(runId));
+					var saved = captures.snapshot(runId);
+					return new ArchiveReader(objects, runId, definition.path("manifestArtifactDigest").asText(),
+							saved.manifestDigest())
+						.navigation(cursor, saved.checkpoint());
 				}
 			}
 			catch (ArchiveReader.InvalidCursor invalid) {

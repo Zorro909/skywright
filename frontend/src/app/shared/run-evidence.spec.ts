@@ -47,7 +47,7 @@ describe('Run evidence', () => {
     expect(root.textContent).toContain('2 committed Steps beyond');
     expect(root.textContent).not.toContain('%');
     expect(root.textContent).toContain('Execution Attempts2');
-    expect(root.textContent).toContain('Logs unavailable');
+    expect(root.textContent).not.toContain('Logs unavailable');
     expect(root.textContent).toContain('Attention Items unavailable');
   });
   it('renders the server unavailable state and last-seen side channel separately', async () => {

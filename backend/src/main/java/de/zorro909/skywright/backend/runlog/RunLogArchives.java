@@ -53,7 +53,7 @@ public final class RunLogArchives {
 
 	RunLogCaptureStore.Saved capture(UUID runId, String version, RunLogCheckpoint checkpoint, ArchiveJournal journal,
 			boolean terminal, boolean prevented) {
-		var published = journal.manifest();
+		var published = journal.publication();
 		if (published != null)
 			return saved(published);
 		var archive = new RunLogArchive(runId, version);
@@ -109,9 +109,9 @@ public final class RunLogArchives {
 		return new RunLogCaptureStore.Saved(checkpoint, null, null);
 	}
 
-	private static RunLogCaptureStore.Saved saved(ArchiveJournal.Manifest manifest) {
-		return new RunLogCaptureStore.Saved(manifest.checkpoint(),
-				RunLogArchive.digest(ArchiveJournal.encode(manifest)), manifest.publishedAt());
+	private static RunLogCaptureStore.Saved saved(ArchiveJournal.Published published) {
+		return new RunLogCaptureStore.Saved(published.manifest().checkpoint(), published.digest(),
+				published.manifest().publishedAt());
 	}
 
 }

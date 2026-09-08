@@ -33,9 +33,10 @@ public class RunLogCaptureStore {
 	}
 
 	@Transactional(readOnly = true)
-	RunLogCheckpoint checkpoint(UUID runId) {
+	Saved snapshot(UUID runId) {
 		var row = entities.find(RunLogCaptureEntity.class, runId);
-		return row == null ? RunLogCheckpoint.initial() : JSON.readValue(row.checkpoint, RunLogCheckpoint.class);
+		return row == null ? new Saved(RunLogCheckpoint.initial(), null, null) : new Saved(
+				JSON.readValue(row.checkpoint, RunLogCheckpoint.class), row.manifestSha256, row.finalizedAt);
 	}
 
 	record Saved(RunLogCheckpoint checkpoint, String manifestDigest, Instant finalizedAt) {

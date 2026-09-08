@@ -93,8 +93,31 @@ class ArchiveReaderTest {
 		assertThat(navigation.nextCursor()).isNull();
 	}
 
+	@Test
+	void finalizedAuthorityCannotFallBackToStagingWhenManifestIsLostOrReplaced() {
+		append("task", "captured".getBytes(StandardCharsets.UTF_8));
+		checkpoint = checkpoint.with("task", RunLogArchive.partial(checkpoint.task(), "SOURCE_LOST"))
+			.with("controller", RunLogArchive.partial(checkpoint.controller(), "SOURCE_LOST"))
+			.markers(null, true);
+		byte[] published = ArchiveJournal.encode(journal.finish(checkpoint, ArchiveJournalTest.NOW).manifest());
+		var reader = new ArchiveReader(objects, ArchiveJournalTest.RUN, ArchiveJournalTest.VERSION,
+				RunLogArchive.digest(published));
+		assertThat(reader.read("task", 0L, null, checkpoint, ArchiveJournalTest.NOW).archiveState())
+			.isEqualTo("finalized");
+		objects.values.remove(ArchiveJournal.MANIFEST);
+		assertThatThrownBy(() -> reader.read("task", 0L, null, checkpoint, ArchiveJournalTest.NOW))
+			.hasMessage("ARCHIVE_MANIFEST_UNAVAILABLE");
+		assertThatThrownBy(() -> reader.navigation(0, checkpoint)).hasMessage("ARCHIVE_MANIFEST_UNAVAILABLE");
+		journal.finish(checkpoint, ArchiveJournalTest.NOW.plusSeconds(1));
+		assertThatThrownBy(() -> reader.read("task", 0L, null, checkpoint, ArchiveJournalTest.NOW))
+			.hasMessage("ARCHIVE_MANIFEST_UNAVAILABLE");
+		objects.values.put(ArchiveJournal.MANIFEST, published);
+		assertThat(reader.read("task", 0L, null, checkpoint, ArchiveJournalTest.NOW).archiveState())
+			.isEqualTo("finalized");
+	}
+
 	private ArchiveReader reader() {
-		return new ArchiveReader(objects, ArchiveJournalTest.RUN, ArchiveJournalTest.VERSION);
+		return new ArchiveReader(objects, ArchiveJournalTest.RUN, ArchiveJournalTest.VERSION, null);
 	}
 
 	private void append(String stream, byte[] raw) {

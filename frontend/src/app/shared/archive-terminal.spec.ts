@@ -114,6 +114,35 @@ describe('Archived terminal bytes', () => {
     await vi.waitFor(() => expect(host.textContent).toContain('€'));
   });
 
+  it('consumes multiple near-limit events coalesced into one transport read', async () => {
+    const bytes = new Uint8Array(65536).fill(65);
+    const parts = [page(bytes, 0n), page(bytes, 65536n, true)];
+    const wire = new TextEncoder().encode(
+      parts
+        .map((item) => 'event: archive\ndata: ' + JSON.stringify(item) + '\n\n')
+        .join(''),
+    );
+    expect(wire.length).toBeGreaterThan(128 * 1024);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(wire);
+            controller.close();
+          },
+        }),
+      ),
+    );
+    await runLogApi.follow(
+      runId,
+      'task',
+      '0',
+      new AbortController().signal,
+      (item) => terminal.append(item),
+    );
+    expect(terminal.cursor).toBe('131072');
+  });
+
   it('rejects oversized or mismatched raw ranges without advancing the cursor', async () => {
     await expect(
       terminal.append({ ...page(new Uint8Array([65]), 0n), nextCursor: '4' }),

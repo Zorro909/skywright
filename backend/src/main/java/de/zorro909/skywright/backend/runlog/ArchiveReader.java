@@ -27,10 +27,13 @@ final class ArchiveReader {
 
 	private final UUID runId;
 
-	ArchiveReader(ArchiveObjects objects, UUID runId, String version) {
+	private final String manifestDigest;
+
+	ArchiveReader(ArchiveObjects objects, UUID runId, String version, String manifestDigest) {
 		this.objects = objects;
 		this.journal = new ArchiveJournal(objects, runId, version);
 		this.runId = runId;
+		this.manifestDigest = manifestDigest;
 	}
 
 	record Page(UUID runId, String stream, String availability, Instant observedAt, String archiveState,
@@ -45,7 +48,7 @@ final class ArchiveReader {
 	}
 
 	Page read(String stream, Long cursor, Long before, RunLogCheckpoint staging, Instant now) {
-		var manifest = journal.manifest();
+		var manifest = journal.manifest(manifestDigest);
 		var checkpoint = manifest == null ? staging : manifest.checkpoint();
 		var head = checkpoint.stream(stream);
 		validateHead(head);
@@ -91,7 +94,7 @@ final class ArchiveReader {
 	 * page.
 	 */
 	Navigation navigation(long sequence, RunLogCheckpoint staging) {
-		var manifest = journal.manifest();
+		var manifest = journal.manifest(manifestDigest);
 		var head = (manifest == null ? staging : manifest.checkpoint()).task();
 		validateHead(head);
 		if (sequence < 0 || sequence > head.sequence())

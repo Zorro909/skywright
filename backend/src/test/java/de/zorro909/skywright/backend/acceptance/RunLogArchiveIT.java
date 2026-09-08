@@ -147,11 +147,11 @@ class RunLogArchiveIT {
 					.value()
 					.at("/trainingProjectVersion/projectIdentity")
 					.asText() + "/" + run + "/v1/";
-				byte[] manifestBytes = admin
+				var manifestObject = admin
 					.getObject(b -> b.bucket(storageBucket).key(prefix + finalization.manifestKey()),
 							software.amazon.awssdk.core.async.AsyncResponseTransformer.toBytes())
-					.join()
-					.asByteArray();
+					.join();
+				byte[] manifestBytes = manifestObject.asByteArray();
 				assertThat(de.zorro909.skywright.backend.runlog.RunLogArchive.digest(manifestBytes))
 					.isEqualTo(finalization.sha256());
 				var manifest = JSON.readTree(manifestBytes);
@@ -224,6 +224,23 @@ class RunLogArchiveIT {
 					.isEqualTo(controllerPage.path("bytesBase64").asText());
 				assertFollow(backend, run, "task", task.length - 17, true,
 						java.util.Arrays.copyOfRange(task, task.length - 17, task.length));
+				// A confirmed terminal archive must never revert to staging when its
+				// manifest disappears at the current location.
+				admin.deleteObject(b -> b.bucket(movedBucket).key(prefix + finalization.manifestKey())).join();
+				var missingManifest = logPage(backend, run, "task", 0);
+				assertThat(missingManifest.path("availability").asText()).isEqualTo("unavailable");
+				assertThat(missingManifest.path("archiveState").asText()).isEqualTo("unknown");
+				assertThat(missingManifest.path("bytesBase64").asText()).isEmpty();
+				assertThat(backend.get("/api/v1/run-logs/" + run + "/navigation").statusCode()).isEqualTo(503);
+				admin
+					.putObject(
+							b -> b.bucket(movedBucket)
+								.key(prefix + finalization.manifestKey())
+								.metadata(manifestObject.response().metadata()),
+							software.amazon.awssdk.core.async.AsyncRequestBody.fromBytes(manifestBytes))
+					.join();
+				assertThat(logPage(backend, run, "task", 0).path("archiveState").asText()).isEqualTo("finalized");
+
 				var chunkKey = records.stream()
 					.filter(r -> r.key().contains("/controller/chunks/"))
 					.findFirst()

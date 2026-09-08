@@ -152,7 +152,11 @@ Issue #234 adds archive-backed reads under `/api/v1/run-logs/{runId}`:
 
 Every read resolves the Run Record's current location and read credentials. The
 immutable terminal manifest, when present, determines completion. Otherwise the
-persisted producer checkpoint supplies a staging high-water mark. Source-read
+persisted producer checkpoint supplies a staging high-water mark until durable
+finalization is recorded. After that handoff, a missing manifest or a digest
+mismatch is unavailable and cannot restore staging authority. Finalization retains
+the digest of the original stored bytes, including older manifests recovered after
+a lost acknowledgement. Source-read
 failures and the last successful source fetch remain explicit and survive backend
 restart. A staging stream never becomes complete just because compute ended.
 Missing or invalid archive objects make that read unavailable; the viewer does

@@ -134,6 +134,28 @@ class ArchiveJournalTest {
 		}
 	}
 
+	@Test
+	void recoveringOlderManifestRetainsTheDigestOfItsOriginalBytes() {
+		var objects = new Objects();
+		var journal = new ArchiveJournal(objects, RUN, VERSION);
+		service((r, s, c) -> new RunLogArchive.Page(s, 0, "setup".getBytes(StandardCharsets.UTF_8), "{}", true, true,
+				null), NOW)
+			.capture(RUN, VERSION, RunLogCheckpoint.initial(), journal, true, false);
+		var older = (tools.jackson.databind.node.ObjectNode) JSON.readTree(objects.values.get(ArchiveJournal.MANIFEST));
+		var checkpoint = (tools.jackson.databind.node.ObjectNode) older.path("checkpoint");
+		checkpoint.remove("taskSourceFailure");
+		checkpoint.remove("controllerSourceFailure");
+		byte[] original = JSON.writeValueAsBytes(older);
+		objects.values.put(ArchiveJournal.MANIFEST, original);
+		var recovered = service((r, s, c) -> {
+			throw new AssertionError("finalized archive must not query source");
+		}, NOW.plusSeconds(20)).capture(RUN, VERSION, RunLogCheckpoint.initial(), journal, true, false);
+		assertThat(recovered.manifestDigest()).isEqualTo(RunLogArchive.digest(original));
+		var reader = new ArchiveReader(objects, RUN, VERSION, recovered.manifestDigest());
+		assertThat(reader.read("task", 0L, null, recovered.checkpoint(), NOW).archiveState()).isEqualTo("finalized");
+		assertThat(objects.values.get(ArchiveJournal.MANIFEST)).isEqualTo(original);
+	}
+
 	private static RunLogArchives service(RunLogSource source, Instant now) {
 		return new RunLogArchives(null, null, null, source, Clock.fixed(now, ZoneOffset.UTC));
 	}
