@@ -6,7 +6,9 @@ from io import BytesIO
 
 import pytest
 
-from skywright._dataset_upload import _validated_remote_digest
+from skywright._dataset_upload import (
+    _validated_remote_digest,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 @pytest.mark.parametrize("kind", [None, "COMPOSITE", "FULL_OBJECT"])

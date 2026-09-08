@@ -1644,7 +1644,7 @@ def test_registered_checksum_options_reach_fixed_length_upload_requests(
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    original = boto3.client
+    original = boto3.client  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
     configurations: list[Config] = []
 
     def client(service: str, **values: object) -> object:
