@@ -68,8 +68,10 @@ describe('Run log viewer', () => {
     await vi.waitFor(() =>
       expect(root.textContent).toContain('Run Store archive unavailable'),
     );
-    expect(root.querySelector('.archive-terminal')?.textContent).toContain(
-      'initial',
+    await vi.waitFor(() =>
+      expect(root.querySelector('.archive-terminal')?.textContent).toContain(
+        'initial',
+      ),
     );
     await vi.waitFor(
       () =>

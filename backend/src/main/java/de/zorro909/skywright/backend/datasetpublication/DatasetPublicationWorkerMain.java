@@ -3,7 +3,6 @@ package de.zorro909.skywright.backend.datasetpublication;
 import de.zorro909.skywright.backend.datasetcatalog.DatasetManifestEntry;
 import java.io.IOException;
 import java.io.InterruptedIOException;
-import java.io.OutputStream;
 import de.zorro909.skywright.backend.worker.TransferObjects;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -29,7 +28,6 @@ import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
-import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.model.Delete;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
@@ -287,16 +285,9 @@ public final class DatasetPublicationWorkerMain {
 
 	private static DatasetManifestEntry verifyObject(S3AsyncClient client, String bucket, String key,
 			ManifestObject object) {
-		var response = client
-			.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build(),
-					AsyncResponseTransformer.toBlockingInputStream())
-			.join();
+
 		try {
-			if (response.response().contentLength() != object.byteCount()) {
-				throw mismatch();
-			}
-			TransferObjects.verify(response, object.byteCount(), object.sha256().substring(7),
-					OutputStream.nullOutputStream());
+			TransferObjects.verify(client, bucket, key, object.byteCount(), object.sha256().substring(7));
 			return new DatasetManifestEntry(object.objectKey(), object.byteCount(),
 					Base64.getEncoder().encodeToString(HexFormat.of().parseHex(object.sha256().substring(7))));
 		}
@@ -308,9 +299,6 @@ public final class DatasetPublicationWorkerMain {
 		}
 		catch (IOException failure) {
 			throw new WorkerFailure("DATASET_VERIFICATION_UNAVAILABLE", true);
-		}
-		finally {
-			response.abort();
 		}
 	}
 
@@ -336,8 +324,9 @@ public final class DatasetPublicationWorkerMain {
 				: AwsSessionCredentials.create(credential.accessKeyId(), credential.secretAccessKey(),
 						credential.sessionToken());
 		return TransferObjects.client(job.endpoint(), job.region(), StaticCredentialsProvider.create(awsCredential),
-				job.pathStyleAccess(), job.chunkedEncoding(), RequestChecksumCalculation.WHEN_SUPPORTED,
-				workerConfiguration(job.action()), null);
+				job.pathStyleAccess(), job.chunkedEncoding(),
+				TransferObjects.checksumCalculation(job.checksumCalculation()), workerConfiguration(job.action()),
+				null);
 	}
 
 	private static ClientOverrideConfiguration workerConfiguration(DatasetPublicationWorkerAction action) {

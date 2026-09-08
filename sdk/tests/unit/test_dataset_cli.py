@@ -14,7 +14,7 @@ from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from io import BytesIO, StringIO
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -1275,6 +1275,7 @@ def test_multipart_completion_response_loss_accepts_the_validated_object() -> No
                 "ContentLength": len(stored),
                 "Metadata": {"skywright-sha256": digest},
                 "ChecksumSHA256": checksum,
+                "ChecksumType": "FULL_OBJECT",
             }
 
         def create_multipart_upload(self, **_values: object) -> dict[str, str]:
@@ -1349,6 +1350,7 @@ def test_ignored_multipart_cancellation_is_discovered_and_reconciled() -> None:
                 "ContentLength": len(stored),
                 "Metadata": {"skywright-sha256": digest},
                 "ChecksumSHA256": checksum,
+                "ChecksumType": "FULL_OBJECT",
             }
 
         def create_multipart_upload(self, **_values: object) -> dict[str, str]:
@@ -1600,3 +1602,95 @@ def test_command_reports_invalid_control_plane_as_one_problem_line(
     assert json.loads(stderr.getvalue())["errorCode"] == (
         "SKYWRIGHT_CONTROL_PLANE_ADDRESS_INVALID"
     )
+
+
+@pytest.mark.parametrize("calculation", ["when-required", "when-supported"])
+@pytest.mark.parametrize("chunking", ["disabled", "enabled"])
+def test_registered_checksum_options_reach_fixed_length_upload_requests(
+    tmp_path: Path, calculation: str, chunking: str
+) -> None:
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    import boto3
+    from botocore.config import Config
+
+    from skywright._dataset_upload import upload
+
+    corpus = tmp_path / "corpus"
+    write_corpus(corpus)
+    inspected = inspect_mds_corpus(corpus)
+    received: list[tuple[str | None, str | None, str | None, bytes]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_PUT(self) -> None:
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            received.append(
+                (
+                    self.headers.get("Content-Encoding"),
+                    self.headers.get("Transfer-Encoding"),
+                    self.headers.get("x-amz-checksum-sha256"),
+                    body,
+                )
+            )
+            self.send_response(200)
+            self.send_header("ETag", '"stored"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    original = boto3.client  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+    configurations: list[Config] = []
+
+    def client(service: str, **values: object) -> object:
+        configurations.append(cast(Config, values["config"]))
+        return original(service, **values)  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType, reportUnknownMemberType]
+
+    try:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AWS_ACCESS_KEY_ID": "test-key",
+                    "AWS_SECRET_ACCESS_KEY": "test-secret",
+                },
+            ),
+            patch("boto3.client", side_effect=client),
+        ):
+            upload(
+                inspected,
+                {"payloadLocation": "payload", "operationLocation": "operation"},
+                {
+                    "bucket": "dataset",
+                    "configuration": {
+                        "endpoint": f"http://127.0.0.1:{server.server_port}",
+                        "region": "us-east-1",
+                        "pathStyleAccess": True,
+                        "compatibilityOptions": {
+                            "checksumCalculation": calculation,
+                            "chunkedEncoding": chunking,
+                        },
+                    },
+                },
+                2,
+                lambda _count: None,
+                lambda: None,
+            )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    assert len(configurations) == 1
+    configured = cast(Any, configurations[0])
+    assert configured.request_checksum_calculation == calculation.replace("-", "_")
+    assert configured.response_checksum_validation == "when_required"
+    assert len(received) == inspected.object_count + 1
+    for encoding, transfer, checksum, body in received:
+        assert encoding is None
+        assert transfer is None
+        assert checksum == base64.b64encode(hashlib.sha256(body).digest()).decode()

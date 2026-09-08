@@ -12,29 +12,16 @@ public class DatasetCatalog {
 
 	private final Clock clock;
 
-	private final DatasetCopyVerifier verifier;
-
 	private final DatasetTargetStorageEligibility storageEligibility;
 
 	DatasetCatalog(DatasetCatalogRepository repository, Clock clock) {
-		this(repository, clock, (definition, manifest, copy) -> {
-			if (!definition.manifestIdentity().equals(copy.currentGeneration().manifestIdentity())
-					|| !definition.contentFingerprint().equals(copy.currentGeneration().contentFingerprint())) {
-				throw new DatasetCatalogConflictException("DATASET_COPY_MANIFEST_MISMATCH",
-						"Dataset Copy does not match the Dataset Definition manifest");
-			}
-		}, storageId -> true);
+		this(repository, clock, storageId -> true);
 	}
 
-	public DatasetCatalog(DatasetCatalogRepository repository, Clock clock, DatasetCopyVerifier verifier) {
-		this(repository, clock, verifier, storageId -> true);
-	}
-
-	public DatasetCatalog(DatasetCatalogRepository repository, Clock clock, DatasetCopyVerifier verifier,
+	public DatasetCatalog(DatasetCatalogRepository repository, Clock clock,
 			DatasetTargetStorageEligibility storageEligibility) {
 		this.repository = repository;
 		this.clock = clock;
-		this.verifier = verifier;
 		this.storageEligibility = storageEligibility;
 	}
 
@@ -151,12 +138,21 @@ public class DatasetCatalog {
 		return catalog.view();
 	}
 
-	public DatasetCatalogView promote(UUID definitionId, UUID copyId, long expectedRevision) {
-		DatasetCatalogAggregate catalog = this.catalog(definitionId);
+	public DatasetCopyOperationView promote(UUID definitionId, UUID copyId, long expectedRevision) {
+		var catalog = this.catalog(definitionId);
 		this.requireEligibleStorage(catalog.targetStorageId(copyId));
-		catalog.promote(copyId, expectedRevision, this.verifier);
+		var operation = catalog.startPromotion(copyId, expectedRevision, this.clock.instant());
 		this.repository.save(catalog);
-		return catalog.view();
+		return operation;
+	}
+
+	DatasetCopyOperationView completePromotion(UUID definitionId, UUID operationId, long expectedRevision) {
+		var catalog = this.catalog(definitionId);
+		var operation = catalog.operationView(operationId);
+		this.requireEligibleStorage(catalog.targetStorageId(operation.copyId()));
+		var completed = catalog.completePromotion(operationId, expectedRevision, this.clock.instant());
+		this.repository.save(catalog);
+		return completed;
 	}
 
 	public DatasetCopyOperationView startRefresh(UUID definitionId, UUID copyId, long generation,

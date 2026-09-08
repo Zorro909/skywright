@@ -27,7 +27,7 @@ import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
-import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
+import de.zorro909.skywright.backend.worker.TransferObjects;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
 import software.amazon.awssdk.regions.Region;
@@ -110,7 +110,8 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 			.overrideConfiguration(deadlines)
 			.httpClientBuilder(NettyNioAsyncHttpClient.builder())
 			.serviceConfiguration(s3Configuration)
-			.requestChecksumCalculation(checksumCalculation(request))
+			.requestChecksumCalculation(TransferObjects
+				.checksumCalculation(request.configuration().compatibilityOptions().get("checksumCalculation")))
 			.build();
 				S3Presigner presigner = S3Presigner.builder()
 					.endpointOverride(request.configuration().endpoint())
@@ -405,11 +406,6 @@ final class S3TargetStorageQualificationProbe implements TargetStorageQualificat
 	private static boolean optionEnabled(TargetStorageQualificationRequest request, String name, boolean defaultValue) {
 		String value = request.configuration().compatibilityOptions().get(name);
 		return value == null ? defaultValue : "enabled".equals(value);
-	}
-
-	private static RequestChecksumCalculation checksumCalculation(TargetStorageQualificationRequest request) {
-		return "when-supported".equals(request.configuration().compatibilityOptions().get("checksumCalculation"))
-				? RequestChecksumCalculation.WHEN_SUPPORTED : RequestChecksumCalculation.WHEN_REQUIRED;
 	}
 
 	private static TargetStorageAssessment unavailable(TargetStorageQualificationRequest request, Instant started,

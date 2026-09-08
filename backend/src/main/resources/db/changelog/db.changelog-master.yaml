@@ -33,3 +33,5 @@ databaseChangeLog:
       file: db/changelog/versions/0016-run-log-capture.yaml
   - include:
       file: db/changelog/versions/0017-local-run-seeds.yaml
+  - include:
+      file: db/changelog/versions/0018-dataset-copy-workers.yaml

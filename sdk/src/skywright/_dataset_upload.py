@@ -67,13 +67,28 @@ def upload(
         raise _protocol_error()
     from botocore.config import Config
 
+    options = typed_configuration.get("compatibilityOptions", {})
+    if not isinstance(options, dict):
+        raise _protocol_error()
+    checksum_option = options.get("checksumCalculation", "when-required")
+    if checksum_option not in ("when-required", "when-supported") or options.get(
+        "chunkedEncoding", "disabled"
+    ) not in ("enabled", "disabled"):
+        raise _protocol_error()
+
     try:
+        # Precomputed SHA256 and ContentLength keep uploads unchunked even when
+        # the endpoint permits chunking; payload signing is a separate policy.
         client: Any = boto3.client(
             "s3",
             endpoint_url=endpoint,
             region_name=region,
             config=Config(
-                s3={"addressing_style": "path" if path_style is True else "virtual"}
+                s3={"addressing_style": "path" if path_style is True else "virtual"},
+                request_checksum_calculation=cast(str, checksum_option).replace(
+                    "-", "_"
+                ),
+                response_checksum_validation="when_required",
             ),
         )
         active()
@@ -135,7 +150,7 @@ def _put_source(
             if (
                 before != entry.source_identity
                 or not stat.S_ISREG(before.mode)
-                or _stream_digest(stream) != digest
+                or _stream_digest(stream, entry.byte_count) != digest
             ):
                 raise _source_mutated()
             stream.seek(0)
@@ -156,7 +171,7 @@ def _put_source(
             if (
                 after != entry.source_identity
                 or path_after != entry.source_identity
-                or _stream_digest(stream) != digest
+                or _stream_digest(stream, entry.byte_count) != digest
             ):
                 raise _source_mutated()
             return entry.byte_count
@@ -382,22 +397,38 @@ def _validated_remote_digest(
     digest: str,
     checksum: str,
 ) -> bool:
-    if head.get("ChecksumSHA256") == checksum:
-        return True
-    response = client.get_object(Bucket=bucket, Key=key, ChecksumMode="ENABLED")
+    stored_checksum = head.get("ChecksumSHA256")
+    if head.get("ChecksumType") == "FULL_OBJECT" and isinstance(stored_checksum, str):
+        try:
+            decoded = base64.b64decode(stored_checksum, validate=True)
+        except ValueError:
+            decoded = b""
+        if len(decoded) == 32:
+            return stored_checksum == checksum
+    size = head.get("ContentLength")
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        return False
+    conditions: dict[str, str] = {}
+    if isinstance(head.get("ETag"), str):
+        conditions["IfMatch"] = cast(str, head["ETag"])
+    response = client.get_object(Bucket=bucket, Key=key, **conditions)
     stream = response.get("Body")
     if stream is None or not hasattr(stream, "read"):
         return False
     try:
-        return _stream_digest(cast(BinaryIO, stream)) == digest
+        return _stream_digest(cast(BinaryIO, stream), size) == digest
     finally:
         close = getattr(stream, "close", None)
         if callable(close):
             close()
 
 
-def _stream_digest(stream: BinaryIO) -> str:
+def _stream_digest(stream: BinaryIO, size: int) -> str | None:
     digest = hashlib.sha256()
-    while chunk := stream.read(1024 * 1024):
+    consumed = 0
+    while chunk := stream.read(min(1024 * 1024, size - consumed + 1)):
+        consumed += len(chunk)
+        if consumed > size:
+            return None
         digest.update(chunk)
-    return digest.hexdigest()
+    return digest.hexdigest() if consumed == size else None

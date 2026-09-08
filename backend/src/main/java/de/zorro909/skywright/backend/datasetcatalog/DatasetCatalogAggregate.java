@@ -163,22 +163,53 @@ final class DatasetCatalogAggregate {
 		this.revision++;
 	}
 
-	void promote(UUID copyId, long expectedRevision, DatasetCopyVerifier verifier) {
+	DatasetCopyOperationView startPromotion(UUID copyId, long expectedRevision, Instant now) {
 		this.requireRevision(expectedRevision);
+		this.requireNoActiveOperation(copyId);
+		this.requirePromotionCandidate(copyId);
+		if (this.operations.stream()
+			.anyMatch(operation -> operation.active() && operation.kind() == DatasetCopyOperationKind.PROMOTE)) {
+			throw new DatasetCatalogConflictException("DATASET_PROMOTION_ACTIVE", "A promotion is already active");
+		}
+		var operation = new DatasetCopyOperationView(UUID.randomUUID(), DatasetCopyOperationKind.PROMOTE, copyId,
+				this.copy(copyId).currentGeneration().number(), DatasetCopyOperationProgress.VERIFYING, 1, null, null,
+				false, now, now);
+		this.operations.add(operation);
+		this.revision++;
+		return operation;
+	}
+
+	DatasetCopyOperationView completePromotion(UUID operationId, long expectedRevision, Instant now) {
+		this.requireRevision(expectedRevision);
+		var operation = this.operation(operationId);
+		if (operation.kind() != DatasetCopyOperationKind.PROMOTE
+				|| operation.progress() != DatasetCopyOperationProgress.VERIFYING
+				|| this.copy(operation.copyId()).currentGeneration().number() != operation.generation()) {
+			throw new DatasetCatalogConflictException("DATASET_PROMOTION_STALE", "Promotion verification is obsolete");
+		}
+		this.requirePromotionCandidate(operation.copyId());
+		for (int index = 0; index < this.copies.size(); index++) {
+			DatasetCopyView copy = this.copies.get(index);
+			DatasetCopyRole role = copy.id().equals(operation.copyId()) ? DatasetCopyRole.AUTHORITY
+					: DatasetCopyRole.REPLICA;
+			this.copies.set(index, new DatasetCopyView(copy.id(), copy.targetStorageId(), role, copy.revision() + 1,
+					copy.currentGeneration(), copy.generationHistory(), copy.activeLeaseCount()));
+		}
+		var completed = new DatasetCopyOperationView(operation.id(), operation.kind(), operation.copyId(),
+				operation.generation(), DatasetCopyOperationProgress.COMPLETED, operation.attempts(), null, null, false,
+				operation.startedAt(), now);
+		this.replaceOperation(operation, completed);
+		this.revision++;
+		return completed;
+	}
+
+	private void requirePromotionCandidate(UUID copyId) {
 		DatasetCopyView candidate = this.copy(copyId);
 		if (candidate.role() != DatasetCopyRole.REPLICA || !candidate.currentGeneration().acceptingLeases()
 				|| candidate.currentGeneration().availability() != DatasetCopyAvailability.AVAILABLE) {
 			throw new DatasetCatalogConflictException("DATASET_COPY_INELIGIBLE",
 					"Only an eligible verified replica can be promoted");
 		}
-		verifier.verify(this.definition, this.manifest, candidate);
-		for (int index = 0; index < this.copies.size(); index++) {
-			DatasetCopyView copy = this.copies.get(index);
-			DatasetCopyRole role = copy.id().equals(copyId) ? DatasetCopyRole.AUTHORITY : DatasetCopyRole.REPLICA;
-			this.copies.set(index, new DatasetCopyView(copy.id(), copy.targetStorageId(), role, copy.revision() + 1,
-					copy.currentGeneration(), copy.generationHistory(), copy.activeLeaseCount()));
-		}
-		this.revision++;
 	}
 
 	DatasetCopyOperationView startRefresh(UUID copyId, long generation, long expectedRevision, Instant now) {
@@ -287,15 +318,29 @@ final class DatasetCatalogAggregate {
 			throw new DatasetCatalogConflictException("DATASET_COPY_OPERATION_NOT_RETRYABLE",
 					"Dataset Copy Operation is not retryable");
 		}
+		this.requireNoActiveOperation(operation.copyId());
+		if (operation.kind() == DatasetCopyOperationKind.PROMOTE) {
+			this.requirePromotionCandidate(operation.copyId());
+			if (this.copy(operation.copyId()).currentGeneration().number() != operation.generation()) {
+				throw new DatasetCatalogConflictException("DATASET_PROMOTION_STALE",
+						"Start a new promotion for the current generation");
+			}
+			if (this.operations.stream()
+				.anyMatch(value -> value.active() && value.kind() == DatasetCopyOperationKind.PROMOTE)) {
+				throw new DatasetCatalogConflictException("DATASET_PROMOTION_ACTIVE", "A promotion is already active");
+			}
+		}
 		DatasetCopyView copy = this.copy(operation.copyId());
 		DatasetCopyOperationProgress progress = operation.failedProgress();
 		if (progress == null) {
-			progress = operation.kind() == DatasetCopyOperationKind.REFRESH ? DatasetCopyOperationProgress.TRANSFERRING
-					: DatasetCopyOperationProgress.DELETING_OLD_BYTES;
+			progress = operation.kind() == DatasetCopyOperationKind.PROMOTE ? DatasetCopyOperationProgress.VERIFYING
+					: operation.kind() == DatasetCopyOperationKind.REFRESH ? DatasetCopyOperationProgress.TRANSFERRING
+							: DatasetCopyOperationProgress.DELETING_OLD_BYTES;
 		}
 		if (progress == DatasetCopyOperationProgress.WAITING_FOR_LEASES && copy.activeLeaseCount() == 0) {
-			progress = operation.kind() == DatasetCopyOperationKind.REFRESH ? DatasetCopyOperationProgress.TRANSFERRING
-					: DatasetCopyOperationProgress.DELETING_OLD_BYTES;
+			progress = operation.kind() == DatasetCopyOperationKind.PROMOTE ? DatasetCopyOperationProgress.VERIFYING
+					: operation.kind() == DatasetCopyOperationKind.REFRESH ? DatasetCopyOperationProgress.TRANSFERRING
+							: DatasetCopyOperationProgress.DELETING_OLD_BYTES;
 		}
 		DatasetCopyOperationView retried = new DatasetCopyOperationView(operation.id(), operation.kind(),
 				operation.copyId(), operation.generation(), progress, operation.attempts() + 1, null, null, false,
@@ -318,7 +363,9 @@ final class DatasetCatalogAggregate {
 				operation.copyId(), operation.generation(), DatasetCopyOperationProgress.CANCELLED,
 				operation.attempts(), null, null, false, operation.startedAt(), now);
 		this.replaceOperation(operation, cancelled);
-		this.restoreLeaseAdmission(operation.copyId(), operation.generation());
+		if (operation.kind() != DatasetCopyOperationKind.PROMOTE) {
+			this.restoreLeaseAdmission(operation.copyId(), operation.generation());
+		}
 		this.revision++;
 		return cancelled;
 	}
