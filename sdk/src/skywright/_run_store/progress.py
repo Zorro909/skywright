@@ -34,7 +34,11 @@ class ProgressRecord:
             raise ValueError("RUN_STORE_MALFORMED_PROGRESS: expected an object")
         value = cast(dict[str, object], parsed)
         schema_version = value.get("schemaVersion")
-        if isinstance(schema_version, bool) or schema_version != 1:
+        if (
+            isinstance(schema_version, bool)
+            or not isinstance(schema_version, int)
+            or schema_version != 1
+        ):
             raise ValueError("RUN_STORE_INCOMPATIBLE_SCHEMA: unknown Progress schema")
         required = {
             "schemaVersion",
@@ -45,7 +49,7 @@ class ProgressRecord:
             "writtenAt",
         }
         allowed = required | {"targetStep"}
-        if set(value) < required or not set(value) <= allowed:
+        if not required <= set(value) or not set(value) <= allowed:
             raise ValueError("RUN_STORE_MALFORMED_PROGRESS: invalid members")
         run_id = value["runId"]
         current_step = _required_step(value["currentStep"])
