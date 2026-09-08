@@ -1,3 +1,5 @@
+@import '@xterm/xterm/css/xterm.css';
+
 :root {
   color-scheme: light dark;
   --surface: #f7f8f4;

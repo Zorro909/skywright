@@ -100,6 +100,8 @@ class RunLogArchiveIT {
 				storageId = LocalRunAssemblyIT.register(backend, storage.endpoint(), storageBucket, "run-output",
 						UUID.randomUUID());
 				UUID run = create(backend);
+				assertThat(backend.get("/api/v1/run-logs/" + UUID.randomUUID() + "/task").statusCode()).isEqualTo(404);
+				assertThat(backend.get("/api/v1/run-logs/" + run + "/task?cursor=-1").statusCode()).isEqualTo(400);
 				de.zorro909.skywright.backend.runlog.RunLogCaptureProbe.replacedProducerCannotPublish(
 						backend.bean(de.zorro909.skywright.backend.runlog.RunLogCaptureStore.class), run,
 						() -> CLOCK.advance(61));
@@ -125,6 +127,12 @@ class RunLogArchiveIT {
 					CLOCK.advance(6);
 					archives.reconcile(run);
 				}
+				var activePage = logPage(backend, run, "task", 0);
+				assertThat(activePage.path("archiveState").asText()).isEqualTo("staging");
+				assertThat(java.util.Base64.getDecoder().decode(activePage.path("bytesBase64").asText()))
+					.isEqualTo(java.util.Arrays.copyOfRange(task, 0, 65536));
+				assertFollow(backend, run, "task", task.length - 17, false,
+						java.util.Arrays.copyOfRange(task, task.length - 17, task.length));
 				terminal.set(true);
 				SOURCE.jobs = List.of(job(run, "FAILED_SETUP"));
 				lifecycle(backend, run);
@@ -139,11 +147,11 @@ class RunLogArchiveIT {
 					.value()
 					.at("/trainingProjectVersion/projectIdentity")
 					.asText() + "/" + run + "/v1/";
-				byte[] manifestBytes = admin
+				var manifestObject = admin
 					.getObject(b -> b.bucket(storageBucket).key(prefix + finalization.manifestKey()),
 							software.amazon.awssdk.core.async.AsyncResponseTransformer.toBytes())
-					.join()
-					.asByteArray();
+					.join();
+				byte[] manifestBytes = manifestObject.asByteArray();
 				assertThat(de.zorro909.skywright.backend.runlog.RunLogArchive.digest(manifestBytes))
 					.isEqualTo(finalization.sha256());
 				var manifest = JSON.readTree(manifestBytes);
@@ -177,11 +185,119 @@ class RunLogArchiveIT {
 				assertThat(
 						backend.bean(de.zorro909.skywright.backend.runlog.RunLogCaptureStore.class).finalization(run))
 					.isEqualTo(finalization);
+				assertFollow(backend, run, "task", task.length - 17, true,
+						java.util.Arrays.copyOfRange(task, task.length - 17, task.length));
+				var controllerPage = logPage(backend, run, "controller", 0);
+				assertThat(java.util.Base64.getDecoder().decode(controllerPage.path("bytesBase64").asText()))
+					.isEqualTo(controller);
+				var navigation = backend.get("/api/v1/run-logs/" + run + "/navigation");
+				assertThat(navigation.statusCode()).as(navigation.body()).isEqualTo(200);
+				assertThat(JSON.readTree(navigation.body()).path("items").get(0).path("kind").asText())
+					.isEqualTo("setup");
+
+				// Exercise the current-location seam; #53 owns the actual relocation
+				// protocol.
+				String movedBucket = "moved-logs-" + UUID.randomUUID();
+				admin.createBucket(b -> b.bucket(movedBucket)).join();
+				UUID movedStorage = LocalRunAssemblyIT.register(backend, storage.endpoint(), movedBucket, "run-output",
+						UUID.randomUUID());
+				var records = admin.listObjectsV2(b -> b.bucket(storageBucket).prefix(prefix)).join().contents();
+				for (var record : records) {
+					var bytes = admin
+						.getObject(b -> b.bucket(storageBucket).key(record.key()),
+								software.amazon.awssdk.core.async.AsyncResponseTransformer.toBytes())
+						.join();
+					admin
+						.putObject(b -> b.bucket(movedBucket).key(record.key()).metadata(bytes.response().metadata()),
+								software.amazon.awssdk.core.async.AsyncRequestBody.fromBytes(bytes.asByteArray()))
+						.join();
+				}
+				var moved = (tools.jackson.databind.node.ObjectNode) backend.bean(RunAcceptanceStore.class)
+					.currentStorage(run);
+				moved.put("storageId", movedStorage.toString()).put("bucket", movedBucket);
+				new org.springframework.jdbc.core.JdbcTemplate(backend.bean(javax.sql.DataSource.class)).update(
+						"update skywright.run_store_location set storage_id=?, descriptor_json=? where run_id=?",
+						movedStorage, moved.toString(), run);
+				for (var record : records)
+					admin.deleteObject(b -> b.bucket(storageBucket).key(record.key())).join();
+				assertThat(logPage(backend, run, "controller", 0).path("bytesBase64").asText())
+					.isEqualTo(controllerPage.path("bytesBase64").asText());
+				assertFollow(backend, run, "task", task.length - 17, true,
+						java.util.Arrays.copyOfRange(task, task.length - 17, task.length));
+				// A confirmed terminal archive must never revert to staging when its
+				// manifest disappears at the current location.
+				admin.deleteObject(b -> b.bucket(movedBucket).key(prefix + finalization.manifestKey())).join();
+				var missingManifest = logPage(backend, run, "task", 0);
+				assertThat(missingManifest.path("availability").asText()).isEqualTo("unavailable");
+				assertThat(missingManifest.path("archiveState").asText()).isEqualTo("unknown");
+				assertThat(missingManifest.path("bytesBase64").asText()).isEmpty();
+				assertThat(backend.get("/api/v1/run-logs/" + run + "/navigation").statusCode()).isEqualTo(503);
+				admin
+					.putObject(
+							b -> b.bucket(movedBucket)
+								.key(prefix + finalization.manifestKey())
+								.metadata(manifestObject.response().metadata()),
+							software.amazon.awssdk.core.async.AsyncRequestBody.fromBytes(manifestBytes))
+					.join();
+				assertThat(logPage(backend, run, "task", 0).path("archiveState").asText()).isEqualTo("finalized");
+
+				var chunkKey = records.stream()
+					.filter(r -> r.key().contains("/controller/chunks/"))
+					.findFirst()
+					.orElseThrow()
+					.key();
+				admin.deleteObject(b -> b.bucket(movedBucket).key(chunkKey)).join();
+				assertThat(logPage(backend, run, "controller", 0).path("availability").asText())
+					.isEqualTo("unavailable");
 			}
 		}
 		finally {
 			server.stop(0);
 			System.clearProperty("skywright.log-collector.endpoint");
+		}
+	}
+
+	private static JsonNode logPage(BackendFixture backend, UUID run, String stream, long cursor) throws Exception {
+		var response = backend.get("/api/v1/run-logs/" + run + "/" + stream + "?cursor=" + cursor);
+		assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+		return JSON.readTree(response.body());
+	}
+
+	private static void assertFollow(BackendFixture backend, UUID run, String stream, long cursor, boolean finalized,
+			byte[] expected) throws Exception {
+		try (var client = java.net.http.HttpClient.newHttpClient()) {
+			var response = client.send(java.net.http.HttpRequest
+				.newBuilder(backend.baseUri()
+					.resolve("/api/v1/run-logs/" + run + "/" + stream + "/follow?cursor=" + cursor))
+				.timeout(java.time.Duration.ofSeconds(15))
+				.GET()
+				.build(), java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+			assertThat(response.statusCode()).isEqualTo(200);
+			assertThat(response.headers().firstValue("Content-Type").orElse("")).startsWith("text/event-stream");
+			try (var input = response.body()) {
+				var frame = new java.io.ByteArrayOutputStream();
+				int prior = -1;
+				while (frame.size() < 128 * 1024) {
+					int value = input.read();
+					assertThat(value).as("SSE closed before its first complete event").isNotEqualTo(-1);
+					frame.write(value);
+					if (value == '\n' && prior == '\n')
+						break;
+					prior = value;
+				}
+				String text = frame.toString(java.nio.charset.StandardCharsets.UTF_8);
+				String data = text.lines()
+					.filter(line -> line.startsWith("data: "))
+					.findFirst()
+					.orElseThrow()
+					.substring(6);
+				var page = JSON.readTree(data);
+				assertThat(page.path("archiveState").asText()).isEqualTo(finalized ? "finalized" : "staging");
+				assertThat(page.path("fromCursor").asText()).isEqualTo(Long.toString(cursor));
+				assertThat(java.util.Base64.getDecoder().decode(page.path("bytesBase64").asText())).isEqualTo(expected);
+				if (finalized)
+					assertThat(input.read()).as("finalization closes follow").isEqualTo(-1);
+			}
 		}
 	}
 

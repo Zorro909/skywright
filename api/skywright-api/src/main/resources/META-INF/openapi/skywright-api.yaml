@@ -86,6 +86,68 @@ paths:
               schema: { $ref: '#/components/schemas/RunLineage' }
         '404': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /run-logs/{runId}/{stream}:
+    get:
+      tags: [RunLogs]
+      operationId: readRunLog
+      summary: Read a bounded verified archive byte window
+      description: Defaults to a 64 KiB tail. Cursor is an absolute byte offset. Before pages older bytes. At most four chunks are consumed; nextCursor may precede the requested window end. Task and controller cursors are independent.
+      parameters:
+        - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+        - { name: stream, in: path, required: true, schema: { type: string, enum: [task, controller] } }
+        - { name: cursor, in: query, schema: { $ref: '#/components/schemas/ArchiveCursor' } }
+        - { name: before, in: query, schema: { $ref: '#/components/schemas/ArchiveCursor' } }
+      responses:
+        '200':
+          description: A verified byte window or explicit archive unavailability
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunLogPage' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429':
+          description: Bounded archive read admission is full; retry later
+  /run-logs/{runId}/{stream}/follow:
+    get:
+      tags: [RunLogs]
+      operationId: followRunLog
+      summary: Follow the archive using bounded SSE byte ranges
+      description: Events named archive carry RunLogPage JSON with base64 raw bytes and an id equal to nextCursor. Start at cursor or a bounded tail. Reconnect with the last renderer-acknowledged cursor. Sessions expire after 30 seconds and slow clients are disconnected after five seconds of pending output. Replay never deletes archive bytes. Finalized streams end after all captured bytes are delivered. No direct SkyPilot stream is opened.
+      parameters:
+        - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+        - { name: stream, in: path, required: true, schema: { type: string, enum: [task, controller] } }
+        - { name: cursor, in: query, schema: { $ref: '#/components/schemas/ArchiveCursor' } }
+      responses:
+        '200':
+          description: SSE events containing bounded archive windows
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/RunLogPage' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429':
+          description: Sixteen live viewers are already admitted; retry later
+  /run-logs/{runId}/navigation:
+    get:
+      tags: [RunLogs]
+      operationId: readRunLogNavigation
+      summary: Page setup and confirmed Execution Attempt navigation
+      description: Navigation cursor is an opaque metadata page token. Segment cursors are absolute task-stream byte positions. Each page contains at most 128 boundaries; empty pages can have a nextCursor.
+      parameters:
+        - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+        - { name: cursor, in: query, schema: { $ref: '#/components/schemas/ArchiveCursor' } }
+      responses:
+        '200':
+          description: Bounded archive navigation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunLogNavigation' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429':
+          description: Bounded archive read admission is full
+        '503':
+          description: Archive navigation is unavailable
   /runs/{runId}/progress:
     parameters:
       - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
@@ -1223,6 +1285,45 @@ components:
       properties:
         predecessorRunId: { $ref: '#/components/schemas/SkywrightId' }
         checkpointReference: { type: string, maxLength: 128, pattern: '^skywright-checkpoint:v1:(0|[1-9][0-9]*):sha256:[0-9a-f]{64}$' }
+    ArchiveCursor:
+      type: string
+      pattern: '^(0|[1-9][0-9]{0,18})$'
+      description: Nonnegative signed-64-bit absolute byte offset, encoded as decimal to avoid JavaScript precision loss.
+    RunLogPage:
+      type: object
+      additionalProperties: false
+      required: [runId, stream, availability, observedAt, archiveState, sourceAvailability, sourceReason, lastSuccessfulFetch, completion, reason, fromCursor, nextCursor, endCursor, bytesBase64]
+      properties:
+        runId: { $ref: '#/components/schemas/SkywrightId' }
+        stream: { type: string, enum: [task, controller] }
+        availability: { type: string, enum: [available, unavailable] }
+        observedAt: { type: string, format: date-time }
+        archiveState: { type: string, enum: [staging, finalized, unknown] }
+        sourceAvailability: { type: string, enum: [available, unavailable, not-observed, unknown] }
+        sourceReason: { type: [string, 'null'] }
+        lastSuccessfulFetch: { type: [string, 'null'], format: date-time }
+        completion: { type: string, enum: [pending, complete, partial, unknown] }
+        reason: { type: [string, 'null'] }
+        fromCursor: { type: [string, 'null'], pattern: '^(0|[1-9][0-9]{0,18})$' }
+        nextCursor: { type: [string, 'null'], pattern: '^(0|[1-9][0-9]{0,18})$' }
+        endCursor: { type: [string, 'null'], pattern: '^(0|[1-9][0-9]{0,18})$' }
+        bytesBase64: { type: string, maxLength: 87384, description: At most 65536 unchanged raw bytes encoded as base64. }
+    RunLogSegment:
+      type: object
+      additionalProperties: false
+      required: [cursor, kind, attemptId, preparationCursor]
+      properties:
+        cursor: { $ref: '#/components/schemas/ArchiveCursor' }
+        kind: { type: string, enum: [setup, attempt] }
+        attemptId: { type: [string, 'null'], format: uuid }
+        preparationCursor: { type: [string, 'null'] }
+    RunLogNavigation:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, maxItems: 128, items: { $ref: '#/components/schemas/RunLogSegment' } }
+        nextCursor: { type: [string, 'null'] }
     RunLineage:
       type: object
       additionalProperties: false

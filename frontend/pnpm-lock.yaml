@@ -22,6 +22,9 @@ importers:
       '@angular/router':
         specifier: 22.1.1
         version: 22.1.1(@angular/common@22.1.1(@angular/core@22.1.1(@angular/compiler@22.1.1)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.1.1(@angular/compiler@22.1.1)(rxjs@7.8.2))(@angular/platform-browser@22.1.1(@angular/common@22.1.1(@angular/core@22.1.1(@angular/compiler@22.1.1)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.1.1(@angular/compiler@22.1.1)(rxjs@7.8.2)))(rxjs@7.8.2)
+      '@xterm/xterm':
+        specifier: 6.0.0
+        version: 6.0.0
       openapi-fetch:
         specifier: 0.17.0
         version: 0.17.0
@@ -2631,6 +2634,12 @@ packages:
     resolution:
       {
         integrity: sha512-fy9am/HWxbaGt/Sawrp90vt6Y6jQwf1RX77cz3uwoJwJVMli/e1IEwRPnMNJ7vKfPTwo0diXifkpPvwH9v7nGA==,
+      }
+
+  '@xterm/xterm@6.0.0':
+    resolution:
+      {
+        integrity: sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==,
       }
 
   accepts@2.0.0:
@@ -6624,6 +6633,8 @@ snapshots:
       '@vitest/pretty-format': 4.1.10
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.1
+
+  '@xterm/xterm@6.0.0': {}
 
   accepts@2.0.0:
     dependencies:

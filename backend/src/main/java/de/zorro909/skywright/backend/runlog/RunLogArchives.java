@@ -53,7 +53,7 @@ public final class RunLogArchives {
 
 	RunLogCaptureStore.Saved capture(UUID runId, String version, RunLogCheckpoint checkpoint, ArchiveJournal journal,
 			boolean terminal, boolean prevented) {
-		var published = journal.manifest();
+		var published = journal.publication();
 		if (published != null)
 			return saved(published);
 		var archive = new RunLogArchive(runId, version);
@@ -82,6 +82,7 @@ public final class RunLogArchives {
 			}
 			try {
 				var page = source.fetch(runId, stream, prior);
+				checkpoint = checkpoint.sourceFailure(stream, null);
 				// An empty read without writer closure supplies no finalization evidence.
 				if (terminal && page.bytes().length == 0 && !page.sealed()) {
 					checkpoint = checkpoint.with(stream, archive.unavailable(prior, true, "WRITER_UNCONFIRMED"));
@@ -91,6 +92,7 @@ public final class RunLogArchives {
 					.append(archive.append(stream, prior, page, terminal, clock.instant(), journal::confirms)));
 			}
 			catch (RunLogSource.Unavailable unavailable) {
+				checkpoint = checkpoint.sourceFailure(stream, unavailable.getMessage());
 				checkpoint = checkpoint.with(stream, archive.unavailable(prior, terminal, unavailable.getMessage()));
 			}
 		}
@@ -107,9 +109,9 @@ public final class RunLogArchives {
 		return new RunLogCaptureStore.Saved(checkpoint, null, null);
 	}
 
-	private static RunLogCaptureStore.Saved saved(ArchiveJournal.Manifest manifest) {
-		return new RunLogCaptureStore.Saved(manifest.checkpoint(),
-				RunLogArchive.digest(ArchiveJournal.encode(manifest)), manifest.publishedAt());
+	private static RunLogCaptureStore.Saved saved(ArchiveJournal.Published published) {
+		return new RunLogCaptureStore.Saved(published.manifest().checkpoint(), published.digest(),
+				published.manifest().publishedAt());
 	}
 
 }

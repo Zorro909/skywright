@@ -220,11 +220,6 @@ export class RunEvidence {
   );
   protected readonly capabilities = [
     {
-      name: 'Logs',
-      reason:
-        'The Run log archive reader is not available in this view yet. Archive capture may still be running.',
-    },
-    {
       name: 'Metrics',
       reason:
         'Metric View is not available here. Basic committed progress is read independently from the Run Store.',

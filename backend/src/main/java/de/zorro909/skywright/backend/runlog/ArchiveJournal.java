@@ -37,9 +37,27 @@ final class ArchiveJournal {
 	record Stream(String status, String reason, long bytes, long chunks, Instant lastSuccessfulFetch) {
 	}
 
-	Manifest manifest() {
+	record Published(Manifest manifest, String digest) {
+	}
+
+	Published publication() {
 		byte[] body = objects.read(MANIFEST, 65536);
-		return body == null ? null : decodeManifest(body);
+		return body == null ? null : published(body);
+	}
+
+	private Published published(byte[] body) {
+		return new Published(decodeManifest(body), RunLogArchive.digest(body));
+	}
+
+	Manifest manifest() {
+		return manifest(null);
+	}
+
+	Manifest manifest(String expectedDigest) {
+		var published = publication();
+		if (expectedDigest != null && (published == null || !expectedDigest.equals(published.digest())))
+			throw new IllegalStateException("ARCHIVE_MANIFEST_UNAVAILABLE");
+		return published == null ? null : published.manifest();
 	}
 
 	private Manifest decodeManifest(byte[] body) {
@@ -134,12 +152,12 @@ final class ArchiveJournal {
 		return checkpoint.markers(keys.isEmpty() ? checkpoint.markerAfter() : keys.getLast(), keys.size() < 4);
 	}
 
-	Manifest finish(RunLogCheckpoint checkpoint, Instant now) {
+	Published finish(RunLogCheckpoint checkpoint, Instant now) {
 		if (!checkpoint.ready() || !checkpoint.markersVerified())
 			throw new IllegalStateException("Archive is not finalized");
 		var manifest = new Manifest(1, runId, version, now, checkpoint, summary(checkpoint.task()),
 				summary(checkpoint.controller()));
-		return decodeManifest(objects.publish(MANIFEST, JSON.writeValueAsBytes(manifest), "manifest"));
+		return published(objects.publish(MANIFEST, JSON.writeValueAsBytes(manifest), "manifest"));
 	}
 
 	static byte[] encode(Manifest manifest) {
