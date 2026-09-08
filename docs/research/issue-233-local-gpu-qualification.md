@@ -1,10 +1,11 @@
 # Issue 233 local GPU qualification
 
-Qualification date: 2026-09-07. This records the isolated environment prepared for
-[#233](https://github.com/Zorro909/skywright/issues/233). The managed UI GPU check
-is still pending. The device smoke test below does not satisfy that check.
+The managed UI GPU check for [#233](https://github.com/Zorro909/skywright/issues/233)
+passed on 2026-09-08, including durable checkpoints and cancellation. This record
+covers the isolated setup and failed attempts on September 7, recovery after a
+host restart, and the successful Run recorded in the final section.
 
-## Published inputs
+## Initial published inputs
 
 The owner authorized creation of the public
 [qualification repository](https://github.com/Zorro909/skywright-ui-qualification)
@@ -105,7 +106,7 @@ UUID, `e23aac30-f005-4c5b-8ea1-be6770f8c54e`.
 
 Private initialization material and raw logs remain outside the repository.
 
-## Managed UI check in progress
+## Initial managed UI attempts, 2026-09-07
 
 The production UI rejected an invalid string at `/project/steps` with HTTP 422
 and the backend's schema diagnostic. Editing that rejected request created a new
@@ -221,3 +222,45 @@ new orphan-reaping regression and the existing SIGTERM-only test requiring
 PID 1 and recorded server descendants to exit within 25 seconds. Standards
 and specification review found no blocking issues. The GPU check remains
 outstanding while the isolated environment is restored after a host restart.
+
+## Managed GPU UI qualification, 2026-09-08
+
+The restored deployment uses the committed server image
+`skywright-skypilot-api-server:issue233-tini-33c114d`. A first GPU Run
+`55af4636-54d1-48a5-a6eb-b321db83bad2` executed Step 1 on the RX 7900 XTX,
+then failed because the synthetic project's `time.sleep` call received an exact
+Decimal value. The qualification project now converts numeric configuration
+explicitly; publication of that correction is separate from the application PR.
+
+The existing published version also accepts integer zero for its delay. Through
+the UI's explicit Create another Run action, the check selected that version,
+the retained Dataset Definition, 10,000 Steps, zero delay, checkpoint cadence 10
+and retention 3. Invalid string-valued Steps were rejected with HTTP 422 before
+the corrected request was accepted.
+
+Run `2d20f270-05b3-473c-a2ee-5a098f144b5e`, submission
+`1439e6b5-9e63-49d4-a43b-f359a163d99a`, was accepted at 12:19:29 UTC.
+SkyPilot managed job 4 created a pod requesting one `amd.com/gpu`, CPU 4 and
+8 GB memory with image
+`ghcr.io/zorro909/skywright-ui-qualification@sha256:b5c5e637e370dc69d99102257a2facd12d436fa285cf7fd839f4cf059a32d107`.
+The project reported `AMD Radeon RX 7900 XTX`, ROCm HIP `7.14.60850`, and
+25,753,026,560 device-memory bytes, then executed finite-loss forward/backward
+training Steps over the published Dataset.
+
+The UI observed committed Step 1,106 and Durable Safe Point 1,100 before requesting
+cancellation. Receipt `aa7584e2-23cf-48da-97e4-c292f63d7b7a` was accepted at
+12:20:32 UTC. Its cooperative request and stop delivery were recorded at
+12:20:39 UTC; the receipt subsequently reported `effect-observed`.
+
+The runtime's termination report records `cancelled`, one Execution Attempt,
+last committed Step 5,590 and latest Durable Safe Point 5,580. Its checkpoint is
+`skywright-checkpoint:v1:5580:sha256:7ba629b0630153a89d9e8ce24a234c9311c00d0ee0e4be3ca8177ff3c16e3f8d`.
+A fresh Run-detail read shows authoritative `cancelled` with live SkyPilot and
+Run Store evidence, affirmative root lineage and disabled new cancellation.
+SkyPilot itself reports `FAILED`; the Run lifecycle correctly uses the runtime's
+cancellation evidence. The UI keeps its source-fact conflict and database-scoped
+job-identity diagnostics visible. No browser script errors were reported.
+
+The complete UI submission, GPU training, durable checkpoint and cancellation
+qualification for #233 has passed. Private diagnostics, browser screenshots and
+API observations are retained in the persistent qualification session directory.
