@@ -87,10 +87,10 @@ public class DatasetCatalogHttpAdapter implements DatasetCatalogApi {
 	}
 
 	@Override
-	public ResponseEntity<DatasetCatalogRecord> promoteDatasetCopy(UUID definitionId, UUID copyId,
+	public ResponseEntity<DatasetCopyOperation> promoteDatasetCopy(UUID definitionId, UUID copyId,
 			DatasetCatalogRevisionCommand request) {
-		return ResponseEntity
-			.ok(this.record(this.catalog.promote(definitionId, copyId, request.getExpectedRevision())));
+		return ResponseEntity.accepted()
+			.body(this.operation(this.catalog.promote(definitionId, copyId, request.getExpectedRevision())));
 	}
 
 	@Override

@@ -1,0 +1,26 @@
+databaseChangeLog:
+  - changeSet:
+      id: issue-223-dataset-copy-worker-custody
+      author: skywright
+      changes:
+        - createTable:
+            schemaName: skywright
+            tableName: dataset_copy_worker_projection
+            columns:
+              - column: { name: projection_id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: copy_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: binding_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: binding_revision, type: bigint, constraints: { nullable: false } }
+              - column: { name: consumer_role, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: projected_at, type: timestamp with time zone, constraints: { nullable: false } }
+              - column: { name: released_at, type: timestamp with time zone }
+              - column: { name: worker_pid, type: bigint }
+              - column: { name: worker_started_at, type: timestamp with time zone }
+              - column: { name: job_directory, type: varchar(255) }
+        - sql:
+            sql: >-
+              CREATE UNIQUE INDEX ix_dataset_copy_worker_open ON skywright.dataset_copy_worker_projection (copy_id)
+              WHERE released_at IS NULL;
+              GRANT SELECT, INSERT, UPDATE ON skywright.dataset_copy_worker_projection TO "${runtimeRole}";
+      rollback:
+        - dropTable: { schemaName: skywright, tableName: dataset_copy_worker_projection }

@@ -147,8 +147,15 @@ final class DatasetCatalogTest {
 		DatasetCatalogView withReplica = this.catalog.addReplica(published.definition().definitionId(),
 				new DatasetReplicaPublication(replicaId, UUID.randomUUID(), "replicas/project/v1", 42, NOW), 2);
 
-		DatasetCatalogView promoted = this.catalog.promote(published.definition().definitionId(), replicaId,
-				withReplica.revision());
+		var operation = this.catalog.promote(published.definition().definitionId(), replicaId, withReplica.revision());
+		assertThat(this.catalog.get(published.definition().definitionId()).copies())
+			.filteredOn(copy -> copy.id().equals(authority.id()))
+			.singleElement()
+			.extracting(DatasetCopyView::role)
+			.isEqualTo(DatasetCopyRole.AUTHORITY);
+		this.catalog.completePromotion(published.definition().definitionId(), operation.id(),
+				withReplica.revision() + 1);
+		DatasetCatalogView promoted = this.catalog.get(published.definition().definitionId());
 
 		assertThat(promoted.copies()).filteredOn(copy -> copy.role() == DatasetCopyRole.AUTHORITY)
 			.singleElement()
@@ -280,9 +287,7 @@ final class DatasetCatalogTest {
 	@Test
 	void publicationAndLeaseAdmissionRequireAnEligibleDatasetTargetStorage() {
 		DatasetTargetStorageEligibility eligibility = storageId -> false;
-		DatasetCatalog guarded = new DatasetCatalog(this.repository, Clock.fixed(NOW, ZoneOffset.UTC),
-				(definition, manifest, copy) -> {
-				}, eligibility);
+		DatasetCatalog guarded = new DatasetCatalog(this.repository, Clock.fixed(NOW, ZoneOffset.UTC), eligibility);
 
 		assertThatThrownBy(() -> guarded.publish(publication())).isInstanceOf(DatasetCatalogConflictException.class)
 			.hasMessageContaining("DATASET_TARGET_STORAGE_INELIGIBLE");
@@ -335,7 +340,7 @@ final class DatasetCatalogTest {
 	}
 
 	@Test
-	void maintenanceWorkerResumesEveryDurableRefreshStage() {
+	void maintenanceWorkerResumesEveryDurableRefreshStage() throws Exception {
 		DatasetPublication publication = new DatasetPublication(UUID.randomUUID(), UUID.randomUUID(), "v1",
 				"mosaicml-streaming-mds@2", "sha256:content", "sha256:manifest", UUID.randomUUID(), UUID.randomUUID(),
 				"datasets/project/v1", 42, NOW, List.of(new DatasetManifestEntry("shard.bin", 42, "checksum")));
@@ -372,9 +377,17 @@ final class DatasetCatalogTest {
 		};
 		DatasetCopyMaintenanceWorker worker = new DatasetCopyMaintenanceWorker(this.catalog, storage);
 
-		worker.resumeDurableOperations();
-		worker.resumeDurableOperations();
-		worker.resumeDurableOperations();
+		try {
+			long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+			while (this.catalog.getOperation(publication.definitionId(), operation.id()).active()
+					&& System.nanoTime() < deadline) {
+				worker.resumeDurableOperations();
+				Thread.sleep(10);
+			}
+		}
+		finally {
+			worker.close();
+		}
 
 		DatasetCopyOperationView completed = this.catalog.getOperation(publication.definitionId(), operation.id());
 		assertThat(completed.progress()).isEqualTo(DatasetCopyOperationProgress.COMPLETED);

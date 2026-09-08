@@ -8,13 +8,19 @@ final class DatasetCopyMaintenanceWorker {
 
 	private final DatasetCopyStorage storage;
 
+	private final java.util.concurrent.atomic.AtomicReference<Active> active = new java.util.concurrent.atomic.AtomicReference<>();
+
+	private volatile boolean closing;
+
 	DatasetCopyMaintenanceWorker(DatasetCatalog catalog, DatasetCopyStorage storage) {
 		this.catalog = catalog;
 		this.storage = storage;
 	}
 
 	@Scheduled(fixedDelayString = "${skywright.dataset-catalog.maintenance-delay:PT5S}")
-	void resumeDurableOperations() {
+	synchronized void resumeDurableOperations() {
+		if (this.closing)
+			return;
 		java.util.List<DatasetCopyWorkItem> workItems;
 		try {
 			workItems = this.catalog.maintenanceWork();
@@ -22,9 +28,40 @@ final class DatasetCopyMaintenanceWorker {
 		catch (RuntimeException databaseUnavailable) {
 			return;
 		}
-		for (DatasetCopyWorkItem work : workItems) {
-			this.advance(work);
+		Active running = this.active.get();
+		if (running != null) {
+			boolean current = workItems.stream()
+				.anyMatch(work -> work.operation().id().equals(running.work().operation().id())
+						&& work.operation().attempts() == running.work().operation().attempts()
+						&& work.operation().progress() == running.work().operation().progress());
+			if (!current)
+				running.thread().interrupt();
+			return;
 		}
+		if (!this.storage.ready() || workItems.isEmpty())
+			return;
+		var work = workItems.getFirst();
+		Thread thread = Thread.ofPlatform().daemon().name("dataset-copy-maintenance").unstarted(() -> {
+			try {
+				this.advance(work);
+			}
+			finally {
+				this.active.set(null);
+			}
+		});
+		this.active.set(new Active(work, thread));
+		thread.start();
+	}
+
+	@jakarta.annotation.PreDestroy
+	synchronized void close() {
+		this.closing = true;
+		Active running = this.active.get();
+		if (running != null)
+			running.thread().interrupt();
+	}
+
+	private record Active(DatasetCopyWorkItem work, Thread thread) {
 	}
 
 	private void advance(DatasetCopyWorkItem work) {
@@ -37,6 +74,12 @@ final class DatasetCopyMaintenanceWorker {
 							work.catalogRevision());
 				}
 				case VERIFYING -> {
+					if (operation.kind() == DatasetCopyOperationKind.PROMOTE) {
+						this.storage.verify(work.definition(), work.manifest(), work.copy());
+						this.catalog.completePromotion(work.definition().definitionId(), operation.id(),
+								work.catalogRevision());
+						break;
+					}
 					VerifiedDatasetReplacement replacement = this.storage.verifyReplacement(work.definition(),
 							work.manifest(), work.copy(), operation.id());
 					this.catalog.publishReplacement(work.definition().definitionId(), operation.id(), replacement,

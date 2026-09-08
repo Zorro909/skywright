@@ -1161,18 +1161,18 @@ paths:
       - { name: copyId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
     post:
       operationId: promoteDatasetCopy
-      summary: Reverify a replica and make it authoritative atomically.
+      summary: Start worker verification before atomically promoting a replica.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/DatasetCatalogRevisionCommand' }
       responses:
-        '200':
-          description: Authority assignment changed.
+        '202':
+          description: Durable promotion accepted; authority changes only after worker verification.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/DatasetCatalogRecord' }
+              schema: { $ref: '#/components/schemas/DatasetCopyOperation' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
   /dataset-catalog/{definitionId}/copies/{copyId}/refresh:
@@ -1833,7 +1833,7 @@ components:
       enum: [available, transiently-unavailable, unavailable]
     DatasetCopyOperationKind:
       type: string
-      enum: [refresh, delete]
+      enum: [promote, refresh, delete]
     DatasetCopyOperationProgress:
       type: string
       enum: [waiting-for-leases, transferring, verifying, publishing, deleting-old-bytes, completed, cancelled, failed]

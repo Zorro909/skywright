@@ -5,6 +5,10 @@ import java.util.UUID;
 
 interface DatasetCopyStorage extends DatasetCopyVerifier {
 
+	default boolean ready() {
+		return true;
+	}
+
 	VerifiedDatasetReplacement stageReplacement(DatasetDefinitionView definition, List<DatasetManifestEntry> manifest,
 			DatasetCopyView copy, UUID operationId);
 

@@ -66,13 +66,14 @@ final class DatasetCatalogApiIT {
 				UUID replicaId = UUID.randomUUID();
 				catalog.addReplica(definitionId,
 						new DatasetReplicaPublication(replicaId, storageId, "datasets/release-1", 4096, now), 1);
-				catalog.promote(definitionId, replicaId, 2);
+				var promotion = catalog.promote(definitionId, replicaId, 2);
+				DatasetChecksumApiIT.awaitOperation(catalog, definitionId, promotion.id());
 				catalog.reportCache(definitionId, new DatasetCacheReport(UUID.randomUUID(), DatasetCacheOwnerType.HOST,
-						"trainer-01", 512, now, now), 3);
+						"trainer-01", 512, now, now), catalog.get(definitionId).revision());
 				var selection = catalog.selectForRun(definitionId, "sha256:content", runRecordId, copyId);
 				assertThat(selection.location()).isEqualTo("datasets/release-1");
 				assertThat(selection.lease().generation()).isEqualTo(1);
-				catalog.startRefresh(definitionId, copyId, 1, 5);
+				catalog.startRefresh(definitionId, copyId, 1, catalog.get(definitionId).revision());
 				backend.restart();
 				assertThat(backend.bean(DatasetCatalog.class)
 					.selectForRun(definitionId, "sha256:content", runRecordId, null)).usingRecursiveComparison()

@@ -113,6 +113,36 @@ Qualification, copy operations and publication workers use the same registered
 request-checksum default and mapping; the worker job retains the selected value.
 Catalog promotion and refresh transitions remain in the Dataset catalog.
 
+Promotion now returns HTTP 202 with a durable `PROMOTE` operation in `VERIFYING`.
+A separate local Transfer Worker receives only the immutable job metadata and
+its `transfer-worker` credential projection. The parent clears the child environment,
+records PID and process start time before sending credentials through stdin, and
+accepts only a bounded receipt for that exact worker attempt. The catalogue switches
+authority and completes the operation in one short transaction after checking the
+captured catalogue revision and candidate generation. Concurrent edits require a
+fresh verification; cancelled or superseded work cannot publish authority.
+
+The maintenance dispatcher admits one worker at a time without a queue. Status,
+lease admission and cancellation use separate short transactions. Cancellation
+interrupts the dispatcher on its next maintenance tick and terminates the child.
+Durable projection records remain open until the child has exited. Startup recovery
+checks PID and start time, terminates surviving old workers, and releases their
+projections before redispatch. A child watchdog also exits when its parent dies.
+Refresh staging, verification and deletion use this same process boundary.
+
+`skywright.dataset-catalog.worker-timeout` defaults to `PT1H`, is configurable from
+one millisecond through `PT24H`, and bounds each worker phase including acquisition
+and consumption of S3 response bodies. The child watchdog covers a trickling body
+even if an HTTP timeout keeps resetting. Storage calls also have a 30-second call
+budget and read-idle timeout. A deadline leaves a durable retryable failure and
+preserves the current authority. This setting does not change Dataset Publication's
+existing verification-runtime policy.
+
+The migration adds `dataset_copy_worker_projection` and the API gains the `promote`
+operation kind. Older servers cannot deserialize retained `PROMOTE` operations;
+a software downgrade requires restoring the pre-upgrade database snapshot. Stop
+workers before rolling back the schema.
+
 The Python uploader maps registered request policy explicitly, keeps precomputed
 checksum headers, and streams uncertain retry evidence. Its full-object fast
 path requires an explicit type and valid 32-byte SHA-256. Streamed retry reads use
@@ -132,7 +162,7 @@ cases pass:
 
 Every case completes refresh to generation 2. Same-size corrupt content and
 short content with claimed expected metadata both fail promotion without changing
-the catalog revision. The dedicated SDK wire tests execute actual boto3 HTTP
+authority. The failed operation and its failure evidence advance the catalogue revision. The dedicated SDK wire tests execute actual boto3 HTTP
 requests for both registered checksum policies and both chunking permissions.
 Java transport coverage exercises request policy and a deliberately unsuitable
 GET checksum header through the actual S3 client. These controlled HTTP tests

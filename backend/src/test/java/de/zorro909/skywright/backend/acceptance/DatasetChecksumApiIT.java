@@ -57,8 +57,20 @@ class DatasetChecksumApiIT {
 					catalog.addReplica(definition,
 							new DatasetReplicaPublication(candidate, storageId, replica, bytes.length, Instant.now()),
 							1);
-					catalog.promote(definition, candidate, 2);
-					var operation = catalog.startRefresh(definition, candidate, 1, 3);
+					var promotionResponse = backend.post(
+							"/api/v1/dataset-catalog/" + definition + "/copies/" + candidate + "/promotion",
+							"{\"expectedRevision\":2}");
+					assertThat(promotionResponse.statusCode()).as(promotionResponse.body()).isEqualTo(202);
+					UUID promotionId = UUID.fromString(
+							JsonMapper.builder().build().readTree(promotionResponse.body()).path("id").asText());
+					if (mode.equals("single")) {
+						backend.restart();
+						catalog = backend.bean(DatasetCatalog.class);
+					}
+					awaitOperation(catalog, definition, promotionId);
+					assertThat(catalog.getOperation(definition, promotionId).progress())
+						.isEqualTo(DatasetCopyOperationProgress.COMPLETED);
+					var operation = catalog.startRefresh(definition, candidate, 1, catalog.get(definition).revision());
 					long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(45);
 					while (catalog.getOperation(definition, operation.id()).active() && System.nanoTime() < deadline)
 						Thread.sleep(100);
@@ -83,15 +95,35 @@ class DatasetChecksumApiIT {
 									AsyncRequestBody.fromBytes(damaged))
 							.join();
 						long revision = catalog.get(definition).revision();
-						assertThatThrownBy(() -> catalog.promote(definition, authority, revision))
-							.isInstanceOf(DatasetCatalogConflictException.class)
-							.extracting(e -> ((DatasetCatalogConflictException) e).errorCode())
+						var failed = catalog.promote(definition, authority, revision);
+						awaitOperation(catalog, definition, failed.id());
+						assertThat(catalog.getOperation(definition, failed.id()).failureCode())
 							.isEqualTo("DATASET_COPY_MANIFEST_MISMATCH");
-						assertThat(catalog.get(definition).revision()).isEqualTo(revision);
+						assertThat(catalog.get(definition).copies())
+							.filteredOn(copy -> copy.role() == DatasetCopyRole.AUTHORITY)
+							.singleElement()
+							.extracting(DatasetCopyView::id)
+							.isEqualTo(candidate);
 					}
 				}
+				var jdbc = new org.springframework.jdbc.core.JdbcTemplate(backend.bean(javax.sql.DataSource.class));
+				assertThat(jdbc.queryForObject(
+						"select count(*) from skywright.dataset_copy_worker_projection where worker_pid is not null and worker_pid <> ? and consumer_role = 'transfer-worker'",
+						Long.class, ProcessHandle.current().pid()))
+					.isGreaterThan(0L);
+				assertThat(jdbc.queryForObject(
+						"select count(*) from skywright.dataset_copy_worker_projection where released_at is null",
+						Long.class))
+					.isZero();
 			}
 		}
+	}
+
+	static void awaitOperation(DatasetCatalog catalog, UUID definition, UUID operation) throws Exception {
+		long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
+		while (catalog.getOperation(definition, operation).active() && System.nanoTime() < deadline)
+			Thread.sleep(100);
+		assertThat(catalog.getOperation(definition, operation).active()).isFalse();
 	}
 
 	private static void upload(S3AsyncClient client, String bucket, String key, byte[] bytes, String mode)
