@@ -115,13 +115,13 @@ def validate_mounts(pod, runtime, pod_uid, sandbox_id):
             "/var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/"
             + sandbox_id
             + "/hostname",
-            True,
+            False,
         ),
         "/etc/resolv.conf": (
             "/var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/"
             + sandbox_id
             + "/resolv.conf",
-            True,
+            False,
         ),
         "/dev/shm": (
             "/run/containerd/io.containerd.grpc.v1.cri/sandboxes/"

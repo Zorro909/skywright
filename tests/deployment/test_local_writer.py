@@ -130,6 +130,34 @@ class WriterEvidenceTest(unittest.TestCase):
 
 
 class WriterMountTest(unittest.TestCase):
+    def test_writable_root_keeps_isolated_sandbox_system_files(self):
+        from deployment.local_writer.node import validate_mounts
+
+        fixture = json.loads((FIXTURE.parent / "local-writer-mounts.json").read_text())
+        for mount in fixture["runtime"]["mounts"]:
+            if mount["destination"] in ("/etc/hostname", "/etc/resolv.conf"):
+                mount["options"] = [
+                    "rw" if option == "ro" else option for option in mount["options"]
+                ]
+        validate_mounts(
+            fixture["pod"],
+            fixture["runtime"],
+            fixture["pod_uid"],
+            fixture["sandbox_id"],
+        )
+        for destination in ("/etc/hostname", "/etc/resolv.conf"):
+            invalid = copy.deepcopy(fixture)
+            for mount in invalid["runtime"]["mounts"]:
+                if mount["destination"] == destination:
+                    mount["source"] = "/run/containerd/containerd.sock"
+            with self.assertRaises(Uncertain):
+                validate_mounts(
+                    invalid["pod"],
+                    invalid["runtime"],
+                    invalid["pod_uid"],
+                    invalid["sandbox_id"],
+                )
+
     def test_only_qualified_mounts_and_restart_policy_can_enter_custody(self):
         from deployment.local_writer.node import validate_mounts
 
