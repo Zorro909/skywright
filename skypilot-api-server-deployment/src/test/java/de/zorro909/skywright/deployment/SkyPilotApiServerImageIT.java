@@ -88,7 +88,17 @@ final class SkyPilotApiServerImageIT {
 
 		var pidOneCommand = docker("exec", serverContainer, "python", "-c",
 				"from pathlib import Path; print(Path('/proc/1/cmdline').read_bytes().replace(b'\\0', b' ').decode())");
-		assertThat(pidOneCommand).contains("python -m sky.server.server", "--host=0.0.0.0", "--port=46580");
+		assertThat(pidOneCommand).contains("/usr/bin/tini -- python -I -S /opt/skywright/runtime/launch.py",
+				"--host=0.0.0.0", "--port=46580");
+		var childCommands = docker("exec", serverContainer, "python", "-c", """
+				from pathlib import Path
+				for pid in Path('/proc/1/task/1/children').read_text().split():
+				    try:
+				        print(Path(f'/proc/{pid}/cmdline').read_bytes().replace(b'\\0', b' ').decode())
+				    except FileNotFoundError:
+				        pass
+				""");
+		assertThat(childCommands).contains("python -m sky.server.server --host=0.0.0.0 --port=46580");
 
 		assertThat(inspectImage("{{.Config.User}}").strip()).isEqualTo("10002:10002");
 		assertThat(inspectImage("{{index .Config.Labels \"org.opencontainers.image.revision\"}}").strip())
@@ -104,6 +114,41 @@ final class SkyPilotApiServerImageIT {
 		assertThat(inspectImage("{{json .Config.Env}}").strip()).contains("OPENBLAS_NUM_THREADS=1")
 			.doesNotContain("SKYPILOT_DB_CONNECTION_URI", "postgresql://");
 		assertThat(docker("logs", serverContainer)).doesNotContain(databasePassword);
+	}
+
+	@Test
+	@Order(1)
+	void orphanedChildrenAreReaped() throws Exception {
+		assertThat(docker("exec", serverContainer, "python", "-I", "-c", """
+				import os, time
+				from pathlib import Path
+				orphans = []
+				for _ in range(20):
+				    reader, writer = os.pipe()
+				    child = os.fork()
+				    if child == 0:
+				        os.close(reader)
+				        orphan = os.fork()
+				        if orphan == 0:
+				            os.close(writer)
+				            while os.getppid() != 1:
+				                time.sleep(0.01)
+				            os._exit(0)
+				        os.write(writer, str(orphan).encode())
+				        os._exit(0)
+				    os.close(writer)
+				    orphans.append(int(os.read(reader, 32)))
+				    os.close(reader)
+				    os.waitpid(child, 0)
+				deadline = time.monotonic() + 5
+				while time.monotonic() < deadline:
+				    remaining = [pid for pid in orphans if Path(f'/proc/{pid}').exists()]
+				    if not remaining:
+				        break
+				    time.sleep(0.01)
+				assert not remaining, f'orphaned children were not reaped: {remaining}'
+				print('orphaned children reaped')
+				""")).contains("orphaned children reaped");
 	}
 
 	@Test
@@ -507,7 +552,7 @@ final class SkyPilotApiServerImageIT {
 			}
 			Thread.sleep(Duration.ofMillis(50));
 		}
-		throw new AssertionError("SkyPilot PID 1 or descendants survived SIGTERM: "
+		throw new AssertionError("Server container PID 1 or descendants survived SIGTERM: "
 				+ processes.stream().filter(ContainerProcess::isAlive).toList());
 	}
 

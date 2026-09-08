@@ -21,7 +21,7 @@ COPY startup/log_collector.py startup/archive_read.py /opt/skywright/runtime/
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
-        ca-certificates curl git netcat-openbsd openssh-client rsync socat \
+        ca-certificates curl git netcat-openbsd openssh-client rsync socat tini \
     && case "$(dpkg --print-architecture)" in \
         amd64) kubectl_arch=amd64; kubectl_sha=6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f ;; \
         arm64) kubectl_arch=arm64; kubectl_sha=922df28df248cc00a9e025f947704f1d1482de64ece54cfe57e61f19eaf1eef3 ;; \
@@ -68,5 +68,5 @@ ENV HOME=/var/lib/skypilot \
 EXPOSE 46580 46581 46582
 STOPSIGNAL SIGTERM
 
-ENTRYPOINT ["python", "-I", "-S", "/opt/skywright/runtime/launch.py"]
+ENTRYPOINT ["/usr/bin/tini", "--", "python", "-I", "-S", "/opt/skywright/runtime/launch.py"]
 CMD ["--host=0.0.0.0", "--port=46580", "--deploy"]

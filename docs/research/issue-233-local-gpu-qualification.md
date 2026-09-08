@@ -113,7 +113,7 @@ submission identity. The corrected request received HTTP 202 for Run
 `cdef8bd0-b135-437a-b1cf-4e5ed9bbebe4`, submission
 `e0df0fb6-7e86-4e39-8d46-c9e3b8820362`, at 15:15:10 UTC. Run details displayed its
 accepted definition, affirmative root lineage and unavailable execution evidence.
-The browser reported no script errors. No GPU Training Process has run yet.
+The browser reported no script errors. This attempt did not reach a GPU Training Process.
 
 A separate GraalPy process inside the production backend image reproduced #250:
 the Fedora-built cryptography extension requires `OPENSSL_3.2.0`, absent from the
@@ -170,3 +170,54 @@ establishing an empty training history. Unknown records still reject admission;
 inventory reads stop after 64 pages of at most 256 keys, and incomplete or
 nonadvancing reads remain unavailable. Regression coverage includes 600 setup
 logs, orphan records after those logs, stalled cursors and oversized pages.
+
+The deployed backend with the log-admission fix subsequently reported managed
+job 2 as terminal `failed`, with live SkyPilot and Run Store reads, zero Execution
+Attempts and absent committed progress. The UI retained its affirmative root
+lineage and reported no browser errors.
+
+The replacement profile is public and anonymously readable at
+`ghcr.io/zorro909/skywright-ui-qualification-profile@sha256:ec1c407778ddad7f8829e978c69a5e534d758f9802a7fbdac4457a980dbfa10c`.
+It builds SDK source `6df8f1ba8091e2ca09166e25210166b2e7d85d3f`; the final
+qualification project build pins this digest and the locked Dataset dependencies.
+The control plane runs backend image `skywright-backend:issue233-prestart-6df8f1b`
+and server image `skywright-skypilot-api-server:issue233-kubectl137`.
+The latter passes all seven production image checks. Its kubectl update addresses
+the dependency thresholds recorded in the [security research](issue-233-kubectl-security-update.md);
+the current CI scan must still pass.
+
+## Process reaping blocker
+
+The final public project build
+[34143376509](https://github.com/Zorro909/skywright-ui-qualification/actions/runs/34143376509)
+passed in 14m15s. Version artifact
+`sha256:012248f1c6cbad3b0ca713974f6f5557efb43118cd8f31d7dbfbf6410c0d4eba`
+is runnable; its anonymously verified ROCm image is
+`sha256:b5c5e637e370dc69d99102257a2facd12d436fa285cf7fd839f4cf059a32d107`.
+The UI accepted Run `9b8575bf-fdb0-4aa9-9297-428850ef5228`, submission
+`86db41a5-739c-47bc-89a0-c2ce6ac6e6e2`, at 16:42:21 UTC.
+
+Before creating a GPU pod, the server container exhausted its 2,048-task scope.
+The enclosing node used only 3,177 of its 16,384 tasks. Raising just the server's
+runtime scope to 8,192 allowed inspection: 1,777 processes were zombies with
+parent PID 1. SkyPilot runs directly as PID 1 and does not reap those adopted
+children. Increasing the task limit alone does not resolve that accumulation.
+A stock SDK read found no launch request for this Run; its claimed dispatch is
+not replayed. No GPU Training Step was published.
+
+The owner approved tini as PID 1 on 2026-09-08. #71, #199 and ADR 0009 now
+record that replacement. Tini reaps orphaned children and forwards SIGTERM to
+the unchanged supported server entry point. Fixed non-root execution, port
+46580, read-only-root operation and the bounded shutdown/descendant checks
+remain required. A packaged regression creates twenty orphaned children; the
+old image left all twenty unreaped.
+
+The UI accepted cancellation `34e0f9d5-9417-4f67-a8a7-e4c13d03c616`
+for that unstarted Run at 16:47:21 UTC. The receipt was `accepted`; it did not
+establish terminal execution evidence.
+
+The replacement image passed all eight packaged-process checks, including the
+new orphan-reaping regression and the existing SIGTERM-only test requiring
+PID 1 and recorded server descendants to exit within 25 seconds. Standards
+and specification review found no blocking issues. The GPU check remains
+outstanding while the isolated environment is restored after a host restart.
