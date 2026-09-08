@@ -454,6 +454,29 @@ def _task(specification, secrets=None):
         }
     if specification.get("runtimePullNamespace"):
         runtime_options["_cluster_config_overrides"]["kubernetes"]["namespace"] = specification["runtimePullNamespace"]
+    writer_authority = specification.get("environment", {}).get("SKYWRIGHT_WRITER_AUTHORITY_SOCKET")
+    if writer_authority:
+        if writer_authority != "/run/skywright-writer/authority.sock":
+            raise ValueError("Invalid local writer authority socket")
+        import uuid
+
+        run_id = str(uuid.UUID(specification["name"].removeprefix("skywright-")))
+        if specification["name"] != "skywright-" + run_id:
+            raise ValueError("Writer authority requires an exact Run identity")
+        if any(not item["infrastructure"].startswith("kubernetes/") for item in specification["resources"]):
+            raise ValueError("Writer authority requires the qualified local Kubernetes target")
+        kubernetes = runtime_options.setdefault("_cluster_config_overrides", {}).setdefault("kubernetes", {})
+        pod = kubernetes.setdefault("pod_config", {})
+        pod["metadata"] = {"labels": {"skywright.io/run-id": run_id}}
+        pod.setdefault("spec", {}).update({
+            "hostPID": False,
+            "hostIPC": False,
+            "hostNetwork": False,
+            "automountServiceAccountToken": False,
+            "shareProcessNamespace": False,
+            "volumes": [{"name": "skywright-writer", "hostPath": {"path": "/var/lib/skywright-writer/socket", "type": "Directory"}}],
+            "containers": [{"name": "ray-node", "volumeMounts": [{"name": "skywright-writer", "mountPath": "/run/skywright-writer", "readOnly": True}]}],
+        })
     resources = [
         sky.Resources(
             infra=requested["infrastructure"],
@@ -466,6 +489,7 @@ def _task(specification, secrets=None):
                 {
                     "max_restarts_on_errors": requested["jobRecovery"]["maxRestartsOnErrors"],
                     "recover_on_exit_codes": requested["jobRecovery"]["recoverOnExitCodes"],
+                    **({"strategy": "EAGER_NEXT_REGION"} if writer_authority else {}),
                 }
                 if requested.get("jobRecovery") is not None
                 else None

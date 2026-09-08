@@ -471,7 +471,8 @@ class LocalRunAssemblyIT {
 		@Bean
 		@Primary
 		LocalRunTargetSettings qualifiedLocalTarget() {
-			return new LocalRunTargetSettings("local/amd", "local", "MI300X", 1, 192L * 1024 * 1024 * 1024, "8", "32");
+			return new LocalRunTargetSettings("local/amd", "local", "MI300X", 1, 192L * 1024 * 1024 * 1024, "8", "32",
+					false);
 		}
 
 		@Bean

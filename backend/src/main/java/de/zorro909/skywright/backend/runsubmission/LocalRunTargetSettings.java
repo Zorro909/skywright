@@ -6,7 +6,7 @@ import de.zorro909.skywright.backend.runtimeassembly.LocalRuntimeProjection;
 /** Operator-qualified local target; absent configuration means unavailable admission. */
 @ConfigurationProperties(prefix = "skywright.local-run", ignoreUnknownFields = false)
 public record LocalRunTargetSettings(String identity, String kubernetesContext, String gpuModel, int maximumGpuCount,
-		long gpuMemoryBytes, String cpus, String memory) {
+		long gpuMemoryBytes, String cpus, String memory, boolean writerAuthorityEnabled) {
 	LocalRuntimeProjection.Target target(String requested) {
 		if (identity == null)
 			throw new RunSubmissionException("LOCAL_TARGET_UNAVAILABLE", 503);

@@ -95,6 +95,7 @@ def run_training_process(
     cgroup_memory_reader: Callable[[], int | None] = read_cgroup_memory_usage,
     system_sampler_wait: SamplerWait = wait_for_sampling,
     _archive_marker: bool = False,
+    _register_writer: Callable[[ExecutionAttemptRecord], None] | None = None,
 ) -> TrainingProcessResult:
     """Execute one Training Project through the process's sole Run Context."""
 
@@ -239,6 +240,8 @@ def run_training_process(
                 resolved_resume.reference if resolved_resume is not None else None
             ),
         )
+        if _register_writer is not None:
+            _register_writer(attempt)
         resolved_recorder.publish_attempt(attempt)
     except RecoveryAdmissionError:
         signal_requests.finalize()

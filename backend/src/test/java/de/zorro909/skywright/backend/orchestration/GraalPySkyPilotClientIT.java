@@ -147,33 +147,47 @@ final class GraalPySkyPilotClientIT {
 		var field = GraalPySkyPilotClient.class.getDeclaredField("context");
 		field.setAccessible(true);
 		var context = (org.graalvm.polyglot.Context) field.get(client);
-		context.eval("python", """
-				import sky
-				specification = {'name': 'projection-fixture', 'run': 'env', 'environment': {},
-				    'resources': [{'infrastructure': 'kubernetes', 'cpus': '2', 'memory': '4', 'useSpot': False,
-				        'jobRecovery': {'maxRestartsOnErrors': 0, 'recoverOnExitCodes': [75]}}],
-				    'runtimePullSecret': 'skywright-pull-00000000-0000-0000-0000-000000000001',
-				    'runtimePullNamespace': 'training'}
-				secrets = {'SKYWRIGHT_DATASET_ACCESS_KEY_ID': 'reader',
-				    'SKYWRIGHT_DATASET_SECRET_ACCESS_KEY': 'reader-secret',
-				    'SKYWRIGHT_RUN_STORE_ACCESS_KEY_ID': 'writer',
-				    'SKYWRIGHT_RUN_STORE_SECRET_ACCESS_KEY': 'writer-secret'}
-				task = _task(specification, secrets)
-				recovered = sky.Task.from_yaml_config(task.to_yaml_config())
-				assert recovered.secrets['SKYWRIGHT_DATASET_ACCESS_KEY_ID'].get_secret_value() == 'reader'
-				assert recovered.envs == {}
-				assert next(iter(recovered.resources)).job_recovery['max_restarts_on_errors'] == 0
-				assert next(iter(recovered.resources)).job_recovery['recover_on_exit_codes'] == [75]
-				assert 'writer-secret' not in str(task.to_yaml_config(use_user_specified_yaml=True))
-				assert 'imagePullSecrets' in str(task.to_yaml_config())
-				assert next(iter(recovered.resources)).cluster_config_overrides['kubernetes']['namespace'] == 'training'
-				assert 'ghcr.io' not in str(task.to_yaml_config())
-				try:
-				    _task(specification, {'VAULT_TOKEN': 'forbidden'})
-				    raise AssertionError('Vault token admitted')
-				except ValueError:
-				    pass
-				""");
+		context.eval("python",
+				"""
+						import sky
+						specification = {'name': 'projection-fixture', 'run': 'env', 'environment': {},
+						    'resources': [{'infrastructure': 'kubernetes', 'cpus': '2', 'memory': '4', 'useSpot': False,
+						        'jobRecovery': {'maxRestartsOnErrors': 0, 'recoverOnExitCodes': [75]}}],
+						    'runtimePullSecret': 'skywright-pull-00000000-0000-0000-0000-000000000001',
+						    'runtimePullNamespace': 'training'}
+						secrets = {'SKYWRIGHT_DATASET_ACCESS_KEY_ID': 'reader',
+						    'SKYWRIGHT_DATASET_SECRET_ACCESS_KEY': 'reader-secret',
+						    'SKYWRIGHT_RUN_STORE_ACCESS_KEY_ID': 'writer',
+						    'SKYWRIGHT_RUN_STORE_SECRET_ACCESS_KEY': 'writer-secret'}
+						task = _task(specification, secrets)
+						recovered = sky.Task.from_yaml_config(task.to_yaml_config())
+						assert recovered.secrets['SKYWRIGHT_DATASET_ACCESS_KEY_ID'].get_secret_value() == 'reader'
+						assert recovered.envs == {}
+						assert next(iter(recovered.resources)).job_recovery['max_restarts_on_errors'] == 0
+						assert next(iter(recovered.resources)).job_recovery['recover_on_exit_codes'] == [75]
+						assert 'writer-secret' not in str(task.to_yaml_config(use_user_specified_yaml=True))
+						assert 'imagePullSecrets' in str(task.to_yaml_config())
+						assert next(iter(recovered.resources)).cluster_config_overrides['kubernetes']['namespace'] == 'training'
+						assert 'ghcr.io' not in str(task.to_yaml_config())
+						specification['name'] = 'skywright-00000000-0000-0000-0000-000000000001'
+						specification['resources'][0]['infrastructure'] = 'kubernetes/local'
+						specification['environment']['SKYWRIGHT_WRITER_AUTHORITY_SOCKET'] = '/run/skywright-writer/authority.sock'
+						qualified = sky.Task.from_yaml_config(_task(specification, secrets).to_yaml_config())
+						resource = next(iter(qualified.resources))
+						assert resource.job_recovery['strategy'] == 'EAGER_NEXT_REGION'
+						pod = resource.cluster_config_overrides['kubernetes']['pod_config']
+						assert pod['metadata']['labels']['skywright.io/run-id'] == '00000000-0000-0000-0000-000000000001'
+						assert pod['spec']['imagePullSecrets'][0]['name'] == specification['runtimePullSecret']
+						assert pod['spec']['hostPID'] is False and pod['spec']['shareProcessNamespace'] is False
+						assert pod['spec']['containers'][0]['volumeMounts'][0]['readOnly'] is True
+						assert qualified.envs['SKYWRIGHT_WRITER_AUTHORITY_SOCKET'] == '/run/skywright-writer/authority.sock'
+						assert resource.cluster_config_overrides['kubernetes']['namespace'] == 'training'
+						try:
+						    _task(specification, {'VAULT_TOKEN': 'forbidden'})
+						    raise AssertionError('Vault token admitted')
+						except ValueError:
+						    pass
+						""");
 	}
 
 	private static void assertConcurrentAuthorization(GraalPySkyPilotClient client) throws Exception {

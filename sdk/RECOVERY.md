@@ -108,3 +108,24 @@ The tests suspend and resume a writer around admission, progress, checkpoint
 publication and pruning; kill a multipart upload; exhaust repeated recoveries;
 remove or corrupt the latest checkpoint; and inject credential, timeout and report
 publication failures. Outcome 75 is checked only after successful finalization.
+
+## Qualified local writer authority
+
+The optional local Kubernetes deployment can enable
+`skywright.local-run.writer-authority-enabled=true`. Its managed task receives a
+fixed read-only Unix socket mount and selects `EAGER_NEXT_REGION`, which tears
+down the old cluster before replacement. The SDK uses only the local protocol;
+it gains no Kubernetes, Vault or SkyPilot dependency or credential.
+
+The node authority registers the exact process/container before attempt
+publication. It independently proves permanent container death under the qualified
+containerd and Linux custody rules and retains an inspectable proof. The SDK waits
+up to 60 seconds only for explicit pending teardown, with at most 10 seconds per
+call. Missing registration, invalid evidence and unavailable authority still refuse
+startup before project entry. With the option absent, the original unavailable
+recovery default remains.
+
+See [deployment and qualification instructions](../deployment/examples/local-writer/README.md)
+for node enrollment, persistent custody, required capabilities and unsupported
+restart/mount configurations. A changed kernel boot or lost runtime evidence
+before proof is retained remains uncertainty in this first implementation.

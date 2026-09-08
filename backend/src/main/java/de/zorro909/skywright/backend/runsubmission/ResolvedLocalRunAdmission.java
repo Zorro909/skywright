@@ -158,7 +158,8 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 							.replace('-', '_')),
 				ownedSeed);
 		var task = new LocalRuntimeProjection().project(definition, materials, target,
-				pullSelection == null ? null : "skywright-pull-" + runId, pullNamespace);
+				pullSelection == null ? null : "skywright-pull-" + runId, pullNamespace,
+				settings.writerAuthorityEnabled());
 		var broker = projections.getIfAvailable();
 		if (broker == null || vault.getIfAvailable() == null)
 			throw new RunSubmissionException("TRAINING_CREDENTIALS_UNAVAILABLE", 503);

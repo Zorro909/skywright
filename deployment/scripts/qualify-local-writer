@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""Exercise the actual SDK authority protocol against a qualified local node."""
+
+import argparse
+import json
+import os
+import subprocess
+import time
+import uuid
+from pathlib import Path
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--kubeconfig", required=True)
+    parser.add_argument("--node", required=True)
+    parser.add_argument(
+        "--image",
+        required=True,
+        help="Locally loaded CPU image with Python 3; never requests a GPU",
+    )
+    parser.add_argument("--namespace", default="skywright-training")
+    parser.add_argument("--authority-namespace", default="skywright")
+    parser.add_argument("--authority", default="qualification-writer")
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    repo = Path(__file__).resolve().parents[2]
+    env = dict(os.environ, KUBECONFIG=args.kubeconfig)
+    run, attempt = str(uuid.uuid4()), str(uuid.uuid4())
+    tag = "writer-check-" + run[:8]
+    pods = [tag + suffix for suffix in ("-old", "-new", "-wrong")]
+
+    def command(*arguments, namespace=None):
+        return ["kubectl", "-n", namespace or args.namespace, *arguments]
+
+    def kube(*arguments, data=None, namespace=None, timeout=90):
+        return subprocess.run(
+            command(*arguments, namespace=namespace),
+            input=data,
+            text=True,
+            capture_output=True,
+            env=env,
+            check=True,
+            timeout=timeout,
+        ).stdout
+
+    def execute(pod, source, timeout=80):
+        return kube("exec", pod, "--", "python3", "-c", source, timeout=timeout)
+
+    files = {"__init__.py": ""}
+    for name in ("_writer_authority.py", "_training_types.py", "recovery.py"):
+        files[name] = (repo / "sdk/src/skywright" / name).read_text()
+    config = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": tag},
+        "data": files,
+    }
+    volumes = [
+        {
+            "name": "skywright-writer",
+            "hostPath": {
+                "path": "/var/lib/skywright-writer/socket",
+                "type": "Directory",
+            },
+        },
+        {"name": "sdk", "configMap": {"name": tag}},
+        {"name": "tmp", "emptyDir": {}},
+    ]
+    mounts = [
+        {
+            "name": "skywright-writer",
+            "mountPath": "/run/skywright-writer",
+            "readOnly": True,
+        },
+        {"name": "sdk", "mountPath": "/source/skywright", "readOnly": True},
+        {"name": "tmp", "mountPath": "/tmp"},
+    ]
+    common = (
+        'from pathlib import Path\nfrom skywright._writer_authority import LocalWriterAuthority\nfrom skywright._training_types import ExecutionAttemptRecord\na=LocalWriterAuthority(Path("/run/skywright-writer/authority.sock"))\nr=ExecutionAttemptRecord('
+        + repr(attempt)
+        + ","
+        + repr(run)
+        + ',"qualification",None)\n'
+    )
+    evidence = {
+        "run_id": run,
+        "attempt_id": attempt,
+        "node": args.node,
+        "image": args.image,
+    }
+    try:
+        kube("create", "-f", "-", data=json.dumps(config))
+        for index, name in enumerate(pods):
+            pod = {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "metadata": {
+                    "name": name,
+                    "labels": {
+                        "skywright.io/run-id": run if index < 2 else str(uuid.uuid4())
+                    },
+                },
+                "spec": {
+                    "nodeName": args.node,
+                    "restartPolicy": "Never",
+                    "automountServiceAccountToken": False,
+                    "volumes": volumes,
+                    "containers": [
+                        {
+                            "name": "ray-node",
+                            "image": args.image,
+                            "imagePullPolicy": "Never",
+                            "command": [
+                                "python3",
+                                "-c",
+                                "import signal,sys,time; signal.signal(signal.SIGTERM,lambda *a:sys.exit(0)); time.sleep(600)",
+                            ],
+                            "env": [{"name": "PYTHONPATH", "value": "/source"}],
+                            "volumeMounts": mounts,
+                            "securityContext": {
+                                "readOnlyRootFilesystem": True,
+                                "allowPrivilegeEscalation": False,
+                            },
+                            "resources": {
+                                "requests": {"cpu": "100m", "memory": "64Mi"},
+                                "limits": {"cpu": "1", "memory": "256Mi"},
+                            },
+                        }
+                    ],
+                },
+            }
+            kube("create", "-f", "-", data=json.dumps(pod))
+            kube("wait", "--for=condition=Ready", "pod/" + name, "--timeout=60s")
+        child = execute(
+            pods[0],
+            common
+            + """
+import os,time
+# The registered parent exits; a detached child remains in its container.
+a.register(r)
+pid=os.fork()
+if pid:
+    print(pid,flush=True)
+else:
+    os.setsid()
+    fd=os.open('/dev/null',os.O_RDWR)
+    for target in (0,1,2):os.dup2(fd,target)
+    os.close(fd)
+    for number in range(6000):
+        Path('/tmp/heartbeat').write_text(str(number))
+        time.sleep(0.05)
+""",
+        ).strip()
+        child = int(child)
+        # A new process may not replace the registration from the exited parent.
+        replacement = execute(
+            pods[1],
+            common
+            + """
+from skywright.recovery import RecoveryAdmissionError
+try:a.register(r)
+except RecoveryAdmissionError:print('replacement-refused')
+else:raise AssertionError('registration replaced')
+""",
+        )
+        assert "replacement-refused" in replacement
+        assert "None" in execute(pods[2], common + "print(a.previous_writer(r))")
+        execute(pods[0], "import os,signal; os.kill(" + str(child) + ",signal.SIGSTOP)")
+        started = time.monotonic()
+        refused = execute(
+            pods[1],
+            common
+            + 'assert a.previous_writer(r) is None; print("suspended-writer-refused")',
+        )
+        evidence["uncertainty_seconds"] = time.monotonic() - started
+        assert (
+            "suspended-writer-refused" in refused
+            and 59 <= evidence["uncertainty_seconds"] < 75
+        )
+        before = execute(
+            pods[0],
+            'from pathlib import Path; print(Path("/tmp/heartbeat").read_text())',
+        )
+        execute(pods[0], "import os,signal; os.kill(" + str(child) + ",signal.SIGCONT)")
+        time.sleep(0.15)
+        after = execute(
+            pods[0],
+            'from pathlib import Path; print(Path("/tmp/heartbeat").read_text())',
+        )
+        assert before != after
+        evidence["detached_child_resumed_after_refusal"] = True
+        print(
+            "Suspended and detached old writer refused; it resumed without a second admission.",
+            flush=True,
+        )
+        query = (
+            common
+            + "import json; from dataclasses import asdict; proof=a.previous_writer(r); assert proof is not None; print(json.dumps(asdict(proof)))"
+        )
+        with subprocess.Popen(
+            command("exec", pods[1], "--", "python3", "-c", query),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        ) as recovery:
+            try:
+                time.sleep(1)
+                assert recovery.poll() is None
+                execute(pods[0], "import os,signal; os.kill(1,signal.SIGTERM)")
+                output, _errors = recovery.communicate(timeout=65)
+                if recovery.returncode:
+                    raise RuntimeError(
+                        "The SDK did not obtain verified death evidence after container teardown"
+                    )
+                proof = json.loads(output)
+            finally:
+                if recovery.poll() is None:
+                    recovery.kill()
+                    recovery.wait()
+        evidence["proof"] = proof
+        assert (
+            proof["run_id"] == run
+            and proof["attempt_id"] == attempt
+            and proof["condition"] == "stopped"
+        )
+        old = json.loads(kube("get", "pod", pods[0], "-o", "json"))
+        evidence["old_pod_retained"] = old["metadata"]["uid"]
+        evidence["pod_phase_when_node_proved_death"] = old["status"]["phase"]
+        kube(
+            "rollout",
+            "restart",
+            "daemonset/" + args.authority,
+            namespace=args.authority_namespace,
+        )
+        kube(
+            "rollout",
+            "status",
+            "daemonset/" + args.authority,
+            "--timeout=60s",
+            namespace=args.authority_namespace,
+        )
+        assert json.loads(execute(pods[1], query)) == proof
+        kube("delete", "pod", pods[0], "--wait=true", "--timeout=30s")
+        assert json.loads(execute(pods[1], query)) == proof
+        evidence["proof_survived_authority_restart_and_pod_deletion"] = True
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(evidence, indent=2) + "\n")
+        print(
+            "Exact container-death proof persisted across authority restart and Pod deletion.",
+            flush=True,
+        )
+    finally:
+        kube(
+            "delete", "pod", *pods, "--ignore-not-found", "--wait=true", "--timeout=30s"
+        )
+        kube("delete", "configmap", tag, "--ignore-not-found")
+
+
+if __name__ == "__main__":
+    main()
