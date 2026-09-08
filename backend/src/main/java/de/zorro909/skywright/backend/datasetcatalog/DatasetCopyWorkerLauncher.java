@@ -27,7 +27,9 @@ final class DatasetCopyWorkerLauncher {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
-	private final TargetStorageResolver targets;
+	private final java.util.function.Function<UUID, de.zorro909.skywright.backend.runstore.ResolvedTargetStorage> targets;
+
+	private final ProcessStarter processes;
 
 	private final DatasetCopyWorkerProjections projections;
 
@@ -41,15 +43,29 @@ final class DatasetCopyWorkerLauncher {
 
 	DatasetCopyWorkerLauncher(TargetStorageResolver targets, DatasetCopyWorkerProjections projections,
 			Duration timeout) {
+		this(id -> targets.resolveDataset(id, "transfer-worker"), projections, timeout, ProcessBuilder::start);
+	}
+
+	DatasetCopyWorkerLauncher(
+			java.util.function.Function<UUID, de.zorro909.skywright.backend.runstore.ResolvedTargetStorage> targets,
+			DatasetCopyWorkerProjections projections, Duration timeout, ProcessStarter processes) {
 		if (timeout.toMillis() < 1 || timeout.compareTo(Duration.ofDays(1)) > 0)
 			throw new IllegalArgumentException("Dataset Copy worker timeout must be positive and at most one day");
 		this.targets = targets;
 		this.projections = projections;
 		this.timeout = timeout;
+		this.processes = processes;
+	}
+
+	@FunctionalInterface
+	interface ProcessStarter {
+
+		Process start(ProcessBuilder builder) throws IOException;
+
 	}
 
 	boolean ready() {
-		return this.ready && !this.closing;
+		return this.ready && !this.closing && this.active.isEmpty();
 	}
 
 	@EventListener(ApplicationReadyEvent.class)
@@ -87,7 +103,7 @@ final class DatasetCopyWorkerLauncher {
 			List<DatasetManifestEntry> manifest, DatasetCopyView copy, UUID operationId, long generation) {
 		if (!this.ready())
 			throw unavailable();
-		var target = this.targets.resolveDataset(copy.targetStorageId(), "transfer-worker");
+		var target = this.targets.apply(copy.targetStorageId());
 		var credentials = target.credentials().resolveCredentials();
 		UUID attempt = this.projections.projected(copy.id(), target.credentialBindingId(),
 				target.credentialBindingRevision());
@@ -115,7 +131,7 @@ final class DatasetCopyWorkerLauncher {
 			builder.environment().clear();
 			if (!this.ready())
 				throw unavailable();
-			process = builder.start();
+			process = this.processes.start(builder);
 			this.active.add(process);
 			this.projections.launched(attempt, process.pid(), process.info().startInstant().orElseThrow());
 			var credential = new DatasetCopyWorkerCredential(credentials.accessKeyId(), credentials.secretAccessKey(),
@@ -151,8 +167,13 @@ final class DatasetCopyWorkerLauncher {
 		finally {
 			Path owned = directory;
 			if (process == null) {
-				this.projections.released(attempt);
-				deleteFiles(owned);
+				try {
+					this.projections.released(attempt);
+					deleteFiles(owned);
+				}
+				catch (RuntimeException unavailable) {
+					this.ready = false;
+				}
 			}
 			else {
 				Process worker = process;
