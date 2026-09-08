@@ -333,6 +333,7 @@ class QualityWorkflowContractTest(unittest.TestCase):
         self.assertIn('"$GITHUB_RUN_ID"', preparation)
         self.assertIn('"$GITHUB_SHA"', preparation)
         self.assertIn("artifact-provenance.json", preparation)
+        self.assertIn("producer-attempt: ${{ steps.archive.outputs.producer-attempt }}", preparation)
         self.assertIn("tar --zstd", preparation)
         self.assertIn("actions/upload-artifact@", preparation)
         self.assertIn("compression-level: 0", preparation)
@@ -372,6 +373,8 @@ class QualityWorkflowContractTest(unittest.TestCase):
                 )
                 self.assertIn("-Dgraalpy.environment.prebuilt=true", consumer)
                 self.assertNotIn("require-graalpy-cache", consumer)
+                self.assertIn("GRAALPY_PRODUCER_ATTEMPT: ${{ needs.graalpy.outputs.producer-attempt }}", consumer)
+                self.assertIn('--run-attempt "$GRAALPY_PRODUCER_ATTEMPT"', consumer)
 
 
 if __name__ == "__main__":

@@ -268,16 +268,15 @@ def main(arguments: list[str] | None = None) -> int:
         if args.observation:
             verify_observation(root, versions, read_document(args.observation))
     if args.command in ("stamp", "provenance"):
-        if not args.run_id or not args.source or not args.output:
-            raise ValueError("Artifact provenance requires run, source and output path")
+        if not args.run_id or not args.source or not args.output or not args.run_attempt or not re.fullmatch(r"[1-9][0-9]*", args.run_attempt):
+            raise ValueError("Artifact provenance requires run, positive producer attempt, source and output path")
         current_source = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
         if current_source != args.source:
             raise ValueError("Artifact source differs from the checked-out commit")
         provenance = {"schema": "skywright-graalpy-artifact@1", "runId": args.run_id,
-                      "sourceCommit": args.source, "identitySha256": record["identitySha256"],
+                      "runAttempt": args.run_attempt, "sourceCommit": args.source, "identitySha256": record["identitySha256"],
                       "payloadSha256": record["payloadSha256"]}
         if args.command == "stamp":
-            provenance["runAttempt"] = args.run_attempt
             write_document(args.output, provenance)
         else:
             actual = read_document(args.output)

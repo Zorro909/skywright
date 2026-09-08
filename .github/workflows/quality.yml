@@ -112,6 +112,8 @@ jobs:
       needs.plan.outputs.image == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 270
+    outputs:
+      producer-attempt: ${{ steps.archive.outputs.producer-attempt }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,6 +121,7 @@ jobs:
         id: graalpy
         uses: ./.github/actions/prepare-graalpy
       - name: Archive packaged GraalPy environment
+        id: archive
         if: steps.graalpy.outcome == 'success'
         run: |
           scripts/graalpy-environment stamp --run-id "$GITHUB_RUN_ID" \
@@ -129,6 +132,7 @@ jobs:
             --file="${RUNNER_TEMP}/graalpy-resources.tar.zst" \
             --directory=.graalpy \
             resources artifact-provenance.json
+          echo "producer-attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - name: Hand GraalPy environment to dependent jobs
         if: steps.graalpy.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -146,6 +150,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       MAVEN_ARGS: -Dgraalpy.environment.prebuilt=true
+      GRAALPY_PRODUCER_ATTEMPT: ${{ needs.graalpy.outputs.producer-attempt }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -166,7 +171,7 @@ jobs:
             --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
             --directory=.graalpy
           scripts/graalpy-environment provenance --run-id "$GITHUB_RUN_ID" \
-            --source "$GITHUB_SHA" --output .graalpy/artifact-provenance.json
+            --run-attempt "$GRAALPY_PRODUCER_ATTEMPT" --source "$GITHUB_SHA" --output .graalpy/artifact-provenance.json
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
@@ -197,6 +202,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       MAVEN_ARGS: -Dgraalpy.environment.prebuilt=true
+      GRAALPY_PRODUCER_ATTEMPT: ${{ needs.graalpy.outputs.producer-attempt }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -217,7 +223,7 @@ jobs:
             --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
             --directory=.graalpy
           scripts/graalpy-environment provenance --run-id "$GITHUB_RUN_ID" \
-            --source "$GITHUB_SHA" --output .graalpy/artifact-provenance.json
+            --run-attempt "$GRAALPY_PRODUCER_ATTEMPT" --source "$GITHUB_SHA" --output .graalpy/artifact-provenance.json
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
@@ -278,6 +284,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       MAVEN_ARGS: -Dgraalpy.environment.prebuilt=true
+      GRAALPY_PRODUCER_ATTEMPT: ${{ needs.graalpy.outputs.producer-attempt }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -298,7 +305,7 @@ jobs:
             --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
             --directory=.graalpy
           scripts/graalpy-environment provenance --run-id "$GITHUB_RUN_ID" \
-            --source "$GITHUB_SHA" --output .graalpy/artifact-provenance.json
+            --run-attempt "$GRAALPY_PRODUCER_ATTEMPT" --source "$GITHUB_SHA" --output .graalpy/artifact-provenance.json
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
@@ -329,6 +336,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       MAVEN_ARGS: -Dgraalpy.environment.prebuilt=true
+      GRAALPY_PRODUCER_ATTEMPT: ${{ needs.graalpy.outputs.producer-attempt }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -349,7 +357,7 @@ jobs:
             --file="${RUNNER_TEMP}/graalpy-artifact/graalpy-resources.tar.zst" \
             --directory=.graalpy
           scripts/graalpy-environment provenance --run-id "$GITHUB_RUN_ID" \
-            --source "$GITHUB_SHA" --output .graalpy/artifact-provenance.json
+            --run-attempt "$GRAALPY_PRODUCER_ATTEMPT" --source "$GITHUB_SHA" --output .graalpy/artifact-provenance.json
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:

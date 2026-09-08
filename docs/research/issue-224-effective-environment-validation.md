@@ -38,3 +38,11 @@ A second probe used that explicit halt path. It asserted the runtime version, in
 [#247](https://github.com/Zorro909/skywright/issues/247) currently records the separate CPython checkpoint-cancellation abort. Do not claim it already covers this GraalPy teardown finding or that this probe resolves it.
 
 The teardown finding is tracked separately in [#271](https://github.com/Zorro909/skywright/issues/271).
+
+## Producer attempt and partial retries
+
+The workflow passes the successful producer's attempt number as a job output and compares it with
+the artifact record. It does not require that number to equal the consumer's current attempt. GitHub
+supports retrying only failed jobs, which can leave a successful dependency producer in an earlier
+attempt of the same run. The consumer still validates the environment again before packaging.
+[GitHub rerun documentation](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)

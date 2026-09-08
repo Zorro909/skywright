@@ -134,11 +134,17 @@ class EnvironmentIdentityTest(unittest.TestCase):
     def test_same_run_provenance_rejects_foreign_run_commit_or_payload(self):
         self.seal()
         output = self.root / 'artifact-provenance.json'
-        def provenance(command, run='10', source='commit-a'):
-            return self.invoke(command, '--run-id', run, '--run-attempt', '1', '--source', source, '--output', str(output))
+        def provenance(command, run='10', source='commit-a', attempt='1'):
+            return self.invoke(command, '--run-id', run, '--run-attempt', attempt, '--source', source, '--output', str(output))
         with patch.object(environment.subprocess, 'check_output', return_value='commit-a\n'):
             provenance('stamp')
             provenance('provenance')
+            with patch.dict(environment.os.environ, {'GITHUB_RUN_ATTEMPT': '2'}):
+                provenance('provenance', attempt='1')
+            with self.assertRaisesRegex(ValueError, 'not from this run'):
+                provenance('provenance', attempt='2')
+            with self.assertRaisesRegex(ValueError, 'positive producer attempt'):
+                provenance('provenance', attempt='')
             with self.assertRaisesRegex(ValueError, 'not from this run'):
                 provenance('provenance', run='11')
             with self.assertRaisesRegex(ValueError, 'checked-out commit'):
@@ -147,6 +153,7 @@ class EnvironmentIdentityTest(unittest.TestCase):
             self.seal()
             with self.assertRaisesRegex(ValueError, 'not from this run'):
                 provenance('provenance')
+
 
 
 if __name__ == '__main__':

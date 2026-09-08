@@ -98,7 +98,9 @@ rerun installation. The standalone probe exits after writing its receipt, preser
 import-only smoke scope. It does not qualify embedded runtime shutdown or production native ABI.
 
 The quality producer stamps the qualified dependency artifact with the workflow run ID and checked-out
-commit. Consumers reject foreign-run or foreign-source provenance before prebuilt packaging.
+commit. Consumers also compare the artifact's producer attempt with the successful producer job's
+output. A consumer-only retry can therefore use the original successful producer, while a different
+producer attempt is rejected. Consumers reject foreign-run or foreign-source provenance before prebuilt packaging.
 The dependency cache is reusable across runs; application outputs and their verification still come
 from the current run. Release builds run the same dependency validation from their exact source.
 Prebuilt environments created before this record existed must be prepared again. A packaging host
