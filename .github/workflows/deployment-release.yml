@@ -34,8 +34,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Set up GraalVM Community
-        uses: ./.github/actions/setup-java
+      - name: Prepare and validate qualified GraalPy dependencies
+        uses: ./.github/actions/prepare-graalpy
+      - name: Use the verified dependency environment for release packaging
+        run: echo "MAVEN_ARGS=-Dgraalpy.environment.prebuilt=true" >> "$GITHUB_ENV"
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
@@ -85,8 +87,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Set up GraalVM Community
-        uses: ./.github/actions/setup-java
+      - name: Prepare and validate qualified GraalPy dependencies
+        uses: ./.github/actions/prepare-graalpy
+      - name: Use the verified dependency environment for release packaging
+        run: echo "MAVEN_ARGS=-Dgraalpy.environment.prebuilt=true" >> "$GITHUB_ENV"
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:

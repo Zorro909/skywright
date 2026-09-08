@@ -19,6 +19,7 @@ PYTHON_ACTION = (
     REPOSITORY / ".github/actions/setup-python-toolchain/action.yml"
 ).read_text(encoding="utf-8")
 WORKFLOW = (REPOSITORY / ".github/workflows/quality.yml").read_text(encoding="utf-8")
+PREPARATION_ACTION = (REPOSITORY / ".github/actions/prepare-graalpy/action.yml").read_text()
 ENVIRONMENT_POM = REPOSITORY / "graalpy-environment/pom.xml"
 ENVIRONMENT_LOCK = REPOSITORY / "graalpy-environment/graalpy.lock"
 BUILD_CONSTRAINTS = REPOSITORY / "graalpy-environment/build-constraints.txt"
@@ -120,14 +121,10 @@ class JavaSetupContractTest(unittest.TestCase):
         self.assertIn("inputs.graalpy-resources == 'true'", environment_cache)
         self.assertIn("${{ runner.os }}", environment_cache)
         self.assertIn("${{ runner.arch }}", environment_cache)
-        self.assertIn(
-            "${{ steps.toolchain.outputs.java_archive_sha256 }}", environment_cache
-        )
-        self.assertIn("graalpy-env-v3", environment_cache)
-        self.assertIn("graalpy-environment/graalpy.lock", environment_cache)
-        self.assertIn("graalpy-environment/pom.xml", environment_cache)
-        self.assertIn("graalpy-environment/build-constraints.txt", environment_cache)
-        self.assertIn("backend-deployment/src/main/docker/Dockerfile", environment_cache)
+        self.assertIn("${{ steps.environment.outputs.identity }}", environment_cache)
+        self.assertIn("graalpy-env-v4", environment_cache)
+        resolution = named_step(JAVA_ACTION, "Resolve effective GraalPy environment identity")
+        self.assertIn("scripts/graalpy-environment identity", resolution)
         self.assertIn(".graalpy/resources", environment_cache)
         self.assertNotIn("restore-keys:", environment_cache)
 
@@ -331,38 +328,31 @@ class QualityWorkflowContractTest(unittest.TestCase):
         preparation = job(WORKFLOW, "graalpy")
         self.assertIn("needs: plan", preparation)
         self.assertIn("timeout-minutes: 270", preparation)
-        self.assertIn("PIP_CACHE_DIR:", preparation)
-        self.assertIn("PIP_CONSTRAINT:", preparation)
-        self.assertIn("PIP_FIND_LINKS:", preparation)
-        self.assertIn("graalpy-environment/build-constraints.txt", preparation)
-        self.assertIn("graalpy-resources: true", preparation)
-        self.assertIn("steps.java.outputs.graalpy-cache-hit != 'true'", preparation)
-        self.assertIn("actions/cache/restore@", preparation)
-        self.assertIn("actions/cache/save@", preparation)
-        self.assertIn("always()", preparation)
-        self.assertIn("github.run_attempt", preparation)
-        self.assertIn("--kill-after=2m", preparation)
-        self.assertIn("Prime pandas wheel cache", preparation)
-        self.assertIn("Publish pandas wheel to local wheelhouse", preparation)
-        self.assertIn("scripts/retag-wheel", preparation)
-        self.assertIn("linux_x86_64", preparation)
-        self.assertIn("150m", preparation)
-        self.assertIn("-Dgraalpy.wheel.package=pandas==2.2.3", preparation)
-        self.assertIn("100m", preparation)
-        self.assertIn("--no-transfer-progress", preparation)
-        self.assertIn("-pl graalpy-environment", preparation)
-        self.assertIn("process-resources", preparation)
-        self.assertNotIn("setup-frontend", preparation)
-        self.assertIn("test -f .graalpy/resources/venv/installed.txt", preparation)
-        self.assertIn(
-            'if [[ "${{ steps.java.outputs.graalpy-cache-hit }}" == "true" ]]',
-            preparation,
-        )
-        self.assertIn("import cryptography", preparation)
-        self.assertIn("import sky", preparation)
+        self.assertIn("uses: ./.github/actions/prepare-graalpy", preparation)
+        self.assertIn("scripts/graalpy-environment stamp", preparation)
+        self.assertIn('"$GITHUB_RUN_ID"', preparation)
+        self.assertIn('"$GITHUB_SHA"', preparation)
+        self.assertIn("artifact-provenance.json", preparation)
         self.assertIn("tar --zstd", preparation)
         self.assertIn("actions/upload-artifact@", preparation)
         self.assertIn("compression-level: 0", preparation)
+        for expected in ("PIP_CACHE_DIR=", "PIP_CONSTRAINT=", "PIP_FIND_LINKS=",
+                         "150m", "100m", "scripts/retag-wheel", "linux_x86_64",
+                         "-Dgraalpy.wheel.package=pandas==2.2.3"):
+            self.assertIn(expected, PREPARATION_ACTION)
+        validation = named_step(PREPARATION_ACTION, "Validate actual packaged runtime and native imports")
+        self.assertIn("steps.java.outputs.graalpy-cache-hit == 'true'", validation)
+        self.assertIn("verify --expected .graalpy/expected-environment.json", validation)
+        self.assertIn("-Dgraalpy.environment.prebuilt=true", validation)
+        self.assertIn("process-resources", validation)
+        self.assertNotIn("venv/bin/python", validation)
+        progressive = named_step(PREPARATION_ACTION, "Restore progressive GraalPy pip cache")
+        self.assertEqual(progressive.count("steps.java.outputs.graalpy-identity"), 2)
+        saved = named_step(PREPARATION_ACTION, "Save exact packaged GraalPy environment")
+        self.assertIn("steps.smoke-graalpy.outcome == 'success'", saved)
+        release = (REPOSITORY / ".github/workflows/deployment-release.yml").read_text()
+        self.assertIn("uses: ./.github/actions/prepare-graalpy", release)
+        self.assertIn("-Dgraalpy.environment.prebuilt=true", release)
 
         concurrency = WORKFLOW.split("permissions:", 1)[0]
         self.assertIn("cancel-in-progress: false", concurrency)
@@ -375,7 +365,7 @@ class QualityWorkflowContractTest(unittest.TestCase):
                 self.assertIn("graalpy-resources.tar.zst", consumer)
                 self.assertIn("tar --zstd", consumer)
                 self.assertIn(
-                    "test -f .graalpy/resources/venv/installed.txt", consumer
+                    "scripts/graalpy-environment provenance", consumer
                 )
                 self.assertNotIn(
                     "test -x .graalpy/resources/venv/bin/python", consumer

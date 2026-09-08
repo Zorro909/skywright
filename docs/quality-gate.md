@@ -74,11 +74,33 @@ Third-party actions must use a full commit SHA with a release comment. Dependabo
 weekly grouped pull requests for GitHub Actions, Maven, Python/uv, and pnpm; they pass through the
 normal gate and are never automatically merged.
 
-Caches may contain only downloaded Maven, pnpm, uv, browser, or analysis dependencies managed by
-their tools. Keys include the runner platform, tool version supplied by the setup action, and the
+Caches contain downloaded Maven, pnpm, uv, browser, or analysis dependencies managed by
+their tools. The approved #224 exception also permits qualified GraalPy native dependencies. Keys include the runner platform, tool version supplied by the setup action, and the
 owning lockfile where applicable. Generated sources, compiled output, distributions, images, test
-results, and publication inputs are never restored as build authority. Pull-request caches are not
+results, and application publication inputs are never restored as build authority. Pull-request caches are not
 used as trusted release inputs; release workflows build and verify from the exact tag commit.
+
+GraalPy preparation is shared by quality and deployment workflows through
+`.github/actions/prepare-graalpy`. Its exact cache identity includes Maven-resolved inherited
+GraalPy and SkyPilot versions, the package lock, constraints, native compiler versions and flags,
+OS/libc/architecture, the pinned JDK, preparation code and production Dockerfile. It does not hash
+unrelated application sources. Progressive wheel caches use the same identity with no broad
+fallback. Changing an identity input starts a new dependency build.
+
+A restored environment must match that identity and a digest of its installed dependency files.
+Every preparation and prebuilt Maven build then launches the current Maven-resolved GraalPy runtime,
+checks installed versions against the lock, and imports the native smoke packages. Validation uses
+the embedding API so a relocated environment does not execute its cached absolute-path launcher or
+rerun installation. The standalone probe exits after writing its receipt, preserving the existing
+import-only smoke scope. It does not qualify embedded runtime shutdown or production native ABI.
+
+The quality producer stamps the qualified dependency artifact with the workflow run ID and checked-out
+commit. Consumers reject foreign-run or foreign-source provenance before prebuilt packaging.
+The dependency cache is reusable across runs; application outputs and their verification still come
+from the current run. Release builds run the same dependency validation from their exact source.
+Prebuilt environments created before this record existed must be prepared again. A packaging host
+may consume dependencies qualified on another host; the recorded native platform remains visible,
+and the fresh import probe must succeed on the packaging host. Image ABI qualification remains #250.
 
 The expensive pull-request lanes have the following elapsed-time budgets on GitHub-hosted
 `ubuntu-24.04` runners. A warm run restores the exact Maven, pnpm, and Playwright keys from the base
