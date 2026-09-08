@@ -12,30 +12,29 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
 /** One recoverable submission per browser origin. Changes serialize across tabs. */
 export class RunRequestJournal {
-  constructor(private readonly storage: Storage = localStorage) {}
+  constructor(private readonly providedStorage?: Storage) {}
+
+  private get storage(): Storage {
+    return this.providedStorage ?? globalThis.localStorage;
+  }
 
   read(): SubmissionJournal | undefined {
     const raw = this.storage.getItem(key);
     if (raw === null) return undefined;
     const value: unknown = JSON.parse(raw);
-    if (!object(value) || value['version'] !== 1 || !object(value['request']))
-      throw new Error('Unreadable saved submission');
-    const request = value['request'];
     if (
-      typeof request['submissionId'] !== 'string' ||
-      !uuid.test(request['submissionId']) ||
-      ![
-        'trainingProjectId',
-        'manifestArtifactDigest',
-        'datasetDefinitionId',
-        'target',
-      ].every((field) => typeof request[field] === 'string') ||
-      !Number.isSafeInteger(request['gpuCount']) ||
-      !object(request['configuration']) ||
+      !object(value) ||
+      !onlyKeys(value, ['version', 'request', 'acceptedRunId', 'rejected']) ||
+      value['version'] !== 1 ||
+      !savedRequest(value['request'])
+    )
+      throw new Error('Unreadable saved submission');
+    if (
       (value['acceptedRunId'] !== undefined &&
         (typeof value['acceptedRunId'] !== 'string' ||
           !uuid.test(value['acceptedRunId']))) ||
-      (value['rejected'] !== undefined && value['rejected'] !== true)
+      (value['rejected'] !== undefined && value['rejected'] !== true) ||
+      (value['acceptedRunId'] !== undefined && value['rejected'] !== undefined)
     )
       throw new Error('Unreadable saved submission');
     return value as unknown as SubmissionJournal;
@@ -113,6 +112,53 @@ export class RunRequestJournal {
       );
     return navigator.locks.request(key, operation);
   }
+}
+
+function onlyKeys(value: Record<string, unknown>, keys: readonly string[]) {
+  return Object.keys(value).every((field) => keys.includes(field));
+}
+
+/** Validate stored request structure; the backend owns input constraints. */
+function savedRequest(value: unknown): value is CreateRun {
+  if (!object(value)) return false;
+  const seed = value['checkpointSeed'];
+  return (
+    onlyKeys(value, [
+      'submissionId',
+      'trainingProjectId',
+      'manifestArtifactDigest',
+      'datasetDefinitionId',
+      'preferredDatasetCopyId',
+      'executionStorageId',
+      'target',
+      'gpuCount',
+      'configuration',
+      'maximumRecoveryDebt',
+      'checkpointSeed',
+    ] satisfies (keyof CreateRun)[]) &&
+    typeof value['submissionId'] === 'string' &&
+    uuid.test(value['submissionId']) &&
+    [
+      'trainingProjectId',
+      'manifestArtifactDigest',
+      'datasetDefinitionId',
+      'target',
+    ].every((field) => typeof value[field] === 'string') &&
+    ['preferredDatasetCopyId', 'executionStorageId'].every(
+      (field) => value[field] === undefined || typeof value[field] === 'string',
+    ) &&
+    typeof value['gpuCount'] === 'number' &&
+    Number.isFinite(value['gpuCount']) &&
+    object(value['configuration']) &&
+    (value['maximumRecoveryDebt'] === undefined ||
+      (typeof value['maximumRecoveryDebt'] === 'number' &&
+        Number.isFinite(value['maximumRecoveryDebt']))) &&
+    (seed === undefined ||
+      (object(seed) &&
+        onlyKeys(seed, ['predecessorRunId', 'checkpointReference']) &&
+        typeof seed['predecessorRunId'] === 'string' &&
+        typeof seed['checkpointReference'] === 'string'))
+  );
 }
 
 export const RUN_REQUEST_JOURNAL = new InjectionToken<RunRequestJournal>(

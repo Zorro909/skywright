@@ -95,6 +95,72 @@ async function fill(root: HTMLElement) {
 describe('Local Run actions', () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => localStorage.clear());
+  it('renders creation with controls disabled when accessing localStorage throws', async () => {
+    const storage = vi
+      .spyOn(window, 'localStorage', 'get')
+      .mockImplementation(() => {
+        throw new DOMException('Storage access denied', 'SecurityError');
+      });
+    try {
+      const { api, fixture, root } = await creation();
+      expect(root.querySelector('fieldset')?.disabled).toBe(true);
+      root
+        .querySelector('form')
+        ?.dispatchEvent(new Event('submit', { cancelable: true }));
+      await fixture.whenStable();
+      expect(api.create).not.toHaveBeenCalled();
+    } finally {
+      storage.mockRestore();
+    }
+  });
+  it('renders cancellation evidence with controls disabled when accessing localStorage throws', async () => {
+    const storage = vi
+      .spyOn(window, 'localStorage', 'get')
+      .mockImplementation(() => {
+        throw new DOMException('Storage access denied', 'SecurityError');
+      });
+    try {
+      const cancel = vi.fn();
+      await TestBed.configureTestingModule({
+        imports: [RunCancellation],
+        providers: [{ provide: RUN_API, useValue: { cancel } }],
+      }).compileComponents();
+      const fixture = TestBed.createComponent(RunCancellation);
+      fixture.componentRef.setInput('run', observedRun());
+      fixture.detectChanges();
+      await fixture.whenStable();
+      const root = fixture.nativeElement as HTMLElement;
+      expect(root.textContent).toContain('Cancellation controls unavailable');
+      expect(root.querySelector('button')?.disabled).toBe(true);
+      expect(cancel).not.toHaveBeenCalled();
+    } finally {
+      storage.mockRestore();
+    }
+  });
+  it('blocks a corrupt saved seed without sending or clearing its identity', async () => {
+    const saved = JSON.stringify({
+      version: 1,
+      request: {
+        submissionId: runId,
+        trainingProjectId: project,
+        manifestArtifactDigest: digest,
+        datasetDefinitionId: dataset,
+        target: 'local/amd',
+        gpuCount: 1,
+        configuration: {},
+        checkpointSeed: 'bad',
+      },
+    });
+    localStorage.setItem('skywright.local-submission.v1', saved);
+    const { api, fixture, root } = await creation();
+    expect(root.querySelector('fieldset')?.disabled).toBe(true);
+    root
+      .querySelector('form')
+      ?.dispatchEvent(new Event('submit', { cancelable: true }));
+    await fixture.whenStable();
+    expect(api.create).not.toHaveBeenCalled();
+    expect(localStorage.getItem('skywright.local-submission.v1')).toBe(saved);
+  });
   it('does not submit malformed JSON and leaves field validation to the backend', async () => {
     const { api, fixture, root } = await creation();
     await fill(root);
@@ -189,6 +255,73 @@ describe('Local Run actions', () => {
       await fixture.whenStable();
       await vi.waitFor(() =>
         expect(root.querySelector('fieldset')?.disabled).toBe(false),
+      );
+    },
+  );
+  it.each([
+    ['Maximum Recovery Debt', 'maximumRecoveryDebt'],
+    ['GPU count', 'gpuCount'],
+  ] as const)(
+    'allows correcting fractional %s after backend rejection',
+    async (label, field) => {
+      const create = vi
+        .fn((body: CreateRun) =>
+          Promise.resolve({
+            ...observedRun(),
+            submissionId: body.submissionId,
+          }),
+        )
+        .mockRejectedValueOnce(
+          new ApiRequestFailure({
+            kind: 'problem',
+            response: new Response('', { status: 422 }),
+            problem: {
+              errorCode: 'SKYWRIGHT_RUN_DEFINITION_INVALID',
+              correlationId: 'fractional-input',
+              detail: 'Expected an integer.',
+              fieldViolations: [],
+            },
+          }),
+        );
+      const { fixture, root } = await creation(create);
+      await fill(root);
+      const input = Array.from(root.querySelectorAll('label'))
+        .find((item) => item.textContent?.includes(label))
+        ?.querySelector('input');
+      if (!input) throw new Error(`Missing ${label}`);
+      input.value = '1.5';
+      input.dispatchEvent(new Event('input'));
+      root
+        .querySelector('form')
+        ?.dispatchEvent(new Event('submit', { cancelable: true }));
+      await vi.waitFor(() =>
+        expect(root.textContent).toContain('Expected an integer'),
+      );
+      await fixture.whenStable();
+      expect(create.mock.calls[0]?.[0][field]).toBe(1.5);
+      await vi.waitFor(() =>
+        expect(
+          Array.from(root.querySelectorAll('button')).find((button) =>
+            button.textContent?.includes('Edit rejected request'),
+          )?.disabled,
+        ).toBe(false),
+      );
+      click(root, 'Edit rejected request');
+      await fixture.whenStable();
+      await vi.waitFor(() =>
+        expect(root.querySelector('fieldset')?.disabled).toBe(false),
+      );
+      input.value = '1';
+      input.dispatchEvent(new Event('input'));
+      root
+        .querySelector('form')
+        ?.dispatchEvent(new Event('submit', { cancelable: true }));
+      await vi.waitFor(() =>
+        expect(root.textContent).toContain('Run accepted'),
+      );
+      expect(create.mock.calls[1]?.[0][field]).toBe(1);
+      expect(create.mock.calls[1]?.[0].submissionId).not.toBe(
+        create.mock.calls[0]?.[0].submissionId,
       );
     },
   );

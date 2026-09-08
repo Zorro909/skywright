@@ -57,6 +57,63 @@ describe('Browser Run request journal', () => {
     await expect(journal.freeze(request)).rejects.toThrow();
     expect(localStorage.getItem('skywright.local-submission.v1')).toBe('{');
   });
+  it.each([
+    { checkpointSeed: 'bad' },
+    { checkpointSeed: null },
+    { checkpointSeed: { predecessorRunId: request.trainingProjectId } },
+    { checkpointSeed: { predecessorRunId: 42, checkpointReference: 'bad' } },
+    { checkpointSeed: { predecessorRunId: 'id', checkpointReference: [] } },
+    {
+      checkpointSeed: {
+        predecessorRunId: 'id',
+        checkpointReference: 'ref',
+        extra: true,
+      },
+    },
+    { maximumRecoveryDebt: '3' },
+    { maximumRecoveryDebt: null },
+    { preferredDatasetCopyId: {} },
+    { executionStorageId: null },
+    { unsupported: true },
+  ])(
+    'retains corrupt optional request fields without replay or replacement: %j',
+    async (fields) => {
+      const encoded = JSON.stringify({
+        version: 1,
+        request: { ...request, ...fields },
+      });
+      localStorage.setItem('skywright.local-submission.v1', encoded);
+      const journal = new RunRequestJournal();
+      expect(() => journal.read()).toThrow('Unreadable');
+      await expect(journal.freeze(request)).rejects.toThrow('Unreadable');
+      await expect(
+        journal.settle(request.submissionId, { rejected: true }),
+      ).rejects.toThrow('Unreadable');
+      await expect(journal.clearSettled()).rejects.toThrow('Unreadable');
+      expect(localStorage.getItem('skywright.local-submission.v1')).toBe(
+        encoded,
+      );
+    },
+  );
+  it('restores every optional field exactly and leaves value constraints to the backend', async () => {
+    const original: CreateRun = {
+      ...request,
+      preferredDatasetCopyId: request.datasetDefinitionId,
+      executionStorageId: request.trainingProjectId,
+      maximumRecoveryDebt: 1.5,
+      gpuCount: 1.5,
+      checkpointSeed: {
+        predecessorRunId: '',
+        checkpointReference: 'invalid reference',
+      },
+    };
+    const journal = new RunRequestJournal();
+    await journal.freeze(original);
+    expect(new RunRequestJournal().read()?.request).toEqual(original);
+    await journal.settle(request.submissionId, { rejected: true });
+    await journal.clearSettled();
+    expect(journal.read()).toBeUndefined();
+  });
   it('does not overwrite a newer request with a late acceptance response', async () => {
     const journal = new RunRequestJournal();
     await journal.freeze(request);
