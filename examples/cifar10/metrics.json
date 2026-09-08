@@ -1,0 +1,32 @@
+{
+  "contractVersion": 1,
+  "definitions": [
+    {
+      "name": "train/loss",
+      "numericKind": "real",
+      "unit": "dimensionless",
+      "recordingBasis": "step",
+      "comparison": "minimize",
+      "stepReduction": "mean",
+      "bounds": {
+        "minimum": 0
+      }
+    },
+    {
+      "name": "train/accuracy",
+      "numericKind": "real",
+      "unit": "dimensionless",
+      "recordingBasis": "step",
+      "comparison": "maximize",
+      "stepReduction": "mean",
+      "bounds": {
+        "minimum": 0,
+        "maximum": 1
+      }
+    }
+  ],
+  "skywrightSchema": {
+    "digest": "sha256:f66e2663c0927ef689238fffbd4381ecada58e44500eaa7cbd3f40801c6e2595",
+    "version": "0.1.0"
+  }
+}
