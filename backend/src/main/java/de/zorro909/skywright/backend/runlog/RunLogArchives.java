@@ -82,6 +82,7 @@ public final class RunLogArchives {
 			}
 			try {
 				var page = source.fetch(runId, stream, prior);
+				checkpoint = checkpoint.sourceFailure(stream, null);
 				// An empty read without writer closure supplies no finalization evidence.
 				if (terminal && page.bytes().length == 0 && !page.sealed()) {
 					checkpoint = checkpoint.with(stream, archive.unavailable(prior, true, "WRITER_UNCONFIRMED"));
@@ -91,6 +92,7 @@ public final class RunLogArchives {
 					.append(archive.append(stream, prior, page, terminal, clock.instant(), journal::confirms)));
 			}
 			catch (RunLogSource.Unavailable unavailable) {
+				checkpoint = checkpoint.sourceFailure(stream, unavailable.getMessage());
 				checkpoint = checkpoint.with(stream, archive.unavailable(prior, terminal, unavailable.getMessage()));
 			}
 		}

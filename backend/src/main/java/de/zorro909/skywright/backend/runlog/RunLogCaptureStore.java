@@ -32,6 +32,12 @@ public class RunLogCaptureStore {
 	public record Finalization(UUID runId, String manifestKey, String sha256, Instant publishedAt) {
 	}
 
+	@Transactional(readOnly = true)
+	RunLogCheckpoint checkpoint(UUID runId) {
+		var row = entities.find(RunLogCaptureEntity.class, runId);
+		return row == null ? RunLogCheckpoint.initial() : JSON.readValue(row.checkpoint, RunLogCheckpoint.class);
+	}
+
 	record Saved(RunLogCheckpoint checkpoint, String manifestDigest, Instant finalizedAt) {
 	}
 

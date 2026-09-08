@@ -11,7 +11,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-@RestControllerAdvice(assignableTypes = LocalRunHttpAdapter.class)
+@RestControllerAdvice(
+		assignableTypes = { LocalRunHttpAdapter.class, de.zorro909.skywright.backend.runlog.RunLogHttpAdapter.class })
 @Order(Ordered.HIGHEST_PRECEDENCE)
 class LocalRunProblemHandler {
 

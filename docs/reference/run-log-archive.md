@@ -131,3 +131,69 @@ pinned SDK's cluster naming and the actual Kubernetes TLS/exec client against a
 controlled API executing the fixed reader, including stalled websocket handshakes
 and incomplete frames. These are source-protocol tests. The
 real LOCAL GPU workflow remains #235.
+
+
+## Bounded archive viewer
+
+Issue #234 adds archive-backed reads under `/api/v1/run-logs/{runId}`:
+
+- `GET /{stream}` defaults to a bounded tail. `cursor` reads forward from an
+  absolute byte position; `before` reads the preceding bounded window. They are
+  mutually exclusive. Task and controller positions are independent decimal
+  strings, including positions larger than JavaScript's safe integer range.
+- `GET /{stream}/follow` sends `archive` SSE events containing the same JSON page
+  and base64 raw bytes. An event ID is its `nextCursor`. The browser reconnects
+  explicitly from its renderer-acknowledged cursor, not the last dispatched SSE
+  event. Duplicate and overlapping ranges are clipped before terminal parsing;
+  gaps stop rendering without advancing the cursor.
+- `GET /navigation` pages setup and confirmed attempt boundaries from the
+  immutable indexes. Its opaque metadata page token is separate from the absolute
+  task-byte cursor carried by each segment. Empty pages can have a next token.
+
+Every read resolves the Run Record's current location and read credentials. The
+immutable terminal manifest, when present, determines completion. Otherwise the
+persisted producer checkpoint supplies a staging high-water mark. Source-read
+failures and the last successful source fetch remain explicit and survive backend
+restart. A staging stream never becomes complete just because compute ended.
+Missing or invalid archive objects make that read unavailable; the viewer does
+not fall back to SkyPilot. Reading an alternate location is tested after the
+original objects are removed. Actual Repatriation remains in #53/#64/#86.
+
+| Resource | Bound |
+| --- | --- |
+| Returned raw page | 64 KiB, at most four immutable chunks |
+| Raw verification buffer | One 1 MiB chunk at a time |
+| Index / manifest read | 64 KiB |
+| Index search | At most 63 probes per binary search; fixed S3 cycle deadline still applies |
+| Archive read admission | Eight concurrent reads, no admission queue |
+| Live viewers | 16 per backend instance |
+| Follow archive workers / queue | Four workers / 16 jobs, at most one job per viewer |
+| Pending SSE frame | One frame of at most 128 KiB per viewer |
+| Pending-output deadline | Five seconds, checked by an independent 250 ms timer |
+| SSE session lifetime | 30 seconds, followed by explicit cursor replay |
+| Follow read cadence | At least 250 ms after data; two seconds after an empty page |
+| Browser event assembly | 128 KiB; one awaited renderer write |
+| Browser terminal retention | 256 KiB raw input and 1,000 scrollback rows |
+| Browser render / request deadline | Five seconds / 45 seconds |
+| Navigation page | One index, at most 128 boundaries |
+
+Servlet nonblocking output checks readiness before writing and flushing. A slow
+client stops further archive reads while its frame is pending. Expiry cancels
+production, drops that view's pending frame and releases admission. Servlet
+completion can still drain container/TCP buffers asynchronously; five seconds is
+not a promised TCP-reset deadline. Captured objects are never deleted by viewer
+backpressure, and reconnect replays from the last rendered byte.
+
+Run details open the viewer on demand. A maintained xterm.js 6.0.0 terminal receives
+raw `Uint8Array` writes, preserving split UTF-8 and ANSI parsing across pages.
+Input and log-driven link activation are disabled. Paging and setup/attempt
+navigation replace the displayed window and pause following; they never prepend
+older bytes into the live parser. Retention rollover replaces the terminal, which
+also bounds combining-mark state that row limits alone cannot bound. An arbitrary
+tail/window boundary lacks prior terminal state, and the UI states that limitation.
+The source archive retains every captured byte regardless of display retention.
+
+This local slice retains the ordinary producer reconciliation cadence. Adaptive
+viewer demand and real relocation integration remain in #64/#86. Primary-source
+renderer and Servlet behavior is recorded in
+[the streaming research note](../research/issue-234-terminal-streaming.md).

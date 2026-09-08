@@ -12,10 +12,17 @@ import { ApiRequestFailure, type ApiFailure } from '../api/api-failure';
 import { RequestFailure } from '../shared/request-failure';
 import { RunCancellation } from '../shared/run-cancellation';
 import { RunEvidence } from '../shared/run-evidence';
+import { RunLogViewer } from '../shared/run-log-viewer';
 
 @Component({
   selector: 'sky-run-detail-page',
-  imports: [RouterLink, RequestFailure, RunEvidence, RunCancellation],
+  imports: [
+    RouterLink,
+    RequestFailure,
+    RunEvidence,
+    RunCancellation,
+    RunLogViewer,
+  ],
   template: `
     <a routerLink="/">Back to overview</a>
     <section aria-labelledby="run-heading">
@@ -41,6 +48,12 @@ import { RunEvidence } from '../shared/run-evidence';
           (refreshRun)="load()"
         />
         <h3>Run observations</h3>
+        <button type="button" (click)="showLogs.set(!showLogs())">
+          {{ showLogs() ? 'Close archived logs' : 'View archived logs' }}
+        </button>
+        @if (showLogs()) {
+          <sky-run-log-viewer [runId]="run.runId" />
+        }
         <sky-run-evidence
           [run]="run"
           [detail]="true"
@@ -58,6 +71,7 @@ export class RunDetailPage {
   private request?: AbortController;
   protected readonly id = signal('');
   protected readonly run = signal<Run | undefined>(undefined);
+  protected readonly showLogs = signal(false);
   protected readonly loading = signal(false);
   protected readonly failure = signal<ApiFailure | undefined>(undefined);
   constructor() {
