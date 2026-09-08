@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""Prepare and validate the effective packaged GraalPy dependency identity."""
+import subprocess
+
+from quality_support.graalpy_environment import main
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (OSError, ValueError, subprocess.SubprocessError) as failure:
+        raise SystemExit(f"GraalPy environment rejected: {failure}") from failure

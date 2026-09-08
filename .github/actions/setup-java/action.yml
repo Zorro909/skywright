@@ -12,6 +12,9 @@ outputs:
   graalpy-cache-primary-key:
     description: Exact key under which a validated packaged environment may be saved.
     value: ${{ steps.graalpy-cache.outputs.cache-primary-key }}
+  graalpy-identity:
+    description: Canonical effective environment identity, including inherited versions and native platform inputs.
+    value: ${{ steps.environment.outputs.identity }}
 runs:
   using: composite
   steps:
@@ -57,10 +60,18 @@ runs:
         jdk-file: ${{ runner.temp }}/graalvm-community.tar.gz
         java-version: ${{ steps.toolchain.outputs.java_version }}
         cache: maven
+    - name: Resolve effective GraalPy environment identity
+      id: environment
+      if: inputs.graalpy-resources == 'true'
+      shell: bash
+      run: |
+        scripts/graalpy-environment identity \
+          --output .graalpy/expected-environment.json \
+          --github-output "$GITHUB_OUTPUT"
     - name: Restore exact packaged GraalPy environment
       id: graalpy-cache
       if: inputs.graalpy-resources == 'true'
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: .graalpy/resources
-        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu24-graalpy-env-v3-${{ steps.toolchain.outputs.java_archive_sha256 }}-${{ hashFiles('graalpy-environment/graalpy.lock', 'graalpy-environment/pom.xml', 'graalpy-environment/build-constraints.txt', 'backend-deployment/src/main/docker/Dockerfile') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-graalpy-env-v4-${{ steps.environment.outputs.identity }}
