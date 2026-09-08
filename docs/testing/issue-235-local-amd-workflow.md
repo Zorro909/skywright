@@ -32,7 +32,7 @@ application image. No validation or SkyPilot SDK code was bypassed or patched.
 
 The executable source is [the CIFAR-10 example](../../examples/cifar10/README.md).
 Its project identity is `35a633f3-8342-4061-a8df-36b1af07d438`; its project repository
-is `ghcr.io/zorro909/skywright-cifar10-qualification`. The public qualification
+is `ghcr.io/zorro909/skywright-cifar10-private-qualification`. The public qualification
 source mirror is commit `b40e12c` in `Zorro909/skywright-ui-qualification`.
 
 The ROCm Environment Profile was built from SDK source
@@ -72,6 +72,18 @@ The publication committed with no failure or unavailable source. Completion took
 5.30 seconds from the recorded creation time. This excludes the source download,
 conversion and copying the corpus to the source pod. `/tmp` capacity was checked
 before publication; this run did not sample its peak usage during verification.
+
+The first project publication built and passed its CPU smoke, but failed the
+private-visibility check. Its version artifact,
+`sha256:041b3c4ff665b4057a3a4a57ca7ee9b96463ca7ebfb64191072ec1845b9fbdfb`
+in `ghcr.io/zorro909/skywright-cifar10-qualification`, was anonymously readable
+with HTTP 200. That artifact is excluded from private-pull evidence. A separate
+private publisher, `Zorro909/skywright-private-qualification`, was prepared with
+the same example and a new package name. Its visibility and target pull remain
+subject to verification.
+
+The temporary source pod and its credential Secret were deleted after publication
+and read checks. No GPU training pod was created during these source checks.
 
 ## Dataset read budget
 

@@ -1,7 +1,7 @@
 {
   "definitionVersion": 1,
   "projectIdentity": "35a633f3-8342-4061-a8df-36b1af07d438",
-  "registryRepository": "ghcr.io/zorro909/skywright-cifar10-qualification",
+  "registryRepository": "ghcr.io/zorro909/skywright-cifar10-private-qualification",
   "configurationContract": "configuration.json",
   "metricContract": "metrics.json",
   "dependencyLock": "requirements.lock",
