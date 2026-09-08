@@ -144,10 +144,18 @@ validation, MDS import/forward-pass smoke, formatting, lint and test-file typing
 
 The production recovery gap is explicit in #56 and `sdk/RECOVERY.md`.
 `RunJobAdapter.previousWriter` returns uncertainty and `ManagedRuntime.run` defaults
-to `uncertain_previous_writer`. A trusted local proof mechanism or an explicit
-change to #235's successful-recovery acceptance criterion is needed before this
-record can claim that requirement has passed. ADR 0016's fail-closed rule remains
-in force.
+to `uncertain_previous_writer`. On 2026-09-09, the owner selected production writer
+proof in #235. Its successful-recovery criteria remain in force and require a
+trusted local Kubernetes authority; supervised fixtures alone do not satisfy them.
+The issue and ADR 0016 record that decision. Missing or uncertain authority evidence
+must still refuse managed recovery before project entry.
+
+A future Kubernetes proof mechanism must correlate the exact Execution Attempt
+with its writer and establish cessation independently of a Pod's overall phase.
+Kubernetes can mark Pods on a disconnected node `Failed`, and force deletion does
+not wait for the processes to terminate. Neither observation can authorize this
+gate. See the [v1.36 Pod lifecycle](https://v1-36.docs.kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
+and [kubectl deletion reference](https://v1-36.docs.kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#delete).
 
 The broader cloud qualification remains in #57. No cloud provider or purchase mode
 has been selected for the next target.

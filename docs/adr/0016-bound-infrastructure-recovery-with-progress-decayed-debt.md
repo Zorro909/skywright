@@ -26,6 +26,8 @@ This deliberately sacrifices recovery availability during an uncertain network p
 
 Recovery Debt evidence must also survive checkpoint payload retention. Removing a checkpoint's bytes cannot erase the durable publication evidence that reduced debt or change a historical admission result.
 
+On 2026-09-09, the owner assigned production previous-writer proof to #235. The local Kubernetes workflow must use a trusted authority that binds permanent quiescence evidence to the exact Run, Execution Attempt and writer. Successful recovery in supervised test fixtures alone is insufficient. Unknown or unavailable authority evidence still refuses managed recovery before project entry. This extends #56's intentionally unavailable default without weakening the admission rule or modifying SkyPilot's server/client SDK.
+
 ## Lifecycle and continuation
 
 A Recovery Exhaustion Record directly derives the Run Lifecycle State as `failed`, even before SkyPilot reflects the process exit. It records a run-level policy decision, not why an earlier process disappeared. The refused process never becomes an Execution Attempt and writes no Execution Termination Report, so no Execution Termination Cause is invented for it.
