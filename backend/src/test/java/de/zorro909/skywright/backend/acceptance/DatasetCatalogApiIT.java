@@ -94,7 +94,7 @@ final class DatasetCatalogApiIT {
 		}
 	}
 
-	private static S3AsyncClient administrator(SeaweedFsFixture storage) {
+	static S3AsyncClient administrator(SeaweedFsFixture storage) {
 		return S3AsyncClient.builder()
 			.httpClientBuilder(NettyNioAsyncHttpClient.builder())
 			.endpointOverride(storage.endpoint())
@@ -105,7 +105,7 @@ final class DatasetCatalogApiIT {
 			.build();
 	}
 
-	private static String registration(URI endpoint, String bucket) {
+	static String registration(URI endpoint, String bucket) {
 		return """
 				{
 				  "name": "Dataset authority",

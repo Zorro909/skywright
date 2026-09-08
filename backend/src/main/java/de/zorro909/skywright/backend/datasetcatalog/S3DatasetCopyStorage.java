@@ -7,11 +7,12 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
-import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
+import de.zorro909.skywright.backend.worker.TransferObjects;
+import java.io.IOException;
+import java.util.Base64;
+import java.util.HexFormat;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
-import software.amazon.awssdk.services.s3.S3Configuration;
-import software.amazon.awssdk.services.s3.model.ChecksumMode;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.Delete;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
@@ -35,17 +36,18 @@ final class S3DatasetCopyStorage implements DatasetCopyStorage {
 		ResolvedTargetStorage target = this.targetStorages.resolveDataset(copy.targetStorageId(), "backend");
 		try (S3AsyncClient client = client(target)) {
 			for (DatasetManifestEntry entry : manifest) {
-				var head = client
-					.headObject(HeadObjectRequest.builder()
-						.bucket(target.bucket())
-						.key(key(copy.currentGeneration().location(), entry.objectKey()))
-						.checksumMode(ChecksumMode.ENABLED)
-						.build())
-					.join();
-				if (head.contentLength() != entry.byteCount()
-						|| !entry.checksumSha256().equals(head.checksumSHA256())) {
+
+				try {
+					TransferObjects.verify(client, target.bucket(),
+							key(copy.currentGeneration().location(), entry.objectKey()), entry.byteCount(),
+							HexFormat.of().formatHex(Base64.getDecoder().decode(entry.checksumSha256())));
+				}
+				catch (TransferObjects.IntegrityMismatch mismatch) {
 					throw new DatasetCatalogConflictException("DATASET_COPY_MANIFEST_MISMATCH",
 							"Dataset Copy does not match the Dataset Definition integrity manifest");
+				}
+				catch (IOException failure) {
+					throw unavailable(copy.targetStorageId());
 				}
 			}
 		}
@@ -150,18 +152,10 @@ final class S3DatasetCopyStorage implements DatasetCopyStorage {
 	}
 
 	private static S3AsyncClient client(ResolvedTargetStorage target) {
-		S3Configuration configuration = S3Configuration.builder()
-			.pathStyleAccessEnabled(target.pathStyleAccess())
-			.chunkedEncodingEnabled("enabled".equals(target.compatibilityOptions().get("chunkedEncoding")))
-			.build();
-		return S3AsyncClient.builder()
-			.httpClientBuilder(NettyNioAsyncHttpClient.builder())
-			.endpointOverride(target.endpoint())
-			.region(target.region())
-			.credentialsProvider(target.credentials())
-			.serviceConfiguration(configuration)
-			.requestChecksumCalculation(RequestChecksumCalculation.WHEN_SUPPORTED)
-			.build();
+		return TransferObjects.client(target.endpoint(), target.region().id(), target.credentials(),
+				target.pathStyleAccess(), "enabled".equals(target.compatibilityOptions().get("chunkedEncoding")),
+				TransferObjects.checksumCalculation(target.compatibilityOptions().get("checksumCalculation")),
+				ClientOverrideConfiguration.builder().build(), null);
 	}
 
 	private static String key(String location, String objectKey) {

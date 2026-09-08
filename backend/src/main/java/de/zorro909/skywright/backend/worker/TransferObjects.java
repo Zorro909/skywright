@@ -12,6 +12,9 @@ import java.util.HexFormat;
 import java.util.function.Predicate;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
+import software.amazon.awssdk.core.checksums.ResponseChecksumValidation;
+import software.amazon.awssdk.core.async.AsyncResponseTransformer;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
 import software.amazon.awssdk.regions.Region;
@@ -39,8 +42,32 @@ public final class TransferObjects {
 			.serviceConfiguration(
 					S3Configuration.builder().pathStyleAccessEnabled(pathStyle).chunkedEncodingEnabled(chunked).build())
 			.requestChecksumCalculation(checksum)
+			.responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)
 			.overrideConfiguration(configuration)
 			.build();
+	}
+
+	/** Registered request-checksum policy, with the same default as qualification. */
+	public static RequestChecksumCalculation checksumCalculation(String option) {
+		return "when-supported".equals(option) ? RequestChecksumCalculation.WHEN_SUPPORTED
+				: RequestChecksumCalculation.WHEN_REQUIRED;
+	}
+
+	/** Verify complete object bytes; metadata and multipart checksums are not proof. */
+	public static void verify(S3AsyncClient client, String bucket, String key, long size, String digest)
+			throws IOException {
+		var response = client
+			.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build(),
+					AsyncResponseTransformer.toBlockingInputStream())
+			.join();
+		try {
+			if (response.response().contentLength() == null || response.response().contentLength() != size)
+				throw new IntegrityMismatch();
+			verify(response, size, digest, OutputStream.nullOutputStream());
+		}
+		finally {
+			response.abort();
+		}
 	}
 
 	/**

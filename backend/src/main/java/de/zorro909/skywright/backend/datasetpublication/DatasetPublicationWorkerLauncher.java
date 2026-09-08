@@ -95,7 +95,8 @@ final class DatasetPublicationWorkerLauncher implements DatasetPublicationVerifi
 						"enabled".equals(target.compatibilityOptions().get("chunkedEncoding")),
 						publication.formatIdentity(), publication.manifestIdentity(), publication.contentFingerprint(),
 						publication.objectCount(), publication.byteCount(), publication.payloadLocation(),
-						publication.operationLocation(), this.verificationConcurrency));
+						publication.operationLocation(), this.verificationConcurrency,
+						target.compatibilityOptions().get("checksumCalculation")));
 			}
 			catch (IOException | JacksonException failure) {
 				return temporaryStorageFailure();
