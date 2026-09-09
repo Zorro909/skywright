@@ -31,7 +31,7 @@ final class PackagedSkyPilotTlsIT {
 			var log = repository.resolve("backend/target/service-logs/" + mode + "-tls-qualification.log");
 			var endpoint = dns ? URI.create("https://localhost:" + proxy.endpoint().getPort()) : proxy.endpoint();
 			var builder = PackagedSkyPilotFixture.process("tls-rejected", endpoint);
-			builder.environment().put("SKYPILOT_SERVICE_ACCOUNT_TOKEN", "synthetic-tls-qualification-token");
+			builder.environment().put("SKYPILOT_SERVICE_ACCOUNT_TOKEN", "sky_synthetic_tls_qualification_token");
 			trust.configureTrust(builder);
 			var process = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
 			try {

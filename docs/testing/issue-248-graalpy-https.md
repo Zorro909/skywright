@@ -90,6 +90,11 @@ GraalPy 25.3 ABI tag. A cache from the old runtime must not be reused as a prebu
 environment. The system test using Maven's effective versions passed and
 confirmed runtime-property invalidation while unrelated edits preserve reuse.
 
+JaCoCo 0.8.15 could not instrument GraalPy's generated
+`PythonCApiAssertions.assertBuiltins` method because the added bytecode exceeded
+the JVM method-size limit. Backend coverage excludes that single third-party
+class from instrumentation; application classes remain covered.
+
 ## Packaged qualification
 
 `PackagedHeldSkyPilotIT` runs both existing HTTP scenarios and their HTTPS
@@ -112,7 +117,31 @@ then with a correctly trusted certificate for the wrong hostname, for both IP
 and DNS endpoints. It invokes
 status directly, then independently checks health. Both operations must report
 `REACHABILITY`, exit cleanly and deliver zero HTTP requests to the proxy.
-The trusted held-work cases establish that the same transport can reach the API.
+All four rejection cases passed on 2026-09-09 with a syntactically valid synthetic
+service-account token. Both SDK and health reported `REACHABILITY`, each child
+exited with status zero, and no HTTP request reached its proxy. The trusted
+held-work cases establish that the same transport can reach the API.
+
+On Linux amd64 on 2026-09-09, all four held-work cases passed with clean JVM
+exit while their responses remained held:
+
+| Measurement | HTTP held | HTTP held + control | HTTPS held, IP | HTTPS held + control, DNS |
+| --- | ---: | ---: | ---: | ---: |
+| Startup cancellation | 1,340 ms | 1,397 ms | 908 ms | 1,085 ms |
+| Cancellation while stream held | 1,147 ms | 1,177 ms | 749 ms | 706 ms |
+| Health | 13 ms | 12 ms | 40 ms | 47 ms |
+| Held queue admission | 0 ms | 0 ms | 0 ms | 0 ms |
+| Catalogue saturation | 1 ms | 1 ms | 1 ms | 1 ms |
+| Short-call saturation | not saturated | 0 ms | not saturated | 0 ms |
+| Unreachable health | 11 ms | shared queue full | 44 ms | shared queue full |
+| Shutdown | 1,257 ms | 1,459 ms | 1,184 ms | 1,260 ms |
+
+These measurements use the existing 2-second cancellation/health, 100-ms
+admission and 5-second shutdown assertions. They are local test results, not
+service latency guarantees. The real SDK typed-operation integration test also
+passed again after the JaCoCo adjustment, without instrumentation errors.
+All 283 backend unit tests also passed on that run. The installed environment passed native imports and exact version checks;
+all 52 quality tests and the relocated-prebuilt/mismatched-SDK system test passed.
 
 Run the command in [Held SkyPilot work](skypilot-held-work.md), including
 `PackagedSkyPilotTlsIT`. Logs are written to `backend/target/service-logs/`.
@@ -131,4 +160,5 @@ remains tracked in #252.
 - [uvloop 0.22.1 release](https://github.com/MagicStack/uvloop/releases/tag/v0.22.1)
 - [watchfiles 1.2.0 release](https://github.com/samuelcolvin/watchfiles/releases/tag/v1.2.0)
 - [PostgreSQL 18.4 source and checksums](https://ftp.postgresql.org/pub/source/v18.4/)
+- [JaCoCo instrumentation exclusions](https://www.jacoco.org/jacoco/trunk/doc/prepare-agent-mojo.html)
 - [Meson Python build settings](https://mesonbuild.com/meson-python/how-to-guides/config-settings.html)

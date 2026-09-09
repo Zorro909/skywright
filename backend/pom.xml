@@ -163,6 +163,16 @@
     </resources>
     <plugins>
       <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <configuration>
+          <excludes>
+            <!-- Instrumenting this generated GraalPy method exceeds the JVM method-size limit. -->
+            <exclude>com/oracle/graal/python/builtins/modules/cext/PythonCApiAssertions</exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+      <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>

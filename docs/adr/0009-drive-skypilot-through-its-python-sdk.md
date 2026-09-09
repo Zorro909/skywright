@@ -20,6 +20,13 @@ In-process under GraalPy, in JVM mode. Native-image is out of scope for this map
 
 The completed GraalPy spike and production bridge proved SkyPilot 0.13.0 under GraalPy 25.2.4, including native dependencies, typed calls, concurrent held and control work, and orderly shutdown. The fixed fallback remains an out-of-process Python service speaking the same SDK, but it is selected only if `Context.close(true)` still causes a reproducible native crash after executor quiescence in the packaged production runtime. It is explicitly **not** a return to REST or the CLI. Under the fallback the service's entry point is a transport shim, not a home for domain logic.
 
+On 2026-09-09, [#248's packaged qualification](../testing/issue-248-graalpy-https.md)
+extended that evidence to verified HTTPS under GraalPy 25.3.4.1 with the same
+SkyPilot 0.13.0 SDK. The bridge selects urllib3's certificate-name verifier to
+cover GraalPy's unchecked IP-hostname path while retaining certificate-chain
+verification. Trusted and rejected peers, held TLS reads, bounded control and
+shutdown passed with the same single context and two execution lanes.
+
 ## The seam
 
 A Run Definition is mapped with MapStruct into a typed Java DTO tree mirroring SkyPilot's task YAML schema, and only then serialized across the polyglot boundary. The task YAML schema is the one part of SkyPilot's surface that is publicly documented, which makes it the right thing to bind to; binding to it in Java records turns an invisible contract into one a compiler checks, and gives MapStruct something to report when a Run Definition field goes unmapped. Mapping straight to an untyped map would reintroduce exactly the blindness that disqualified REST.
