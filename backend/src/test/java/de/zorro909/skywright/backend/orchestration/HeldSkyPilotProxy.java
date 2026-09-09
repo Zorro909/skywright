@@ -12,6 +12,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Set;
+import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -43,6 +45,58 @@ final class HeldSkyPilotProxy implements AutoCloseable {
 	private final CountDownLatch controlEntered = new CountDownLatch(1);
 
 	private final AtomicInteger requests = new AtomicInteger();
+
+	private volatile ConcurrentLinkedQueue<CapturedRequest> cancellationRequests;
+
+	enum RequestState {
+
+		PENDING, COMPLETED, FAILED, INTERRUPTED
+
+	}
+
+	record RequestTiming(String method, String path, RequestState state, int status, long upstreamMillis) {
+	}
+
+	private static final class CapturedRequest {
+
+		private final String method;
+
+		private final String path;
+
+		private final long started = System.nanoTime();
+
+		private volatile RequestTiming finished;
+
+		private CapturedRequest(String method, String path) {
+			this.method = method;
+			this.path = path;
+		}
+
+		private RequestTiming timing(RequestState state, int status) {
+			return new RequestTiming(this.method, this.path, state, status,
+					TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - this.started));
+		}
+
+		private RequestTiming snapshot() {
+			var completed = this.finished;
+			return completed == null ? timing(RequestState.PENDING, 0) : completed;
+		}
+
+		private void finish(RequestState state, int status) {
+			this.finished = timing(state, status);
+		}
+
+	}
+
+	void beginCancellation() {
+		this.cancellationRequests = new ConcurrentLinkedQueue<>();
+	}
+
+	List<RequestTiming> finishCancellation() {
+		var captured = this.cancellationRequests;
+		this.cancellationRequests = null;
+		return captured == null ? List.of() : captured.stream().map(CapturedRequest::snapshot).toList();
+	}
 
 	HeldSkyPilotProxy(URI upstream) throws IOException {
 		this(upstream, null);
@@ -97,6 +151,7 @@ final class HeldSkyPilotProxy implements AutoCloseable {
 
 	private void forward(HttpExchange exchange) throws IOException {
 		this.requests.incrementAndGet();
+		var captured = this.cancellationRequests;
 		try (exchange) {
 			var uri = exchange.getRequestURI();
 			if (this.holdControl && "/jobs/queue/v2".equals(uri.getPath())) {
@@ -121,12 +176,35 @@ final class HeldSkyPilotProxy implements AutoCloseable {
 				}
 			});
 			HttpResponse<byte[]> response;
+			var builtRequest = request.build();
+			var timing = captured == null ? null : new CapturedRequest(exchange.getRequestMethod(), uri.getPath());
+			if (captured != null) {
+				captured.add(timing);
+			}
 			try {
-				response = this.client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
+				response = this.client.send(builtRequest, HttpResponse.BodyHandlers.ofByteArray());
 			}
 			catch (IOException unavailable) {
+				if (timing != null) {
+					timing.finish(RequestState.FAILED, 0);
+				}
 				exchange.sendResponseHeaders(503, -1);
 				return;
+			}
+			catch (InterruptedException interrupted) {
+				if (timing != null) {
+					timing.finish(RequestState.INTERRUPTED, 0);
+				}
+				throw interrupted;
+			}
+			catch (RuntimeException failure) {
+				if (timing != null) {
+					timing.finish(RequestState.FAILED, 0);
+				}
+				throw failure;
+			}
+			if (timing != null) {
+				timing.finish(RequestState.COMPLETED, response.statusCode());
 			}
 			response.headers().map().forEach((name, values) -> {
 				if (!HOP_HEADERS.contains(name.toLowerCase(java.util.Locale.ROOT))) {
