@@ -35,6 +35,7 @@ class CheckpointCoordinator:
         self._condition = threading.Condition()
         self._confirmation_lock = threading.Lock()
         self._active: CheckpointSnapshot | None = None
+        self._workers: list[threading.Thread] = []
         self._pending: CheckpointSnapshot | None = None
         self._failure: Exception | None = None
         self._confirmed = (
@@ -72,6 +73,10 @@ class CheckpointCoordinator:
                     daemon=True,
                 )
                 worker.start()
+                self._workers = [
+                    previous for previous in self._workers if previous.is_alive()
+                ]
+                self._workers.append(worker)
             else:
                 self._pending = snapshot
 
@@ -111,7 +116,9 @@ class CheckpointCoordinator:
         except Exception as failure:
             self._latch(failure)
         with self._condition:
-            stopped = self._active is None
+            stopped = self._active is None and not any(
+                worker.is_alive() for worker in self._workers
+            )
         if stopped:
             self._resume_after_cancellation()
         with self._condition:
@@ -130,7 +137,10 @@ class CheckpointCoordinator:
                 cancellation_observed = True
                 self._request_active_cancellation()
             with self._condition:
-                if self._active is None:
+                self._workers = [
+                    worker for worker in self._workers if worker.is_alive()
+                ]
+                if self._active is None and not self._workers:
                     return cancellation_observed
                 deadline = self._shutdown_deadline
                 if deadline is None:
@@ -142,7 +152,14 @@ class CheckpointCoordinator:
                     raise TimeoutError(
                         "checkpoint publication exceeded the shutdown grace deadline"
                     )
-                self._condition.wait(min(remaining, 0.05))
+                if self._active is not None:
+                    self._condition.wait(min(remaining, 0.05))
+                    continue
+                worker = self._workers[0]
+            # Clearing _active signals publication completion, but exception
+            # traceback and native tensor cleanup can still run as the thread
+            # exits. Join outside the condition so cleanup can acquire it.
+            worker.join(min(remaining, 0.05))
 
     def _publish_scheduled(self) -> None:
         while True:
