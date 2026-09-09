@@ -100,6 +100,7 @@ runs:
           mvn --batch-mode --no-transfer-progress -Dgraalpy.environment.prebuilt=true \
           -pl graalpy-environment process-resources
     - name: Save complete GraalPy wheel cache
+      # Only promote checkpoints after the full environment passes native imports.
       if: >-
         steps.graalpy-pip-cache.outcome == 'success' &&
         steps.graalpy-pip-cache.outputs.cache-hit != 'true' &&
