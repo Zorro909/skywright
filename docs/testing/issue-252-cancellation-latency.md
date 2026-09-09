@@ -49,11 +49,19 @@ scheduling, other JVM work and transport overhead; this qualification does not
 attribute it to a particular GraalPy or JIT method. The warm HTTPS case also
 shows that upstream waits vary independently of client CPU cost.
 
+Repeating all four cases with CPUs 0 through 3 passed. First cancellations took
+1,732/1,854/1,265/1,419 ms, and held cancellations took 1,323/1,356/628/624 ms
+in the same scenario order. Probes took 27/32/82/106 ms and shutdown took
+1,142/1,202/1,108/1,019 ms. Every packaged JVM exited with code 0.
+
 ## Qualification contract
 
 `CancellationTimingClient` measures the real call on the serialized control
 thread. `HeldSkyPilotProxy` records each cancellation's actual upstream method,
-path, status and elapsed time. The SDK still initiates and completes its normal
+path, request state, status and elapsed time. Requests still waiting upstream
+remain in failure evidence as `PENDING`; transport failures are `FAILED` and
+interrupted requests are `INTERRUPTED`. Status 0 means no response was received.
+The SDK still initiates and completes its normal
 status lookup before submitting cancellation. Neither SDK nor server source is
 modified, and the fixture does not return a synthetic SDK result.
 
@@ -86,6 +94,8 @@ evidence` contains the upstream timings and process exit code. The same wire
 evidence is saved beside each child log as `*.log.requests.json`, including
 partial evidence when a test fails. The integration job retains both its
 Failsafe reports and `backend/target/service-logs` artifacts.
+If forced cleanup cannot terminate the child within its existing wait, the
+wire evidence records `still-running` instead of discarding the diagnostics.
 
 Run from the repository root after `scripts/setup-worktree`. Build the paired
 JAR and test fixture before invoking the focused integration test:

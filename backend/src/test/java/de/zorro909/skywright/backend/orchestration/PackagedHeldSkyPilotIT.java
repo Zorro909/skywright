@@ -112,6 +112,7 @@ final class PackagedHeldSkyPilotIT {
 						.singleElement()
 						.satisfies(request -> {
 							assertThat(request.method()).isEqualTo("POST");
+							assertThat(request.state()).isEqualTo(HeldSkyPilotProxy.RequestState.COMPLETED);
 							assertThat(request.status()).isEqualTo(200);
 						});
 				}
@@ -121,8 +122,9 @@ final class PackagedHeldSkyPilotIT {
 				process.destroyForcibly();
 				process.waitFor(5, TimeUnit.SECONDS);
 				reader.join(5000);
+				Object exitCode = process.isAlive() ? "still-running" : process.exitValue();
 				var wireEvidence = JSON.writeValueAsString(Map.of("startup", startupRequests, "held", heldRequests,
-						"unfinished", proxy.finishCancellation(), "exit_code", process.exitValue()));
+						"unfinished", proxy.finishCancellation(), "exit_code", exitCode));
 				Files.writeString(output.resolveSibling(output.getFileName() + ".requests.json"), wireEvidence);
 				System.out.println("Cancellation wire evidence: " + wireEvidence);
 			}
