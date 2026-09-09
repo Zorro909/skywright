@@ -328,6 +328,15 @@ final class SkyPilotApiServerImageIT {
 
 	@Test
 	@Order(4)
+	void controllerCanObserveAMissingTargetPod() throws Exception {
+		String probe = java.nio.file.Files
+			.readString(java.nio.file.Path.of("src/test/resources/controller_missing_pod_probe.py"));
+		assertThat(docker("exec", serverContainer, "python", "-I", "-c", probe))
+			.contains("Missing target Pod remains a recoverable status observation");
+	}
+
+	@Test
+	@Order(4)
 	void collectorReadsPinnedPostgresAndRawFilesWithReadOnlyStateAndNoSdkImport() throws Exception {
 		String run = "38c76a5b-7cba-400e-9595-7657b194ea83";
 		String seed = """

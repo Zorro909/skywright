@@ -14,6 +14,7 @@ LABEL org.opencontainers.image.base.name="docker.io/library/python:3.12.11-slim-
       io.skywright.skypilot.version="@skypilot.version@"
 
 COPY maven/graalpy.lock /tmp/graalpy.lock
+COPY server-requirements.lock /tmp/server-requirements.lock
 COPY startup/launch.py /opt/skywright/runtime/launch.py
 COPY startup/runtime_pull.py /opt/skywright/runtime/runtime_pull.py
 COPY startup/log_collector.py startup/archive_read.py /opt/skywright/runtime/
@@ -39,8 +40,12 @@ RUN apt-get update \
         --no-deps \
         --only-binary=:all: \
         --requirement /tmp/graalpy.lock \
+    && python -m pip install \
+        --disable-pip-version-check --no-cache-dir --no-deps \
+        --only-binary=:all: --require-hashes \
+        --requirement /tmp/server-requirements.lock \
     && python -c "import sky; assert sky.__version__ == '@skypilot.version@'" \
-    && rm --force /tmp/graalpy.lock \
+    && rm --force /tmp/graalpy.lock /tmp/server-requirements.lock \
     && groupadd --gid 10002 skypilot \
     && useradd --uid 10002 --gid 10002 --home-dir /var/lib/skypilot \
         --no-create-home --shell /usr/sbin/nologin skypilot \
