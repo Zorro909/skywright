@@ -63,20 +63,22 @@ Maven compilation. Maven inheritance and command-line override checks run
 against the real Maven executable. Workflow and composite-action expressions
 are checked with actionlint, alongside the quality and deployment suites.
 
-These changes have not yet run on GitHub-hosted runners. The new wheel namespace
+Hosted validation and measured comparisons are recorded in
+[PR #279](https://github.com/Zorro909/skywright/pull/279). The new wheel namespace
 requires an initial fill; old packaged environments also need qualification
 under the changed preparation inputs. Fully cold builds and deliberate native
-runtime, lock, compiler or platform changes can still be expensive. Record a
-new cold run, an exact environment hit, and an environment miss with a wheel hit
-before claiming an elapsed-time improvement. Compare selected checks, cache
-state, elapsed time and summed job time separately.
+runtime, lock, compiler or platform changes can still be expensive. Distinguish
+a cold run, an exact environment hit, and an environment miss with a wheel hit
+when comparing elapsed time. Compare selected checks, cache state, elapsed time
+and summed job time separately.
 
 Cross-workflow cold-build deduplication and independent cancellation of superseded
 PR verification remain part of
 [#225](https://github.com/Zorro909/skywright/issues/225). The uv caches are already small and pruned;
 retaining large downloaded ML wheels needs timing and storage measurements
-before changing that policy. Production native ABI qualification remains
-[#250](https://github.com/Zorro909/skywright/issues/250).
+before changing that policy. The production native ABI qualification added by
+[#250](https://github.com/Zorro909/skywright/issues/250) remains required in the
+image consumer, including its real SDK invocation.
 
 
 ## Backend artifact reuse
