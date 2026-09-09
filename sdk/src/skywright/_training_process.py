@@ -206,6 +206,11 @@ def run_training_process(
         return signal_requests.interruption_requested or interruption_requested()
 
     try:
+        configure_retention = getattr(
+            resolved_recorder, "configure_checkpoint_retention", None
+        )
+        if callable(configure_retention):
+            configure_retention(configuration)
         configure_recorder_observability(
             resolved_recorder,
             configuration,

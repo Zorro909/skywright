@@ -11,6 +11,7 @@ from skywright._run_store.implementation import (
     CheckpointCodec,
     OperationControl,
     RunStoreMissingObjectError,
+    RunStoreReader,
     TargetStorage,
 )
 from skywright._run_store.implementation import (
@@ -74,6 +75,51 @@ class RunStoreRecorder(_RunStoreRecorder):
             ObservabilityShutdownIncomplete | None
         ) = None
         self._shutdown_grace_seconds = 30.0
+        self._checkpoint_retention: tuple[int, int | None] | None = None
+
+    def configure_checkpoint_retention(
+        self, configuration: Mapping[str, object]
+    ) -> None:
+        """Bind the accepted retention policy before the attempt starts."""
+        if self._attempt is not None:
+            raise RuntimeError(
+                "retention must be configured before attempt publication"
+            )
+        checkpoint = configuration.get("checkpoint", {})
+        if not isinstance(checkpoint, Mapping):
+            raise TypeError("Run Configuration checkpoint must be an object")
+        policy = cast(Mapping[str, object], checkpoint)
+        retention = policy.get("retention", 3)
+        keep_every_nth = policy.get("keepEveryNth")
+        for value in (retention, keep_every_nth):
+            if value is not None and (type(value) is not int or value < 1):
+                raise ValueError(
+                    "checkpoint retention counts must be positive integers"
+                )
+        if retention is None:
+            raise ValueError("checkpoint.retention must be a positive integer")
+        self._checkpoint_retention = (
+            cast(int, retention),
+            cast(int | None, keep_every_nth),
+        )
+
+    def prune_confirmed_checkpoints(self) -> None:
+        """Prune in the checkpoint worker, behind its confirmed recovery point."""
+        self._require_open()
+        if self._checkpoint_retention is None:
+            return
+        with self._confirmation_lock:
+            confirmed = self._latest_confirmation
+        if confirmed is None:
+            return
+        retention, keep_every_nth = self._checkpoint_retention
+        RunStoreReader(
+            self.target, client=self._client, checkpoint_codec=self._codec
+        ).prune_checkpoints(
+            retention=retention,
+            keep_every_nth=keep_every_nth,
+            final_reference=confirmed[1],
+        )
 
     def configure_metrics(
         self,

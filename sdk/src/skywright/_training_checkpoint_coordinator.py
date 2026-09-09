@@ -152,6 +152,9 @@ class CheckpointCoordinator:
                 return
             try:
                 self._publish_and_confirm(snapshot)
+                prune = getattr(self._recorder, "prune_confirmed_checkpoints", None)
+                if callable(prune):
+                    prune()
             except Exception as failure:
                 with self._condition:
                     expected_cancellation = self._cancelling_active and isinstance(

@@ -50,6 +50,9 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
             addressingMode="path",
         )
         materials["datasetLocation"].update(endpoint=endpoint, region="us-east-1")
+        definition["configuration"]["checkpoint"].update(
+            cadence=3, retention=1, keepEveryNth=5
+        )
         client.create_bucket(Bucket="outputs")
         client.create_bucket(Bucket="datasets")
         for item in materials["dataset"]["objects"]:
@@ -82,6 +85,9 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
             counter += 1
             directory.mkdir()
             d, m = deepcopy(definition), deepcopy(materials)
+            if stop:
+                # Isolate forced-final-checkpoint behavior from scheduled checkpoints.
+                d["configuration"]["checkpoint"]["cadence"] = 100
             m["runId"] = run_id
             m["sourceCheckpoint"] = source
             d["orderingReset"] = reset
@@ -181,6 +187,14 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
             return directory, result
 
         baseline_dir, baseline = execute(str(uuid4()))
+        baseline_keys = client.list_objects_v2(
+            Bucket="outputs",
+            Prefix=f"stable-project/{baseline['run_id']}/v1/checkpoints/",
+        ).get("Contents", [])
+        assert [
+            int(item["Key"].split("/checkpoints/")[1].split("/")[0])
+            for item in baseline_keys
+        ] == [12]
         expected_ordinals = json.loads((baseline_dir / "committed.json").read_text())
         resumed_id = str(uuid4())
         _, seed = execute(resumed_id, interrupt=5, expected=75)

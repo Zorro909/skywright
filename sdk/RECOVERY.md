@@ -53,6 +53,13 @@ Under the Run Store's `v1/` prefix:
 Each journal event records the Run, Project Version and pinned debt maximum.
 Attempt events retain admission debt and previous-writer evidence. Checkpoint
 events retain Step and durable reference; payload pruning never deletes them.
+The Training Process configures automatic checkpoint retention from its Run
+Configuration. After confirmation, the same checkpoint worker prunes behind a
+fully verified newer protected checkpoint. It keeps the newest configured count,
+optional every-Nth Steps and the confirmed final reference. Pruning shares the
+publication cancellation control and shutdown wait. Failure preserves the
+confirmed point and leaves excess objects; it is reported through the worker's
+failure path instead of being treated as successful cleanup.
 Replay verifies every addressed event and corresponding Execution Attempt Record.
 A missing head with existing Run Store objects, missing event, corrupt digest,
 conflicting identity, changed policy or invalid termination evidence fails closed.
