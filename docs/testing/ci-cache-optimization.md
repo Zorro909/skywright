@@ -35,6 +35,7 @@ as the sole identity difference between two cold retry attempts.
 | Trivy | Each scan invokes setup and restores the complete cache again. Four cache entries occupied about 4.0 GB during the audit. | Set up once per job; retain only databases; write daily database entries from main only. |
 | Backend verification | Java, application and image jobs each verify the backend reactor. | The Java producer verifies once and publishes a checksummed handoff bound to the revision, run and producer attempt. Browser and image checks consume it. |
 | SDK static checks | Every compatibility lane repeats formatting, typing, generated contracts, API checks and coverage. | Run these once on Python 3.14; retain unit and installed-distribution tests on all five interpreters. |
+| Integration scheduling | The SDK's independent 26 real-service tests run after the Java suite, adding 5m 30s in the warm main run 34396974085. | Run SDK integration after planning in a separate job; require both suites in the existing integration result. |
 | Main deployment | Every main push installs prerequisites and builds images, including documentation changes. | Apply the existing quality planner before setup and build steps. |
 
 The cache API initially reported 64 entries using 11,169,078,533 bytes. This is
@@ -92,8 +93,9 @@ producer attempts. Consumer-only retries explicitly refer to the retained
 successful producer attempt. Tests exercise these checks against real Git
 revisions and files, including altered, missing, extra and linked artifacts.
 
-Real-service integration remains independent because it runs a different tagged
-suite. Frontend verification retains its production build, which checks size
+Real-service integration runs a different tagged Java suite. Its independent
+SDK suite runs in parallel, and both results remain required. Frontend
+verification retains its production build, which checks size
 budgets absent from the Maven output configuration. Image SARIF/SBOM reporting
 and policy enforcement remain separate required checks, sharing scanner setup
 and databases within their job. Release workflows retain qualification of the

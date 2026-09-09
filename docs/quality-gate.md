@@ -23,6 +23,11 @@ SeaweedFS images through a `docker` CLI connected to a Docker-API-compatible dae
 and Podman sockets satisfying that contract are supported; a missing CLI or unreachable daemon is
 a failed prerequisite. The complete local plan includes this selector.
 
+CI runs the Java and SDK real-service suites in separate jobs. The SDK suite
+starts after planning because it needs neither the backend build nor GraalPy.
+The `Real-service integration` result requires both jobs to succeed whenever
+integration applies. The complete local selector still runs both suites.
+
 The planning interface accepts either a Git comparison or explicit paths:
 
 ```bash
