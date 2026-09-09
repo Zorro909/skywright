@@ -52,6 +52,11 @@ found that the listed candidate's download broker failed. `scripts/setup-worktre
 therefore falls back to that same verified archive on Linux amd64. This path was
 run with a separate SDKMAN directory lacking the candidate and completed setup.
 The pinned container's Java properties and installation path were also checked.
+CI's pinned `actions/setup-java` rejects four-part Java versions as invalid
+SemVer. The composite action supplies `25.0.4+1` as its installation label while
+retaining `25.0.4.1` in the canonical toolchain and exact Maven runtime checks.
+The pinned setup action was executed against the verified archive in an isolated
+local action environment and passed.
 
 GraalPy's Python implementation tuple omits the fourth hotfix component.
 The environment observation records the exact version checked against the

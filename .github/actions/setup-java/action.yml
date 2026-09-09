@@ -27,8 +27,15 @@ runs:
         from pathlib import Path
 
         toolchain = json.loads(Path("quality/toolchain.json").read_text())
-        for name in ("java_archive_sha256", "java_archive_url", "java_version"):
+        for name in ("java_archive_sha256", "java_archive_url"):
             print(f"{name}={toolchain[name]}")
+        # setup-java accepts SemVer labels, but this JDK has a fourth hotfix component.
+        # The archive checksum and Maven runtime checks still pin the exact JDK.
+        parts = toolchain["java_version"].split(".")
+        setup_version = ".".join(parts[:3])
+        if len(parts) > 3:
+            setup_version += "+" + ".".join(parts[3:])
+        print(f"java_setup_version={setup_version}")
         PY
     - name: Cache GraalVM Community archive
       id: graalvm-cache
@@ -58,7 +65,7 @@ runs:
       with:
         distribution: jdkfile
         jdk-file: ${{ runner.temp }}/graalvm-community.tar.gz
-        java-version: ${{ steps.toolchain.outputs.java_version }}
+        java-version: ${{ steps.toolchain.outputs.java_setup_version }}
         cache: maven
     - name: Resolve effective GraalPy environment identity
       id: environment
