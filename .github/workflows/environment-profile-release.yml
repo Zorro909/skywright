@@ -119,9 +119,13 @@ jobs:
             --inspect "release/$BACKEND/image.json" \
             --facts "release/$BACKEND/runtime-facts.json" \
             --output "release/$BACKEND/evidence.json"
+      - name: Set up Trivy databases once
+        uses: ./.github/actions/setup-trivy
       - name: Generate the SPDX JSON SBOM
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          cache: false
+          skip-setup-trivy: true
           image-ref: ghcr.io/zorro909/skywright-environment:${{ needs.validate.outputs.version }}-${{ matrix.backend }}
           format: spdx-json
           output: release/${{ matrix.backend }}/${{ matrix.backend }}.spdx.json
@@ -133,6 +137,8 @@ jobs:
       - name: Enforce the vulnerability policy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          cache: false
+          skip-setup-trivy: true
           image-ref: ghcr.io/zorro909/skywright-environment:${{ needs.validate.outputs.version }}-${{ matrix.backend }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true

@@ -62,6 +62,42 @@ class EnvironmentIdentityTest(unittest.TestCase):
         (self.root / 'Application.java').write_text('changed application')
         self.assertEqual(before, environment.identity(self.root, self.versions))
 
+    def test_workflow_and_probe_edits_requalify_environment_but_reuse_wheels(self):
+        before = environment.identity(self.root, self.versions, target={'os': 'one'}, native={'cc': 'one'})
+        wheels = environment.wheel_identity(before)
+        for name in ('.github/actions/prepare-graalpy/action.yml',
+                     'graalpy-environment/VerifyEnvironment.java',
+                     'backend-deployment/src/main/docker/Dockerfile'):
+            with self.subTest(input=name):
+                path = self.root / name
+                path.write_text(path.read_text() + '\n# qualification-only edit\n')
+                after = environment.identity(self.root, self.versions, target={'os': 'one'}, native={'cc': 'one'})
+                self.assertNotEqual(before, after)
+                self.assertEqual(wheels, environment.wheel_identity(after))
+
+    def test_wheels_are_isolated_by_runtime_lock_recipe_platform_and_native_inputs(self):
+        before = environment.identity(self.root, self.versions, target={'os': 'one'}, native={'cc': 'one'})
+        wheels = environment.wheel_identity(before)
+        for field, value in (('versions', {**self.versions, 'graalpy': '99.0.0'}),
+                             ('versions', {**self.versions, 'skypilot': '99.0.0'}),
+                             ('platform', {'os': 'two'}), ('nativeBuild', {'cc': 'two'}),
+                             ('nativeBuild', {'cc': 'one', 'flags': {'CFLAGS': '-march=native'}}),
+                             ('toolchain', {'java_version': '99'})):
+            with self.subTest(field=field, value=value):
+                self.assertNotEqual(wheels, environment.wheel_identity({**before, field: value}))
+        for name in environment.WHEEL_INPUTS:
+            with self.subTest(input=name):
+                changed = {**before, 'inputs': {**before['inputs'], name: 'changed'}}
+                self.assertNotEqual(wheels, environment.wheel_identity(changed))
+
+    def test_identity_command_emits_both_cache_identities(self):
+        output = self.root / 'github-output'
+        self.invoke('identity', '--github-output', str(output))
+        values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+        expected = environment.identity(self.root, self.versions)
+        self.assertEqual(values['identity'], environment.digest(environment.canonical(expected)))
+        self.assertEqual(values['wheel-identity'], environment.digest(environment.canonical(environment.wheel_identity(expected))))
+
     def test_sealed_environment_rejects_changed_effective_versions_before_probe(self):
         self.seal()
         self.invoke('verify')

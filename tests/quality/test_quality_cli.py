@@ -112,7 +112,7 @@ class PlanningTest(unittest.TestCase):
                     "frontend": True,
                     "image": True,
                     "integration": False,
-                    "java": False,
+                    "java": True,
                     "profile": False,
                     "sdk": False,
                     "security": True,

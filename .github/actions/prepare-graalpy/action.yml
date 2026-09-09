@@ -16,6 +16,14 @@ runs:
         echo "PIP_CACHE_DIR=$GITHUB_WORKSPACE/.ci-cache/graalpy-pip" >> "$GITHUB_ENV"
         echo "PIP_CONSTRAINT=$GITHUB_WORKSPACE/graalpy-environment/build-constraints.txt" >> "$GITHUB_ENV"
         echo "PIP_FIND_LINKS=$GITHUB_WORKSPACE/.ci-cache/graalpy-pip/wheelhouse" >> "$GITHUB_ENV"
+    - name: Set up pinned native Rust compiler
+      shell: bash
+      run: |
+        rust_version=$(cat graalpy-environment/rust-toolchain-version)
+        if ! rustup run "$rust_version" rustc --version; then
+          rustup toolchain install "$rust_version" --profile minimal --no-self-update
+        fi
+        echo "RUSTUP_TOOLCHAIN=$rust_version" >> "$GITHUB_ENV"
     - name: Set up GraalVM Community and packaged GraalPy cache
       id: java
       uses: ./.github/actions/setup-java
@@ -24,43 +32,34 @@ runs:
     - name: Test effective Maven version invalidation
       shell: bash
       run: python3 -m unittest discover -s tests/graalpy -v
-    - name: Prepare progressive GraalPy pip cache directory
-      if: steps.java.outputs.graalpy-cache-hit != 'true'
-      shell: bash
-      run: mkdir --parents "$PIP_CACHE_DIR" "$PIP_FIND_LINKS"
     - name: Restore progressive GraalPy pip cache
       id: graalpy-pip-cache
-      if: steps.java.outputs.graalpy-cache-hit != 'true'
+      # Restore even on an environment hit so expensive wheels stay in active use.
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
-        path: ${{ env.PIP_CACHE_DIR }}
-        key: ${{ runner.os }}-${{ runner.arch }}-graalpy-pip-v3-${{ steps.java.outputs.graalpy-identity }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          .ci-cache/graalpy-pip/wheels
+          .ci-cache/graalpy-pip/wheelhouse
+        key: ${{ runner.os }}-${{ runner.arch }}-graalpy-wheels-v1-${{ steps.java.outputs.graalpy-wheel-identity }}-complete
         restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-graalpy-pip-v3-${{ steps.java.outputs.graalpy-identity }}-
+          ${{ runner.os }}-${{ runner.arch }}-graalpy-wheels-v1-${{ steps.java.outputs.graalpy-wheel-identity }}-partial-
     - name: Prime pandas wheel cache
       if: steps.java.outputs.graalpy-cache-hit != 'true'
       shell: bash
-      run: |
-        timeout \
-          --verbose \
-          --kill-after=2m \
-          150m \
-          ./mvnw \
-            --batch-mode \
-            --no-transfer-progress \
-            -Dgraalpy.environment.prebuilt=true \
-            -P!verify-prebuilt-graalpy-environment \
-            -Dgraalpy.wheel.package=pandas==2.2.3 \
-            -Dgraalpy.wheel.id=pandas \
-            -pl graalpy-environment \
-            process-resources
-    - name: Publish pandas wheel to local wheelhouse
-      if: steps.java.outputs.graalpy-cache-hit != 'true'
-      shell: bash
-      run: |
-        pandas_wheel=$(find "$PIP_CACHE_DIR/wheels" -type f -name 'pandas-2.2.3-graalpy313-graalpy253_313_native-*.whl' -print -quit)
-        test -n "$pandas_wheel"
-        scripts/retag-wheel "$pandas_wheel" "$PIP_FIND_LINKS" linux_x86_64
+      run: scripts/prepare-graalpy-wheels
+    - name: Checkpoint pandas wheels before installing the full environment
+      if: >-
+        always() && steps.java.outputs.graalpy-cache-hit != 'true' &&
+        steps.graalpy-pip-cache.outcome == 'success' &&
+        steps.graalpy-pip-cache.outputs.cache-hit != 'true' &&
+        hashFiles('.ci-cache/graalpy-pip/wheels/**', '.ci-cache/graalpy-pip/wheelhouse/**') != '' &&
+        steps.graalpy-pip-cache.outputs.cache-matched-key != format('{0}-{1}-graalpy-wheels-v1-{2}-partial-{3}', runner.os, runner.arch, steps.java.outputs.graalpy-wheel-identity, hashFiles('.ci-cache/graalpy-pip/wheels/**', '.ci-cache/graalpy-pip/wheelhouse/**'))
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: |
+          .ci-cache/graalpy-pip/wheels
+          .ci-cache/graalpy-pip/wheelhouse
+        key: ${{ runner.os }}-${{ runner.arch }}-graalpy-wheels-v1-${{ steps.java.outputs.graalpy-wheel-identity }}-partial-${{ hashFiles('.ci-cache/graalpy-pip/wheels/**', '.ci-cache/graalpy-pip/wheelhouse/**') }}
     - name: Build packaged GraalPy environment on cache miss
       id: build-graalpy
       if: steps.java.outputs.graalpy-cache-hit != 'true'
@@ -70,20 +69,24 @@ runs:
           --verbose \
           --kill-after=2m \
           100m \
-          ./mvnw \
+          mvn \
             --batch-mode \
             --no-transfer-progress \
             -pl graalpy-environment \
             process-resources
-    - name: Save progressive GraalPy pip cache
+    - name: Save additional wheels after an interrupted environment build
       if: >-
-        always() &&
-        steps.java.outputs.graalpy-cache-hit != 'true' &&
-        steps.graalpy-pip-cache.outcome == 'success'
+        always() && steps.java.outputs.graalpy-cache-hit != 'true' &&
+        steps.graalpy-pip-cache.outcome == 'success' &&
+        steps.graalpy-pip-cache.outputs.cache-hit != 'true' &&
+        steps.build-graalpy.outcome == 'failure' &&
+        hashFiles('.ci-cache/graalpy-pip/wheels/**', '.ci-cache/graalpy-pip/wheelhouse/**') != ''
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
-        path: ${{ env.PIP_CACHE_DIR }}
-        key: ${{ steps.graalpy-pip-cache.outputs.cache-primary-key }}
+        path: |
+          .ci-cache/graalpy-pip/wheels
+          .ci-cache/graalpy-pip/wheelhouse
+        key: ${{ runner.os }}-${{ runner.arch }}-graalpy-wheels-v1-${{ steps.java.outputs.graalpy-wheel-identity }}-partial-${{ hashFiles('.ci-cache/graalpy-pip/wheels/**', '.ci-cache/graalpy-pip/wheelhouse/**') }}
     - name: Validate actual packaged runtime and native imports
       id: smoke-graalpy
       if: >-
@@ -96,6 +99,18 @@ runs:
         timeout --verbose --kill-after=30s 5m \
           mvn --batch-mode --no-transfer-progress -Dgraalpy.environment.prebuilt=true \
           -pl graalpy-environment process-resources
+    - name: Save complete GraalPy wheel cache
+      if: >-
+        steps.graalpy-pip-cache.outcome == 'success' &&
+        steps.graalpy-pip-cache.outputs.cache-hit != 'true' &&
+        steps.build-graalpy.outcome == 'success' &&
+        steps.smoke-graalpy.outcome == 'success'
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: |
+          .ci-cache/graalpy-pip/wheels
+          .ci-cache/graalpy-pip/wheelhouse
+        key: ${{ steps.graalpy-pip-cache.outputs.cache-primary-key }}
     - name: Test relocated prebuilt packaging and mismatch rejection
       shell: bash
       run: python3 -m unittest discover -s tests/graalpy_prebuilt -v

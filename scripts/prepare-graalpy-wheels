@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This recipe is part of the wheel identity. Keep build options here so editing
+# workflow orchestration does not invalidate compatible compiled dependencies.
+: "${PIP_CACHE_DIR:?}"
+: "${PIP_FIND_LINKS:?}"
+: "${PIP_CONSTRAINT:?}"
+mkdir --parents "$PIP_CACHE_DIR/wheels" "$PIP_FIND_LINKS"
+
+wheel_pattern='pandas-2.2.3-graalpy313-graalpy253_313_native-*.whl'
+if [[ -n "$(find "$PIP_FIND_LINKS" -type f -name "$wheel_pattern" -print -quit)" ]]; then
+  echo 'Reusing the prepared pandas wheel; the locked environment build will validate it.'
+  exit 0
+fi
+
+pandas_wheel=$(find "$PIP_CACHE_DIR/wheels" -type f -name "$wheel_pattern" -print -quit)
+if [[ -z "$pandas_wheel" ]]; then
+  timeout --verbose --kill-after=2m 150m \
+    mvn --batch-mode --no-transfer-progress \
+      -Dgraalpy.environment.prebuilt=true \
+      -P!verify-prebuilt-graalpy-environment \
+      -Dgraalpy.wheel.package=pandas==2.2.3 \
+      -Dgraalpy.wheel.id=pandas \
+      -pl graalpy-environment process-resources
+  pandas_wheel=$(find "$PIP_CACHE_DIR/wheels" -type f -name "$wheel_pattern" -print -quit)
+fi
+test -n "$pandas_wheel"
+scripts/retag-wheel "$pandas_wheel" "$PIP_FIND_LINKS" linux_x86_64

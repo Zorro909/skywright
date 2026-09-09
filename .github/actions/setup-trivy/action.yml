@@ -1,0 +1,39 @@
+name: Set up Trivy and its databases
+description: Restore databases once per job and save daily updates only from main.
+runs:
+  using: composite
+  steps:
+    - name: Install Trivy
+      uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+      with:
+        version: v0.70.0
+        cache: true
+    - name: Read database cache date
+      id: date
+      shell: bash
+      run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+    - name: Restore Trivy databases
+      id: databases
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: |
+          .cache/trivy/db
+          .cache/trivy/java-db
+        key: ${{ runner.os }}-${{ runner.arch }}-trivy-db-v0.70.0-${{ steps.date.outputs.date }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-trivy-db-v0.70.0-
+    - name: Refresh vulnerability databases
+      shell: bash
+      run: |
+        timeout --verbose --kill-after=30s 5m trivy image --cache-dir .cache/trivy --download-db-only
+        timeout --verbose --kill-after=30s 5m trivy image --cache-dir .cache/trivy --download-java-db-only
+    - name: Save daily Trivy databases from main
+      if: >-
+        github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+        steps.databases.outputs.cache-hit != 'true'
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: |
+          .cache/trivy/db
+          .cache/trivy/java-db
+        key: ${{ steps.databases.outputs.cache-primary-key }}

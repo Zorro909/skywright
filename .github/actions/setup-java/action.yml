@@ -12,6 +12,9 @@ outputs:
   graalpy-cache-primary-key:
     description: Exact key under which a validated packaged environment may be saved.
     value: ${{ steps.graalpy-cache.outputs.cache-primary-key }}
+  graalpy-wheel-identity:
+    description: Exact native wheel inputs, independent of environment qualification code.
+    value: ${{ steps.environment.outputs.wheel-identity }}
   graalpy-identity:
     description: Canonical effective environment identity, including inherited versions and native platform inputs.
     value: ${{ steps.environment.outputs.identity }}
@@ -66,7 +69,22 @@ runs:
         distribution: jdkfile
         jdk-file: ${{ runner.temp }}/graalvm-community.tar.gz
         java-version: ${{ steps.toolchain.outputs.java_setup_version }}
-        cache: maven
+    - name: Cache Maven downloads
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: |
+          ~/.m2/repository
+          !~/.m2/repository/de/zorro909/skywright
+        # Each lane saves its own dependency set; the native producer cannot win
+        # a race and freeze an incomplete cache for every backend consumer.
+        key: ${{ runner.os }}-${{ runner.arch }}-maven-v1-${{ github.job }}-${{ hashFiles('**/pom.xml', '.mvn/**') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-maven-v1-${{ github.job }}-
+    - name: Cache Maven wrapper distribution
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/.m2/wrapper/dists
+        key: ${{ runner.os }}-${{ runner.arch }}-maven-wrapper-${{ hashFiles('.mvn/wrapper/maven-wrapper.properties') }}
     - name: Resolve effective GraalPy environment identity
       id: environment
       if: inputs.graalpy-resources == 'true'

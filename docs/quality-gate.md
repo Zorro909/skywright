@@ -58,8 +58,10 @@ diagnostic metadata for 90 days. `main` and merge-queue runs identify `github.sh
 workflows must call `scripts/quality identity --event tag` with the peeled tag commit as both the
 tested revision and tag commit, so another checkout cannot be described as the released source.
 
-Superseded runs are cancelled only for the same pull request. `main`, merge queue, tag, and
-publication runs use unique concurrency identities and finish independently. Ordinary verification
+The current quality workflow queues runs for the same pull request without cancelling an active
+native build, so it can save expensive compiled wheels. Independent cancellation of superseded
+verification remains tracked in #225. Main and merge-queue quality runs use unique concurrency
+identities; release workflows serialize their own branch or tag. Ordinary verification
 uses no repository, publication, infrastructure, or cloud credentials and remains runnable for fork
 pull requests.
 
@@ -84,8 +86,41 @@ GraalPy preparation is shared by quality and deployment workflows through
 `.github/actions/prepare-graalpy`. Its exact cache identity includes Maven-resolved inherited
 GraalPy and SkyPilot versions, the package lock, constraints, native compiler versions and flags,
 OS/libc/architecture, the pinned JDK, preparation code and production Dockerfile. It does not hash
-unrelated application sources. Progressive wheel caches use the same identity with no broad
-fallback. Changing an identity input starts a new dependency build.
+unrelated application sources. CI selects the exact Rust compiler from
+`graalpy-environment/rust-toolchain-version` before resolving native inputs. Hosted runner changes
+to other native compilers or system libraries still invalidate the environment.
+
+Wheel downloads and packaged environments have separate identities. The wheel identity retains
+exact effective runtime/SDK versions, lockfile, constraints, JDK, native compiler versions/flags,
+platform, environment POM, and the `scripts/prepare-graalpy-wheels` and `scripts/retag-wheel`
+recipes. Workflow, import-probe, identity-verification code, and production Dockerfile edits
+require a fresh environment install and qualification but can reuse those compiled wheels.
+Keep wheel build options in the hashed recipe; bump the wheel schema when its compatibility
+rules change. There is no fallback across different wheel identities.
+
+Preparation restores the completed wheel cache even on a packaged-environment hit, keeping it
+in active use. A successful preparation saves one immutable completed cache per wheel identity.
+Before that exists, partial caches use a digest of their contents and survive a later build
+failure. Pandas is checkpointed immediately after preparation, before the full locked install.
+Only pip's built-wheel directory and the local wheelhouse are saved, excluding HTTP responses.
+The completed cache is saved only after the actual environment build and import check pass.
+
+Maven download keys include the job name, POMs, and Maven configuration. A missing exact key
+falls back only within that job and runner platform, then Maven resolves the current POMs.
+This prevents the small native producer dependency set from taking the immutable cache key
+needed by backend jobs. Locally installed Skywright artifacts are excluded. Wrapper archives
+use a separate key. Pnpm downloads retain exact Node/pnpm and lockfile keys with fallback
+within the same toolchain. Chromium keys use Ubuntu 24.04, architecture, and the pinned
+Playwright version; unrelated frontend lockfile edits do not invalidate the browser.
+
+Trivy restores its vulnerability and Java databases once per job. The shared setup refreshes
+both databases through Trivy before scanning; updates remain enabled. Only main pushes save
+a daily database entry, and cached image-analysis results are excluded. All existing SARIF,
+SBOM, and vulnerability-policy scans remain required.
+
+Main deployment qualification uses the quality planner before installing prerequisites.
+It builds when image or deployment inputs changed; documentation-only pushes skip native
+preparation and image builds. Tag publication continues to qualify its exact release source.
 
 A restored environment must match that identity and a digest of its installed dependency files.
 Preparation discards generated interpreter bytecode before validation and packaging, retaining
@@ -102,7 +137,22 @@ commit. Consumers also compare the artifact's producer attempt with the successf
 output. A consumer-only retry can therefore use the original successful producer, while a different
 producer attempt is rejected. Consumers reject foreign-run or foreign-source provenance before prebuilt packaging.
 The dependency cache is reusable across runs; application outputs and their verification still come
-from the current run. Release builds run the same dependency validation from their exact source.
+from the current run. The Java job runs the backend reactor through `install`, which includes its
+unit and non-real-service acceptance tests, then publishes only that reactor's installed JARs and
+POMs. `scripts/ci-backend` records and validates their exact inventory, SHA-256 digests, tested Git
+revision, workflow run and successful producer attempt. Browser and image jobs receive that
+handoff and fail before consuming any files if its identity or contents differ. A consumer-only
+retry uses the original successful producer attempt; it cannot accept another producer's output.
+These artifacts are never restored through a cross-run dependency cache. The image job runs only
+the deployment modules, while browser acceptance launches the verified executable and test fixture.
+Integration retains its separate real-service tests and build. Frontend changes select the Java
+producer because browser and image qualification require its packaged application.
+
+SDK static checks, generated-contract checks, public API checks and coverage run on the primary
+Python 3.14 lane. `sdk/scripts/test-unit` runs the discovered unit suite on every compatibility
+interpreter without repeating coverage instrumentation. Installed wheel and source-distribution
+tests still run on Python 3.10 through 3.14. `sdk/scripts/check` remains the complete local and
+release check; it invokes the same unit command with coverage enabled. Release builds run the same dependency validation from their exact source.
 Prebuilt environments created before this record existed must be prepared again. A packaging host
 may consume dependencies qualified on another host; the recorded native platform remains visible,
 and the fresh import probe must succeed on the packaging host. Image ABI qualification remains #250.
