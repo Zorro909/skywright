@@ -26,7 +26,7 @@ These are local measurements, not service latency guarantees. The test measures 
 
 ## Production boundary
 
-Initialization and lifecycle bookkeeping remain serialized. SDK execution uses two bounded platform-thread lanes in the single shared native-capable GraalPy context. SDK imports serialize on their own lock and happen on the first SDK operation. The initial health probe only needs the standard library. SkyPilot's contextual environment carries the resolved backend authorization token for each invocation, including overlapping credential revisions. Vault projection usage continues to cover the whole invocation.
+Initialization and lifecycle bookkeeping remain serialized. SDK execution uses two bounded platform-thread lanes in the single shared native-capable GraalPy context. SDK imports serialize on their own lock and happen on the first SDK operation. Health probes use Requests with the same verified TLS configuration as SDK calls and do not import SkyPilot. SkyPilot's contextual environment carries the resolved backend authorization token for each invocation, including overlapping credential revisions. Vault projection usage continues to cover the whole invocation.
 
 A Python audit hook tracks live sockets owned by this context, including wrappers created around existing descriptors. Shutdown closes admission, drains for the configured grace, rejects queued work, and shuts down the tracked sockets to wake native reads. The client waits up to four seconds for active invocations to leave before closing the context. Failure to quiesce raises an error instead of destroying a context still executing native code. This guard does not qualify arbitrary native extension deadlocks.
 

@@ -144,8 +144,8 @@ class JavaSetupContractTest(unittest.TestCase):
             "urllib3==2.7.0",
             "pandas==2.2.3",
             "psutil==5.9.8",
-            "uvloop==0.19.0",
-            "watchfiles==0.21.0",
+            "uvloop==0.22.1",
+            "watchfiles==1.2.0",
         }
 
         self.assertTrue(expected.issubset(packages))

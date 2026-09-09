@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,7 +34,9 @@ final class PackagedHeldSkyPilotIT {
 		var certificate = tls ? SkyPilotTlsFixture.create(temporary, true) : null;
 		try (var api = SkyPilotApiServerFixture.start();
 				var proxy = new HeldSkyPilotProxy(api.endpoint(), certificate == null ? null : certificate.context())) {
-			var builder = PackagedSkyPilotFixture.process(mode, proxy.endpoint());
+			var endpoint = tls && saturateControl ? URI.create("https://localhost:" + proxy.endpoint().getPort())
+					: proxy.endpoint();
+			var builder = PackagedSkyPilotFixture.process(mode, endpoint);
 			if (certificate != null) {
 				certificate.configureTrust(builder);
 			}

@@ -6,13 +6,13 @@ import re
 import socket
 import sys
 import threading
-import urllib.error
-import urllib.request
 import weakref
 
 
 _SKY_MODULES = None
 _SKY_LOCK = threading.Lock()
+_REQUESTS = None
+_REQUESTS_LOCK = threading.Lock()
 _JOB_LIMIT = 1000
 _JOB_FIELDS = [
     "job_id", "job_name", "status", "recovery_count", "task_id", "submitted_at",
@@ -21,11 +21,29 @@ _JOB_FIELDS = [
 ]
 
 
+def _requests_module():
+    global _REQUESTS
+    if _REQUESTS is None:
+        with _REQUESTS_LOCK:
+            if _REQUESTS is None:
+                # GraalPy's native hostname checking omits IP endpoints. Mark
+                # that capability unreliable so urllib3 checks certificate names
+                # itself before writing HTTP headers, including authorization.
+                from urllib3.util import ssl_ as urllib3_ssl
+
+                urllib3_ssl.HAS_NEVER_CHECK_COMMON_NAME = False
+                import requests
+
+                _REQUESTS = requests
+    return _REQUESTS
+
+
 def _sky_modules():
     global _SKY_MODULES
     if _SKY_MODULES is None:
         with _SKY_LOCK:
             if _SKY_MODULES is None:
+                _requests_module()
                 import sky
                 from sky.server import common as server_common
                 from sky.utils import common as sky_common
@@ -76,11 +94,14 @@ def _clear_api_server_status_cache():
 
 
 def _probe_failure(failure):
-    if isinstance(failure, urllib.error.HTTPError) and failure.code in (401, 403):
-        return _bridge_failure(
-            "AUTHENTICATION", "SkyPilot API authentication failed"
-        )
-    if isinstance(failure, (urllib.error.URLError, TimeoutError)):
+    requests = _requests_module()
+    if (isinstance(failure, requests.exceptions.HTTPError)
+            and failure.response.status_code in (401, 403)):
+        return _bridge_failure("AUTHENTICATION", "SkyPilot API authentication failed")
+    if isinstance(failure, (
+        requests.exceptions.HTTPError, requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+    )):
         return _bridge_failure("REACHABILITY", "SkyPilot API server is unreachable")
     return _bridge_failure("ADAPTER_CONTRACT", "SkyPilot bridge operation failed")
 
@@ -160,13 +181,15 @@ def bridge_interrupt():
 def bridge_probe(token=None):
     endpoint = os.environ["SKYPILOT_API_SERVER_ENDPOINT"].rstrip("/")
     try:
-        request = urllib.request.Request(f"{endpoint}/api/health")
         if token is None:
             token = os.environ.get("SKYPILOT_SERVICE_ACCOUNT_TOKEN")
-        if token:
-            request.add_header("Authorization", f"Bearer {token}")
-        with urllib.request.urlopen(request, timeout=5) as response:
-            info = json.load(response)
+        # Health carries authorization too and may redirect to HTTPS.
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        with _requests_module().get(
+            f"{endpoint}/api/health", headers=headers, timeout=5
+        ) as response:
+            response.raise_for_status()
+            info = response.json()
     except Exception as failure:
         return _probe_failure(failure)
     return json.dumps({"server_version": str(info["version"])})

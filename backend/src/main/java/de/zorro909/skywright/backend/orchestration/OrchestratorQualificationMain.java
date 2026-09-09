@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import tools.jackson.databind.json.JsonMapper;
@@ -41,18 +42,26 @@ public final class OrchestratorQualificationMain {
 	}
 
 	private static Map<String, Object> tlsRejected(SkyPilotClient client) throws Exception {
+		// Call the actual SDK first. Health must not short-circuit this check.
+		requireTlsRejection(() -> client.observe(new StatusRequest(List.of("missing-job"))));
+		requireTlsRejection(() -> {
+			client.probe();
+			return null;
+		});
+		return Map.of("sdk_tls_rejected", true, "probe_tls_rejected", true, "cause", "REACHABILITY");
+	}
+
+	private static void requireTlsRejection(Callable<?> request) throws Exception {
 		try {
-			// Call the actual SDK. The standard-library health probe must not
-			// short-circuit this qualification before urllib3 attempts TLS.
-			client.observe(new StatusRequest(List.of("missing-job")));
+			request.call();
 		}
 		catch (SkyPilotClientFailure failure) {
 			if (failure.causeCategory() != BridgeFailure.FailureCause.REACHABILITY) {
 				throw failure;
 			}
-			return Map.of("sdk_tls_rejected", true, "cause", failure.causeCategory().name());
+			return;
 		}
-		throw new IllegalStateException("SDK accepted a TLS peer that should have been rejected");
+		throw new IllegalStateException("TLS peer accepted when it should have been rejected");
 	}
 
 	private static Map<String, Object> unavailable(SkyPilotClient client, BridgeFailure.FailureCause expected)
