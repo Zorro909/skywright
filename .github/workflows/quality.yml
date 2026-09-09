@@ -304,10 +304,11 @@ jobs:
           SDK_RESULT: ${{ needs.integration-sdk.result }}
         run: |
           test "$PLAN_RESULT" = success
-          if [[ "$APPLICABLE" != true ]]; then
+          if [[ "$APPLICABLE" == false ]]; then
             echo 'INAPPLICABLE integration'
             exit 0
           fi
+          test "$APPLICABLE" = true
           test "$JAVA_RESULT" = success
           test "$SDK_RESULT" = success
 
