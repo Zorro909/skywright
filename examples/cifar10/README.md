@@ -86,6 +86,12 @@ and a public profile do not qualify a private project-image pull. Register the
 private registry binding before submission; verify unauthenticated rejection as
 well as an authenticated pull by the actual target container runtime.
 
+After enrolling the Training Project, replace the example definition's
+`projectIdentity` with its assigned ID and `registryRepository` with its bound
+GHCR repository before publishing. The checked-in definition names the isolated
+qualification project; use your own enrollment for another deployment. The backend
+must assess the resulting version as runnable.
+
 ## Submit and inspect
 
 Select the immutable project version and Dataset Definition in the UI, then choose
@@ -105,6 +111,13 @@ in addition to a readable checkpoint. The current production runtime defaults to
 unavailable recovery when that proof is absent. A cooperative signal alone is not
 proof. Successful supervised-fixture recovery must not be presented as successful
 production managed recovery.
+
+For the qualified local containerd target, install and enable the
+[local writer authority](../../deployment/examples/local-writer/README.md) before
+submitting the Run. Its node enrollment, persistent custody and matching SDK image
+are required for managed recovery. Follow the
+[qualification record](../../docs/testing/issue-235-local-amd-workflow.md) for the
+tested deployment identities, failure scenarios and measured limits.
 
 ## Automated example checks
 

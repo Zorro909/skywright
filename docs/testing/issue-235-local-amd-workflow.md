@@ -285,6 +285,23 @@ status observation containing exactly one matching job, ID 7. This Run used the
 same immutable private project image and SDK revision `f4bb661` with the corrected
 server packaging and collector.
 
+The successful Run used the following observed container-runtime image identities.
+These are manifest digests, distinct from the backend build configuration ID
+recorded earlier. The server and collector were rebuilt as local overlays of the
+qualified tini image; only Skywright collector code and the pinned CPython
+dependency changed.
+
+| Container | Source revision | Observed image digest |
+| --- | --- | --- |
+| `storage` | `pinned deployment image` | `sha256:f7cbc8bdbbf60a1aaba7d61784a3bdff3ec1e0657f6ad0b26d5b6ab2cd9d0dc6` |
+| `vault` | `pinned deployment image` | `sha256:4e33b126a59c0c333b76fb4e894722462659a6bec7c48c9ee8cea56fccfd2569` |
+| `authority` | `117c58d` | `sha256:07865d4b905bcbcfff6e24fd85dfed3124f8a035c2005a06d6845751a0805fba` |
+| `backend` | `f4bb661` | `sha256:e260ee3d6225f17786bb4a87bc53a53c164bf9183d20dc99a11902df9f49abb0` |
+| `postgresql` | `pinned deployment image` | `sha256:cc9f4143a8d2fa8cf3749d0cb4d26ecf2d53a77a2ac807e9ebd67ae22426221a` |
+| `log-collector` | `881bd13` | `sha256:ef58af1061025eba2f680180ede5b23f6edeff9f193338d96353fd4d1d4ac8b8` |
+| `runtime-pull` | `33c114d` | `sha256:f4236aed1f3e7a47885d2ca2fb38de5d345925b10ac9f98719b5d2d6279d73ba` |
+| `skypilot-api-server` | `71f1602` | `sha256:2e909a47e686d9de95c6762864dd69e2dccaffec1d9b2daa8d9fd190f3bee6d5` |
+
 Cooperative SIGTERM produced a confirmed checkpoint at Step 16. Its successor
 attempt `1ade5c87-dbec-4bef-9f62-67af427e9bfc` restored that exact reference and
 Dataset Item offset 256. The first recovered Step consumed the expected 16 Items
@@ -304,7 +321,11 @@ Cancellation Request `31c2429c-e8a8-4074-ac45-1bf7536a48f6` was accepted at
 2026-09-09 00:45:30.609977 UTC. After dropping its response and restarting the
 backend, replay preserved its ID, acceptance time and escalation deadline. The
 response recorded `effect-observed`; the UI reached a terminal state supported by
-source evidence. No training Pods remained. The latest checkpoint was Step 57.
+source evidence. No training Pods remained. The authority also retained the final
+attempt's exact-container death proof: container
+`56c973835183cd649c2958023545c67c88bf528949837d4d732b4347435cb303`
+exited at 00:46:02.566925608 UTC and its recursive cgroup was removed. The proof's
+registration digest matched that cancelled attempt. The latest checkpoint was Step 57.
 The finalized controller archive retained 43,954 bytes and reported complete.
 The task archive retained 30,010 bytes, including all three training-entry events,
 and honestly reported partial with `SOURCE_GENERATION_LOST` after abrupt loss.

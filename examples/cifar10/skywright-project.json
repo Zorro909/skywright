@@ -12,7 +12,7 @@
   ],
   "backends": {
     "rocm": {
-      "environmentProfile": "ghcr.io/zorro909/skywright-ui-qualification-profile@sha256:c18cafe3e3446207a84125628bd06a6e6c86c12e0aecf59c533d9bc080f0d65f"
+      "environmentProfile": "ghcr.io/zorro909/skywright-ui-qualification-profile@sha256:3dff7998855d200717bec9b6d1257a936b6c30d7c9423f99df39b09fe1954ab6"
     }
   }
 }
