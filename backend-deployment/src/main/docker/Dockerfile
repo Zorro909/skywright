@@ -1,4 +1,4 @@
-FROM ghcr.io/graalvm/jdk-community:25i2-25.0.4-ol10@sha256:15428f0d444cb8811758c5b0dde8a2f1ab35792629cc5dd7526fc838d949f159 AS graalvm
+FROM ghcr.io/graalvm/jdk-community:25i3-25.0.4.1-ol10@sha256:f09094098451bd6899fd941a5c23079b9e99a13b83ebaf73ac771d7c5ec874f0 AS graalvm
 
 FROM docker.io/library/ubuntu@sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316
 
@@ -12,7 +12,7 @@ LABEL org.opencontainers.image.created="${BUILD_CREATED}" \
       org.opencontainers.image.version="@project.version@" \
       io.skywright.skypilot.version="@skypilot.version@"
 
-COPY --from=graalvm /usr/lib64/graalvm/graalvm-community-java25i2 /opt/graalvm
+COPY --from=graalvm /usr/lib64/graalvm/graalvm-community-java25i3 /opt/graalvm
 
 ENV JAVA_HOME=/opt/graalvm \
     PATH=/opt/graalvm/bin:$PATH

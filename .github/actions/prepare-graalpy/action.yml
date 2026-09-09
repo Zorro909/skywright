@@ -58,7 +58,7 @@ runs:
       if: steps.java.outputs.graalpy-cache-hit != 'true'
       shell: bash
       run: |
-        pandas_wheel=$(find "$PIP_CACHE_DIR/wheels" -type f -name 'pandas-2.2.3-graalpy312-graalpy250_312_native-*.whl' -print -quit)
+        pandas_wheel=$(find "$PIP_CACHE_DIR/wheels" -type f -name 'pandas-2.2.3-graalpy313-graalpy253_313_native-*.whl' -print -quit)
         test -n "$pandas_wheel"
         scripts/retag-wheel "$pandas_wheel" "$PIP_FIND_LINKS" linux_x86_64
     - name: Build packaged GraalPy environment on cache miss

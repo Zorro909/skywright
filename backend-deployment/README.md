@@ -38,7 +38,7 @@ DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock" \
 ./mvnw -pl backend-deployment -am package
 ```
 
-The initial deployment is Linux amd64. The Dockerfile copies GraalVM CE 25.2.4 / OpenJDK 25.0.4
+The initial deployment is Linux amd64. The Dockerfile copies GraalVM CE 25.3.4.1 / OpenJDK 25.0.4.1
 from its immutable official image into a digest-pinned Fedora 44 runtime. Fedora matches the glibc
 ABI of the repository toolchain that builds GraalPy's locked native extensions. The image retains
 the complete JDK rather than using `jlink`, packages the locked SkyPilot 0.13.0 GraalPy environment

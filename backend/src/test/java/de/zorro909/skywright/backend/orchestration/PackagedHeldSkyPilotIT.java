@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -12,31 +13,33 @@ import java.time.Duration;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import tools.jackson.databind.json.JsonMapper;
 
 @Tag("real-service")
 final class PackagedHeldSkyPilotIT {
 
 	@ParameterizedTest
-	@ValueSource(booleans = { false, true })
+	@CsvSource({ "false,false", "true,false", "false,true", "true,true" })
 	@Timeout(180)
-	void packagedNativeSdkKeepsControlAndShutdownBoundedWithAnOutstandingStream(boolean saturateControl)
-			throws Exception {
+	void packagedNativeSdkKeepsControlAndShutdownBoundedWithAnOutstandingStream(boolean saturateControl, boolean tls,
+			@TempDir Path temporary) throws Exception {
 		var repository = Path.of(System.getProperty("repository.root"));
 		var mode = saturateControl ? "held-control" : "held";
-		var output = repository.resolve("backend/target/service-logs/" + mode + "-sdk-qualification.log");
-		try (var api = SkyPilotApiServerFixture.start(); var proxy = new HeldSkyPilotProxy(api.endpoint())) {
-			var builder = new ProcessBuilder("java", "--enable-native-access=ALL-UNNAMED",
-					"--sun-misc-unsafe-memory-access=allow", "-Xss16m",
-					"-Dgraalpy.external.directory=" + System.getProperty("graalpy.external.directory"),
-					"-Dloader.main=de.zorro909.skywright.backend.orchestration.OrchestratorQualificationMain", "-cp",
-					System.getProperty("backend.executable"),
-					"org.springframework.boot.loader.launch.PropertiesLauncher", mode);
-			builder.directory(repository.toFile());
-			builder.environment().put("SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT", proxy.endpoint().toString());
+		var output = repository
+			.resolve("backend/target/service-logs/" + mode + (tls ? "-tls" : "") + "-sdk-qualification.log");
+		var certificate = tls ? SkyPilotTlsFixture.create(temporary, true) : null;
+		try (var api = SkyPilotApiServerFixture.start();
+				var proxy = new HeldSkyPilotProxy(api.endpoint(), certificate == null ? null : certificate.context())) {
+			var endpoint = tls && saturateControl ? URI.create("https://localhost:" + proxy.endpoint().getPort())
+					: proxy.endpoint();
+			var builder = PackagedSkyPilotFixture.process(mode, endpoint);
+			if (certificate != null) {
+				certificate.configureTrust(builder);
+			}
 			builder.redirectErrorStream(true);
 			var process = builder.start();
 			var lines = new LinkedBlockingQueue<String>();

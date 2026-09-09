@@ -15,7 +15,7 @@
   <description>Always-on Skywright control-plane backend.</description>
 
   <properties>
-    <netty.version>4.2.16.Final</netty.version>
+    <netty.version>4.2.17.Final</netty.version>
   </properties>
 
   <dependencies>
@@ -162,6 +162,16 @@
       </resource>
     </resources>
     <plugins>
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <configuration>
+          <excludes>
+            <!-- Instrumenting this generated GraalPy method exceeds the JVM method-size limit. -->
+            <exclude>com/oracle/graal/python/builtins/modules/cext/PythonCApiAssertions</exclude>
+          </excludes>
+        </configuration>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>

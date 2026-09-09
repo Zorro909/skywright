@@ -34,16 +34,23 @@ public final class VerifyEnvironment {
                 import numpy
                 import pandas
                 import psutil
+                import ssl
+                import urllib3
                 import sky
                 import uvloop
                 import watchfiles
 
                 runtime = '.'.join(str(part) for part in sys.implementation.version[:3])
                 assert sys.implementation.name == 'graalpy', 'Unexpected Python implementation'
-                assert runtime == sys.argv[1], 'Unexpected GraalPy version'
+                # GraalPy's implementation tuple omits the engine's fourth hotfix component.
+                # The host already verified the exact Maven-resolved engine version.
+                assert runtime == '.'.join(sys.argv[1].split('.')[:3]), 'Unexpected GraalPy version'
                 assert sky.__version__ == sys.argv[2], 'Unexpected SkyPilot version'
+                tls = urllib3.util.ssl_.create_urllib3_context()
+                assert tls.verify_mode == ssl.CERT_REQUIRED, 'TLS certificate verification disabled'
+                assert tls.check_hostname, 'TLS hostname verification disabled'
                 library = (Path(sys.argv[3]) / 'venv' / 'lib').resolve()
-                for module in (aiohttp, cryptography, numpy, pandas, psutil, sky, uvloop, watchfiles):
+                for module in (aiohttp, cryptography, numpy, pandas, psutil, sky, urllib3, uvloop, watchfiles):
                     assert Path(module.__file__).resolve().is_relative_to(library), 'Import outside packaged environment'
                 packages = {}
                 for distribution in importlib.metadata.distributions():
@@ -51,7 +58,7 @@ public final class VerifyEnvironment {
                     name = re.sub(r'[-_.]+', '-', distribution.metadata['Name']).lower()
                     assert name not in packages, 'Duplicate installed distribution'
                     packages[name] = distribution.version
-                json.dumps({'implementation': sys.implementation.name, 'graalpy': runtime,
+                json.dumps({'implementation': sys.implementation.name, 'graalpy': sys.argv[1], 'graalpy_implementation': runtime,
                             'python': '.'.join(str(part) for part in sys.version_info[:3]),
                             'skypilot': sky.__version__, 'packages': packages}, sort_keys=True)
                 """).asString();

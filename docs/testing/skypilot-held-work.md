@@ -2,7 +2,7 @@
 
 Issue [#214](https://github.com/Zorro909/skywright/issues/214) qualifies the concurrency and shutdown boundary required by [ADR 0009](../adr/0009-drive-skypilot-through-its-python-sdk.md).
 
-`PackagedHeldSkyPilotIT` starts the pinned real SkyPilot API server and launches `OrchestratorQualificationMain held` from the packaged application JAR in a separate JVM. An HTTP proxy holds `/api/stream` before sending response headers. The parent observes that request on the wire before allowing the child to measure cancellation and health latency. A second fresh JVM also holds a status initiation request and fills both queues. Each scenario stops the real API server and checks shutdown without releasing its held requests. The first scenario probes the unreachable server; the second keeps the shared short-call lane saturated until shutdown. A zero JVM exit status is part of the assertion.
+`PackagedHeldSkyPilotIT` starts the pinned real SkyPilot API server and launches `OrchestratorQualificationMain held` from the packaged application JAR in a separate JVM. An HTTP or HTTPS proxy holds `/api/stream` before sending response headers. The parent observes that request on the wire before allowing the child to measure cancellation and health latency. A second fresh JVM for each transport also holds a status initiation request and fills both queues. Each scenario stops the real API server and checks shutdown without releasing its held requests. The first scenario probes the unreachable server; the second keeps the shared short-call lane saturated until shutdown. A zero JVM exit status is part of the assertion.
 
 The fixture uses one active worker and one queued completion, and one active worker and two queued status calls. Additional calls, including catalogue-price requests, must report `SATURATION` within 100 ms. Catalogue lookups share the held-work lane with completion reads, so pricing traffic cannot create extra context workers or bypass queue limits. An unreachable server must report `REACHABILITY`, independently of queue saturation. Active and queued calls must finish as `SHUTDOWN` when the bridge closes.
 
@@ -20,13 +20,13 @@ On Linux amd64 with GraalPy 25.2.4 and SkyPilot 0.13.0, the restored two-lane im
 | Health after the API server stopped | 15 ms | not attempted: shared queue full |
 | Shutdown | 1342 ms | 1103 ms |
 
-HTTPS qualification is tracked separately in [#248](https://github.com/Zorro909/skywright/issues/248). The unchanged locked runtime lacks an SSL constant required by urllib3, so its HTTPS SDK calls fail before the concurrency scenario. This qualification covers HTTP. Cross-distribution native-wheel compatibility in the production image is tracked in [#250](https://github.com/Zorro909/skywright/issues/250). In particular, Fedora-built cryptography requires an OpenSSL ABI absent from the Ubuntu runtime. The packaged-JAR test uses native resources built for its host; a successful standard-library health probe does not establish native SDK compatibility.
+The measurements above cover the original HTTP qualification. [Issue #248's qualification](issue-248-graalpy-https.md) updates the runtime and adds both scenarios over HTTPS, together with untrusted-certificate and hostname-mismatch rejection checks through the actual SDK. Cross-distribution native-wheel compatibility in the production image is tracked in [#250](https://github.com/Zorro909/skywright/issues/250). In particular, Fedora-built cryptography requires an OpenSSL ABI absent from the Ubuntu runtime. The packaged-JAR test uses native resources built for its host; a successful standard-library health probe does not establish native SDK compatibility.
 
-These are local measurements, not service latency guarantees. The test measures each run and saves the packaged JVM output under `backend/target/service-logs/{held,held-control}-sdk-qualification.log`.
+These are local measurements, not service latency guarantees. The test measures each run and saves the packaged JVM output under `backend/target/service-logs/{held,held-control,held-tls,held-control-tls}-sdk-qualification.log`.
 
 ## Production boundary
 
-Initialization and lifecycle bookkeeping remain serialized. SDK execution uses two bounded platform-thread lanes in the single shared native-capable GraalPy context. SDK imports serialize on their own lock and happen on the first SDK operation. The initial health probe only needs the standard library. SkyPilot's contextual environment carries the resolved backend authorization token for each invocation, including overlapping credential revisions. Vault projection usage continues to cover the whole invocation.
+Initialization and lifecycle bookkeeping remain serialized. SDK execution uses two bounded platform-thread lanes in the single shared native-capable GraalPy context. SDK imports serialize on their own lock and happen on the first SDK operation. Health probes use Requests with the same verified TLS configuration as SDK calls and do not import SkyPilot. SkyPilot's contextual environment carries the resolved backend authorization token for each invocation, including overlapping credential revisions. Vault projection usage continues to cover the whole invocation.
 
 A Python audit hook tracks live sockets owned by this context, including wrappers created around existing descriptors. Shutdown closes admission, drains for the configured grace, rejects queued work, and shuts down the tracked sockets to wake native reads. The client waits up to four seconds for active invocations to leave before closing the context. Failure to quiesce raises an error instead of destroying a context still executing native code. This guard does not qualify arbitrary native extension deadlocks.
 
@@ -42,7 +42,7 @@ Run from the repository root after `scripts/setup-worktree`:
 mvn -pl backend -am \
   -Dtest=OrchestratorContractTest,LocalProjectionBoundaryTest \
   -Dsurefire.failIfNoSpecifiedTests=false \
-  -Dit.test=GraalPySkyPilotClientIT,PackagedHeldSkyPilotIT \
+  -Dit.test=GraalPySkyPilotClientIT,PackagedHeldSkyPilotIT,PackagedSkyPilotTlsIT \
   -Dfailsafe.failIfNoSpecifiedTests=false verify
 ```
 

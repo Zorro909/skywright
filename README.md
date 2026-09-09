@@ -15,7 +15,7 @@ The repository pins every build tool in a file consumed by its native version ma
 
 | Tool | Version | Source of truth |
 | --- | --- | --- |
-| GraalVM Community | SDKMAN `25.2.4-graalce` (`GraalVM CE 25.2.4+7.1`, OpenJDK `25.0.4+7`) | `.sdkmanrc`, with the verified CI archive in `quality/toolchain.json` |
+| GraalVM Community | SDKMAN `25.3.4+1.r25-graalce` (`GraalVM CE 25.3.4.1+1.1`, OpenJDK `25.0.4.1+1`) | `.sdkmanrc`, with the verified CI archive in `quality/toolchain.json` |
 | Maven | 3.9.16 | `.sdkmanrc` and `.mvn/wrapper/maven-wrapper.properties` |
 | Node | 26.7.0 | `.nvmrc` and `frontend/package.json` |
 | pnpm | 11.21.0 | `frontend/package.json` |
@@ -49,7 +49,7 @@ pnpm --version
 uv --version
 ```
 
-`java -version` must identify GraalVM Community 25.2.4 and Java 25.0.4. `mvn --version` must
+`java -version` must identify GraalVM Community 25.3.4.1 and Java 25.0.4.1. `mvn --version` must
 identify Maven 3.9.16 and the same JDK. The build validates the exact Maven, Java, GraalVM, vendor,
 and OpenJDK runtime versions before creating module artifacts. Maven Toolchains selects that active
 JDK for compilation and tests; an explicit `~/.m2/toolchains.xml` is not required.
