@@ -15,7 +15,8 @@ sys.path.insert(0, str(REPOSITORY / 'scripts'))
 from quality_support import graalpy_environment as environment
 
 
-class EnvironmentIdentityTest(unittest.TestCase):
+class EnvironmentTestCase(unittest.TestCase):
+    """Shared sealed-environment fixture without test cases of its own."""
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -45,6 +46,8 @@ class EnvironmentIdentityTest(unittest.TestCase):
     def seal(self):
         self.invoke('seal', '--observation', str(self.observation))
 
+
+class EnvironmentIdentityTest(EnvironmentTestCase):
     def test_effective_versions_platform_constraints_and_native_inputs_invalidate(self):
         baseline = environment.identity(self.root, self.versions, target={'os': 'one'}, native={'cc': 'one'})
         for name in self.versions:

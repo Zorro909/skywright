@@ -3,7 +3,8 @@
 This module is the independently buildable deployment boundary for the backend. Its Maven package
 phase consumes the executable JAR from `backend`, constructs `skywright-backend:0.1.0-SNAPSHOT`,
 and copies that same artifact into the image. Docker-compatible tooling is required.
-Verification also requires `kubectl` on `PATH` to render the production overlay; it
+Verification also requires `uv` to run an isolated, version-paired SkyPilot API server,
+and `kubectl` on `PATH` to render the production overlay; it
 does not require a cluster or Kubernetes credentials. `scripts/setup-worktree` reuses
 an installed client or installs a checksum-verified Linux client into `~/.local/bin`.
 Include that directory on `PATH` after initial setup.
@@ -26,7 +27,12 @@ that image and verifies its operator-visible runtime contract:
 The verification starts the repository-pinned PostgreSQL image and covers non-root execution,
 health and application/source identity, the exact
 served OpenAPI bytes, structured safe console output, sanitized invalid-configuration failure, and
-bounded graceful termination. It deliberately does not inspect Dockerfile instructions, image
+bounded graceful termination. It also imports the actual SkyPilot SDK in the production image,
+initiates `sky.jobs.queue_v2`, and decodes the isolated stock API server's typed
+`ClusterNotUpError` through `sky.stream_and_get`. The process must exit successfully within
+120 seconds with the production user, read-only filesystem and 64 MiB temporary-storage limit.
+No compute is launched. Health probes alone do not qualify native SDK compatibility.
+It deliberately does not inspect Dockerfile instructions, image
 layers, private JVM details, or internal filesystem layout. CI additionally retains a complete high
 and critical vulnerability report and rejects fixable findings at those severities under the
 repository security policy; it does not publish the image.
@@ -39,10 +45,50 @@ DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock" \
 ```
 
 The initial deployment is Linux amd64. The Dockerfile copies GraalVM CE 25.3.4.1 / OpenJDK 25.0.4.1
-from its immutable official image into a digest-pinned Fedora 44 runtime. Fedora matches the glibc
-ABI of the repository toolchain that builds GraalPy's locked native extensions. The image retains
+from its immutable official image into a digest-pinned Ubuntu 24.04 runtime. Native dependencies
+must be built on Ubuntu 24.04 amd64 with glibc 2.39 and Ubuntu's OpenSSL 3.0 ABI.
+`prepare-package` verifies the environment's sealed build provenance, effective Maven versions,
+native payload hash and source inputs before copying it into the image. Fedora-built wheels
+are rejected even when they import successfully on Fedora. The image retains
 the complete JDK rather than using `jlink`, packages the locked SkyPilot 0.13.0 GraalPy environment
 beside the application, and starts the JVM with the required 16 MiB thread stack.
+
+### Build on another Linux amd64 host
+
+Select the native environment produced by the repository's Ubuntu 24.04 CI job. The packaging
+host does not rebuild or import these wheels. Choose a successful Repository Quality run whose native
+inputs match the checkout; unrelated application edits may reuse that environment.
+
+```bash
+gh run download <run-id> --repo Zorro909/skywright --name graalpy-resources --dir /tmp/skywright-native-artifact
+mkdir -p .graalpy/production
+tar --zstd -xf /tmp/skywright-native-artifact/graalpy-resources.tar.zst -C .graalpy/production
+scripts/verify-production-graalpy --resources .graalpy/production/resources
+./mvnw -pl backend-deployment -am verify \
+  -Dgraalpy.production.directory="$PWD/.graalpy/production/resources"
+```
+
+`graalpy.production.directory` selects only the image's dependencies. The reactor still builds
+and tests the backend against its local `graalpy.external.directory`. Ubuntu wheels can also
+fail to import on Fedora, so using one resource directory for both purposes is unsupported.
+On Ubuntu, the production setting defaults to the local external directory, preserving the
+normal build command. The production
+image uses only its distribution packages for system libraries. Do not copy developer-host
+libraries into it or disable TLS verification to make a wheel load.
+
+Native cache identity includes the lock, effective GraalPy and SkyPilot versions, build constraints,
+preparation scripts, exact Java toolchain, Dockerfile, build distribution/libc, compiler, Rust,
+OpenSSL and compiler flags. Any change to those inputs requires a newly sealed environment;
+payload changes also invalidate it. Local selection preserves the recorded build host while
+checking current source inputs. CI additionally checks the producer run, attempt and tested
+commit before handing the artifact to consumers. Production selection policy is checked anew
+on every package build, and every image verification repeats the real SDK call in that image.
+Cached imports on the build host are insufficient evidence for the production runtime.
+
+Ubuntu 24.04 CI is the qualified native build host. Fedora is supported as a Linux amd64
+packaging host by selecting that artifact, as qualified in
+[`issue-250-native-runtime-abi.md`](../docs/testing/issue-250-native-runtime-abi.md).
+Other distributions and architectures need their own qualification before being listed here.
 
 ## Run the image
 

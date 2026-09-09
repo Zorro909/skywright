@@ -13,7 +13,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-final class SkyPilotApiServerFixture implements AutoCloseable {
+public final class SkyPilotApiServerFixture implements AutoCloseable {
 
 	private Process process;
 
@@ -25,15 +25,27 @@ final class SkyPilotApiServerFixture implements AutoCloseable {
 
 	private final Path logs;
 
-	private SkyPilotApiServerFixture(Process process, URI endpoint, Path environment, Path repository, Path logs) {
+	private final String listenAddress;
+
+	private final Path home;
+
+	private SkyPilotApiServerFixture(Process process, URI endpoint, Path environment, Path repository, Path logs,
+			String listenAddress, Path home) {
 		this.process = process;
 		this.endpoint = endpoint;
 		this.environment = environment;
 		this.repository = repository;
 		this.logs = logs;
+		this.listenAddress = listenAddress;
+		this.home = home;
 	}
 
 	static SkyPilotApiServerFixture start() throws Exception {
+		return start("127.0.0.1");
+	}
+
+	/** Bind to a container-reachable interface while keeping server state isolated. */
+	public static SkyPilotApiServerFixture start(String listenAddress) throws Exception {
 		var repository = Path.of(System.getProperty("repository.root"));
 		var environment = repository.resolve("backend/target/skypilot-api-server-venv");
 		run(repository, "uv", "venv", "--python", "3.12", environment.toString());
@@ -41,16 +53,23 @@ final class SkyPilotApiServerFixture implements AutoCloseable {
 				repository.resolve("graalpy-environment/graalpy.lock").toString());
 
 		var port = availablePort();
-		var logs = repository.resolve("backend/target/service-logs/skypilot-api.log");
+		var logs = repository.resolve("backend/target/service-logs/skypilot-api-" + port + ".log");
 		Files.createDirectories(logs.getParent());
-		var process = startProcess(environment, repository, logs, port);
+		var home = Files.createTempDirectory(repository.resolve("backend/target"), "skypilot-server-home-");
+		var process = startProcess(environment, repository, logs, port, listenAddress, home);
 		var fixture = new SkyPilotApiServerFixture(process, URI.create("http://127.0.0.1:" + port), environment,
-				repository, logs);
-		fixture.awaitHealthy(Duration.ofSeconds(30), logs);
+				repository, logs, listenAddress, home);
+		try {
+			fixture.awaitHealthy(Duration.ofSeconds(30), logs);
+		}
+		catch (Exception | AssertionError failure) {
+			fixture.close();
+			throw failure;
+		}
 		return fixture;
 	}
 
-	URI endpoint() {
+	public URI endpoint() {
 		return this.endpoint;
 	}
 
@@ -62,7 +81,8 @@ final class SkyPilotApiServerFixture implements AutoCloseable {
 	}
 
 	void restart() throws Exception {
-		this.process = startProcess(this.environment, this.repository, this.logs, this.endpoint.getPort());
+		this.process = startProcess(this.environment, this.repository, this.logs, this.endpoint.getPort(),
+				this.listenAddress, this.home);
 		awaitHealthy(Duration.ofSeconds(30), this.logs);
 	}
 
@@ -93,13 +113,16 @@ final class SkyPilotApiServerFixture implements AutoCloseable {
 		}
 	}
 
-	private static Process startProcess(Path environment, Path repository, Path logs, int port) throws IOException {
-		return new ProcessBuilder(environment.resolve("bin/python").toString(), "-m", "sky.server.server", "--host",
-				"127.0.0.1", "--port", Integer.toString(port))
+	private static Process startProcess(Path environment, Path repository, Path logs, int port, String listenAddress,
+			Path home) throws IOException {
+		var builder = new ProcessBuilder(environment.resolve("bin/python").toString(), "-m", "sky.server.server",
+				"--host", listenAddress, "--port", Integer.toString(port))
 			.directory(repository.toFile())
 			.redirectErrorStream(true)
-			.redirectOutput(ProcessBuilder.Redirect.appendTo(logs.toFile()))
-			.start();
+			.redirectOutput(ProcessBuilder.Redirect.appendTo(logs.toFile()));
+		builder.environment().put("HOME", home.toString());
+		builder.environment().put("XDG_CACHE_HOME", home.resolve(".cache").toString());
+		return builder.start();
 	}
 
 	private static void run(Path workingDirectory, String... command) throws Exception {

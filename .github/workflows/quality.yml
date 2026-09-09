@@ -383,6 +383,10 @@ jobs:
         with:
           name: verified-backend-${{ needs.java.outputs.producer-attempt }}
           path: ci/verified-backend
+      - name: Set up Python for the real SDK image qualification
+        uses: ./.github/actions/setup-python-toolchain
+        with:
+          python-version: '3.14'
       - name: Build and exercise the production image
         id: build_image
         run: scripts/ci-backend image ci/verified-backend --producer-attempt "$BACKEND_PRODUCER_ATTEMPT"

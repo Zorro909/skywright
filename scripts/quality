@@ -532,6 +532,8 @@ def check_prerequisites(check: str) -> None:
         require_uv()
     if check in {"image", "profile"}:
         require_container_runtime()
+    if check == "image":
+        require_uv()
 
 
 def run_command(arguments: argparse.Namespace) -> int:
