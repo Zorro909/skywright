@@ -100,6 +100,11 @@ JaCoCo 0.8.15 could not instrument GraalPy's generated
 the JVM method-size limit. Backend coverage excludes that single third-party
 class from instrumentation; application classes remain covered.
 
+The required production-image scan also rejected the existing Netty
+4.2.16.Final pin for [CVE-2026-75595](https://github.com/netty/netty/security/advisories/GHSA-c4c3-7fpv-j4q5).
+The backend now uses the advisory's patched 4.2.17.Final release. This keeps the
+required image gate enabled; it is separate from the GraalPy HTTPS transport.
+
 ## Packaged qualification
 
 `PackagedHeldSkyPilotIT` runs both existing HTTP scenarios and their HTTPS
