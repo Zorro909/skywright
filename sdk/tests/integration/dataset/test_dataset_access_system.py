@@ -299,8 +299,8 @@ def test_exact_committed_sequence_across_process_recovery_and_clone(
                 text=True,
                 capture_output=True,
                 timeout=90,
-                check=True,
             )
+            assert process.returncode == 0, process.stdout + process.stderr
             result = json.loads(process.stdout.strip().splitlines()[-1])
             stopped_writers[options["run_id"]] = {
                 "run_id": options["run_id"],
@@ -326,7 +326,10 @@ def test_exact_committed_sequence_across_process_recovery_and_clone(
         first_reference = None
         for boundary in (2, 5):
             run_id = f"recover-{boundary}"
-            stopped = execute(run_id=run_id, stop_after_step=boundary)
+            # Keep this clone seed while the source Run resumes and prunes older payloads.
+            stopped = execute(
+                run_id=run_id, stop_after_step=boundary, keep_every_nth=boundary
+            )
             assert stopped["outcome"] == "interrupted"
             if boundary == 2:
                 first_reference = stopped["reference"]
@@ -337,6 +340,7 @@ def test_exact_committed_sequence_across_process_recovery_and_clone(
                 batch_size=7,
                 workers=3,
                 accelerators=4,
+                keep_every_nth=boundary,
             )
             assert resumed["outcome"] == "completed"
             assert resumed["ordinals"] == baseline["ordinals"]
