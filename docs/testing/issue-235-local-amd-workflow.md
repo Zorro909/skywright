@@ -415,6 +415,16 @@ entries and exact continuation ordinals; abrupt-generation loss remains explicit
 Finalization recorded 30,007 task bytes as partial with `SOURCE_GENERATION_LOST`
 and 43,285 controller bytes as complete.
 
+PR review found that the authority's readiness probe accepted a stale socket
+pathname. Source `e1b3936` replaces it with a bounded health acknowledgement.
+Tests reject stale sockets and non-serving listeners and exercise the actual
+handler without writer registration. All 65 deployment tests passed with two
+root-only skips; all ten writer tests passed separately in the root container.
+The resulting authority image, observed manifest digest
+`sha256:da92fccdd4a1839f62ed09fa1b6d4c16b8b5e6c5dee32ae7e2116f3b42157ce2`,
+passed an actual node rollout and explicit live probe. All three registrations
+and death proofs from the final GPU Run survived that restart unchanged.
+
 A changed boot, missing runtime evidence before proof or unavailable authority
 still refuses recovery before project entry. The local authority does not infer
 physical node destruction or provide storage credential fencing. The default

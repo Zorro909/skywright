@@ -90,6 +90,11 @@ per node and observes one pending registration between requests. Reaching the
 limit refuses new registration. Custody is not automatically pruned: release and
 retention policy must account for all dependent Run histories before removal.
 
+Readiness requires a bounded health acknowledgement from the initialized Unix
+listener. A stale socket pathname or a listener that no longer serves requests
+does not pass. This health request neither registers a writer nor creates proof;
+each writer admission still performs its own identity and custody checks.
+
 ## Qualification
 
 The CPU/container check uses the real SDK Unix client, a suspended detached child,
