@@ -1598,6 +1598,260 @@ print(json.dumps({
     }
 
 
+@pytest.mark.parametrize(
+    "cleanup_release", ["within_grace", "after_deadline", "after_return"]
+)
+def test_cancellation_waits_for_publisher_traceback_cleanup(
+    cleanup_release: str,
+) -> None:
+    release_within_grace = cleanup_release == "within_grace"
+    completed = run_project(
+        """
+import json
+import threading
+import time
+
+import torch
+
+from skywright import run_training_process
+from skywright.run_store import RunStoreCancelledError
+
+confirmation_started = threading.Event()
+cancelled = threading.Event()
+cleanup_started = threading.Event()
+release_cleanup = threading.Event()
+cleanup_finished = threading.Event()
+returned = threading.Event()
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+class PublicationLocal:
+    def __init__(self):
+        self.tensor = torch.ones(1)
+
+    def __del__(self):
+        # This local survives in the cancellation traceback until the publisher
+        # unwinds it. Hold that real cleanup boundary after publication ends.
+        cleanup_started.set()
+        release_cleanup.wait(5)
+        del self.tensor
+        cleanup_finished.set()
+
+
+class CancellingRecorder(TestRecorder):
+    def confirm_checkpoint(self, step, reference):
+        local = PublicationLocal()
+        confirmation_started.set()
+        assert cancelled.wait(5)
+        raise RunStoreCancelledError("terminal confirmation cancelled")
+
+    def cancel_checkpoint_publication(self):
+        cancelled.set()
+
+    def resume_after_checkpoint_cancellation(self):
+        self.events.append(("resume", cleanup_finished.is_set()))
+
+    def publish_report(self, report):
+        self.events.append(("report", cleanup_finished.is_set()))
+
+
+recorder = CancellingRecorder()
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+
+
+def release_after_cleanup_starts():
+    assert cleanup_started.wait(5)
+    returned.wait(0.1)
+    release_cleanup.set()
+
+
+"""
+        + (
+            "releaser = threading.Thread(target=release_after_cleanup_starts)\n"
+            "releaser.start()\n"
+            if release_within_grace
+            else ""
+        )
+        + (
+            """
+from skywright._training_checkpoint_coordinator import CheckpointCoordinator
+
+wait_for_active = CheckpointCoordinator._wait_for_active
+
+
+def finish_cleanup_after_deadline(self, cancellation_requested=None):
+    try:
+        return wait_for_active(self, cancellation_requested)
+    except TimeoutError:
+        # Force the worker to exit after the real deadline was exceeded but
+        # before stop() decides whether it can resume/report the attempt.
+        release_cleanup.set()
+        for thread in threading.enumerate():
+            if thread.name == "skywright-checkpoint-publisher":
+                thread.join(5)
+        assert cleanup_finished.is_set()
+        raise
+
+
+CheckpointCoordinator._wait_for_active = finish_cleanup_after_deadline
+"""
+            if cleanup_release == "after_deadline"
+            else ""
+        )
+        + f"""
+started = time.monotonic()
+try:
+    result = run_training_process(
+        train,
+        run_id="test-run",
+        project_version="test-project@abc123",
+        configuration={{}},
+        dataset=TestDataset(("one",)),
+        metric_contracts=TestMetricContracts(),
+        skywright_metric_schema="test-schema@1",
+        recorder=recorder,
+        seed=1,
+        cancellation_requested=confirmation_started.is_set,
+        policy_stop_requested=lambda: "decision-1",
+        shutdown_grace_seconds={2 if release_within_grace else 0.1},
+    )
+    elapsed = time.monotonic() - started
+    returned.set()
+    events_at_return = list(recorder.events)
+    print(json.dumps({{
+        "cause": result.report.cause.value,
+        "cleanup_finished": cleanup_finished.is_set(),
+        "resumes": [event[1] for event in events_at_return if event[0] == "resume"],
+        "reports": [event[1] for event in events_at_return if event[0] == "report"],
+        "bounded": elapsed < 1.5,
+        "failure": result.report.diagnostics.get("exception_type"),
+    }}))
+finally:
+    release_cleanup.set()
+    for thread in threading.enumerate():
+        if thread.name == "skywright-checkpoint-publisher":
+            thread.join(5)
+"""
+        + ("releaser.join(5)\n" if release_within_grace else "")
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "cancelled" if release_within_grace else "skywright_failure",
+        "cleanup_finished": cleanup_release != "after_return",
+        "resumes": [True] if release_within_grace else [],
+        "reports": [True] if release_within_grace else [],
+        "bounded": True,
+        "failure": None if release_within_grace else "TimeoutError",
+    }
+
+
+def test_terminal_checkpoint_waits_for_earlier_publisher_thread_cleanup() -> None:
+    completed = run_project(
+        """
+import json
+import threading
+
+from skywright import run_training_process
+
+cleanup_started = threading.Event()
+release_cleanup = threading.Event()
+cleanup_finished = threading.Event()
+returned = threading.Event()
+
+
+class State:
+    def state_dict(self): return {}
+    def load_state_dict(self, state): pass
+
+
+class PublicationLocal:
+    def __del__(self):
+        cleanup_started.set()
+        release_cleanup.wait(5)
+        cleanup_finished.set()
+
+
+class Recorder(TestRecorder):
+    def __init__(self):
+        super().__init__()
+        self.local = threading.local()
+
+    def publish_checkpoint(self, checkpoint):
+        if checkpoint.step == 1:
+            # Thread-local cleanup follows publication completion. A later
+            # cadence publication must not hide this still-exiting worker.
+            self.local.cleanup = PublicationLocal()
+        return super().publish_checkpoint(checkpoint)
+
+    def publish_report(self, report):
+        self.events.append(("report", cleanup_finished.is_set()))
+
+
+recorder = Recorder()
+
+
+def train(context):
+    context.register_checkpoint_state("state", State())
+    context.start()
+    context.commit_step(next_batch(context))
+    assert cleanup_started.wait(5)
+    context.commit_step(next_batch(context))
+
+
+def release_after_cleanup_starts():
+    assert cleanup_started.wait(5)
+    returned.wait(0.1)
+    release_cleanup.set()
+
+
+releaser = threading.Thread(target=release_after_cleanup_starts)
+releaser.start()
+try:
+    result = run_training_process(
+        train,
+        run_id="test-run",
+        project_version="test-project@abc123",
+        configuration={"checkpoint": {"cadence": 1}},
+        dataset=TestDataset(("one", "two")),
+        metric_contracts=TestMetricContracts(),
+        skywright_metric_schema="test-schema@1",
+        recorder=recorder,
+        seed=1,
+        shutdown_grace_seconds=2,
+    )
+    returned.set()
+    print(json.dumps({
+        "cause": result.report.cause.value,
+        "step": result.final_checkpoint.step,
+        "reports": [event[1] for event in recorder.events if event[0] == "report"],
+    }))
+finally:
+    release_cleanup.set()
+    releaser.join(5)
+    for thread in threading.enumerate():
+        if thread.name == "skywright-checkpoint-publisher":
+            thread.join(5)
+"""
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "cause": "completed",
+        "step": 2,
+        "reports": [True],
+    }
+
+
 def test_shutdown_deadline_does_not_publish_report_before_checkpoint_work_stops() -> (
     None
 ):
