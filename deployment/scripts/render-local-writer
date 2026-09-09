@@ -18,6 +18,7 @@ parser.add_argument(
 parser.add_argument("--namespace", default="skywright")
 parser.add_argument("--training-namespace", default="skywright-training")
 parser.add_argument("--name", default="skywright-local-writer")
+parser.add_argument("--ancillary-render-device")
 configuration = parser.parse_args()
 for value in (
     configuration.node,
@@ -32,6 +33,13 @@ ns, name = configuration.namespace, configuration.name
 image, image_pull_policy = configuration.image, configuration.image_pull_policy
 training_namespace = configuration.training_namespace
 args = ["--node-name", node, "--node-uid", uid, "--namespace", training_namespace]
+if configuration.ancillary_render_device is not None:
+    if (
+        re.fullmatch(r"/dev/dri/renderD[0-9]+", configuration.ancillary_render_device)
+        is None
+    ):
+        parser.error("Ancillary device must name one qualified DRM render node")
+    args += ["--ancillary-render-device", configuration.ancillary_render_device]
 volumes = [
     {
         "name": "state",

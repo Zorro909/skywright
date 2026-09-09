@@ -8,7 +8,7 @@ The isolated qualification node currently reports Kubernetes `1.36.1`, container
 
 [`PreviousWriterVerifier`](../../sdk/src/skywright/recovery.py) receives the previous `ExecutionAttemptRecord` and returns authority-verified evidence or `None`. Its evidence identifies the Run, exact attempt, condition and inspectable reference. [`RecoveryJournal.prepare`](../../sdk/src/skywright/_run_store/recovery.py) rejects absent proof, rereads the conditional history head after verification, and only then evaluates debt. Preserve that ordering and its fail-closed errors.
 
-[`ManagedRuntime.run`](../../sdk/src/skywright/_managed_runtime.py) currently defaults to `uncertain_previous_writer`; the production CLI does not install an authority client. [`run_training_process`](../../sdk/src/skywright/_training_process.py) generates the attempt UUID before `resolved_recorder.publish_attempt(attempt)`, which admits into the recovery journal. Add the registration callback immediately before that publication, after recovery validation, and before project entry. Registration failure must prevent both publication and project entry. A durable registration without a subsequent attempt publication is harmless retained custody, not an admitted attempt.
+[`ManagedRuntime.run`](../../sdk/src/skywright/_managed_runtime.py) defaulted to `uncertain_previous_writer` at the start of this investigation; the implemented production CLI now installs the optional local authority client. [`run_training_process`](../../sdk/src/skywright/_training_process.py) generates the attempt UUID before `resolved_recorder.publish_attempt(attempt)`, which admits into the recovery journal. Add the registration callback immediately before that publication, after recovery validation, and before project entry. Registration failure must prevent both publication and project entry. A durable registration without a subsequent attempt publication is harmless retained custody, not an admitted attempt.
 
 [`RunJobAdapter.previousWriter`](../../backend/src/main/java/de/zorro909/skywright/backend/orchestration/RunJobAdapter.java) intentionally returns uncertainty, and SkyPilot correlation is only at Run/job scope. Do not convert that display information into evidence. An operator-configured local Unix client can supply the production verifier and registration callback without changing the SDK's explicit embedding/test injection seam.
 
@@ -91,10 +91,36 @@ A read-only inspection of a live container on the qualification node confirmed t
 | Same volume root with `kubernetes.io~secret`, `kubernetes.io~configmap` or `kubernetes.io~projected` | Declared mount path, read-only |
 | `/var/lib/kubelet/pods/U/etc-hosts` | `/etc/hosts` |
 | `/var/lib/kubelet/pods/U/containers/C/<generated-file>` | Declared termination-message path, normally `/dev/termination-log` |
-| `/var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/S/hostname` | `/etc/hostname`, read-only |
-| Same sandbox root with `resolv.conf` | `/etc/resolv.conf`, read-only |
+| `/var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/S/hostname` | `/etc/hostname`, read-only or writable within this sandbox |
+| Same sandbox root with `resolv.conf` | `/etc/resolv.conf`, read-only or writable within this sandbox |
 | `/run/containerd/io.containerd.grpc.v1.cri/sandboxes/S/shm` | `/dev/shm`, when no explicit shared-memory volume replaces it |
 
 Kubelet supplies managed hosts and volume mounts; containerd also supplies standard proc, tmpfs, devpts, mqueue, sysfs and cgroup mounts. Permit only their expected destination/type pairs, retain read-only sysfs/cgroup checks, and reject unmatched binds or duplicate destinations. Do not reject ordinary generated hostname/resolver/termination mounts merely because they are host-backed. [Pinned kubelet mount assembly](https://github.com/kubernetes/kubernetes/blob/v1.36.1/pkg/kubelet/kubelet_pods.go), [termination mount assembly](https://github.com/kubernetes/kubernetes/blob/v1.36.1/pkg/kubelet/kuberuntime/kuberuntime_container.go), [containerd default mounts](https://github.com/containerd/containerd/blob/v2.3.1/pkg/oci/mounts.go)
 
 Also reject container-level restart policies/rules outside this qualification. Kubernetes 1.36 supports overrides even when the Pod's policy is `Never`; checking only the Pod field misses them. [Container restart rules](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-restart-policy)
+
+A later GPU-allocated Pod with a writable root filesystem confirmed that containerd
+mounts the exact sandbox hostname and resolver files read-write in that mode. The
+authority accepts either mode for those two isolated files while retaining exact
+source matching. Substitution with a runtime socket is rejected. This changes no
+PID namespace, cgroup, capability or authority-socket condition. The six custody
+and mount regressions passed in the root container.
+
+## Ancillary ROCr discovery device
+
+The first managed CIFAR startup was refused before attempt publication because the
+retained #233 context projects `/dev/dri/renderD129` for ROCr discovery. The device
+plugin still allocates the discrete GPU, and `ROCR_VISIBLE_DEVICES=0` selects it.
+This requirement was already measured in [#233's qualification](issue-233-local-gpu-qualification.md).
+
+The authority now supports an explicit, default-disabled ancillary render-device
+pin. It accepts only the named AMD DRM render character device, requires major
+226 and the matching render minor from 128 through 255, verifies AMD's sysfs vendor
+on the host and peer, and matches the exact `CharDevice` hostPath and OCI bind.
+A regular file, symlink, directory or substituted runtime socket cannot satisfy
+that check. Generic hostPath access remains unavailable.
+
+Linux documents render nodes as the unprivileged rendering/GPGPU interface without
+modesetting or privileged ioctls. Their driver and kernel remain trusted; this
+exception provides no container-runtime or cgroup control access. This supports
+retaining the same process-death proof condition. [Kernel DRM render-node contract](https://docs.kernel.org/gpu/drm-uapi.html#render-nodes)

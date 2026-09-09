@@ -130,6 +130,69 @@ class WriterEvidenceTest(unittest.TestCase):
 
 
 class WriterMountTest(unittest.TestCase):
+    def test_ancillary_render_requires_explicit_exact_device_enrollment(self):
+        from deployment.local_writer.node import validate_mounts, validate_render_device
+
+        fixture = json.loads((FIXTURE.parent / "local-writer-mounts.json").read_text())
+        device = "/dev/dri/renderD129"
+        fixture["pod"]["volumes"].append(
+            {
+                "name": "rocm-ancillary-render",
+                "hostPath": {"path": device, "type": "CharDevice"},
+            }
+        )
+        fixture["pod"]["containers"][0]["volumeMounts"].append(
+            {"name": "rocm-ancillary-render", "mountPath": device}
+        )
+        fixture["runtime"]["mounts"].append(
+            {
+                "source": device,
+                "destination": device,
+                "type": "bind",
+                "options": ["rbind", "rprivate", "rw"],
+            }
+        )
+
+        def check(value, pin=None):
+            validate_mounts(
+                value["pod"],
+                value["runtime"],
+                value["pod_uid"],
+                value["sandbox_id"],
+                pin,
+            )
+
+        with self.assertRaises(Uncertain):
+            check(fixture)
+        check(fixture, device)
+        for mutate in (
+            lambda f: f["pod"]["volumes"][-1]["hostPath"].update(type="Directory"),
+            lambda f: f["pod"]["volumes"][-1]["hostPath"].update(
+                path="/run/containerd/containerd.sock"
+            ),
+            lambda f: f["pod"]["containers"][0]["volumeMounts"][-1].update(
+                mountPath="/tmp/runtime"
+            ),
+            lambda f: f["runtime"]["mounts"][-1].update(
+                source="/run/containerd/containerd.sock"
+            ),
+        ):
+            invalid = copy.deepcopy(fixture)
+            mutate(invalid)
+            with self.assertRaises(Uncertain):
+                check(invalid, device)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / device.lstrip("/")
+            path.parent.mkdir(parents=True)
+            path.touch()
+            with self.assertRaises(Uncertain):
+                validate_render_device(root, device)
+            path.unlink()
+            path.symlink_to("/dev/null")
+            with self.assertRaises(Uncertain):
+                validate_render_device(root, device)
+
     def test_writable_root_keeps_isolated_sandbox_system_files(self):
         from deployment.local_writer.node import validate_mounts
 

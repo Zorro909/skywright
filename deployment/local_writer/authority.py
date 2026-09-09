@@ -146,6 +146,7 @@ def main():
     parser.add_argument("--node-name", required=True)
     parser.add_argument("--node-uid", required=True)
     parser.add_argument("--namespace", default="skywright-training")
+    parser.add_argument("--ancillary-render-device")
     parser.add_argument("--initialize", action="store_true")
     arguments = parser.parse_args()
     identifier(arguments.node_uid)
@@ -177,7 +178,12 @@ def main():
         return
     custody = Custody(arguments.state, arguments.node_uid)
     try:
-        node = Node(arguments.node_name, arguments.node_uid, arguments.namespace)
+        node = Node(
+            arguments.node_name,
+            arguments.node_uid,
+            arguments.namespace,
+            arguments.ancillary_render_device,
+        )
         Authority(custody, node).serve(arguments.socket)
     finally:
         custody.close()

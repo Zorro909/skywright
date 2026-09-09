@@ -45,6 +45,17 @@ the matching Skywright SDK client. An import preflight rejects older images befo
 runtime delivery. A missing authority refuses initial writer
 registration before attempt publication or project entry.
 
+This retained qualification host needs the ancillary AMD render node described in
+[#233's device evidence](../../../docs/research/issue-233-local-gpu-qualification.md).
+Only for a target with that measured requirement, add
+`--ancillary-render-device /dev/dri/renderD129` to the renderer. The option accepts
+one explicitly enrolled AMD DRM render character device, checks its major/minor
+and sysfs vendor on the node and peer, and permits only the matching `CharDevice`
+volume and exact bind destination. It does not add the training mount; the existing
+qualified SkyPilot context owns that projection. Other hostPath devices and runtime
+sockets remain refused. Kernel and GPU driver correctness remain trusted, as they
+already do for the allocated accelerator.
+
 ## Evidence and failure behavior
 
 The daemon authenticates the socket's exact peer with credentials and a pidfd,

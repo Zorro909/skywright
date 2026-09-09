@@ -7,6 +7,7 @@ import os
 import re
 import selectors
 import ssl
+import stat
 import subprocess
 import time
 import urllib.request
@@ -68,7 +69,22 @@ def runtime_json(arguments):
     return json.loads(runtime_output(arguments))
 
 
-def validate_mounts(pod, runtime, pod_uid, sandbox_id):
+def validate_render_device(root, device):
+    match = re.fullmatch(r"/dev/dri/renderD([0-9]+)", device)
+    if match is None or not 128 <= int(match[1]) <= 255:
+        raise Uncertain()
+    metadata = (root / device.lstrip("/")).stat(follow_symlinks=False)
+    if (
+        not stat.S_ISCHR(metadata.st_mode)
+        or os.major(metadata.st_rdev) != 226
+        or os.minor(metadata.st_rdev) != int(match[1])
+        or (root / f"sys/dev/char/226:{match[1]}/device/vendor").read_text().strip()
+        != "0x1002"
+    ):
+        raise Uncertain()
+
+
+def validate_mounts(pod, runtime, pod_uid, sandbox_id, ancillary_render=None):
     container = pod["containers"][0]
     if (
         pod.get("hostNetwork")
@@ -92,6 +108,14 @@ def validate_mounts(pod, runtime, pod_uid, sandbox_id):
             raise Uncertain()
         kind = next(iter(kinds))
         if kind == "hostPath":
+            if volume["name"] == "rocm-ancillary-render":
+                if ancillary_render is None or volume[kind] != {
+                    "path": ancillary_render,
+                    "type": "CharDevice",
+                }:
+                    raise Uncertain()
+                volumes[volume["name"]] = (ancillary_render, False)
+                continue
             if (
                 volume["name"] != "skywright-writer"
                 or volume[kind]["path"] != "/var/lib/skywright-writer/socket"
@@ -147,6 +171,8 @@ def validate_mounts(pod, runtime, pod_uid, sandbox_id):
         if mount["name"] == "skywright-writer" and (
             destination != "/run/skywright-writer" or not mount.get("readOnly")
         ):
+            raise Uncertain()
+        if mount["name"] == "rocm-ancillary-render" and destination != ancillary_render:
             raise Uncertain()
         expected[destination] = (source, readonly)
     if expected.get("/run/skywright-writer") != (
@@ -209,9 +235,12 @@ def validate_mounts(pod, runtime, pod_uid, sandbox_id):
 
 
 class Node:
-    def __init__(self, node_name, node_uid, namespace):
+    def __init__(self, node_name, node_uid, namespace, ancillary_render=None):
         self.node_name, self.node_uid, self.namespace = node_name, node_uid, namespace
         self.proc = Path("/host/proc")
+        self.ancillary_render = ancillary_render
+        if ancillary_render is not None:
+            validate_render_device(self.proc / "1/root", ancillary_render)
         self.cgroups = Path("/host/cgroup")
         self.boot_id = (self.proc / "sys/kernel/random/boot_id").read_text().strip()
         identifier(self.boot_id)
@@ -339,7 +368,16 @@ class Node:
             raise Uncertain()
         if spec["containers"][0].get("securityContext", {}).get("privileged"):
             raise Uncertain()
-        validate_mounts(spec, runtime_spec, metadata["uid"], info["sandboxID"])
+        validate_mounts(
+            spec,
+            runtime_spec,
+            metadata["uid"],
+            info["sandboxID"],
+            self.ancillary_render,
+        )
+        if any(v["name"] == "rocm-ancillary-render" for v in spec.get("volumes", [])):
+            validate_render_device(self.proc / "1/root", self.ancillary_render)
+            validate_render_device(self.proc / str(pid) / "root", self.ancillary_render)
         cgroup_mounts = [
             mount for mount in runtime_spec["mounts"] if mount["type"] == "cgroup"
         ]
