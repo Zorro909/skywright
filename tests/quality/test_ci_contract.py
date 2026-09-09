@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 import re
 import runpy
+import subprocess
 import sys
+import textwrap
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -393,7 +396,7 @@ class QualityWorkflowContractTest(unittest.TestCase):
         concurrency = WORKFLOW.split("permissions:", 1)[0]
         self.assertIn("cancel-in-progress: false", concurrency)
 
-        for name in ("java", "integration", "application", "image"):
+        for name in ("java", "integration-java", "application", "image"):
             with self.subTest(job=name):
                 consumer = job(WORKFLOW, name)
                 self.assertIn("needs: [plan, graalpy, java]" if name in ("application", "image") else "needs: [plan, graalpy]", consumer)
@@ -410,6 +413,26 @@ class QualityWorkflowContractTest(unittest.TestCase):
                 self.assertNotIn("require-graalpy-cache", consumer)
                 self.assertIn("GRAALPY_PRODUCER_ATTEMPT: ${{ needs.graalpy.outputs.producer-attempt }}", consumer)
                 self.assertIn('--run-attempt "$GRAALPY_PRODUCER_ATTEMPT"', consumer)
+
+    def test_integration_gate_requires_both_lanes_and_explicit_applicability(self):
+        gate = named_step(job(WORKFLOW, "integration"), "Require every applicable integration lane")
+        command = textwrap.dedent(gate.split("run: |\n", 1)[1])
+        outcomes = ("success", "failure", "skipped", "cancelled", "")
+        for plan in ("success", "failure"):
+            for applicable in ("true", "false", "", "unknown"):
+                for java in outcomes:
+                    for sdk in outcomes:
+                        with self.subTest(plan=plan, applicable=applicable, java=java, sdk=sdk):
+                            result = subprocess.run(
+                                ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", command],
+                                env={**os.environ, "PLAN_RESULT": plan, "APPLICABLE": applicable,
+                                     "JAVA_RESULT": java, "SDK_RESULT": sdk},
+                                capture_output=True, text=True,
+                            )
+                            expected = plan == "success" and (
+                                applicable == "false" or applicable == "true" and java == sdk == "success"
+                            )
+                            self.assertEqual(result.returncode == 0, expected, result.stderr)
 
 
 if __name__ == "__main__":
