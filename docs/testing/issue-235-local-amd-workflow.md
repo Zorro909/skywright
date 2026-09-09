@@ -1,9 +1,10 @@
 # Local AMD workflow qualification
 
-This is the ongoing evidence record for [#235](https://github.com/Zorro909/skywright/issues/235).
-Qualification remains incomplete until the corrected automatic-retention runtime
-passes its GPU check. Managed cooperative and abrupt recovery, private pulls and
-cancellation passed with the prior SDK revision as recorded below.
+This records the completed local AMD qualification for
+[#235](https://github.com/Zorro909/skywright/issues/235). Real private-image GPU Runs
+passed cooperative and abrupt recovery, exact Dataset continuation, cancellation
+and automatic checkpoint retention. Failed earlier Runs and the limits of the
+qualified target remain recorded below.
 
 ## Isolated deployment
 
@@ -272,8 +273,8 @@ pinned SkyPilot Kubernetes extra. Its CPython 3.12 Linux amd64 and arm64 wheels
 are separate from the shared GraalPy environment. A regression executes the
 installed SDK's missing-Pod handler; it reproduces the missing import in the old
 image and returns a transient status observation in the corrected image.
-SkyPilot source remains unchanged. A fresh Run must repeat abrupt recovery and
-cancellation with the corrected packaging.
+SkyPilot source remains unchanged. The following Runs repeat abrupt recovery
+and cancellation with the corrected packaging.
 
 ## Successful managed recovery and cancellation
 
@@ -343,7 +344,7 @@ and honestly reported partial with `SOURCE_GENERATION_LOST` after abrupt loss.
 These short-run measurements do not establish classifier convergence or sustained
 GPU saturation. Data loading dominates the small model's Step time.
 
-## Automatic-retention correction and remaining check
+## Automatic-retention correction and final GPU check
 
 The measurements exposed missing integration of the existing retention algorithm:
 configured newest-three retention did not run automatically. This contradicts
@@ -357,9 +358,62 @@ The correction passed 145 unit tests, an installed-SDK managed workflow against
 real S3 in 49.19 seconds, and three focused worker/retention tests including
 cancellation during pruning. Type checking, formatting and lint passed. The
 installed workflow verifies automatic retention, recovery and cloning with a
-protected seed. The updated ROCm profile is being published from SDK source
-`ff026fbcf9ce21fe5779df1a4d30688dee2322ce`; its actual private GPU Run remains the
-final release check. The earlier inventories above retain their observed counts.
+protected seed. The updated ROCm profile passed publication
+[34296958517](https://github.com/Zorro909/skywright-ui-qualification/actions/runs/34296958517)
+from SDK source `ff026fbcf9ce21fe5779df1a4d30688dee2322ce`, producing
+`sha256:3dff7998855d200717bec9b6d1257a936b6c30d7c9423f99df39b09fe1954ab6`.
+Private project publication
+[34297457670](https://github.com/Zorro909/skywright-private-qualification/actions/runs/34297457670)
+passed in 13m 35s from source `24b0efaf3ab08f8a00e41bc0567463ce8adbe77b`.
+Its image is `sha256:05e92ec83c366bcb122011605d0ba32537cd7c717ba02cb3d9d0c3faf3247853`
+and version artifact is
+`sha256:ce9dd756320d31cfcee5f5980e4b4d9746a8eff5831693e176f93ed0838c6ca9`.
+The publisher verified private visibility and the backend assessed that exact
+version as runnable with no failures. The earlier inventories above retain their
+observed counts.
+
+Run `2a59c90d-71b5-4ba8-9c40-794a7bc78bf0`, submission
+`ff18118a-b7a8-48c5-83d8-0861db71e688`, was accepted at
+2026-09-09 01:15:33.943690 UTC. The browser repeated dropped-response and backend
+restart replay without changing either identity. The managed Pod pulled the exact
+new private image with its Run-owned Secret and trained on the RX 7900 XTX.
+At Step 18, the Run Store reader found only checkpoints 12, 15 and 18, and verified
+the latest model, optimizer, random-number and Dataset ordering state.
+
+Cooperative interruption confirmed Step 23 and left checkpoints 18, 21 and 23.
+Attempt `af726606-815a-4b9e-807a-ac63a558708c` restored the exact Step 23 reference
+`skywright-checkpoint:v1:23:sha256:9f598a41f76fe989e2dc71bb10a3486d7925152811c029ebca54537c4601906a`.
+Its first Step consumed the expected 16 Items starting at offset 368. After
+progress, retained payloads were 30, 33 and 36 and Recovery Debt returned to zero.
+
+An exact-UID, zero-grace Pod deletion then left committed Step 43 and checkpoint
+42. Attempt `2fad6101-b149-4ba4-b353-8c1e0140655f` restored
+`skywright-checkpoint:v1:42:sha256:c4df6f01a8af4d255ed3c831e29cc5ce181b2cbfea4941522ebe0e0ba28a356b`
+and replayed the exact 16 uncheckpointed Items at offset 672. Both predecessor
+proofs matched the registered container and were observed before the successor
+registration. Debt increased to one against maximum three, then returned to zero;
+retained payloads advanced to 48, 51 and 54.
+
+Cancellation Request `e5d15c88-56aa-46aa-909d-c5bd0cb13a29`, accepted at
+01:22:47.401887 UTC, survived another dropped response and backend restart with
+its identity, acceptance time and escalation deadline unchanged. Replay reported
+`effect-observed`. The UI latched cancellation from the verified process report,
+while retaining SkyPilot's `FAILED` fact and current source unavailability. The SDK
+uses exit 64 for cancellation; this is not a claim of SkyPilot `CANCELLED` status.
+No GPU-consuming Pods remained across the cluster. The final container
+`764f611723427e3e18e07b1109ce5a8cb4726c8bff55663bffd46c7fc5922e1b`
+exited at 01:23:29.229090221 UTC with its recursive cgroup removed. Its retained
+death proof matched the final attempt's registration digest.
+
+The final inventory contained only checkpoints 54, 57 and 60, each 2,506,560 bytes,
+within 8,418,637 bytes of total Run Store objects at observation. The durable
+Recovery Debt history retained all 21 checkpoint confirmations despite payload
+pruning. The Dataset Cache again measured 154,801,331 bytes within its 256 MiB
+ceiling. Verified PNG Samples, prediction Artifacts and metric records remained
+readable after both recoveries. Archived task output retained all three training
+entries and exact continuation ordinals; abrupt-generation loss remains explicit.
+Finalization recorded 30,007 task bytes as partial with `SOURCE_GENERATION_LOST`
+and 43,285 controller bytes as complete.
 
 A changed boot, missing runtime evidence before proof or unavailable authority
 still refuses recovery before project entry. The local authority does not infer
