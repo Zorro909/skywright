@@ -10,11 +10,7 @@ environment = fixtures.environment
 production = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'scripts/verify-production-graalpy'))
 
 
-class ProductionEnvironmentTest(unittest.TestCase):
-    setUp = fixtures.EnvironmentIdentityTest.setUp
-    invoke = fixtures.EnvironmentIdentityTest.invoke
-    seal = fixtures.EnvironmentIdentityTest.seal
-
+class ProductionEnvironmentTest(fixtures.EnvironmentTestCase):
     def seal_for(self, platform, openssl='OpenSSL 3.0.13 30 Jan 2024'):
         with patch.object(environment, 'build_platform', return_value=platform), \
                 patch.object(environment, 'native_inputs', return_value={'openssl': openssl}):

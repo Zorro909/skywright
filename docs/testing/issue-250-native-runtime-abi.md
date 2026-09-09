@@ -72,6 +72,16 @@ mvn -B -ntp -pl backend-deployment -am verify \
 python3 -m unittest discover -s tests/quality -v
 ```
 
-Local verification results will be recorded after the complete image run.
+Local verification passed on 2026-09-09 from Fedora 44:
+
+- 283 backend unit tests passed against the local Fedora environment.
+- All seven production image tests passed against the selected Ubuntu environment.
+  The complete image test class took 91.62 seconds.
+- The isolated server observed `POST /jobs/queue/v2`, `GET /api/stream` and
+  `GET /api/get` for one request. The SDK decoded the server's `ClusterNotUpError`,
+  and the production qualification process exited with code 0.
+- All 56 quality tests passed, including cross-host selection and rejection of
+  incompatible platform/OpenSSL records, changed native payloads and changed
+  runtime source inputs.
 The [deployment README](../../backend-deployment/README.md) records supported
 hosts, selection commands and cache invalidation rules.
