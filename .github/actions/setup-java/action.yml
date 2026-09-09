@@ -73,18 +73,38 @@ runs:
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: |
-          ~/.m2/repository
-          !~/.m2/repository/de/zorro909/skywright
+          ~/.m2/repository/**/*.jar
+          ~/.m2/repository/**/*.pom
+          ~/.m2/repository/**/*.xml
+          ~/.m2/repository/**/*.zip
+          ~/.m2/repository/**/*.tar.gz
+          ~/.m2/repository/**/_remote.repositories
+          ~/.m2/repository/**/*.sha1
+          ~/.m2/repository/**/*.sha256
+          !~/.m2/repository/de/zorro909/skywright/**
+        # Cache files, not their parent directory: tar would recursively archive
+        # the parent and bypass the reactor exclusion.
         # Each lane saves its own dependency set; the native producer cannot win
         # a race and freeze an incomplete cache for every backend consumer.
-        key: ${{ runner.os }}-${{ runner.arch }}-maven-v1-${{ github.job }}-${{ hashFiles('**/pom.xml', '.mvn/**') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-maven-v2-${{ github.job }}-${{ hashFiles('**/pom.xml', '.mvn/**') }}
         restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-maven-v1-${{ github.job }}-
+          ${{ runner.os }}-${{ runner.arch }}-maven-v2-${{ github.job }}-
     - name: Cache Maven wrapper distribution
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: ~/.m2/wrapper/dists
         key: ${{ runner.os }}-${{ runner.arch }}-maven-wrapper-${{ hashFiles('.mvn/wrapper/maven-wrapper.properties') }}
+    - name: Select the repository Maven distribution
+      shell: bash
+      run: |
+        mkdir --parents "$RUNNER_TEMP/skywright-maven"
+        cat > "$RUNNER_TEMP/skywright-maven/mvn" <<'SH'
+        #!/usr/bin/env bash
+        exec "$GITHUB_WORKSPACE/mvnw" "$@"
+        SH
+        chmod +x "$RUNNER_TEMP/skywright-maven/mvn"
+        echo "$RUNNER_TEMP/skywright-maven" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/skywright-maven/mvn" --version
     - name: Resolve effective GraalPy environment identity
       id: environment
       if: inputs.graalpy-resources == 'true'

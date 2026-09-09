@@ -139,7 +139,10 @@ def main() -> None:
                            "m:properties/m:postgresql.container.image", namespaces=NS)}
         run("pnpm", "--dir", "frontend", "run", "test:acceptance", env=environment)
     else:
-        run("scripts/graalpy-environment", "verify")
+        # Qualify the native payload on this packaging host without rebuilding it
+        # or rerunning the backend reactor's tests.
+        run("mvn", "--batch-mode", "--no-transfer-progress",
+            "-Dgraalpy.environment.prebuilt=true", "-pl", "graalpy-environment", "process-resources")
         for module in ("backend-deployment", "skypilot-api-server-deployment"):
             run("mvn", "--batch-mode", "--no-transfer-progress",
                 "-DexcludedGroups=real-service", "-pl", module, "verify")

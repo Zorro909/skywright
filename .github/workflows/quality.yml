@@ -189,7 +189,7 @@ jobs:
           name: verified-backend-${{ github.run_attempt }}
           path: ci/verified-backend
           if-no-files-found: error
-          retention-days: 1
+          retention-days: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 30 || 7 }}
           compression-level: 0
       - name: Retain Java test and diagnostic reports
         if: always()

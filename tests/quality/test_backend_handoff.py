@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -99,3 +100,23 @@ class BackendHandoffTest(unittest.TestCase):
             backend.receive(self.handoff, self.consumer, '1')
         with self.assertRaisesRegex(ValueError, 'positive workflow run'):
             backend.source_identity('')
+
+    def test_failed_packaging_host_native_probe_prevents_image_builds(self):
+        binary = self.root / 'bin'
+        binary.mkdir()
+        command_log = self.root / 'commands.log'
+        mvn = binary / 'mvn'
+        mvn.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$MAVEN_COMMAND_LOG"\nexit 73\n')
+        mvn.chmod(0o755)
+        with (
+            patch.object(Path, 'home', return_value=self.consumer),
+            patch.object(sys, 'argv', ['ci-backend', 'image', str(self.handoff), '--producer-attempt', '1']),
+            patch.dict(os.environ, {'PATH': f'{binary}:{os.environ["PATH"]}',
+                                    'MAVEN_COMMAND_LOG': str(command_log)}),
+            self.assertRaises(subprocess.CalledProcessError) as failure,
+        ):
+            backend.main()
+        self.assertEqual(failure.exception.returncode, 73)
+        commands = command_log.read_text().splitlines()
+        self.assertEqual(len(commands), 1)
+        self.assertIn('-Dgraalpy.environment.prebuilt=true -pl graalpy-environment process-resources', commands[0])
