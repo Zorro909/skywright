@@ -34,11 +34,14 @@ def records(archive):
 
 
 def prepare(archive, destination):
+    source_md5 = hashlib.md5()
+    source_sha256 = hashlib.sha256()
     with archive.open("rb") as source:
-        if hashlib.file_digest(source, "md5").hexdigest() != SOURCE_MD5:
-            raise ValueError(
-                "Archive differs from the original CIFAR-10 download checksum"
-            )
+        while chunk := source.read(1024 * 1024):
+            source_md5.update(chunk)
+            source_sha256.update(chunk)
+    if source_md5.hexdigest() != SOURCE_MD5:
+        raise ValueError("Archive differs from the original CIFAR-10 download checksum")
     if destination.exists():
         raise ValueError(
             "Use a new output directory; published corpora must not be overwritten"
@@ -62,12 +65,10 @@ def prepare(archive, destination):
         raise ValueError(
             "Qualification requires all training images and a shard above 64 MiB"
         )
-    with archive.open("rb") as source:
-        digest = hashlib.file_digest(source, "sha256").hexdigest()
     return {
         "source": SOURCE,
         "sourceMd5": SOURCE_MD5,
-        "sourceSha256": digest,
+        "sourceSha256": source_sha256.hexdigest(),
         "trainingImages": count,
         "largestShardBytes": largest,
         "shardLimitBytes": SHARD_BYTES,
