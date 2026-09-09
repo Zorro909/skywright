@@ -90,7 +90,7 @@ print("example-context-passed")
     assert completed.stdout.strip().endswith("example-context-passed")
 
 
-def test_preparation_rejects_wrong_archive_before_creating_corpus(tmp_path):
+def test_preparation_rejects_wrong_archive_before_creating_corpus(tmp_path: Path):
     archive = tmp_path / "wrong.tar.gz"
     archive.write_bytes(b"not the immutable source")
     destination = tmp_path / "mds"
