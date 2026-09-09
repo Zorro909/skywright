@@ -24,7 +24,14 @@ final class SkyPilotHeldQualification {
 		evidence.put("control_queue_capacity", 2);
 		evidence.put("held_queue_capacity", 1);
 		evidence.put("shutdown_grace_ms", 100);
-		var orchestrator = new SkyPilotOrchestrator(client, new SkyPilotBridgeSettings(2, 1, Duration.ofMillis(100)));
+		evidence.put("skypilot_version", client.version());
+		evidence.put("platform",
+				Map.of("os", System.getProperty("os.name"), "architecture", System.getProperty("os.arch"), "processors",
+						Runtime.getRuntime().availableProcessors(), "java_runtime",
+						System.getProperty("java.runtime.version")));
+		var timedClient = new CancellationTimingClient(client);
+		var orchestrator = new SkyPilotOrchestrator(timedClient,
+				new SkyPilotBridgeSettings(2, 1, Duration.ofMillis(100)));
 		try {
 			require(orchestrator.refreshAvailability().toCompletableFuture().get(60, TimeUnit.SECONDS).available(),
 					"initial availability");
@@ -34,6 +41,8 @@ final class SkyPilotHeldQualification {
 				.value();
 			// Initialize the cancellation path before measuring contention with held
 			// work.
+			System.out.println("CANCEL_STARTUP");
+			proceed(input, "startup");
 			var startupStarted = System.nanoTime();
 			var startupCancellation = orchestrator
 				.control(new ControlRequest("missing-job", ControlRequest.Action.CANCEL))
@@ -41,6 +50,8 @@ final class SkyPilotHeldQualification {
 				.get(10, TimeUnit.SECONDS);
 			require(startupCancellation.failure() == null, "startup cancellation");
 			evidence.put("startup_cancellation_ms", elapsed(startupStarted));
+			evidence.put("startup_cancellation", timedClient.cancellation());
+			System.out.println("STARTUP_EVIDENCE " + JSON.writeValueAsString(evidence));
 			System.out.println("HOLD " + JSON.readTree(operation.id()).required("request_id").asText());
 			proceed(input, "complete");
 			var held = orchestrator.complete(operation).toCompletableFuture();
@@ -51,6 +62,9 @@ final class SkyPilotHeldQualification {
 				.get(2, TimeUnit.SECONDS);
 			require(cancellation.failure() == null, "cancellation initiation");
 			evidence.put("cancellation_ms", elapsed(started));
+			evidence.put("held_cancellation", timedClient.cancellation());
+			System.out.println("CANCELLED");
+			proceed(input, "probe");
 			started = System.nanoTime();
 			require(orchestrator.refreshAvailability().toCompletableFuture().get(2, TimeUnit.SECONDS).available(),
 					"health with held work");

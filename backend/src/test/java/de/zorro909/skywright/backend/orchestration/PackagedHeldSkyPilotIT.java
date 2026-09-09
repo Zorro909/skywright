@@ -10,6 +10,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Tag;
@@ -22,11 +24,16 @@ import tools.jackson.databind.json.JsonMapper;
 @Tag("real-service")
 final class PackagedHeldSkyPilotIT {
 
+	private static final JsonMapper JSON = JsonMapper.builder().build();
+
 	@ParameterizedTest
 	@CsvSource({ "false,false", "true,false", "false,true", "true,true" })
 	@Timeout(180)
 	void packagedNativeSdkKeepsControlAndShutdownBoundedWithAnOutstandingStream(boolean saturateControl, boolean tls,
 			@TempDir Path temporary) throws Exception {
+		assertThat(Runtime.getRuntime().availableProcessors())
+			.as("timing qualification requires at least two available CPUs for the packaged JVM and real server")
+			.isGreaterThanOrEqualTo(2);
 		var repository = Path.of(System.getProperty("repository.root"));
 		var mode = saturateControl ? "held-control" : "held";
 		var output = repository
@@ -42,6 +49,8 @@ final class PackagedHeldSkyPilotIT {
 			}
 			builder.redirectErrorStream(true);
 			var process = builder.start();
+			List<HeldSkyPilotProxy.RequestTiming> startupRequests = List.of();
+			List<HeldSkyPilotProxy.RequestTiming> heldRequests = List.of();
 			var lines = new LinkedBlockingQueue<String>();
 			var reader = Thread.ofPlatform().start(() -> {
 				try (var stream = new BufferedReader(
@@ -61,10 +70,18 @@ final class PackagedHeldSkyPilotIT {
 				}
 			});
 			try (var input = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8)) {
-				proxy.hold(awaitLine(lines, "HOLD ", Duration.ofSeconds(120)).substring(5));
+				awaitLine(lines, "CANCEL_STARTUP", Duration.ofSeconds(120));
+				proxy.beginCancellation();
+				command(input, "startup");
+				proxy.hold(awaitLine(lines, "HOLD ", Duration.ofSeconds(12)).substring(5));
+				startupRequests = proxy.finishCancellation();
 				command(input, "complete");
 				assertThat(proxy.awaitHeld(Duration.ofSeconds(10))).as("SDK is waiting at /api/stream").isTrue();
+				proxy.beginCancellation();
 				command(input, "measure");
+				awaitLine(lines, "CANCELLED", Duration.ofSeconds(10));
+				heldRequests = proxy.finishCancellation();
+				command(input, "probe");
 				if (saturateControl) {
 					awaitLine(lines, "HOLD_CONTROL", Duration.ofSeconds(10));
 					proxy.holdControl();
@@ -76,7 +93,7 @@ final class PackagedHeldSkyPilotIT {
 				awaitLine(lines, "UNREACHABLE", Duration.ofSeconds(10));
 				api.stop();
 				command(input, "unreachable");
-				var result = JsonMapper.builder().build().readTree(awaitLine(lines, "{", Duration.ofSeconds(12)));
+				var result = JSON.readTree(awaitLine(lines, "{", Duration.ofSeconds(12)));
 				assertThat(process.waitFor(5, TimeUnit.SECONDS)).as("packaged JVM exits with stream still held")
 					.isTrue();
 				assertThat(process.exitValue()).isZero();
@@ -88,12 +105,26 @@ final class PackagedHeldSkyPilotIT {
 					assertThat(result.required("control_admission_ms").asLong()).isLessThan(100);
 				}
 				assertThat(result.required("shutdown_ms").asLong()).isLessThan(5000);
+				assertThat(result.required("startup_cancellation").required("thread_cpu_ms").asLong()).isPositive();
+				assertThat(result.required("held_cancellation").required("thread_cpu_ms").asLong()).isPositive();
+				for (var requests : List.of(startupRequests, heldRequests)) {
+					assertThat(requests).filteredOn(request -> request.path().equals("/jobs/cancel"))
+						.singleElement()
+						.satisfies(request -> {
+							assertThat(request.method()).isEqualTo("POST");
+							assertThat(request.status()).isEqualTo(200);
+						});
+				}
 				System.out.println("Packaged SDK evidence: " + result);
 			}
 			finally {
 				process.destroyForcibly();
 				process.waitFor(5, TimeUnit.SECONDS);
 				reader.join(5000);
+				var wireEvidence = JSON.writeValueAsString(Map.of("startup", startupRequests, "held", heldRequests,
+						"unfinished", proxy.finishCancellation(), "exit_code", process.exitValue()));
+				Files.writeString(output.resolveSibling(output.getFileName() + ".requests.json"), wireEvidence);
+				System.out.println("Cancellation wire evidence: " + wireEvidence);
 			}
 		}
 	}

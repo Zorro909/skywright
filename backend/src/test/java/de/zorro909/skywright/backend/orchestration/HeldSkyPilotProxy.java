@@ -12,6 +12,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Set;
+import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -43,6 +45,21 @@ final class HeldSkyPilotProxy implements AutoCloseable {
 	private final CountDownLatch controlEntered = new CountDownLatch(1);
 
 	private final AtomicInteger requests = new AtomicInteger();
+
+	private volatile ConcurrentLinkedQueue<RequestTiming> cancellationRequests;
+
+	record RequestTiming(String method, String path, int status, long upstreamMillis) {
+	}
+
+	void beginCancellation() {
+		this.cancellationRequests = new ConcurrentLinkedQueue<>();
+	}
+
+	List<RequestTiming> finishCancellation() {
+		var captured = this.cancellationRequests;
+		this.cancellationRequests = null;
+		return captured == null ? List.of() : List.copyOf(captured);
+	}
 
 	HeldSkyPilotProxy(URI upstream) throws IOException {
 		this(upstream, null);
@@ -97,6 +114,7 @@ final class HeldSkyPilotProxy implements AutoCloseable {
 
 	private void forward(HttpExchange exchange) throws IOException {
 		this.requests.incrementAndGet();
+		var captured = this.cancellationRequests;
 		try (exchange) {
 			var uri = exchange.getRequestURI();
 			if (this.holdControl && "/jobs/queue/v2".equals(uri.getPath())) {
@@ -121,12 +139,17 @@ final class HeldSkyPilotProxy implements AutoCloseable {
 				}
 			});
 			HttpResponse<byte[]> response;
+			var started = System.nanoTime();
 			try {
 				response = this.client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
 			}
 			catch (IOException unavailable) {
 				exchange.sendResponseHeaders(503, -1);
 				return;
+			}
+			if (captured != null) {
+				captured.add(new RequestTiming(exchange.getRequestMethod(), uri.getPath(), response.statusCode(),
+						TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)));
 			}
 			response.headers().map().forEach((name, values) -> {
 				if (!HOP_HEADERS.contains(name.toLowerCase(java.util.Locale.ROOT))) {
