@@ -22,7 +22,8 @@ public final class OrchestratorQualificationMain {
 
 	public static void main(String[] arguments) throws Exception {
 		if (arguments.length < 1 || arguments.length > 2) {
-			throw new IllegalArgumentException("expected unavailable <cause>, saturation, held or held-control");
+			throw new IllegalArgumentException(
+					"expected unavailable <cause>, saturation, held, held-control or tls-rejected");
 		}
 		var endpoint = URI.create(requiredEnvironment("SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT"));
 		try (var client = new GraalPySkyPilotClient(
@@ -32,10 +33,26 @@ public final class OrchestratorQualificationMain {
 				case "saturation" -> saturation(client);
 				case "held" -> SkyPilotHeldQualification.run(client, false);
 				case "held-control" -> SkyPilotHeldQualification.run(client, true);
+				case "tls-rejected" -> tlsRejected(client);
 				default -> throw new IllegalArgumentException("unsupported qualification: " + arguments[0]);
 			};
 			System.out.println(JSON.writeValueAsString(result));
 		}
+	}
+
+	private static Map<String, Object> tlsRejected(SkyPilotClient client) throws Exception {
+		try {
+			// Call the actual SDK. The standard-library health probe must not
+			// short-circuit this qualification before urllib3 attempts TLS.
+			client.observe(new StatusRequest(List.of("missing-job")));
+		}
+		catch (SkyPilotClientFailure failure) {
+			if (failure.causeCategory() != BridgeFailure.FailureCause.REACHABILITY) {
+				throw failure;
+			}
+			return Map.of("sdk_tls_rejected", true, "cause", failure.causeCategory().name());
+		}
+		throw new IllegalStateException("SDK accepted a TLS peer that should have been rejected");
 	}
 
 	private static Map<String, Object> unavailable(SkyPilotClient client, BridgeFailure.FailureCause expected)

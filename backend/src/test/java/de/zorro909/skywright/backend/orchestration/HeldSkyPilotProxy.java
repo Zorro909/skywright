@@ -2,6 +2,8 @@ package de.zorro909.skywright.backend.orchestration;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -13,6 +15,8 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import javax.net.ssl.SSLContext;
 
 /** Holds one actual SDK stream at the wire while forwarding other real API calls. */
 final class HeldSkyPilotProxy implements AutoCloseable {
@@ -38,16 +42,35 @@ final class HeldSkyPilotProxy implements AutoCloseable {
 
 	private final CountDownLatch controlEntered = new CountDownLatch(1);
 
+	private final AtomicInteger requests = new AtomicInteger();
+
 	HeldSkyPilotProxy(URI upstream) throws IOException {
+		this(upstream, null);
+	}
+
+	HeldSkyPilotProxy(URI upstream, SSLContext tls) throws IOException {
 		this.upstream = upstream;
-		this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		var address = new InetSocketAddress("127.0.0.1", 0);
+		if (tls == null) {
+			this.server = HttpServer.create(address, 0);
+		}
+		else {
+			var https = HttpsServer.create(address, 0);
+			https.setHttpsConfigurator(new HttpsConfigurator(tls));
+			this.server = https;
+		}
 		this.server.setExecutor(this.executor);
 		this.server.createContext("/", this::forward);
 		this.server.start();
 	}
 
 	URI endpoint() {
-		return URI.create("http://127.0.0.1:" + this.server.getAddress().getPort());
+		var scheme = this.server instanceof HttpsServer ? "https" : "http";
+		return URI.create(scheme + "://127.0.0.1:" + this.server.getAddress().getPort());
+	}
+
+	int requests() {
+		return this.requests.get();
 	}
 
 	void hold(String requestId) {
@@ -73,6 +96,7 @@ final class HeldSkyPilotProxy implements AutoCloseable {
 	}
 
 	private void forward(HttpExchange exchange) throws IOException {
+		this.requests.incrementAndGet();
 		try (exchange) {
 			var uri = exchange.getRequestURI();
 			if (this.holdControl && "/jobs/queue/v2".equals(uri.getPath())) {

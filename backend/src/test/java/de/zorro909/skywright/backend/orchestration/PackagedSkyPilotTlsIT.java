@@ -1,0 +1,61 @@
+package de.zorro909.skywright.backend.orchestration;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import tools.jackson.databind.json.JsonMapper;
+
+@Tag("real-service")
+final class PackagedSkyPilotTlsIT {
+
+	@ParameterizedTest
+	@ValueSource(booleans = { false, true })
+	@Timeout(180)
+	void packagedSdkRejectsUntrustedAuthoritiesAndMismatchedHostnames(boolean matchingHostname, @TempDir Path temporary)
+			throws Exception {
+		var repository = Path.of(System.getProperty("repository.root"));
+		var server = SkyPilotTlsFixture.create(temporary.resolve("server"), matchingHostname);
+		var trust = matchingHostname ? SkyPilotTlsFixture.create(temporary.resolve("unrelated-authority"), true)
+				: server;
+		var mode = matchingHostname ? "untrusted-authority" : "wrong-hostname";
+		try (var api = SkyPilotApiServerFixture.start();
+				var proxy = new HeldSkyPilotProxy(api.endpoint(), server.context())) {
+			var log = repository.resolve("backend/target/service-logs/" + mode + "-tls-qualification.log");
+			var builder = new ProcessBuilder("java", "--enable-native-access=ALL-UNNAMED",
+					"--sun-misc-unsafe-memory-access=allow", "-Xss16m",
+					"-Dgraalpy.external.directory=" + System.getProperty("graalpy.external.directory"),
+					"-Dloader.main=de.zorro909.skywright.backend.orchestration.OrchestratorQualificationMain", "-cp",
+					System.getProperty("backend.executable"),
+					"org.springframework.boot.loader.launch.PropertiesLauncher", "tls-rejected");
+			builder.directory(repository.toFile());
+			builder.environment().put("SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT", proxy.endpoint().toString());
+			trust.configureTrust(builder);
+			var process = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
+			try {
+				assertThat(process.waitFor(120, TimeUnit.SECONDS)).as("packaged TLS rejection exits").isTrue();
+				assertThat(process.exitValue()).as(Files.readString(log)).isZero();
+				var evidence = Files.readAllLines(log)
+					.stream()
+					.filter(line -> line.startsWith("{"))
+					.reduce((earlier, later) -> later)
+					.orElseThrow();
+				var result = JsonMapper.builder().build().readTree(evidence);
+				assertThat(result.required("sdk_tls_rejected").asBoolean()).isTrue();
+				assertThat(result.required("cause").asText()).isEqualTo("REACHABILITY");
+				assertThat(proxy.requests()).as("TLS rejection prevents any HTTP request reaching the API").isZero();
+			}
+			finally {
+				process.destroyForcibly();
+				process.waitFor(5, TimeUnit.SECONDS);
+			}
+		}
+	}
+
+}

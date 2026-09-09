@@ -140,7 +140,8 @@ class JavaSetupContractTest(unittest.TestCase):
             )
         }
         expected = {
-            "numpy==2.2.4",
+            "numpy==2.3.2",
+            "urllib3==2.7.0",
             "pandas==2.2.3",
             "psutil==5.9.8",
             "uvloop==0.19.0",
@@ -152,7 +153,7 @@ class JavaSetupContractTest(unittest.TestCase):
         for package in expected:
             self.assertIn(f"{package}\n", lock)
         self.assertEqual(
-            BUILD_CONSTRAINTS.read_text(encoding="utf-8"), "numpy==2.2.4\n"
+            BUILD_CONSTRAINTS.read_text(encoding="utf-8"), "numpy==2.3.2\n"
         )
 
     def test_graalpy_environment_is_a_dedicated_reactor_module(self) -> None:
@@ -217,7 +218,7 @@ class JavaSetupContractTest(unittest.TestCase):
             )
         }
         self.assertEqual(
-            wheel_packages, {"${graalpy.wheel.package}", "numpy==2.2.4"}
+            wheel_packages, {"${graalpy.wheel.package}", "numpy==2.3.2"}
         )
 
 

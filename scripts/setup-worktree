@@ -4,7 +4,7 @@ set -euo pipefail
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository"
 
-for command in curl flock sha256sum install; do
+for command in curl flock sha256sum install python3 tar; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "Required command is unavailable: $command" >&2
     exit 1
@@ -61,7 +61,37 @@ set +u
 cd "$lock_directory"
 source "$sdkman_directory/bin/sdkman-init.sh"
 cd "$repository"
-sdk env install
+if ! sdk env install; then
+  java_candidate="$(sed -n 's/^java=//p' .sdkmanrc)"
+  java_destination="$sdkman_directory/candidates/java/$java_candidate"
+  if [[ "$(uname -s)/$(uname -m)" != Linux/x86_64 || -e "$java_destination" ]]; then
+    exit 1
+  fi
+  # SDKMAN can list a new release before its download broker serves it. Use
+  # the same checksum-pinned official archive as CI, registered with SDKMAN.
+  mapfile -t java_archive_configuration < <(python3 - <<'PY'
+import json
+from pathlib import Path
+toolchain = json.loads(Path("quality/toolchain.json").read_text())
+print(toolchain["java_archive_url"])
+print(toolchain["java_archive_sha256"])
+PY
+  )
+  mkdir -p "$sdkman_directory/candidates/java"
+  java_staging="$(mktemp -d "$sdkman_directory/candidates/java/.skywright.XXXXXX")"
+  trap 'rm -rf "$java_staging"' EXIT
+  curl --fail --location --silent --show-error --retry 3 \
+    "${java_archive_configuration[0]}" --output "$java_staging/archive.tar.gz"
+  printf '%s  %s\n' "${java_archive_configuration[1]}" "$java_staging/archive.tar.gz" \
+    | sha256sum --check --strict
+  mkdir "$java_staging/jdk"
+  tar --extract --gzip --file "$java_staging/archive.tar.gz" \
+    --strip-components=1 --directory "$java_staging/jdk"
+  mv "$java_staging/jdk" "$java_destination"
+  rm -rf "$java_staging"
+  trap - EXIT
+  sdk env install
+fi
 sdk env
 while IFS='=' read -r candidate version; do
   [[ -n "$candidate" && -n "$version" ]] && sdk default "$candidate" "$version"

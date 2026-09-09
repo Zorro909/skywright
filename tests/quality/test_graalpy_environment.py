@@ -24,13 +24,13 @@ class EnvironmentIdentityTest(unittest.TestCase):
             destination = self.root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(REPOSITORY / name, destination)
-        self.versions = {'graalpy': '25.2.4', 'skypilot': '0.13.0'}
+        self.versions = {'graalpy': '25.3.4.1', 'skypilot': '0.13.0'}
         self.resources = self.root / 'resources'
-        self.library = self.resources / 'venv/lib/python3.12/site-packages'
+        self.library = self.resources / 'venv/lib/python3.13/site-packages'
         self.library.mkdir(parents=True)
         (self.library / 'package.py').write_text('qualified dependency')
         (self.resources / 'venv/installed.txt').write_text('skypilot==0.13.0\n')
-        (self.resources / 'venv/contents').write_text('version=25.2.4\ninput_packages=skypilot==0.13.0\n')
+        (self.resources / 'venv/contents').write_text('version=25.3.4.1\ninput_packages=skypilot==0.13.0\n')
         self.observed = {'implementation': 'graalpy', **self.versions,
                          'packages': environment.locked_packages(self.root)}
         self.observation = self.root / 'observation.json'
