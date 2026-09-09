@@ -33,14 +33,7 @@ final class PackagedHeldSkyPilotIT {
 		var certificate = tls ? SkyPilotTlsFixture.create(temporary, true) : null;
 		try (var api = SkyPilotApiServerFixture.start();
 				var proxy = new HeldSkyPilotProxy(api.endpoint(), certificate == null ? null : certificate.context())) {
-			var builder = new ProcessBuilder("java", "--enable-native-access=ALL-UNNAMED",
-					"--sun-misc-unsafe-memory-access=allow", "-Xss16m",
-					"-Dgraalpy.external.directory=" + System.getProperty("graalpy.external.directory"),
-					"-Dloader.main=de.zorro909.skywright.backend.orchestration.OrchestratorQualificationMain", "-cp",
-					System.getProperty("backend.executable"),
-					"org.springframework.boot.loader.launch.PropertiesLauncher", mode);
-			builder.directory(repository.toFile());
-			builder.environment().put("SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT", proxy.endpoint().toString());
+			var builder = PackagedSkyPilotFixture.process(mode, proxy.endpoint());
 			if (certificate != null) {
 				certificate.configureTrust(builder);
 			}
