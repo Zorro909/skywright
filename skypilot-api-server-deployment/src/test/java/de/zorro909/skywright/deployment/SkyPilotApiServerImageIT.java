@@ -340,11 +340,12 @@ final class SkyPilotApiServerImageIT {
 	void collectorReadsPinnedPostgresAndRawFilesWithReadOnlyStateAndNoSdkImport() throws Exception {
 		String run = "38c76a5b-7cba-400e-9595-7657b194ea83";
 		String seed = """
-				import os, sys, uuid
+				import os, sys, time, uuid
 				from pathlib import Path
 				sys.path.insert(0, '/opt/skywright/runtime')
 				from log_collector import cloud_name, managed_cluster_name
 				from sky.jobs.utils import generate_managed_job_cluster_name
+				from sky.jobs import log_gc
 				from sky.utils.common_utils import make_cluster_name_on_cloud
 				from sky.utils import common_utils
 				import psycopg2
@@ -362,7 +363,11 @@ final class SkyPilotApiServerImageIT {
 				snapshot.write_bytes(raw)
 				with psycopg2.connect(os.environ['SKYPILOT_DB_CONNECTION_URI']) as connection, connection.cursor() as cursor:
 				    cursor.execute("INSERT INTO job_info(spot_job_id,name,schedule_state,user_hash) VALUES (91062,%s,'DONE','fixture')", (name,))
-				    cursor.execute("INSERT INTO spot(spot_job_id,task_id,task_name,status,end_at,local_log_file) VALUES (91062,0,%s,'FAILED_SETUP',1,%s)", (name,str(snapshot)))
+				    cursor.execute("INSERT INTO spot(spot_job_id,task_id,task_name,status,end_at,local_log_file) VALUES (91062,0,%s,'FAILED_SETUP',%s,%s)", (name,time.time(),str(snapshot)))
+				# A recent terminal fixture must survive the live server's background GC.
+				log_gc._clean_task_logs_with_retention(log_gc._DEFAULT_TASK_LOGS_GC_RETENTION_HOURS * 3600)
+				log_gc._clean_controller_logs_with_retention(log_gc._DEFAULT_CONTROLLER_LOGS_GC_RETENTION_HOURS * 3600)
+				assert snapshot.exists(), 'fixture was eligible for production log cleanup'
 				print('fixture ready; naming protocol matches')
 				""";
 		assertThat(docker("exec", serverContainer, "python", "-I", "-c", seed)).contains("naming protocol matches");
