@@ -88,13 +88,17 @@ cancellation scheduling window.
 `test_cancellation_waits_for_publisher_traceback_cleanup` exercises the real
 `run_training_process` boundary. A recorder-local object owns a PyTorch tensor and
 survives in the cancellation traceback. Its destructor holds cleanup at that
-boundary using events. Both cases failed before the fix:
+boundary using events. The cases failed before their corresponding fixes:
 
 - Cleanup released within grace must finish before the recorder resumes and the
   cancellation report is published.
 - Cleanup held beyond grace must return a `TimeoutError` diagnostic, suppress the
   report, and leave recorder cancellation active. The test releases and joins the
   thread afterward so its intentional stall does not contaminate test shutdown.
+- If the thread exits just after the deadline was exceeded, the timeout remains
+  latched. A controlled wrapper releases cleanup after the real wait throws,
+  forcing the race before the completion check. The attempt must still remain
+  unfinalized. This case failed before the PR review follow-up.
 
 `test_terminal_checkpoint_waits_for_earlier_publisher_thread_cleanup` holds a
 successful cadence publisher's thread-local destructor while the next cadence
@@ -102,7 +106,8 @@ publication runs. Terminal completion must wait for the earlier thread too.
 
 The coordinator retains live publisher thread handles and joins them outside its
 condition lock. Publication and thread exit consume the same existing shutdown
-deadline. Dead handles are discarded during scheduling and shutdown instead of
+deadline. The first exceeded deadline remains latched even if workers subsequently
+finish, so cleanup cannot resume the recorder or publish a late report. Dead handles are discarded during scheduling and shutdown instead of
 accumulating with Run history. Daemon status remains necessary for the existing
 bounded failure path when a native call never returns. This implements
 [ADR 0014](../adr/0014-separate-safe-points-from-execution-termination.md)'s cleanup barrier;
@@ -117,17 +122,17 @@ fail.
 ## Python coverage and limits
 
 The cancellation and shutdown cases are exercised with the locked CPU PyTorch
-stack across supported CPython versions. Each row combines the eight cancellation
-and deadline cases with the earlier-publisher cleanup regression. Every version
+stack across supported CPython versions. Each row covers the nine cancellation and deadline cases plus the
+earlier-publisher cleanup regression. Every version
 used PyTorch 2.12.0+cpu.
 
 | CPython | Focused cases |
 |---|---|
-| 3.10.18 | 9 passed |
-| 3.11.13 | 9 passed |
-| 3.12.11 | 9 passed |
-| 3.13.6 | 9 passed |
-| 3.14.6 | 9 passed |
+| 3.10.18 | 10 passed |
+| 3.11.13 | 10 passed |
+| 3.12.11 | 10 passed |
+| 3.13.6 | 10 passed |
+| 3.14.6 | 10 passed |
 
 Run these checks from the repository root with the desired interpreter:
 

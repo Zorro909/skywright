@@ -1598,10 +1598,13 @@ print(json.dumps({
     }
 
 
-@pytest.mark.parametrize("release_within_grace", [True, False])
+@pytest.mark.parametrize(
+    "cleanup_release", ["within_grace", "after_deadline", "after_return"]
+)
 def test_cancellation_waits_for_publisher_traceback_cleanup(
-    release_within_grace: bool,
+    cleanup_release: str,
 ) -> None:
+    release_within_grace = cleanup_release == "within_grace"
     completed = run_project(
         """
 import json
@@ -1678,6 +1681,32 @@ def release_after_cleanup_starts():
             if release_within_grace
             else ""
         )
+        + (
+            """
+from skywright._training_checkpoint_coordinator import CheckpointCoordinator
+
+wait_for_active = CheckpointCoordinator._wait_for_active
+
+
+def finish_cleanup_after_deadline(self, cancellation_requested=None):
+    try:
+        return wait_for_active(self, cancellation_requested)
+    except TimeoutError:
+        # Force the worker to exit after the real deadline was exceeded but
+        # before stop() decides whether it can resume/report the attempt.
+        release_cleanup.set()
+        for thread in threading.enumerate():
+            if thread.name == "skywright-checkpoint-publisher":
+                thread.join(5)
+        assert cleanup_finished.is_set()
+        raise
+
+
+CheckpointCoordinator._wait_for_active = finish_cleanup_after_deadline
+"""
+            if cleanup_release == "after_deadline"
+            else ""
+        )
         + f"""
 started = time.monotonic()
 try:
@@ -1704,9 +1733,7 @@ try:
         "resumes": [event[1] for event in events_at_return if event[0] == "resume"],
         "reports": [event[1] for event in events_at_return if event[0] == "report"],
         "bounded": elapsed < 1.5,
-        "cleanup_failure": result.report.diagnostics.get(
-            "checkpoint_cleanup_failure", {{}}
-        ).get("exception_type"),
+        "failure": result.report.diagnostics.get("exception_type"),
     }}))
 finally:
     release_cleanup.set()
@@ -1720,11 +1747,11 @@ finally:
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout) == {
         "cause": "cancelled" if release_within_grace else "skywright_failure",
-        "cleanup_finished": release_within_grace,
+        "cleanup_finished": cleanup_release != "after_return",
         "resumes": [True] if release_within_grace else [],
         "reports": [True] if release_within_grace else [],
         "bounded": True,
-        "cleanup_failure": None if release_within_grace else "TimeoutError",
+        "failure": None if release_within_grace else "TimeoutError",
     }
 
 

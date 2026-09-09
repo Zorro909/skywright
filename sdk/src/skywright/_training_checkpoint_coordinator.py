@@ -45,6 +45,7 @@ class CheckpointCoordinator:
         )
         self._cancelling_active = False
         self._shutdown_deadline: float | None = None
+        self._shutdown_timeout: TimeoutError | None = None
 
     def durable_state(self) -> tuple[int | None, str | None]:
         """Read the confirmed Step and reference under one synchronization boundary."""
@@ -116,8 +117,10 @@ class CheckpointCoordinator:
         except Exception as failure:
             self._latch(failure)
         with self._condition:
-            stopped = self._active is None and not any(
-                worker.is_alive() for worker in self._workers
+            stopped = (
+                self._shutdown_timeout is None
+                and self._active is None
+                and not any(worker.is_alive() for worker in self._workers)
             )
         if stopped:
             self._resume_after_cancellation()
@@ -137,6 +140,8 @@ class CheckpointCoordinator:
                 cancellation_observed = True
                 self._request_active_cancellation()
             with self._condition:
+                if self._shutdown_timeout is not None:
+                    raise self._shutdown_timeout
                 self._workers = [
                     worker for worker in self._workers if worker.is_alive()
                 ]
@@ -149,9 +154,10 @@ class CheckpointCoordinator:
                     )
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise TimeoutError(
+                    self._shutdown_timeout = TimeoutError(
                         "checkpoint publication exceeded the shutdown grace deadline"
                     )
+                    raise self._shutdown_timeout
                 if self._active is not None:
                     self._condition.wait(min(remaining, 0.05))
                     continue
