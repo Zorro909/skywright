@@ -334,16 +334,16 @@ final class SkyPilotApiServerImageIT {
 				import os, sys, uuid
 				from pathlib import Path
 				sys.path.insert(0, '/opt/skywright/runtime')
-				from log_collector import cloud_name
+				from log_collector import cloud_name, managed_cluster_name
+				from sky.jobs.utils import generate_managed_job_cluster_name
 				from sky.utils.common_utils import make_cluster_name_on_cloud
 				from sky.utils import common_utils
 				import psycopg2
 				name = 'skywright-38c76a5b-7cba-400e-9595-7657b194ea83'
 				for i in range(100):
 				    candidate = 'skywright-' + str(uuid.UUID(int=i))
-				    expected = make_cluster_name_on_cloud(candidate, 30, add_user_hash=False)
-				    assert cloud_name(candidate, 30) == expected
-				    cluster = expected + '-' + str(91062 + i)
+				    cluster = generate_managed_job_cluster_name(candidate, 91062 + i)
+				    assert managed_cluster_name(candidate, 91062 + i) == cluster
 				    assert cloud_name(cluster, 42, common_utils.get_user_hash()) == make_cluster_name_on_cloud(cluster, 42)
 				root = Path('/var/lib/skypilot/sky_logs')
 				(root / 'jobs_controller').mkdir(exist_ok=True)
