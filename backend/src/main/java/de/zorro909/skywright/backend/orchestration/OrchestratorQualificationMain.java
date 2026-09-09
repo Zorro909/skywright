@@ -24,7 +24,7 @@ public final class OrchestratorQualificationMain {
 	public static void main(String[] arguments) throws Exception {
 		if (arguments.length < 1 || arguments.length > 2) {
 			throw new IllegalArgumentException(
-					"expected unavailable <cause>, saturation, held, held-control or tls-rejected");
+					"expected unavailable <cause>, saturation, held, held-control, tls-rejected or sdk-status");
 		}
 		var endpoint = URI.create(requiredEnvironment("SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT"));
 		try (var client = new GraalPySkyPilotClient(
@@ -35,10 +35,23 @@ public final class OrchestratorQualificationMain {
 				case "held" -> SkyPilotHeldQualification.run(client, false);
 				case "held-control" -> SkyPilotHeldQualification.run(client, true);
 				case "tls-rejected" -> tlsRejected(client);
+				case "sdk-status" -> sdkStatus(client);
 				default -> throw new IllegalArgumentException("unsupported qualification: " + arguments[0]);
 			};
 			System.out.println(JSON.writeValueAsString(result));
 		}
+	}
+
+	private static Map<String, Object> sdkStatus(SkyPilotClient client) throws Exception {
+		// An isolated stock server has no job controller. Accept only its typed
+		// response after the actual SDK initiates and completes the status request.
+		var operation = client.observe(new StatusRequest(List.of("native-runtime-qualification")));
+		var result = client.complete(operation);
+		if (!new OperationOutcome.Failed("ClusterNotUpError", "SkyPilot target is unavailable").equals(result)) {
+			throw new IllegalStateException("unexpected isolated SDK status result: " + result);
+		}
+		return Map.of("sdk_status_completed", true, "sdk_version", client.version(), "source_result",
+				"ClusterNotUpError");
 	}
 
 	private static Map<String, Object> tlsRejected(SkyPilotClient client) throws Exception {
