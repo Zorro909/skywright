@@ -2,6 +2,7 @@ package de.zorro909.skywright.deployment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.zorro909.skywright.backend.orchestration.SkyPilotApiServerFixture;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -29,6 +30,7 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.Timeout;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -177,6 +179,41 @@ final class ProductionImageIT {
 
 	@Test
 	@Order(6)
+	@Timeout(240)
+	void shippedNativeSdkInitiatesAndCompletesARealStatusRequest() throws Exception {
+		var container = containerName("native-sdk");
+		try (var skyPilot = SkyPilotApiServerFixture.start("0.0.0.0")) {
+			docker("run", "--detach", "--name", container, "--read-only", "--tmpfs", BackendPodBudget.temporaryMount(),
+					"--add-host", "skywright-test-host:host-gateway", "--env",
+					"SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT=http://skywright-test-host:"
+							+ skyPilot.endpoint().getPort(),
+					"--env", "NO_PROXY=skywright-test-host,127.0.0.1,localhost", "--env",
+					"no_proxy=skywright-test-host,127.0.0.1,localhost", "--entrypoint", "java", imageName(),
+					"--enable-native-access=ALL-UNNAMED", "--sun-misc-unsafe-memory-access=allow", "-Xss16m",
+					"-Dloader.main=de.zorro909.skywright.backend.orchestration.OrchestratorQualificationMain", "-cp",
+					"/opt/skywright/application.jar", "org.springframework.boot.loader.launch.PropertiesLauncher",
+					"sdk-status");
+			var deadline = Instant.now().plusSeconds(120);
+			while ("true".equals(docker("inspect", "--format", "{{.State.Running}}", container).strip())
+					&& Instant.now().isBefore(deadline)) {
+				Thread.sleep(100);
+			}
+			var logs = dockerCombinedOutput("logs", container);
+			assertThat(docker("inspect", "--format", "{{.State.Running}}", container).strip()).as(logs)
+				.isEqualTo("false");
+			assertThat(docker("inspect", "--format", "{{.State.ExitCode}}", container).strip()).as(logs).isEqualTo("0");
+			assertThat(logs)
+				.contains("\"sdk_status_completed\":true", "\"sdk_version\":\"" + skypilotVersion() + "\"",
+						"\"source_result\":\"ClusterNotUpError\"")
+				.doesNotContain("SIGSEGV", "A fatal error has been detected");
+		}
+		finally {
+			dockerIgnoringFailure("rm", "--force", container);
+		}
+	}
+
+	@Test
+	@Order(7)
 	void productionProcessTerminatesWithinTheDocumentedStopWindow() throws Exception {
 		docker("rm", "--force", runningContainer);
 		runningContainer = null;

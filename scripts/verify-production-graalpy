@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""Select sealed native resources built for the supported production ABI."""
+import argparse
+from pathlib import Path
+import subprocess
+
+from quality_support.graalpy_environment import effective_versions, verify_record
+
+
+def verify(root, resources, versions):
+    record = verify_record(root, resources, versions)
+    identity = record["identity"]
+    expected = {"system": "Linux", "machine": "x86_64",
+                "distribution": {"ID": "ubuntu", "VERSION_ID": "24.04"},
+                "libc": ["glibc", "2.39"]}
+    if identity["platform"] != expected:
+        raise ValueError("Production requires Ubuntu 24.04 amd64 native resources; "
+                         "select a qualified CI environment as documented in backend-deployment/README.md")
+    if not identity["nativeBuild"].get("openssl", "").startswith("OpenSSL 3.0."):
+        raise ValueError("Production native resources must be built against Ubuntu's OpenSSL 3.0 ABI")
+    return record
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--resources", type=Path, required=True)
+    parser.add_argument("--graalpy-version")
+    parser.add_argument("--skypilot-version")
+    args = parser.parse_args()
+    if bool(args.graalpy_version) != bool(args.skypilot_version):
+        raise ValueError("Both effective versions must be supplied together")
+    root = Path(__file__).resolve().parents[1]
+    versions = {"graalpy": args.graalpy_version, "skypilot": args.skypilot_version} if args.graalpy_version else effective_versions(root)
+    record = verify(root, args.resources, versions)
+    print(f"Production native environment selected: {record['identitySha256']}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, subprocess.SubprocessError) as failure:
+        raise SystemExit(f"Production GraalPy environment rejected: {failure}") from failure

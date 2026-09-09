@@ -15,6 +15,10 @@
   <name>Skywright backend deployment</name>
   <description>Production OCI packaging for the backend.</description>
 
+  <properties>
+    <graalpy.production.directory>${graalpy.external.directory}</graalpy.production.directory>
+  </properties>
+
   <dependencies>
     <dependency>
       <groupId>de.zorro909.skywright</groupId>
@@ -47,6 +51,31 @@
 
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>${exec-maven.version}</version>
+        <executions>
+          <execution>
+            <id>select-production-native-environment</id>
+            <phase>prepare-package</phase>
+            <goals><goal>exec</goal></goals>
+            <configuration>
+              <executable>python3</executable>
+              <timeout>180000</timeout>
+              <arguments>
+                <argument>${maven.multiModuleProjectDirectory}/scripts/verify-production-graalpy</argument>
+                <argument>--resources</argument>
+                <argument>${graalpy.production.directory}</argument>
+                <argument>--graalpy-version</argument>
+                <argument>${graalpy.version}</argument>
+                <argument>--skypilot-version</argument>
+                <argument>${skypilot.version}</argument>
+              </arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
@@ -88,7 +117,7 @@
                   <inline>
                     <fileSets>
                       <fileSet>
-                        <directory>${graalpy.external.directory}</directory>
+                        <directory>${graalpy.production.directory}</directory>
                         <outputDirectory>graalpy-resources</outputDirectory>
                       </fileSet>
                     </fileSets>

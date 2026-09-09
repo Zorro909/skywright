@@ -362,6 +362,10 @@ jobs:
         uses: ./.github/actions/setup-frontend
         with:
           install-browser: false
+      - name: Set up Python for the real SDK image qualification
+        uses: ./.github/actions/setup-python-toolchain
+        with:
+          python-version: '3.14'
       - name: Build and exercise the production image
         id: build_image
         run: scripts/quality run image --frontend-dependencies-ready
