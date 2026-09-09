@@ -43,6 +43,8 @@ class Authority:
             if flags & socket.MSG_TRUNC or select.select([peer_fd], [], [], 0)[0]:
                 raise Uncertain()
             request = json.loads(data)
+            if request == {"operation": "health"}:
+                return {"status": "ready"}
             if not isinstance(request, dict) or set(request) != {
                 "operation",
                 "run_id",

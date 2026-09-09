@@ -154,11 +154,12 @@ items = [
                                 "exec": {
                                     "command": [
                                         "python3",
-                                        "-c",
-                                        'import os; assert os.path.exists("/var/lib/skywright-writer/socket/authority.sock")',
+                                        "-m",
+                                        "local_writer.readiness",
                                     ]
                                 },
                                 "periodSeconds": 5,
+                                "timeoutSeconds": 3,
                             },
                         )
                     ],

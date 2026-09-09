@@ -3,8 +3,10 @@
 import copy
 import json
 import os
+import socket
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from deployment.local_writer.authority import Authority
@@ -15,6 +17,7 @@ from deployment.local_writer.custody import (
     validate_registration,
 )
 from deployment.local_writer.node import Node
+from deployment.local_writer.readiness import check
 
 FIXTURE = Path(__file__).parent / "fixtures/local-writer-registration.json"
 
@@ -30,6 +33,45 @@ def observation(record):
         "boot_id": record["boot_id"],
         "finished_at": "2026-09-09T00:00:00Z",
     }
+
+
+class WriterReadinessTest(unittest.TestCase):
+    def test_stale_socket_does_not_report_ready(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "authority.sock")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as listener:
+                listener.bind(path)
+            self.assertTrue(Path(path).exists())
+            with self.assertRaises(ConnectionRefusedError):
+                check(path)
+
+    def test_listener_without_serving_protocol_times_out(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "authority.sock")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as listener:
+                listener.bind(path)
+                listener.listen(1)
+                with self.assertRaises(TimeoutError):
+                    check(path)
+
+    def test_live_authority_acknowledges_without_registering_a_writer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "authority.sock")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as listener:
+                listener.bind(path)
+                listener.listen(1)
+                listener.settimeout(3)
+
+                def serve():
+                    connection, _ = listener.accept()
+                    with connection:
+                        response = Authority(None, None).handle(connection)
+                        connection.sendall(json.dumps(response).encode())
+
+                with ThreadPoolExecutor(max_workers=1) as worker:
+                    handled = worker.submit(serve)
+                    check(path)
+                    handled.result(timeout=3)
 
 
 class WriterEvidenceTest(unittest.TestCase):
