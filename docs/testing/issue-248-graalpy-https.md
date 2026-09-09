@@ -12,7 +12,7 @@ network operation. GraalPy lacks `ssl.VERIFY_X509_PARTIAL_CHAIN`; urllib3's
 combined SSL import consequently leaves its `SSLContext` unset. Calling
 `urllib3.util.ssl_.create_urllib3_context()` raises `TypeError`.
 
-The candidate is GraalPy **25.3.4.1**, Python **3.13.14**, with urllib3
+The selected runtime is GraalPy **25.3.4.1**, Python **3.13.14**, with urllib3
 **2.7.0** and unchanged SkyPilot **0.13.0**. The released runtime now supplies
 the SSL constant. `VerifyEnvironment.java` checks that the context factory
 constructs a context with `CERT_REQUIRED` and hostname verification enabled.
@@ -41,8 +41,8 @@ would retain GraalPy's unchecked IP-hostname path.
 
 The isolated adjusted transport accepted the trusted peer and rejected both the
 unrelated CA and the wrong hostname. The production health-probe code also
-passed those cases with a synthetic authorization header. The documented PyOpenSSL adapter was also
-investigated, but hit a GraalPy `NotImplementedError: latin1`; it is not a selected
+passed those cases with a synthetic authorization header. The documented
+PyOpenSSL adapter was also investigated, but hit a GraalPy `NotImplementedError: latin1`; it is not a selected
 dependency. With GraalPy 25.2.4 it also left the incomplete SSL imports unresolved.
 
 The corresponding JDK is GraalVM CE **25.3.4.1+1.1**, OpenJDK **25.0.4.1**.
@@ -71,9 +71,17 @@ its setup code imports the removed `pkg_resources` module. watchfiles moves from
 GraalPy patch's PyO3 0.20.3 fork. pandas stays at **2.2.3**, and psutil at **5.9.8**.
 For the local pandas wheel preparation, `pip wheel -Ccompile-args=-j4` bounds
 parallel compilation on this 32-thread host. It changes parallelism, not compiler
-optimization or ABI options.
+optimization or ABI options. The host also lacked `pg_config`, required to
+build the existing psycopg2-binary 2.9.12 pin for the new GraalPy ABI. A
+checksum-verified PostgreSQL 18.4 source build supplied client headers and build
+tools in the isolated local cache; it did not start a database or change the
+running qualification deployment. Rust 1.95.0 was selected for this worktree
+after orjson 3.11.9 rejected the host default 1.94.0 compiler. Builds receive
+`RUSTUP_TOOLCHAIN=1.95.0` so pip's temporary build directories use that compiler
+too. The orjson dependency pin is unchanged.
 
-The environment lock must be regenerated for the new Python runtime. The
+The Maven plugin regenerated the full 101-package environment lock for the new
+Python runtime. Only NumPy, uvloop and watchfiles changed package versions. The
 existing environment identity includes the effective GraalPy version, package
 inputs, lock, build constraints, toolchain and native platform inputs. Those
 changes invalidate the previous environment and wheel caches without a cache
@@ -86,8 +94,8 @@ confirmed runtime-property invalidation while unrelated edits preserve reuse.
 
 `PackagedHeldSkyPilotIT` runs both existing HTTP scenarios and their HTTPS
 counterparts. The held HTTPS case uses an IP endpoint, and the saturated
-short-call HTTPS case uses a DNS endpoint. Each launches the packaged backend in a fresh JVM and reaches
-the real pinned SkyPilot API server through a local proxy. For HTTPS, a temporary
+short-call HTTPS case uses a DNS endpoint. Each launches the packaged backend
+in a fresh JVM and reaches the real pinned SkyPilot API server through a local proxy. For HTTPS, a temporary
 CA signs a server certificate with the loopback IP in its subject alternative
 names. The child receives this CA through `SSL_CERT_FILE` and
 `REQUESTS_CA_BUNDLE`. Verification remains enabled.
@@ -122,4 +130,5 @@ remains tracked in #252.
 - [NumPy GCC 16 build failure and 2.3.2 fix](https://github.com/numpy/numpy/issues/29130)
 - [uvloop 0.22.1 release](https://github.com/MagicStack/uvloop/releases/tag/v0.22.1)
 - [watchfiles 1.2.0 release](https://github.com/samuelcolvin/watchfiles/releases/tag/v1.2.0)
+- [PostgreSQL 18.4 source and checksums](https://ftp.postgresql.org/pub/source/v18.4/)
 - [Meson Python build settings](https://mesonbuild.com/meson-python/how-to-guides/config-settings.html)
