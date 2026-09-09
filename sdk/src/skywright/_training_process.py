@@ -95,6 +95,7 @@ def run_training_process(
     cgroup_memory_reader: Callable[[], int | None] = read_cgroup_memory_usage,
     system_sampler_wait: SamplerWait = wait_for_sampling,
     _archive_marker: bool = False,
+    _register_writer: Callable[[ExecutionAttemptRecord], None] | None = None,
 ) -> TrainingProcessResult:
     """Execute one Training Project through the process's sole Run Context."""
 
@@ -205,6 +206,11 @@ def run_training_process(
         return signal_requests.interruption_requested or interruption_requested()
 
     try:
+        configure_retention = getattr(
+            resolved_recorder, "configure_checkpoint_retention", None
+        )
+        if callable(configure_retention):
+            configure_retention(configuration)
         configure_recorder_observability(
             resolved_recorder,
             configuration,
@@ -239,6 +245,8 @@ def run_training_process(
                 resolved_resume.reference if resolved_resume is not None else None
             ),
         )
+        if _register_writer is not None:
+            _register_writer(attempt)
         resolved_recorder.publish_attempt(attempt)
     except RecoveryAdmissionError:
         signal_requests.finalize()

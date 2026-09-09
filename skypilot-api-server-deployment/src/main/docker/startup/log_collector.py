@@ -59,6 +59,11 @@ def bounded_json(response):
         response.release_conn()
 
 
+def managed_cluster_name(task_name, job_id):
+    # SkyPilot 0.13 jobs.constants.JOBS_CLUSTER_NAME_PREFIX_LENGTH.
+    return cloud_name(task_name, 25) + f"-{job_id}"
+
+
 class Sources:
     def __init__(self, connection_uri=None, root=ROOT):
         self.connection_uri = connection_uri or os.environ.get("SKYPILOT_DB_CONNECTION_URI")
@@ -89,7 +94,7 @@ class Sources:
         return dict(zip(keys, rows[0]))
 
     def head(self, job, job_id):
-        cluster = cloud_name(job["taskName"], 30) + f"-{job_id}"
+        cluster = managed_cluster_name(job["taskName"], job_id)
         with closing(self._connection()) as connection, connection.cursor() as cursor:
             cursor.execute("""
                 SELECT region FROM clusters

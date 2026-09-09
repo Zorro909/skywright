@@ -1,0 +1,309 @@
+"""Custody validation and proof persistence at the local authority boundary."""
+
+import copy
+import json
+import os
+import socket
+import tempfile
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+from deployment.local_writer.authority import Authority
+from deployment.local_writer.common import Uncertain, identity
+from deployment.local_writer.custody import (
+    Custody,
+    validate_proof,
+    validate_registration,
+)
+from deployment.local_writer.node import Node
+from deployment.local_writer.readiness import check
+
+FIXTURE = Path(__file__).parent / "fixtures/local-writer-registration.json"
+
+
+def registration():
+    return json.loads(FIXTURE.read_text())
+
+
+def observation(record):
+    return {
+        "kind": "container-exited-cgroup-removed",
+        "container_id": record["container_id"],
+        "boot_id": record["boot_id"],
+        "finished_at": "2026-09-09T00:00:00Z",
+    }
+
+
+class WriterReadinessTest(unittest.TestCase):
+    def test_stale_socket_does_not_report_ready(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "authority.sock")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as listener:
+                listener.bind(path)
+            self.assertTrue(Path(path).exists())
+            with self.assertRaises(ConnectionRefusedError):
+                check(path)
+
+    def test_listener_without_serving_protocol_times_out(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "authority.sock")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as listener:
+                listener.bind(path)
+                listener.listen(1)
+                with self.assertRaises(TimeoutError):
+                    check(path)
+
+    def test_live_authority_acknowledges_without_registering_a_writer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "authority.sock")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as listener:
+                listener.bind(path)
+                listener.listen(1)
+                listener.settimeout(3)
+
+                def serve():
+                    connection, _ = listener.accept()
+                    with connection:
+                        response = Authority(None, None).handle(connection)
+                        connection.sendall(json.dumps(response).encode())
+
+                with ThreadPoolExecutor(max_workers=1) as worker:
+                    handled = worker.submit(serve)
+                    check(path)
+                    handled.result(timeout=3)
+
+
+class WriterEvidenceTest(unittest.TestCase):
+    def test_incomplete_or_mismatched_registration_never_establishes_custody(self):
+        original = registration()
+        validate_registration(original, original["owner"])
+        for field in original:
+            invalid = copy.deepcopy(original)
+            del invalid[field]
+            with self.subTest(missing=field), self.assertRaises(Uncertain):
+                validate_registration(invalid, original["owner"])
+        for mutate in (
+            lambda r: r["process"].update(container_id="b" * 64),
+            lambda r: r["init"].update(pid_namespace="pid:[1]"),
+            lambda r: r["process"].update(cgroup="/../escape"),
+            lambda r: r.update(cgroup_chain=[]),
+            lambda r: r.update(runtime="unqualified/1"),
+        ):
+            invalid = copy.deepcopy(original)
+            mutate(invalid)
+            with self.assertRaises(Uncertain):
+                validate_registration(invalid, original["owner"])
+
+    def test_reference_ids_alone_are_not_a_proof(self):
+        record = registration()
+        forged = {"run_id": record["run_id"], "attempt_id": record["attempt_id"]}
+        with self.assertRaises(Uncertain):
+            validate_proof(forged, record)
+
+    @unittest.skipUnless(
+        os.geteuid() == 0,
+        "root-owned custody is exercised in the container system check",
+    )
+    def test_durable_proof_survives_restart_and_cannot_be_replaced(self):
+        record = registration()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "authority.json").write_text(json.dumps(record["owner"]))
+            first = Custody(directory, record["owner"]["node_uid"])
+            first.register(record)
+            first.register(dict(record, registered_at=record["registered_at"] + 1))
+            with self.assertRaises(Uncertain):
+                first.register(dict(record, image="different-image"))
+            key = first.key(record["run_id"], record["attempt_id"])
+            first.prove(key, observation(record))
+            expected = first.response(key)
+            first.close()
+            second = Custody(directory, record["owner"]["node_uid"])
+            self.assertEqual(second.response(key), expected)
+            second.close()
+            proof_path = directory / ("proof-" + key + ".json")
+            proof = json.loads(proof_path.read_text())
+            for field in tuple(proof):
+                invalid = dict(proof)
+                del invalid[field]
+                with self.subTest(missing=field), self.assertRaises(Uncertain):
+                    validate_proof(invalid, record)
+            proof.pop("observation")
+            proof_path.write_text(json.dumps(proof))
+            with self.assertRaises(Uncertain):
+                Custody(directory, record["owner"]["node_uid"])
+
+    @unittest.skipUnless(os.geteuid() == 0, "requires root-owned custody")
+    def test_retained_proof_refuses_changed_boot_or_cgroup_root(self):
+        record = registration()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            cgroups = directory / "cgroups"
+            cgroups.mkdir()
+            state = directory / "custody"
+            state.mkdir(mode=0o700)
+            record["cgroup_root"] = identity(cgroups)
+            (state / "authority.json").write_text(json.dumps(record["owner"]))
+            custody = Custody(state, record["owner"]["node_uid"])
+            try:
+                custody.register(record)
+                key = custody.key(record["run_id"], record["attempt_id"])
+                custody.prove(key, observation(record))
+            finally:
+                custody.close()
+            custody = Custody(state, record["owner"]["node_uid"])
+            try:
+                node = object.__new__(Node)
+                node.boot_id = record["boot_id"]
+                node.cgroups = cgroups
+                authority = Authority(custody, node)
+                self.assertEqual(authority.observe(key), custody.response(key))
+                node.boot_id = "00000000-0000-0000-0000-000000000001"
+                with self.assertRaises(Uncertain):
+                    authority.observe(key)
+                node.boot_id = record["boot_id"]
+                cgroups.rename(directory / "old-cgroups")
+                cgroups.mkdir()
+                with self.assertRaises(Uncertain):
+                    authority.observe(key)
+            finally:
+                custody.close()
+
+
+class WriterMountTest(unittest.TestCase):
+    def test_ancillary_render_requires_explicit_exact_device_enrollment(self):
+        from deployment.local_writer.node import validate_mounts, validate_render_device
+
+        fixture = json.loads((FIXTURE.parent / "local-writer-mounts.json").read_text())
+        device = "/dev/dri/renderD129"
+        fixture["pod"]["volumes"].append(
+            {
+                "name": "rocm-ancillary-render",
+                "hostPath": {"path": device, "type": "CharDevice"},
+            }
+        )
+        fixture["pod"]["containers"][0]["volumeMounts"].append(
+            {"name": "rocm-ancillary-render", "mountPath": device}
+        )
+        fixture["runtime"]["mounts"].append(
+            {
+                "source": device,
+                "destination": device,
+                "type": "bind",
+                "options": ["rbind", "rprivate", "rw"],
+            }
+        )
+
+        def check(value, pin=None):
+            validate_mounts(
+                value["pod"],
+                value["runtime"],
+                value["pod_uid"],
+                value["sandbox_id"],
+                pin,
+            )
+
+        with self.assertRaises(Uncertain):
+            check(fixture)
+        check(fixture, device)
+        for mutate in (
+            lambda f: f["pod"]["volumes"][-1]["hostPath"].update(type="Directory"),
+            lambda f: f["pod"]["volumes"][-1]["hostPath"].update(
+                path="/run/containerd/containerd.sock"
+            ),
+            lambda f: f["pod"]["containers"][0]["volumeMounts"][-1].update(
+                mountPath="/tmp/runtime"
+            ),
+            lambda f: f["runtime"]["mounts"][-1].update(
+                source="/run/containerd/containerd.sock"
+            ),
+        ):
+            invalid = copy.deepcopy(fixture)
+            mutate(invalid)
+            with self.assertRaises(Uncertain):
+                check(invalid, device)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / device.lstrip("/")
+            path.parent.mkdir(parents=True)
+            path.touch()
+            with self.assertRaises(Uncertain):
+                validate_render_device(root, device)
+            path.unlink()
+            path.symlink_to("/dev/null")
+            with self.assertRaises(Uncertain):
+                validate_render_device(root, device)
+
+    def test_writable_root_keeps_isolated_sandbox_system_files(self):
+        from deployment.local_writer.node import validate_mounts
+
+        fixture = json.loads((FIXTURE.parent / "local-writer-mounts.json").read_text())
+        for mount in fixture["runtime"]["mounts"]:
+            if mount["destination"] in ("/etc/hostname", "/etc/resolv.conf"):
+                mount["options"] = [
+                    "rw" if option == "ro" else option for option in mount["options"]
+                ]
+        validate_mounts(
+            fixture["pod"],
+            fixture["runtime"],
+            fixture["pod_uid"],
+            fixture["sandbox_id"],
+        )
+        for destination in ("/etc/hostname", "/etc/resolv.conf"):
+            invalid = copy.deepcopy(fixture)
+            for mount in invalid["runtime"]["mounts"]:
+                if mount["destination"] == destination:
+                    mount["source"] = "/run/containerd/containerd.sock"
+            with self.assertRaises(Uncertain):
+                validate_mounts(
+                    invalid["pod"],
+                    invalid["runtime"],
+                    invalid["pod_uid"],
+                    invalid["sandbox_id"],
+                )
+
+    def test_only_qualified_mounts_and_restart_policy_can_enter_custody(self):
+        from deployment.local_writer.node import validate_mounts
+
+        fixture = json.loads((FIXTURE.parent / "local-writer-mounts.json").read_text())
+
+        def check(value):
+            validate_mounts(
+                value["pod"], value["runtime"], value["pod_uid"], value["sandbox_id"]
+            )
+
+        check(fixture)
+        for mutate in (
+            lambda f: f["pod"].update(hostNetwork=True),
+            lambda f: f["pod"]["containers"][0].update(restartPolicy="Always"),
+            lambda f: f["pod"]["volumes"].append(
+                {
+                    "name": "extra",
+                    "persistentVolumeClaim": {"claimName": "host-runtime"},
+                }
+            ),
+            lambda f: f["runtime"]["mounts"].append(
+                {
+                    "type": "bind",
+                    "source": "/run/containerd/containerd.sock",
+                    "destination": "/tmp/runtime.sock",
+                    "options": ["ro", "rprivate"],
+                }
+            ),
+            lambda f: f["runtime"]["mounts"].append(f["runtime"]["mounts"][0]),
+            lambda f: f["pod"]["containers"][0]["volumeMounts"][0].update(
+                readOnly=False
+            ),
+            lambda f: f["pod"]["containers"][0]["volumeMounts"][0].update(
+                subPath="authority.sock"
+            ),
+        ):
+            invalid = copy.deepcopy(fixture)
+            mutate(invalid)
+            with self.assertRaises(Uncertain):
+                check(invalid)
+
+
+if __name__ == "__main__":
+    unittest.main()

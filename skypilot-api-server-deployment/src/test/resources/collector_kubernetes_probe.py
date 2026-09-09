@@ -29,7 +29,12 @@ sys.path.insert(0, '/opt/skywright/runtime')
 import log_collector as collector
 
 NAME = 'skywright-38c76a5b-7cba-400e-9595-7657b194ea83'
-CLUSTER = collector.cloud_name(NAME, 30) + '-91062'
+with tempfile.TemporaryDirectory() as sdk_home:
+    CLUSTER = subprocess.check_output([
+        sys.executable, '-I', '-c',
+        'from sky.jobs.utils import generate_managed_job_cluster_name; '
+        'print(generate_managed_job_cluster_name(' + repr(NAME) + ', 91062))',
+    ], text=True, env={**os.environ, 'HOME': sdk_home}, timeout=15).strip()
 CLOUD = collector.cloud_name(CLUSTER, 42, '12345678')
 RAW = b'setup\r\n\x1b[31m\xff\x00task\rprogress\n'
 

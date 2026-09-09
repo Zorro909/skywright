@@ -1261,6 +1261,139 @@ def test_retention_keeps_union_and_verifies_newer_before_deleting(tmp_path) -> N
     assert remaining == [2, 3, 5, 6]
 
 
+def test_checkpoint_worker_applies_configured_retention_after_confirmation(tmp_path):
+    from skywright._training_checkpoint_coordinator import CheckpointCoordinator
+
+    memory = MemoryS3()
+    store = recorder(memory, tmp_path)
+    store.configure_checkpoint_retention(
+        {"checkpoint": {"retention": 2, "keepEveryNth": 3}}
+    )
+    store.publish_attempt(
+        ExecutionAttemptRecord(
+            "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+        )
+    )
+    coordinator = CheckpointCoordinator(store, None, 5)
+    for step in range(1, 7):
+        snapshot = CheckpointSnapshot(
+            step, {"value": step}, run_id="run", project_version="project@digest"
+        )
+        coordinator.publish_terminal(step, lambda checkpoint=snapshot: checkpoint)
+    reader = RunStoreReader(store.target, client=memory)
+    assert [item.step for item in reader.list_checkpoints()] == [3, 5, 6]
+    step, reference = coordinator.durable_state()
+    assert step == 6
+    assert reference is not None and reader.read_exact(reference).step == 6
+
+
+def test_pruning_failure_preserves_confirmed_point_and_can_be_retried(tmp_path):
+    from skywright._training_checkpoint_coordinator import CheckpointCoordinator
+
+    class DeniedDelete(MemoryS3):
+        denied = True
+
+        def delete_object(self, **request):
+            if self.denied:
+                raise PermissionError("injected retention denial")
+            return super().delete_object(**request)
+
+    memory = DeniedDelete()
+    store = recorder(memory, tmp_path)
+    store.configure_checkpoint_retention({"checkpoint": {"retention": 1}})
+    store.publish_attempt(
+        ExecutionAttemptRecord(
+            "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+        )
+    )
+    coordinator = CheckpointCoordinator(store, None, 5)
+    coordinator.publish_terminal(
+        1, lambda: CheckpointSnapshot(1, {"value": 1}, run_id="run")
+    )
+    with pytest.raises(PermissionError, match="injected retention denial"):
+        coordinator.publish_terminal(
+            2, lambda: CheckpointSnapshot(2, {"value": 2}, run_id="run")
+        )
+    assert coordinator.durable_state()[0] == 2
+    reader = RunStoreReader(store.target, client=memory)
+    assert [item.step for item in reader.list_checkpoints()] == [1, 2]
+    memory.denied = False
+    store.prune_confirmed_checkpoints()
+    assert [item.step for item in reader.list_checkpoints()] == [2]
+
+
+def test_cancellation_during_pruning_waits_and_preserves_confirmed_checkpoint(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from skywright._training_checkpoint_coordinator import CheckpointCoordinator
+
+    entered, release, cancelled = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+
+    class HeldPruneRead(MemoryS3):
+        def get_object(self, **request):
+            if "/checkpoints/0000000000000000002/" in request["Key"]:
+                entered.set()
+                assert release.wait(3)
+            return super().get_object(**request)
+
+    memory = HeldPruneRead()
+    store = recorder(memory, tmp_path)
+    store.configure_checkpoint_retention({"checkpoint": {"retention": 1}})
+    attempt = ExecutionAttemptRecord(
+        "123e4567-e89b-12d3-a456-426614174000", "run", "project@digest", None
+    )
+    store.publish_attempt(attempt)
+    original_cancel = store.cancel_checkpoint_publication
+
+    def cancel():
+        original_cancel()
+        cancelled.set()
+
+    store.cancel_checkpoint_publication = cancel
+    coordinator = CheckpointCoordinator(store, None, 5)
+    coordinator.publish_terminal(
+        1, lambda: CheckpointSnapshot(1, {"value": 1}, run_id="run")
+    )
+    try:
+        coordinator.schedule(CheckpointSnapshot(2, {"value": 2}, run_id="run"))
+        assert entered.wait(2)
+        assert coordinator.durable_state()[0] == 2
+        coordinator.schedule(CheckpointSnapshot(3, {"value": 3}, run_id="run"))
+        with ThreadPoolExecutor(max_workers=1) as stopping:
+            stopped = stopping.submit(coordinator.stop)
+            assert cancelled.wait(1)
+            assert not stopped.done()
+            release.set()
+            shutdown = stopped.result(timeout=3)
+        assert shutdown.stopped and shutdown.failure is None
+        step, reference = coordinator.durable_state()
+        assert step == 2
+        assert [
+            item.step
+            for item in RunStoreReader(store.target, client=memory).list_checkpoints()
+        ] == [1, 2]
+        store.publish_report(
+            ExecutionTerminationReport(
+                schema_version=1,
+                attempt_id=attempt.attempt_id,
+                run_id="run",
+                project_version="project@digest",
+                cause=ExecutionTerminationCause.CANCELLED,
+                last_committed_step=2,
+                latest_durable_step=step,
+                latest_durable_checkpoint=reference,
+                diagnostics={},
+            )
+        )
+        assert store.protocol.attempt_report_key(attempt.attempt_id) in memory.objects
+    finally:
+        release.set()
+
+
 def test_checkpoint_multipart_publication_is_atomic_and_cleans_known_failures(
     tmp_path,
 ) -> None:

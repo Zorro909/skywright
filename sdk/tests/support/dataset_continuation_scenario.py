@@ -130,7 +130,13 @@ with MdsDatasetAccess(
         train,
         run_id=run_id,
         project_version="project@digest",
-        configuration={"reproducibility": {"seed": 19}, "checkpoint": {"cadence": 1}},
+        configuration={
+            "reproducibility": {"seed": 19},
+            "checkpoint": {
+                "cadence": 1,
+                "keepEveryNth": inputs.get("keep_every_nth"),
+            },
+        },
         dataset=dataset,
         metric_contracts=EmptyMetricContracts(),
         skywright_metric_schema="metrics@1",

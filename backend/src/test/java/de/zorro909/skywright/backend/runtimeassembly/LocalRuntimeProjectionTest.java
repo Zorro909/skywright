@@ -67,6 +67,20 @@ class LocalRuntimeProjectionTest {
 	}
 
 	@Test
+	void qualifiedWriterAuthorityIsAnOperatorProjectionOutsideTheRunDefinition() throws Exception {
+		var definition = RunDefinition.decode(Files.readString(ROOT.resolve("definition.json")));
+		var materials = materials();
+		var projector = new LocalRuntimeProjection();
+		var ordinary = projector.project(definition, materials, TARGET, null);
+		var qualified = projector.project(definition, materials, TARGET, null, null, true);
+		assertThat(qualified.environment()).containsOnly(
+				java.util.Map.entry("SKYWRIGHT_WRITER_AUTHORITY_SOCKET", "/run/skywright-writer/authority.sock"));
+		assertThat(qualified.run())
+			.isEqualTo("set -e\npython -c 'import skywright._writer_authority'\n" + ordinary.run());
+		assertThat(qualified.resources()).isEqualTo(ordinary.resources());
+	}
+
+	@Test
 	void rejectsUnavailableCapabilitiesAndMismatchedArtifactsBeforeSubmission() throws Exception {
 		var accepted = RunDefinition.decode(Files.readString(ROOT.resolve("definition.json")));
 		var materials = materials();

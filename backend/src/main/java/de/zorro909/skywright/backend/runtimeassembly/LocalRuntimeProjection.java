@@ -47,6 +47,11 @@ public final class LocalRuntimeProjection {
 
 	public OrchestratorTaskSpecification project(RunDefinition definition, RuntimeMaterials materials, Target target,
 			String runtimePullSecret, String runtimePullNamespace) {
+		return project(definition, materials, target, runtimePullSecret, runtimePullNamespace, false);
+	}
+
+	public OrchestratorTaskSpecification project(RunDefinition definition, RuntimeMaterials materials, Target target,
+			String runtimePullSecret, String runtimePullNamespace, boolean writerAuthorityEnabled) {
 		var value = definition.value();
 		if (value.path("schemaVersion").asInt() != 2 || !value.propertyNames().equals(FIELDS))
 			throw new IllegalArgumentException("Unsupported local Run Definition shape");
@@ -83,11 +88,16 @@ public final class LocalRuntimeProjection {
 				+ "'))\nSKYWRIGHT_DELIVERY\ncd /workspace\nexec python -m skywright._runtime --definition '" + directory
 				+ "/definition.json' --materials '" + directory + "/materials.json' --cache-directory '" + directory
 				+ "/dataset-cache'";
+		if (writerAuthorityEnabled)
+			command = "set -e\npython -c 'import skywright._writer_authority'\n" + command;
 		var resources = new OrchestratorTaskSpecification.Resources("kubernetes/" + target.kubernetesContext(),
 				target.cpus(), target.memory(), target.gpuModel() + ":" + request.path("gpuCount").asInt(),
 				"docker:" + image, false, new OrchestratorTaskSpecification.JobRecovery(0, List.of(75)));
 		return this.mapper.map(new TaskPlan("skywright-" + materials.runId(), null, command, List.of(resources),
-				Map.of(), runtimePullSecret, runtimePullNamespace));
+				writerAuthorityEnabled
+						? Map.of("SKYWRIGHT_WRITER_AUTHORITY_SOCKET", "/run/skywright-writer/authority.sock")
+						: Map.of(),
+				runtimePullSecret, runtimePullNamespace));
 	}
 
 	private static String encoded(String value) {

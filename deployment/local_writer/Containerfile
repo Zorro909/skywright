@@ -1,0 +1,7 @@
+FROM docker.io/kindest/node@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5 AS runtime-tools
+FROM docker.io/library/ubuntu@sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316
+RUN apt-get update && apt-get install --yes --no-install-recommends python3 ca-certificates util-linux && rm -rf /var/lib/apt/lists/*
+COPY --from=runtime-tools /usr/local/bin/crictl /usr/local/bin/crictl
+COPY deployment/local_writer/*.py /opt/skywright/local_writer/
+ENV PYTHONPATH=/opt/skywright
+ENTRYPOINT ["nsenter", "--cgroup=/host/proc/1/ns/cgroup", "--", "python3", "-m", "local_writer.authority"]

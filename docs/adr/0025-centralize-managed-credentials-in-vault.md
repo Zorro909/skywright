@@ -33,6 +33,8 @@ Credentials are distinct by external resource, Training Project where applicable
 - A Metric View receives read-only access to the selected Run's Metric Segments.
 - The backend's GHCR resolver and an execution target's private-image pull use separate read-only registry identities. Public Environment Profiles require none.
 
+For local GHCR qualification in #235, the owner cannot use two GitHub accounts. Role separation may use two distinct, independently revocable personal access tokens from the same account, each with only `read:packages`. Here the registry credential identity is the individual token, recorded by a non-secret fingerprint, rather than a requirement for separate GitHub account principals. Separate Vault paths, bindings and projections remain mandatory, and reusing one token for both roles is forbidden. Both tokens inherit the account's package visibility; this separates credential delivery and revocation, not account compromise or account-level package permissions. The backend exchanges its resolver credential for the exact repository's pull scope as before.
+
 More narrowly scoped or per-Run dynamic credentials are used when a provider supports them, but they are not a portability requirement. A provider that cannot meet this reusable role-isolation floor cannot be First-class. The backend's transient ability to project another role's secret does not authorize it to use that external identity for its own work.
 
 ## Lifetime, rotation, and revocation

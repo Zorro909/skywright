@@ -3999,3 +3999,31 @@ assert bool(output.getvalue()) is (not FAIL_PUBLICATION)
 """.replace("FAIL_PUBLICATION", repr(fail_publication))
     )
     assert process.returncode == 0, process.stderr
+
+
+def test_writer_registration_failure_prevents_attempt_and_project_entry() -> None:
+    result = run_project("""
+from skywright import run_training_process
+from skywright.recovery import RecoveryAdmissionError
+recorder = TestRecorder()
+def register(attempt):
+    assert recorder.events == []
+    raise RecoveryAdmissionError("RECOVERY_AUTHORITY_UNAVAILABLE", "authority unavailable")
+def train(context):
+    raise AssertionError("project must not start")
+try:
+    run_training_process(
+        train, run_id="run", project_version="version", configuration={},
+        dataset=TestDataset(), metric_contracts=TestMetricContracts(),
+        skywright_metric_schema="test-schema@1", recorder=recorder, seed=17,
+        _register_writer=register,
+    )
+except RecoveryAdmissionError as failure:
+    assert failure.code == "RECOVERY_AUTHORITY_UNAVAILABLE"
+else:
+    raise AssertionError("registration failure was ignored")
+assert recorder.events == []
+print("registration-failed-closed")
+""")
+    assert result.returncode == 0, result.stderr
+    assert "registration-failed-closed" in result.stdout

@@ -1,0 +1,253 @@
+{
+  "pod": {
+    "automountServiceAccountToken": false,
+    "containers": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import signal,sys,time; signal.signal(signal.SIGTERM,lambda *a:sys.exit(0)); time.sleep(600)"
+        ],
+        "env": [
+          {
+            "name": "PYTHONPATH",
+            "value": "/source"
+          }
+        ],
+        "image": "localhost/skywright-local-writer:issue235",
+        "imagePullPolicy": "Never",
+        "name": "ray-node",
+        "resources": {
+          "limits": {
+            "cpu": "1",
+            "memory": "256Mi"
+          },
+          "requests": {
+            "cpu": "100m",
+            "memory": "64Mi"
+          }
+        },
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "readOnlyRootFilesystem": true
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+          {
+            "mountPath": "/run/skywright-writer",
+            "name": "skywright-writer",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/source/skywright",
+            "name": "sdk",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/tmp",
+            "name": "tmp"
+          }
+        ]
+      }
+    ],
+    "dnsPolicy": "ClusterFirst",
+    "enableServiceLinks": true,
+    "nodeName": "skywright-issue233-control-plane",
+    "preemptionPolicy": "PreemptLowerPriority",
+    "priority": 0,
+    "restartPolicy": "Never",
+    "schedulerName": "default-scheduler",
+    "securityContext": {},
+    "serviceAccount": "default",
+    "serviceAccountName": "default",
+    "terminationGracePeriodSeconds": 30,
+    "tolerations": [
+      {
+        "effect": "NoExecute",
+        "key": "node.kubernetes.io/not-ready",
+        "operator": "Exists",
+        "tolerationSeconds": 300
+      },
+      {
+        "effect": "NoExecute",
+        "key": "node.kubernetes.io/unreachable",
+        "operator": "Exists",
+        "tolerationSeconds": 300
+      }
+    ],
+    "volumes": [
+      {
+        "hostPath": {
+          "path": "/var/lib/skywright-writer/socket",
+          "type": "Directory"
+        },
+        "name": "skywright-writer"
+      },
+      {
+        "configMap": {
+          "defaultMode": 420,
+          "name": "writer-4acbc708"
+        },
+        "name": "sdk"
+      },
+      {
+        "emptyDir": {},
+        "name": "tmp"
+      }
+    ]
+  },
+  "pod_uid": "dccbff8d-0cf8-466e-a60f-f7a1bfe6f377",
+  "sandbox_id": "84ad1b421e469a2463ea32d99e3c8f7ba24167b492249cd5fa76b3ab126d441b",
+  "runtime": {
+    "mounts": [
+      {
+        "destination": "/proc",
+        "options": [
+          "nosuid",
+          "noexec",
+          "nodev"
+        ],
+        "source": "proc",
+        "type": "proc"
+      },
+      {
+        "destination": "/dev",
+        "options": [
+          "nosuid",
+          "strictatime",
+          "mode=755",
+          "size=65536k"
+        ],
+        "source": "tmpfs",
+        "type": "tmpfs"
+      },
+      {
+        "destination": "/dev/pts",
+        "options": [
+          "nosuid",
+          "noexec",
+          "newinstance",
+          "ptmxmode=0666",
+          "mode=0620",
+          "gid=5"
+        ],
+        "source": "devpts",
+        "type": "devpts"
+      },
+      {
+        "destination": "/dev/mqueue",
+        "options": [
+          "nosuid",
+          "noexec",
+          "nodev"
+        ],
+        "source": "mqueue",
+        "type": "mqueue"
+      },
+      {
+        "destination": "/sys",
+        "options": [
+          "nosuid",
+          "noexec",
+          "nodev",
+          "ro"
+        ],
+        "source": "sysfs",
+        "type": "sysfs"
+      },
+      {
+        "destination": "/sys/fs/cgroup",
+        "options": [
+          "nosuid",
+          "noexec",
+          "nodev",
+          "relatime",
+          "ro"
+        ],
+        "source": "cgroup",
+        "type": "cgroup"
+      },
+      {
+        "destination": "/tmp",
+        "options": [
+          "rbind",
+          "rprivate",
+          "rw"
+        ],
+        "source": "/var/lib/kubelet/pods/dccbff8d-0cf8-466e-a60f-f7a1bfe6f377/volumes/kubernetes.io~empty-dir/tmp",
+        "type": "bind"
+      },
+      {
+        "destination": "/run/skywright-writer",
+        "options": [
+          "rbind",
+          "rprivate",
+          "ro"
+        ],
+        "source": "/var/lib/skywright-writer/socket",
+        "type": "bind"
+      },
+      {
+        "destination": "/source/skywright",
+        "options": [
+          "rbind",
+          "rprivate",
+          "ro"
+        ],
+        "source": "/var/lib/kubelet/pods/dccbff8d-0cf8-466e-a60f-f7a1bfe6f377/volumes/kubernetes.io~configmap/sdk",
+        "type": "bind"
+      },
+      {
+        "destination": "/etc/hosts",
+        "options": [
+          "rbind",
+          "rprivate",
+          "rw"
+        ],
+        "source": "/var/lib/kubelet/pods/dccbff8d-0cf8-466e-a60f-f7a1bfe6f377/etc-hosts",
+        "type": "bind"
+      },
+      {
+        "destination": "/dev/termination-log",
+        "options": [
+          "rbind",
+          "rprivate",
+          "rw"
+        ],
+        "source": "/var/lib/kubelet/pods/dccbff8d-0cf8-466e-a60f-f7a1bfe6f377/containers/ray-node/85e08331",
+        "type": "bind"
+      },
+      {
+        "destination": "/etc/hostname",
+        "options": [
+          "rbind",
+          "rprivate",
+          "ro"
+        ],
+        "source": "/var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/84ad1b421e469a2463ea32d99e3c8f7ba24167b492249cd5fa76b3ab126d441b/hostname",
+        "type": "bind"
+      },
+      {
+        "destination": "/etc/resolv.conf",
+        "options": [
+          "rbind",
+          "rprivate",
+          "ro"
+        ],
+        "source": "/var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/84ad1b421e469a2463ea32d99e3c8f7ba24167b492249cd5fa76b3ab126d441b/resolv.conf",
+        "type": "bind"
+      },
+      {
+        "destination": "/dev/shm",
+        "options": [
+          "rbind",
+          "rprivate",
+          "rw"
+        ],
+        "source": "/run/containerd/io.containerd.grpc.v1.cri/sandboxes/84ad1b421e469a2463ea32d99e3c8f7ba24167b492249cd5fa76b3ab126d441b/shm",
+        "type": "bind"
+      }
+    ]
+  }
+}

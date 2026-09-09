@@ -1,0 +1,18 @@
+{
+  "definitionVersion": 1,
+  "projectIdentity": "6b4c790f-d8cd-4bdf-898c-deaf074861e9",
+  "registryRepository": "ghcr.io/zorro909/skywright-cifar10-private-qualification",
+  "configurationContract": "configuration.json",
+  "metricContract": "metrics.json",
+  "dependencyLock": "requirements.lock",
+  "smokeCommand": [
+    "python",
+    "-m",
+    "skywright_project"
+  ],
+  "backends": {
+    "rocm": {
+      "environmentProfile": "ghcr.io/zorro909/skywright-ui-qualification-profile@sha256:3dff7998855d200717bec9b6d1257a936b6c30d7c9423f99df39b09fe1954ab6"
+    }
+  }
+}

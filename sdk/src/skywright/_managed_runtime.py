@@ -20,6 +20,7 @@ from skywright._run_definition import RunDefinition
 from skywright._run_store.control import RunStopObservation
 from skywright._training import Accelerator, TrainingProcessResult, run_training_process
 from skywright._training_types import CheckpointSnapshot
+from skywright._writer_authority import LocalWriterAuthority
 from skywright.configuration import ConfigurationContract
 from skywright.credentials import CredentialProjectionError, s3_credentials
 from skywright.dataset import (
@@ -309,6 +310,7 @@ class ManagedRuntime:
         seed = configuration["reproducibility"]["seed"]
         ordering = configuration["dataset"]["ordering"]
         recorder = RunStoreRecorder(self.target)
+        authority = LocalWriterAuthority.configured()
 
         def seed_checkpoint() -> CheckpointSnapshot:
             assert self.source_run_id is not None and self.source_reference is not None
@@ -353,7 +355,12 @@ class ManagedRuntime:
                 recorder=recorder,
                 seed=seed,
                 maximum_recovery_debt=value["executionPolicy"]["maximumRecoveryDebt"],
-                previous_writer_verifier=_previous_writer_verifier,
+                previous_writer_verifier=(
+                    authority.previous_writer
+                    if authority
+                    else _previous_writer_verifier
+                ),
+                _register_writer=authority.register if authority else None,
                 cancellation_requested=requests.cancelled,
                 policy_stop_requested=requests.policy_stop,
                 resume_from=seed_checkpoint if self.source_run_id is not None else None,

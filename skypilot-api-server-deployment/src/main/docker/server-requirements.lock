@@ -1,0 +1,5 @@
+# CPython controller dependency from SkyPilot's Kubernetes extra.
+# Wheel hashes cover the server's CPython 3.12 Linux amd64 and arm64 images.
+grpcio==1.83.1 \
+    --hash=sha256:72578aa07a4008f17521ef52debcc3acfd1e2c5426243bc3ffb56a38bfe610b7 \
+    --hash=sha256:5ccc26715fd4defca5e129e280dd883b1737b65045ec50ffe22ce42104089519
