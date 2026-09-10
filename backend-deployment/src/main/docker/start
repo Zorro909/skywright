@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+# Bound descriptors even when the image runs outside Kubernetes.
+limit="${SKYWRIGHT_NOFILE_LIMIT:-4096}"
+case "$limit" in
+    ''|*[!0-9]*) echo 'SKYWRIGHT_NOFILE_LIMIT must be an integer' >&2; exit 64 ;;
+esac
+hard_limit="$(ulimit -Hn)"
+if [ "$hard_limit" != unlimited ] && [ "$limit" -gt "$hard_limit" ]; then
+    limit="$hard_limit"
+fi
+ulimit -n "$limit"
+exec java -XX:MaxRAMPercentage=50 -XX:MaxDirectMemorySize=256m "$@"

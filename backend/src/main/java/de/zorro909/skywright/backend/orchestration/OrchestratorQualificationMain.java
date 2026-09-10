@@ -24,7 +24,7 @@ public final class OrchestratorQualificationMain {
 	public static void main(String[] arguments) throws Exception {
 		if (arguments.length < 1 || arguments.length > 2) {
 			throw new IllegalArgumentException(
-					"expected unavailable <cause>, saturation, held, held-control, tls-rejected or sdk-status");
+					"expected unavailable <cause>, saturation, held, held-control, tls-rejected, sdk-status or sdk-resources");
 		}
 		var endpoint = URI.create(requiredEnvironment("SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT"));
 		try (var client = new GraalPySkyPilotClient(
@@ -36,6 +36,7 @@ public final class OrchestratorQualificationMain {
 				case "held-control" -> SkyPilotHeldQualification.run(client, true);
 				case "tls-rejected" -> tlsRejected(client);
 				case "sdk-status" -> sdkStatus(client);
+				case "sdk-resources" -> SkyPilotResourceQualification.run(client);
 				default -> throw new IllegalArgumentException("unsupported qualification: " + arguments[0]);
 			};
 			System.out.println(JSON.writeValueAsString(result));

@@ -122,6 +122,9 @@ public final class SkyPilotApiServerFixture implements AutoCloseable {
 			.redirectOutput(ProcessBuilder.Redirect.appendTo(logs.toFile()));
 		builder.environment().put("HOME", home.toString());
 		builder.environment().put("XDG_CACHE_HOME", home.resolve(".cache").toString());
+		builder.environment().put("SKYPILOT_POD_CPU_CORE_LIMIT", "2");
+		builder.environment().put("SKYPILOT_POD_MEMORY_GB_LIMIT", "4");
+		builder.environment().put("SKYPILOT_DISABLE_USAGE_COLLECTION", "true");
 		return builder.start();
 	}
 

@@ -417,9 +417,9 @@ final class SkyPilotApiServerImageIT {
 	private ArrayList<String> serverArguments(String container) {
 		var databaseUri = "postgresql://skypilot:" + databasePassword + "@" + databaseContainer + ":5432/skypilot";
 		return new ArrayList<>(List.of("run", "--detach", "--name", container, "--network", network, "--read-only",
-				"--cpus", "2", "--memory", "6g", "--tmpfs", "/tmp:rw,exec,nosuid,size=256m", "--volume",
-				stateVolume + ":/var/lib/skypilot", "--env", "SKYPILOT_DB_CONNECTION_URI=" + databaseUri, "--publish",
-				"127.0.0.1::46580", imageName()));
+				"--cpus", "2", "--memory", "4g", "--memory-swap", "4g", "--pids-limit", "192", "--tmpfs",
+				"/tmp:rw,exec,nosuid,size=64m", "--volume", stateVolume + ":/var/lib/skypilot", "--env",
+				"SKYPILOT_DB_CONNECTION_URI=" + databaseUri, "--publish", "127.0.0.1::46580", imageName()));
 	}
 
 	private String get(String path) throws IOException, InterruptedException {
