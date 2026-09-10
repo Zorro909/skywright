@@ -119,5 +119,5 @@ print(json.dumps({
     "explicit_bid_and_offer_override": configured,
     "on_demand": on_demand,
     "remote_credential_mounts": mounts,
-    "result": "credential isolation and default-price risks reproduced",
+    "result": "credential delivery and default-price behavior reproduced",
 }, indent=2))
