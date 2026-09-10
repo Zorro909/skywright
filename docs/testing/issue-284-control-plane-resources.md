@@ -87,6 +87,11 @@ batches, then returned to the test JVM's one-socket baseline. Its heap samples
 were 134–249 MiB and RSS was 670–858 MiB during the workload. The timeout's
 remote endpoint remains held deliberately until shutdown.
 
+The separate [cancellation timing fixture](issue-252-cancellation-latency.md)
+uses a six-GiB worker-sizing budget to avoid disposable workers when its local
+CLI server receives overlapping requests. The resource regression and image
+budgets remain four GiB; cancellation deadlines are unchanged.
+
 `PackagedSkyPilotResourcesIT` invokes the packaged `sdk-resources` qualification
 against an isolated stock SkyPilot server and a trusted HTTPS telemetry peer.
 It completes forty real SDK status operations and health probes, checks a
