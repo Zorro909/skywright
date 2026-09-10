@@ -29,7 +29,8 @@ RUN apt-get update \
 
 COPY --chown=0:0 maven/application.jar /opt/skywright/application.jar
 COPY --chown=0:0 maven/graalpy-resources /opt/skywright/graalpy-resources
-COPY --chown=0:0 --chmod=0755 start /opt/skywright/start
+COPY --chown=0:0 start /opt/skywright/start
+RUN chmod 0755 /opt/skywright/start
 
 USER 10001:10001
 WORKDIR /opt/skywright
