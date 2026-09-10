@@ -8,14 +8,27 @@ Skywright initially supports a deliberately finite deployment matrix rather than
 
 ## Initial target matrix
 
-| Target | First-class modes | Compatible modes |
-|---|---|---|
-| Local AMD on-prem Kubernetes | Local capacity | — |
-| Nebius | On-demand, spot | — |
-| RunPod | On-demand, spot | — |
-| Vast.ai | On-demand, spot | — |
-| Verda | — | On-demand, spot |
-| Lambda Cloud | — | On-demand |
+| Target | First-class modes | Compatible modes | Deferred modes |
+|---|---|---|---|
+| Local AMD on-prem Kubernetes | Local capacity | — | — |
+| Nebius | On-demand, spot | — | — |
+| RunPod | On-demand, spot | — | — |
+| Vast.ai | — | — | On-demand, spot |
+| Verda | — | On-demand, spot | — |
+| Lambda Cloud | — | On-demand | — |
+
+On 2026-09-10, [#281](https://github.com/Zorro909/skywright/issues/281)
+established that the pinned SkyPilot Vast adapter inserts the provider provisioning
+key into remote startup text in both purchase modes. This fails ADR 0025's
+credential-isolation floor. Applying this ADR's failed-gate rule demotes both
+Vast.ai on-demand and spot to **Deferred**; submissions must reject them explicitly
+while existing Runs remain readable. The original First-class scope remains
+required by [#57](https://github.com/Zorro909/skywright/issues/57), and the owner's
+selection of interruptible as the next qualification mode is preserved.
+Restoration requires the supported isolation path tracked in
+[#283](https://github.com/Zorro909/skywright/issues/283) and successful qualification
+of each mode's applicable gates. The [preflight evidence](../research/issue-281-vast-interruptible-preflight.md)
+is an offline compatibility result, not a live cloud qualification.
 
 Every other researched provider is deferred. CoreWeave and Together AI remain operator-supplied Kubernetes routes rather than provider-specific Skywright targets. Prime Intellect spot remains deferred because SkyPilot's launch behavior is unverified, and adapters present only in source remain deferred until they meet the same evidence gates as documented adapters.
 

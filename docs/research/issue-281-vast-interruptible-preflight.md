@@ -46,7 +46,8 @@ uv run --no-project --python backend/target/skypilot-api-server-venv/bin/python 
 | --- | --- |
 | Default interruptible launch | Selected synthetic offer `101` and submitted its USD 0.20/hour minimum bid, despite a second offer `202` with a USD 0.03/hour minimum. |
 | Explicit offer `202`, bid USD 0.04/hour and custom startup `true` | Replaced the offer ID with `101`, retained the explicit bid, and appended the custom startup after the synthetic key write. |
-| Both creation requests | Included the synthetic provider key in startup text writing `~/.vast_api_key`. |
+| On-demand launch | Submitted no bid and still included the synthetic provider key in the remote startup command. |
+| All three creation requests | Included the synthetic provider key in startup text writing `~/.vast_api_key`. |
 | Credential mount declaration | Returned `~/.config/vastai/vast_api_key` as both remote and local path. |
 
 The reported source hash matches the installed, release and upstream files above. These numbers are deliberately synthetic; the test does not show that Vast would accept the low bid on that offer. It does not execute a remote shell, copy a credential, call a live provider or test `NO_UPLOAD` end to end. The file-mount exclusion finding comes from source inspection.
@@ -61,7 +62,7 @@ Vast's [search API](https://docs.vast.ai/api-reference/search/search-offers) dis
 
 ## Next dependency
 
-Keep the owner's Vast.ai interruptible selection and keep its #57 slice unqualified. The next dependency is an upstream-supported path that omits the startup credential and excludes credential mounts, adopted as a pinned release with the diagnostic rerun. Launch and recovery must also preserve an explicit bid and validate the actual offer's disk and traffic rates before spending. This investigation does not authorize local SDK patches or a different provider.
+The credential copy affects both purchase modes. ADR 0023's failed-gate rule therefore demotes Vast.ai on-demand and spot to **Deferred**, with explicit submission rejection and continued readability of existing Runs. Its matrix records this status. Both modes remain in #57's required scope, and the owner's interruptible-first selection is preserved. #283 tracks restoration through an upstream-supported path that omits the startup credential and excludes credential mounts, adopted as a pinned release with the diagnostic rerun. Each mode must then pass its applicable qualification gates. Launch and recovery must also preserve an explicit bid and validate the actual offer's disk and traffic rates before spending. This investigation does not authorize local SDK patches or a different provider.
 
 Later account work also needs the provider SDK dependencies, a Vault-backed provider binding, verified available credit and billing settings, fresh suitable offers, private-image pull credentials, reachable Dataset/Run Store endpoints, and an NVIDIA-compatible qualification image. No real account, offer or storage access was tested. No account secret is needed to complete this investigation.
 

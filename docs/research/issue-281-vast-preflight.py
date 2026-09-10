@@ -57,7 +57,7 @@ class RecordingProvider:
         return {"id": 9001}
 
 
-def run_case(overrides):
+def run_case(overrides, *, preemptible=True):
     provider = RecordingProvider()
     with patch.object(utils.vast, "vast", return_value=provider):
         instance = utils.launch(
@@ -67,7 +67,7 @@ def run_case(overrides):
             disk_size=20,
             image_name="example.invalid/synthetic@sha256:" + "0" * 64,
             ports=None,
-            preemptible=True,
+            preemptible=preemptible,
             secure_only=True,
             create_instance_kwargs=overrides,
         )
@@ -78,7 +78,7 @@ def run_case(overrides):
     return {
         "search_arguments": provider.queries,
         "selected_offer": creation["id"],
-        "submitted_bid_usd_per_hour": creation["price"],
+        "submitted_bid_usd_per_hour": creation.get("price"),
         "requested_disk_gb": creation["disk"],
         "provider_key_in_startup_command": provider.client.api_key in command,
         "writes_remote_provider_key": "> ~/.vast_api_key" in command,
@@ -93,6 +93,7 @@ def require(condition, message):
 
 default = run_case(None)
 configured = run_case({"id": 202, "price": 0.04, "onstart_cmd": "true"})
+on_demand = run_case(None, preemptible=False)
 mounts = Vast().get_credential_file_mounts()
 
 require(default["provider_key_in_startup_command"], "Key interpolation did not reproduce")
@@ -103,6 +104,9 @@ require(configured["selected_offer"] == 101, "Requested offer ID was not overwri
 require(configured["submitted_bid_usd_per_hour"] == 0.04, "Explicit bid was not preserved")
 require(configured["provider_key_in_startup_command"], "Custom startup removed key interpolation")
 require(configured["custom_startup_appended"], "Custom startup was not appended")
+require(on_demand["provider_key_in_startup_command"], "On-demand key interpolation did not reproduce")
+require(on_demand["writes_remote_provider_key"], "On-demand remote key command did not reproduce")
+require(on_demand["submitted_bid_usd_per_hour"] is None, "On-demand unexpectedly specified a bid")
 require("~/.config/vastai/vast_api_key" in mounts, "Credential-file projection did not reproduce")
 
 source = Path(inspect.getfile(utils))
@@ -113,6 +117,7 @@ print(json.dumps({
     "provider_boundary": "synthetic recording client",
     "default_interruptible": default,
     "explicit_bid_and_offer_override": configured,
+    "on_demand": on_demand,
     "remote_credential_mounts": mounts,
     "result": "credential isolation and default-price risks reproduced",
 }, indent=2))
