@@ -34,15 +34,29 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Plan main deployment qualification
+        id: plan
+        env:
+          BASE_REVISION: ${{ github.event.before }}
+        run: |
+          base_revision="$BASE_REVISION"
+          if [[ -z "$base_revision" || "$base_revision" =~ ^0+$ ]]; then
+            base_revision="HEAD^"
+          fi
+          scripts/quality plan --base "$base_revision" --format text --github-output "$GITHUB_OUTPUT"
       - name: Prepare and validate qualified GraalPy dependencies
+        if: steps.plan.outputs.image == 'true' || steps.plan.outputs.deployment == 'true'
         uses: ./.github/actions/prepare-graalpy
       - name: Use the verified dependency environment for release packaging
+        if: steps.plan.outputs.image == 'true' || steps.plan.outputs.deployment == 'true'
         run: echo "MAVEN_ARGS=-Dgraalpy.environment.prebuilt=true" >> "$GITHUB_ENV"
       - name: Set up frontend prerequisites
+        if: steps.plan.outputs.image == 'true' || steps.plan.outputs.deployment == 'true'
         uses: ./.github/actions/setup-frontend
         with:
           install-browser: false
       - name: Install pinned Skaffold
+        if: steps.plan.outputs.image == 'true' || steps.plan.outputs.deployment == 'true'
         env:
           SKAFFOLD_SHA256: 702344081860a587c57937cd55dfa2e70f124c05d6fb845319832ee23fd144a8
         run: |
@@ -55,6 +69,7 @@ jobs:
           chmod +x "$install_dir/skaffold"
           echo "$install_dir" >> "$GITHUB_PATH"
       - name: Build and test through the deployment image contract
+        if: steps.plan.outputs.image == 'true' || steps.plan.outputs.deployment == 'true'
         run: skaffold build --profile local-kind --tag "$GITHUB_SHA" 2>&1 | tee deployment-image-build.log
       - name: Retain main deployment build diagnostics
         if: always()

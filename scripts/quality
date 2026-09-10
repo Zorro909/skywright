@@ -342,6 +342,9 @@ def make_plan(paths: Iterable[str]) -> QualityPlan:
         applicable = applicable.union(
             ("application", "image", "integration", "java", "sdk", "security")
         )
+    # Browser and image checks consume the Java producer's verified application.
+    if applicable.intersection(("application", "image")):
+        applicable = applicable.union(("java",))
     return QualityPlan(
         changed_files=tuple(materialized_paths),
         categories=tuple(categories or ["complete"]),

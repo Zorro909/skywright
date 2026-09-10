@@ -15,14 +15,18 @@ from pathlib import Path
 
 SCHEMA = "skywright-graalpy-environment@1"
 RECORD = "skywright-environment.json"
-INPUTS = (
-    ".github/actions/prepare-graalpy/action.yml",
-    "scripts/graalpy-environment",
+WHEEL_INPUTS = (
     "graalpy-environment/pom.xml",
     "graalpy-environment/graalpy.lock",
     "graalpy-environment/build-constraints.txt",
-    "graalpy-environment/VerifyEnvironment.java",
+    "scripts/prepare-graalpy-wheels",
     "scripts/retag-wheel",
+)
+INPUTS = (
+    *WHEEL_INPUTS,
+    ".github/actions/prepare-graalpy/action.yml",
+    "scripts/graalpy-environment",
+    "graalpy-environment/VerifyEnvironment.java",
     "scripts/quality_support/graalpy_environment.py",
     "backend-deployment/src/main/docker/Dockerfile",
 )
@@ -109,6 +113,18 @@ def identity(root: Path, versions: dict[str, str], *, target: dict | None = None
             "nativeBuild": native_inputs() if native is None else native,
             "toolchain": read_document(root / "quality/toolchain.json"),
             "inputs": {name: digest((root / name).read_bytes()) for name in INPUTS}}
+
+
+def wheel_identity(environment: dict) -> dict:
+    """Reuse installation inputs when only packaging or qualification changes.
+
+    These wheels still require a locked install and fresh environment qualification.
+    Keep exact compiler, runtime, recipe and platform boundaries, including flags.
+    """
+    return {"schema": "skywright-graalpy-wheels@1",
+            **{name: environment[name] for name in
+               ("versions", "platform", "nativeBuild", "toolchain")},
+            "inputs": {name: environment["inputs"][name] for name in WHEEL_INPUTS}}
 
 
 def package_name(name: str) -> str:
@@ -247,6 +263,7 @@ def main(arguments: list[str] | None = None) -> int:
         if args.github_output:
             with args.github_output.open("a") as output:
                 output.write(f"identity={key}\n")
+                output.write(f"wheel-identity={digest(canonical(wheel_identity(value)))}\n")
         print(key)
         return 0
     expected = read_document(args.expected) if args.expected else None

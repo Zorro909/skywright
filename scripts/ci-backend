@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Build and verify backend artifacts once, then qualify their browser and image consumers."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+NS = {"m": "http://maven.apache.org/POM/4.0.0"}
+MODULES = (".", "api/skywright-api", "frontend", "graalpy-environment", "backend")
+SCHEMA = "skywright-backend-handoff@1"
+
+
+def run(*command: str, **kwargs) -> None:
+    subprocess.run(command, cwd=ROOT, check=True, **kwargs)
+
+
+def version() -> str:
+    value = ET.parse(ROOT / "pom.xml").findtext("m:version", namespaces=NS)
+    if not value or not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+        raise ValueError("Unsupported reactor version")
+    return value
+
+
+def source_identity(producer_attempt: str) -> dict:
+    run_id = os.environ["GITHUB_RUN_ID"]
+    if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (run_id, producer_attempt)):
+        raise ValueError("Handoff requires a positive workflow run and producer attempt")
+    return {
+        "revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+        "runId": run_id,
+        "producerAttempt": producer_attempt,
+    }
+
+
+def artifact_paths() -> set[str]:
+    """Only publish artifacts installed by the producer's selected reactor."""
+    result = set()
+    release = version()
+    for module in MODULES:
+        pom = ET.parse(ROOT / module / "pom.xml")
+        artifact = pom.findtext("m:artifactId", namespaces=NS)
+        if not artifact or not re.fullmatch(r"[A-Za-z0-9_.-]+", artifact):
+            raise ValueError("Unsupported reactor artifact ID")
+        prefix = f"{artifact}/{release}/{artifact}-{release}"
+        result.add(f"{prefix}.pom")
+        if pom.findtext("m:packaging", default="jar", namespaces=NS) == "jar":
+            result.add(f"{prefix}.jar")
+        if module == "backend":
+            result.add(f"{prefix}-tests.jar")
+    return result
+
+
+def checksum(path: Path) -> str:
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def validate(directory: Path, producer_attempt: str) -> dict:
+    if directory.is_symlink() or any(path.is_symlink() for path in directory.rglob("*")):
+        raise ValueError("Backend handoff must not contain symbolic links")
+    record = directory / "manifest.json"
+    if record.stat().st_size > 1024 * 1024:
+        raise ValueError("Backend handoff manifest exceeds its bound")
+    manifest = json.loads(record.read_text())
+    if manifest.get("schema") != SCHEMA or manifest.get("source") != source_identity(producer_attempt):
+        raise ValueError("Backend handoff belongs to a different revision, run or producer attempt")
+    expected = artifact_paths()
+    if not isinstance(manifest.get("files"), dict) or set(manifest["files"]) != expected:
+        raise ValueError("Backend handoff does not contain the required reactor artifacts")
+    actual = {path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_file()}
+    if actual != expected | {"manifest.json"}:
+        raise ValueError("Backend handoff is incomplete or contains unexpected files")
+    for name in expected:
+        if checksum(directory / name) != manifest["files"][name]:
+            raise ValueError(f"Backend handoff checksum mismatch: {name}")
+    return manifest
+
+
+def stage(directory: Path, repository: Path, producer_attempt: str) -> None:
+    directory.mkdir(parents=True, exist_ok=False)
+    for name in artifact_paths():
+        source = repository / name
+        if source.is_symlink() or not source.is_file():
+            raise ValueError(f"Missing producer artifact: {name}")
+        target = directory / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    manifest = {"schema": SCHEMA, "source": source_identity(producer_attempt),
+                "files": {name: checksum(directory / name) for name in sorted(artifact_paths())}}
+    (directory / "manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
+    validate(directory, producer_attempt)
+
+
+def receive(directory: Path, repository: Path, producer_attempt: str) -> None:
+    manifest = validate(directory, producer_attempt)
+    # Validate the entire handoff before writing any artifact into Maven's repository.
+    for name in manifest["files"]:
+        target = repository / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(directory / name, target)
+    for suffix in (".jar", "-tests.jar"):
+        name = f"skywright-backend-{version()}{suffix}"
+        target = ROOT / "backend/target" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(directory / f"skywright-backend/{version()}/{name}", target)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("build", "application", "image"))
+    parser.add_argument("directory", type=Path)
+    parser.add_argument("--producer-attempt")
+    args = parser.parse_args()
+    repository = Path.home() / ".m2/repository/de/zorro909/skywright"
+    if args.command == "build":
+        # install includes verify, then makes the exact reactor artifacts available
+        # to image modules without compiling or testing the backend again.
+        run("mvn", "--batch-mode", "--no-transfer-progress",
+            "-DskipFrontendInstall=true", "-DskipFrontendTests=true",
+            "-DexcludedGroups=real-service", "-pl", "backend", "-am", "install")
+        stage(args.directory, repository, os.environ["GITHUB_RUN_ATTEMPT"])
+        return
+    if args.producer_attempt is None:
+        parser.error("consumers require --producer-attempt from the successful Java job")
+    receive(args.directory, repository, args.producer_attempt)
+    if args.command == "application":
+        environment = {**os.environ,
+                       "SKYWRIGHT_BACKEND_EXECUTABLE": str(ROOT / f"backend/target/skywright-backend-{version()}.jar"),
+                       "SKYWRIGHT_BACKEND_TEST_FIXTURE": str(ROOT / f"backend/target/skywright-backend-{version()}-tests.jar"),
+                       "SKYWRIGHT_POSTGRESQL_IMAGE": ET.parse(ROOT / "pom.xml").findtext(
+                           "m:properties/m:postgresql.container.image", namespaces=NS)}
+        run("pnpm", "--dir", "frontend", "run", "test:acceptance", env=environment)
+    else:
+        # Qualify the native payload on this packaging host without rebuilding it
+        # or rerunning the backend reactor's tests.
+        run("mvn", "--batch-mode", "--no-transfer-progress",
+            "-Dgraalpy.environment.prebuilt=true", "-pl", "graalpy-environment", "process-resources")
+        for module in ("backend-deployment", "skypilot-api-server-deployment"):
+            run("mvn", "--batch-mode", "--no-transfer-progress",
+                "-DexcludedGroups=real-service", "-pl", module, "verify")
+
+
+if __name__ == "__main__":
+    main()

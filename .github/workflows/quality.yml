@@ -148,6 +148,8 @@ jobs:
     needs: [plan, graalpy]
     if: needs.plan.outputs.java == 'true'
     runs-on: ubuntu-24.04
+    outputs:
+      producer-attempt: ${{ steps.backend-build.outputs.producer-attempt }}
     env:
       MAVEN_ARGS: -Dgraalpy.environment.prebuilt=true
       GRAALPY_PRODUCER_ATTEMPT: ${{ needs.graalpy.outputs.producer-attempt }}
@@ -176,8 +178,19 @@ jobs:
         uses: ./.github/actions/setup-frontend
         with:
           install-browser: false
-      - name: Run Java verification
-        run: scripts/quality run java --frontend-dependencies-ready
+      - name: Build and verify the backend once
+        id: backend-build
+        run: |
+          scripts/ci-backend build ci/verified-backend
+          echo "producer-attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - name: Hand verified backend artifacts to browser and image jobs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verified-backend-${{ github.run_attempt }}
+          path: ci/verified-backend
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 30 || 7 }}
+          compression-level: 0
       - name: Retain Java test and diagnostic reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -195,8 +208,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-  integration:
-    name: Real-service integration
+  integration-java:
+    name: Real-service integration / Java
     needs: [plan, graalpy]
     if: needs.plan.outputs.integration == 'true'
     runs-on: ubuntu-24.04
@@ -233,7 +246,10 @@ jobs:
         with:
           python-version: '3.14'
       - name: Qualify PostgreSQL and S3-compatible behavior
-        run: scripts/quality run integration --frontend-dependencies-ready
+        run: >-
+          mvn --batch-mode --no-transfer-progress
+          -DskipFrontendInstall=true -DskipFrontendTests=true
+          -Dgroups=real-service -pl backend -am verify
       - name: Retain integration test and service diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -244,11 +260,57 @@ jobs:
             **/target/site/jacoco/**
             **/target/site/jacoco-it/**
             **/target/service-logs/**
+          if-no-files-found: ignore
+          retention-days: 90
+
+  integration-sdk:
+    name: Real-service integration / SDK
+    needs: plan
+    if: needs.plan.outputs.integration == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up primary Python
+        uses: ./.github/actions/setup-python-toolchain
+        with:
+          python-version: '3.14'
+      - name: Qualify SDK storage and recovery behavior
+        run: sdk/scripts/integration
+      - name: Retain SDK integration test and service diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sdk-integration-reports
+          path: |
             sdk/target/test-results/**
             sdk/target/coverage/**
+            sdk/target/service-logs/**
             sdk/target/dataset-read-measurements/**
           if-no-files-found: ignore
           retention-days: 90
+
+  integration:
+    name: Real-service integration
+    needs: [plan, integration-java, integration-sdk]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every applicable integration lane
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          APPLICABLE: ${{ needs.plan.outputs.integration }}
+          JAVA_RESULT: ${{ needs.integration-java.result }}
+          SDK_RESULT: ${{ needs.integration-sdk.result }}
+        run: |
+          test "$PLAN_RESULT" = success
+          if [[ "$APPLICABLE" == false ]]; then
+            echo 'INAPPLICABLE integration'
+            exit 0
+          fi
+          test "$APPLICABLE" = true
+          test "$JAVA_RESULT" = success
+          test "$SDK_RESULT" = success
 
   frontend:
     name: Frontend
@@ -279,10 +341,11 @@ jobs:
 
   application:
     name: Complete application
-    needs: [plan, graalpy]
+    needs: [plan, graalpy, java]
     if: needs.plan.outputs.application == 'true'
     runs-on: ubuntu-24.04
     env:
+      BACKEND_PRODUCER_ATTEMPT: ${{ needs.java.outputs.producer-attempt }}
       MAVEN_ARGS: -Dgraalpy.environment.prebuilt=true
       GRAALPY_PRODUCER_ATTEMPT: ${{ needs.graalpy.outputs.producer-attempt }}
     steps:
@@ -306,12 +369,17 @@ jobs:
             --directory=.graalpy
           scripts/graalpy-environment provenance --run-id "$GITHUB_RUN_ID" \
             --run-attempt "$GRAALPY_PRODUCER_ATTEMPT" --source "$GITHUB_SHA" --output .graalpy/artifact-provenance.json
+      - name: Receive verified backend artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: verified-backend-${{ needs.java.outputs.producer-attempt }}
+          path: ci/verified-backend
       - name: Set up frontend prerequisites
         uses: ./.github/actions/setup-frontend
         with:
           install-browser: true
       - name: Qualify the complete application
-        run: scripts/quality run application --frontend-dependencies-ready
+        run: scripts/ci-backend application ci/verified-backend --producer-attempt "$BACKEND_PRODUCER_ATTEMPT"
       - name: Retain application test, coverage, and diagnostic reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -331,10 +399,11 @@ jobs:
 
   image:
     name: Production control-plane images
-    needs: [plan, graalpy]
+    needs: [plan, graalpy, java]
     if: needs.plan.outputs.image == 'true'
     runs-on: ubuntu-24.04
     env:
+      BACKEND_PRODUCER_ATTEMPT: ${{ needs.java.outputs.producer-attempt }}
       MAVEN_ARGS: -Dgraalpy.environment.prebuilt=true
       GRAALPY_PRODUCER_ATTEMPT: ${{ needs.graalpy.outputs.producer-attempt }}
     steps:
@@ -358,24 +427,30 @@ jobs:
             --directory=.graalpy
           scripts/graalpy-environment provenance --run-id "$GITHUB_RUN_ID" \
             --run-attempt "$GRAALPY_PRODUCER_ATTEMPT" --source "$GITHUB_SHA" --output .graalpy/artifact-provenance.json
-      - name: Set up frontend prerequisites
-        uses: ./.github/actions/setup-frontend
+      - name: Receive verified backend artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          install-browser: false
+          name: verified-backend-${{ needs.java.outputs.producer-attempt }}
+          path: ci/verified-backend
       - name: Set up Python for the real SDK image qualification
         uses: ./.github/actions/setup-python-toolchain
         with:
           python-version: '3.14'
       - name: Build and exercise the production image
         id: build_image
-        run: scripts/quality run image --frontend-dependencies-ready
+        run: scripts/ci-backend image ci/verified-backend --producer-attempt "$BACKEND_PRODUCER_ATTEMPT"
       - name: Prepare image security reports
         if: steps.build_image.outcome == 'success'
         run: mkdir --parents security-results
+      - name: Set up Trivy databases once
+        if: steps.build_image.outcome == 'success'
+        uses: ./.github/actions/setup-trivy
       - name: Record all high and critical image findings
         if: steps.build_image.outcome == 'success'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          cache: false
+          skip-setup-trivy: true
           scan-type: image
           image-ref: skywright-backend:0.1.0-SNAPSHOT
           severity: HIGH,CRITICAL
@@ -386,6 +461,8 @@ jobs:
         if: steps.build_image.outcome == 'success'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          cache: false
+          skip-setup-trivy: true
           scan-type: image
           image-ref: skywright-backend:0.1.0-SNAPSHOT
           severity: HIGH,CRITICAL
@@ -395,6 +472,8 @@ jobs:
         if: steps.build_image.outcome == 'success'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          cache: false
+          skip-setup-trivy: true
           scan-type: image
           image-ref: skywright-skypilot-api-server:0.1.0-SNAPSHOT
           severity: HIGH,CRITICAL
@@ -405,6 +484,8 @@ jobs:
         if: steps.build_image.outcome == 'success'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          cache: false
+          skip-setup-trivy: true
           scan-type: image
           image-ref: skywright-skypilot-api-server:0.1.0-SNAPSHOT
           severity: HIGH,CRITICAL
@@ -479,9 +560,9 @@ jobs:
         with:
           name: sdk-qualified-distributions
           path: sdk-dist
-      - name: Qualify the installed SDK and contributor checks
+      - name: Qualify SDK runtime and installed distributions
         run: |
-          sdk/scripts/check
+          sdk/scripts/test-unit
           uv run --project sdk --locked pytest sdk/tests/system -m system \
             --junitxml sdk/target/test-results/system-${{ matrix.python-version }}.xml \
             --artifact-dir sdk-dist
