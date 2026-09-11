@@ -134,8 +134,11 @@ invalidating unchanged dependencies or allowing an ignored bytecode file to reac
 Every preparation and prebuilt Maven build then launches the current Maven-resolved GraalPy runtime,
 checks installed versions against the lock, and imports the native smoke packages. Validation uses
 the embedding API so a relocated environment does not execute its cached absolute-path launcher or
-rerun installation. The standalone probe exits after writing its receipt, preserving the existing
-import-only smoke scope. It does not qualify embedded runtime shutdown or production native ABI.
+rerun installation. The standalone probe closes its context before writing its receipt and exits
+normally. Its bounded child-process exit also checks native teardown; a written receipt cannot
+override a crash or timeout. Linux extensions remain mapped until process exit to preserve Rust
+thread-local destructors, as qualified in [#271](testing/issue-271-native-teardown.md).
+Production native ABI and backend executor/socket shutdown have separate system tests.
 
 The quality producer stamps the qualified dependency artifact with the workflow run ID and checked-out
 commit. Consumers also compare the artifact's producer attempt with the successful producer job's
