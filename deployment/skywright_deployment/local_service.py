@@ -28,7 +28,7 @@ def renew(kube: Kubernetes, settings: dict) -> None:
     vault.initialize()
     for consumer in ("backend", "skypilot"):
         vault.token = protected_json(root / ("skywright-" + consumer + "-vault.json"))["token"]
-        vault.run("token", "renew", "-self")
+        vault.run("token", "renew")
 
 
 def install(settings: dict, directory: Path, source: Path) -> None:

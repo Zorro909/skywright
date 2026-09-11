@@ -35,6 +35,16 @@ class FreshAmdInstallationTest(unittest.TestCase):
                 self.assertTrue(report["ready"], report)
                 self.assertEqual(report["gpuCount"], 2)
         self.assertEqual(json.loads(installed.read_text())["release"], settings["release"])
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:8080/api/v1/managed-run-form", timeout=5) as response:
+                    if json.load(response)["ready"]:
+                        return
+            except OSError:
+                pass
+            time.sleep(2)
+        self.fail("Private GUI access and Managed Run readiness did not become available")
 
 
 @unittest.skipUnless(os.environ.get("SKYWRIGHT_HOST_CONFIGURATION"), "requires idle AMD qualification host")

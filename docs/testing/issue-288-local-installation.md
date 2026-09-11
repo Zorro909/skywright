@@ -84,3 +84,22 @@ An opt-in deployment CLI regression failed on the suspended host before the fix
 and passed afterward. Inventory now accepts that response only when the kernel
 reports `suspended` both before and after the counter read; other errors still
 block admission. This check does not wake the GPUs or change their power policy.
+
+Reactor verification subsequently passed in stages, including all 20 backend,
+Dataset-publication and SkyPilot container-image tests. Repository Quality run
+`34651202834` passed for source `682c78a`. Release publication then exposed a
+missing `uv` prerequisite in the release runner; the workflow now uses the same
+pinned Python setup as image CI. No release was published by those failed runs.
+
+The retained Vault now contains the installation's version-one credential inputs
+and exact consumer policies. Live checks allowed each consumer's selected reads
+and returned HTTP 403 for the other consumer's paths. A maintenance CLI probe
+failed to advance the host observation with `vault token renew -self`, which the
+pinned CLI rejects. It passed after using the supported `vault token renew`
+self-renewal command. The fresh-installation test also requires the private GUI
+endpoint to serve a ready Managed Run form, covering maintenance startup.
+
+A temporary CPU-only Pod exercised the packaged SkyPilot credential init sequence
+as UID 10002. It verified a readable, mode-0400 kubeconfig and removal of the
+bootstrap token. The Pod was deleted afterward. The backend, SkyPilot service,
+Dataset and writer are still awaiting the first complete signed installation.
