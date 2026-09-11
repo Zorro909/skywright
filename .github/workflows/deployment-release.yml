@@ -68,6 +68,11 @@ jobs:
           echo "$SKAFFOLD_SHA256  $install_dir/skaffold" | sha256sum --check
           chmod +x "$install_dir/skaffold"
           echo "$install_dir" >> "$GITHUB_PATH"
+      - name: Set up Python for the real SDK image qualification
+        if: steps.plan.outputs.image == 'true' || steps.plan.outputs.deployment == 'true'
+        uses: ./.github/actions/setup-python-toolchain
+        with:
+          python-version: '3.14'
       - name: Build and test through the deployment image contract
         if: steps.plan.outputs.image == 'true' || steps.plan.outputs.deployment == 'true'
         run: skaffold build --profile local-kind --tag "$GITHUB_SHA" 2>&1 | tee deployment-image-build.log
@@ -185,6 +190,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Set up Python for the real SDK image qualification
+        uses: ./.github/actions/setup-python-toolchain
+        with:
+          python-version: '3.14'
       - name: Build, test, and identify the control-plane images
         env:
           BACKEND_TAG: ghcr.io/zorro909/skywright-backend:${{ github.sha }}
