@@ -161,3 +161,14 @@ It exercises install, preflight, a one-GPU Run and Artifact download, restart,
 update, a second Run, stop and start. It checks retained Run observations after
 each transition. A failing smoke requests cancellation. Follow any failure by
 checking the Run page and preflight to confirm cleanup.
+
+The packaged GUI can also be qualified through the private SSH tunnel using
+the pinned frontend browser tooling. This creates one twelve-Step Run and
+downloads an Artifact through the GUI:
+
+```sh
+pnpm --dir frontend exec node tools/qualify-installed-instance.mjs
+```
+
+A failed GUI smoke requests cancellation through the Managed Run API. Inspect
+the accepted Run and confirm GPU cleanup before another qualification.
