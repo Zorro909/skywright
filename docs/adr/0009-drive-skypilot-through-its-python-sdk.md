@@ -54,6 +54,16 @@ Skywright-owned, read-only log collector and its bounded transport for #62.
 That exception applies only to archive capture as recorded in ADR 0018;
 submission, status and control remain through the unchanged SDK.
 
+On 2026-09-10, the owner corrected the provider-credential boundary in ADR 0025.
+SkyPilot may receive and forward provider credentials wherever its official cloud
+adapter requires them, including supported remote bootstrap and runtime paths.
+This accepts Vast's adapter-generated credential delivery; it does not require a
+SkyPilot patch or a custom provider API implementation. Skywright's typed task
+DTOs and Run Definitions remain secret-free, and credential-bearing adapter state
+must be treated as such rather than exposed as public diagnostics. Qualification
+records which remote components and co-located project code can access the
+provider authority, along with cleanup and recovery behavior.
+
 On 2026-09-08, the owner approved `tini` as PID 1 for the server image in
 #71 and #199. The unchanged SkyPilot server entry point runs as its child.
 Tini reaps adopted children, forwards SIGTERM to the server and preserves its
