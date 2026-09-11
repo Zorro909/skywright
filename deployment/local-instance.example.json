@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "release": "ghcr.io/zorro909/skywright-deployment@sha256:REPLACE_WITH_RELEASE_DIGEST",
+  "context": "kind-skywright-local",
+  "node": "skywright-local-control-plane",
+  "stateDirectory": "/home/OPERATOR/.local/share/skywright/instance",
+  "secretDirectory": "/home/OPERATOR/.local/share/skywright/operator-secrets",
+  "gpuModel": "rx7800xt",
+  "gpuMemoryBytes": 17163091968,
+  "gpuCount": 2
+}

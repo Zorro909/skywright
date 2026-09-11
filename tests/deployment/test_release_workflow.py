@@ -26,7 +26,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("--build-image", workflow)
         self.assertIn("io.skywright.skypilot.version", workflow)
         self.assertIn("SKYPILOT_VERSION", workflow)
-        self.assertEqual(workflow.count("uses: actions/attest@"), 3)
+        self.assertEqual(workflow.count("uses: actions/attest@"), 4)
         self.assertIn("subject-name: ghcr.io/zorro909/skywright-deployment", workflow)
         self.assertIn("subject-name: ghcr.io/zorro909/skywright-backend", workflow)
         self.assertIn(

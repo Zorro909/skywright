@@ -45,6 +45,23 @@ final class HttpRuntimePullDelivery implements RuntimePullDelivery {
 	}
 
 	@Override
+	public Readiness readiness(String context) {
+		var response = exchange("readiness", Map.of("context", context), null);
+		if (response.statusCode() != 200)
+			throw unavailable();
+		var value = JSON.readTree(response.body());
+		if (!value.path("nodeReady").isBoolean() || !value.path("writerReady").isBoolean()
+				|| !value.path("gpuModel").isString() || !value.path("gpuCount").isInt()
+				|| !value.path("freeGpuCount").isInt())
+			throw unavailable();
+		int count = value.path("gpuCount").asInt(), free = value.path("freeGpuCount").asInt();
+		if (count < 0 || count > 32 || free < 0 || free > count)
+			throw unavailable();
+		return new Readiness(true, value.path("nodeReady").asBoolean(), value.path("gpuModel").asText(), count, free,
+				value.path("writerReady").asBoolean());
+	}
+
+	@Override
 	public boolean installed(AcceptedRun run) {
 		var response = exchange("pull", identity(run), null);
 		if (response.statusCode() == 404)

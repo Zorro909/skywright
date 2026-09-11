@@ -139,7 +139,17 @@ jobs:
             --pom pom.xml \
             --lock graalpy-environment/graalpy.lock)"
           git fetch --no-tags origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          quality_event=push
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            if [[ "$classification" != prerelease || "$GITHUB_EVENT_NAME" != workflow_dispatch ]]; then
+              echo "Stable releases require a commit already on main." >&2
+              exit 1
+            fi
+            # A manual installation qualification may use an up-to-date PR head.
+            git merge-base --is-ancestor origin/main "$GITHUB_SHA"
+            quality_event=pull_request
+          fi
+          echo "quality_event=$quality_event" >> "$GITHUB_OUTPUT"
           scripts/quality identity \
             --event tag \
             --tested-revision "$GITHUB_SHA" \
@@ -154,20 +164,21 @@ jobs:
           echo "classification=$classification" >> "$GITHUB_OUTPUT"
           echo "release_run_id=${REQUESTED_RUN_ID:-$GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
           echo "skypilot_version=$skypilot_version" >> "$GITHUB_OUTPUT"
-      - name: Require the successful main quality gate
+      - name: Require the successful source quality gate
         env:
           GH_TOKEN: ${{ github.token }}
+          QUALITY_EVENT: ${{ steps.release.outputs.quality_event }}
         run: |
           conclusion="$(gh run list \
             --workflow quality.yml \
             --commit "$GITHUB_SHA" \
-            --event push \
+            --event "$QUALITY_EVENT" \
             --status completed \
             --limit 20 \
             --json conclusion \
             --jq '.[0].conclusion // ""')"
           if [[ "$conclusion" != success ]]; then
-            echo "The release commit has no successful main Repository Quality run." >&2
+            echo "The release commit has no successful Repository Quality run for its source event." >&2
             exit 1
           fi
       - name: Authenticate to GHCR
@@ -251,10 +262,31 @@ jobs:
             --output build-artifacts.json \
             --source-commit "$GITHUB_SHA" \
             --skypilot-version "$SKYPILOT_VERSION"
+      - name: Build and identify the local writer image
+        id: writer
+        env:
+          WRITER_TAG: ghcr.io/zorro909/skywright-local-writer:${{ github.sha }}
+        run: |
+          if ! writer_digest="$(oras resolve "$WRITER_TAG" 2>/dev/null)"; then
+            docker build --file deployment/local_writer/Containerfile \
+              --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+              --tag "$WRITER_TAG" .
+            docker push "$WRITER_TAG"
+            writer_digest="$(oras resolve "$WRITER_TAG")"
+          fi
+          docker pull "ghcr.io/zorro909/skywright-local-writer@$writer_digest"
+          revision="$(docker image inspect \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "ghcr.io/zorro909/skywright-local-writer@$writer_digest")"
+          test "$revision" = "$GITHUB_SHA"
+          echo "digest=$writer_digest" >> "$GITHUB_OUTPUT"
+          git archive --format=tar.gz --output=local-package.tar.gz "$GITHUB_SHA" \
+            deployment scripts/deploy examples/cifar10 sdk/src
       - name: Build the Deployment Bundle payload
         env:
           VERSION: ${{ steps.release.outputs.version }}
           RELEASE_RUN_ID: ${{ steps.release.outputs.release_run_id }}
+          WRITER_DIGEST: ${{ steps.writer.outputs.digest }}
           SKYPILOT_VERSION: ${{ steps.release.outputs.skypilot_version }}
         run: |
           deployment/scripts/release-support build-bundle \
@@ -267,7 +299,9 @@ jobs:
             --skypilot-image "$(jq --raw-output '.builds[] | select(.imageName == "skywright-skypilot-api-server") | .tag' build-artifacts.json)" \
             --skypilot-version "$SKYPILOT_VERSION" \
             --workflow deployment-release.yml \
-            --run-id "$RELEASE_RUN_ID"
+            --run-id "$RELEASE_RUN_ID" \
+            --local-package local-package.tar.gz \
+            --writer-image "ghcr.io/zorro909/skywright-local-writer@$WRITER_DIGEST"
       - name: Publish or recover the immutable bundle
         id: publish
         env:
@@ -295,6 +329,12 @@ jobs:
         with:
           subject-name: ghcr.io/zorro909/skywright-skypilot-api-server
           subject-digest: ${{ steps.publish.outputs.skypilot_digest }}
+          push-to-registry: false
+      - name: Attest the local writer image digest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ghcr.io/zorro909/skywright-local-writer
+          subject-digest: ${{ steps.writer.outputs.digest }}
           push-to-registry: false
       - name: Record durable release evidence
         env:

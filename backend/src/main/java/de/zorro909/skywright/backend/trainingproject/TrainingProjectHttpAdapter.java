@@ -46,6 +46,17 @@ public class TrainingProjectHttpAdapter implements TrainingProjectsApi {
 	}
 
 	@Override
+	public ResponseEntity<TrainingProject> importTrainingProject(
+			de.zorro909.skywright.backend.boundary.generated.model.ImportTrainingProject request) {
+		var registry = request.getRegistry();
+		UUID id = this.projects.importPublished(request.getProjectId(), request.getDisplayName(),
+				registry.getRepository(), accessMode(registry.getAccessMode()),
+				registry.getResolverCredentialBindingId(), registry.getExecutionCredentialBindingId(),
+				request.getManifestArtifactDigest());
+		return ResponseEntity.ok(project(this.projects.get(id)));
+	}
+
+	@Override
 	public ResponseEntity<List<TrainingProject>> listTrainingProjects() {
 		return ResponseEntity.ok(this.projects.list().stream().map(this::project).toList());
 	}

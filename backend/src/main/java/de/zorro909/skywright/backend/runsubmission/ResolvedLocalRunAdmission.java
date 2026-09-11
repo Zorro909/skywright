@@ -86,6 +86,21 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 	@Override
 	public Prepared prepare(UUID runId, LocalRunRequest request) {
 		var target = settings.target(request.target());
+		if (settings.writerAuthorityEnabled()) {
+			RuntimePullDelivery.Readiness readiness;
+			try {
+				readiness = pulls.readiness(target.kubernetesContext());
+			}
+			catch (RuntimeException unavailable) {
+				throw new RunSubmissionException("WRITER_AUTHORITY_UNAVAILABLE", 503);
+			}
+			if (!readiness.available() || !readiness.nodeReady() || !readiness.writerReady())
+				throw new RunSubmissionException("WRITER_AUTHORITY_UNAVAILABLE", 503);
+			if (!readiness.gpuModel().equals(target.gpuModel()) || readiness.gpuCount() != target.maximumGpuCount())
+				throw new RunSubmissionException("LOCAL_TARGET_UNAVAILABLE", 503);
+			if (readiness.freeGpuCount() < request.gpuCount())
+				throw new RunSubmissionException("GPU_CAPACITY_UNAVAILABLE", 503);
+		}
 		var project = projects.resolveForAcceptance(request.trainingProjectId());
 		var pullSelection = projects.runtimePullSelection(project.projectId());
 		String pullNamespace = pullSelection == null ? null : pulls.namespace(target.kubernetesContext());

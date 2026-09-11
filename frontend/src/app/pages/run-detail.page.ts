@@ -13,6 +13,7 @@ import { RequestFailure } from '../shared/request-failure';
 import { RunCancellation } from '../shared/run-cancellation';
 import { RunEvidence } from '../shared/run-evidence';
 import { RunLogViewer } from '../shared/run-log-viewer';
+import { RunOutputViewer } from '../shared/run-output-viewer';
 
 @Component({
   selector: 'sky-run-detail-page',
@@ -22,6 +23,7 @@ import { RunLogViewer } from '../shared/run-log-viewer';
     RunEvidence,
     RunCancellation,
     RunLogViewer,
+    RunOutputViewer,
   ],
   template: `
     <a routerLink="/">Back to overview</a>
@@ -54,6 +56,12 @@ import { RunLogViewer } from '../shared/run-log-viewer';
         @if (showLogs()) {
           <sky-run-log-viewer [runId]="run.runId" />
         }
+        <button type="button" (click)="showOutputs.set(!showOutputs())">
+          {{ showOutputs() ? 'Close outputs' : 'View outputs' }}
+        </button>
+        @if (showOutputs()) {
+          <sky-run-output-viewer [runId]="run.runId" />
+        }
         <sky-run-evidence
           [run]="run"
           [detail]="true"
@@ -72,6 +80,7 @@ export class RunDetailPage {
   protected readonly id = signal('');
   protected readonly run = signal<Run | undefined>(undefined);
   protected readonly showLogs = signal(false);
+  protected readonly showOutputs = signal(false);
   protected readonly loading = signal(false);
   protected readonly failure = signal<ApiFailure | undefined>(undefined);
   constructor() {

@@ -120,7 +120,7 @@ test('local submission diagnostics, uncertain replay, lineage and cancellation r
       },
     });
   });
-  await page.goto('/runs/new');
+  await page.goto('/runs/new/advanced');
   await page
     .getByRole('combobox', { name: 'Training Project', exact: true })
     .selectOption(project);

@@ -15,6 +15,8 @@ export type Lineage = components['schemas']['RunLineage'];
 export type RunPage = components['schemas']['RunPage'];
 export type Progress = components['schemas']['RunProgressObservation'];
 export type CreateRun = components['schemas']['CreateLocalRun'];
+export type CreateManagedRun = components['schemas']['CreateManagedRun'];
+export type ManagedRunForm = components['schemas']['ManagedRunForm'];
 export type CommandReceipt = components['schemas']['RunCommandReceipt'];
 export type LocalTarget = components['schemas']['LocalRunTarget'];
 export type Project = components['schemas']['TrainingProject'];
@@ -26,6 +28,59 @@ const api = createClient<paths>({
   baseUrl: '/api/v1',
   fetch: (request) => globalThis.fetch(request),
 });
+
+export const managedRunApi = {
+  async form(signal: AbortSignal): Promise<ManagedRunForm> {
+    return read(
+      await transport(
+        api.GET('/managed-run-form', { signal, parseAs: 'text' }),
+      ),
+      (value) =>
+        object(value) &&
+        typeof value['ready'] === 'boolean' &&
+        time(value['observedAt']) &&
+        Array.isArray(value['workloads']) &&
+        value['workloads'].length <= 1 &&
+        value['workloads'].every(
+          (w) =>
+            object(w) &&
+            w['id'] === 'demonstration' &&
+            typeof w['displayName'] === 'string',
+        ) &&
+        Array.isArray(value['targets']) &&
+        value['targets'].length <= 1 &&
+        value['targets'].every(
+          (t) =>
+            object(t) &&
+            typeof t['id'] === 'string' &&
+            typeof t['gpuModel'] === 'string' &&
+            Number.isSafeInteger(t['gpuCount']) &&
+            Number(t['gpuCount']) > 0,
+        ) &&
+        Array.isArray(value['checks']) &&
+        value['checks'].every(
+          (c) =>
+            object(c) &&
+            typeof c['ready'] === 'boolean' &&
+            ['component', 'code', 'detail'].every(
+              (k) => typeof c[k] === 'string',
+            ),
+        ) &&
+        (!value['ready'] ||
+          (value['workloads'].length === 1 &&
+            value['targets'].length === 1 &&
+            value['checks'].every((c) => object(c) && c['ready'] === true))),
+    );
+  },
+  async create(body: CreateManagedRun, signal: AbortSignal): Promise<Run> {
+    return read(
+      await transport(
+        api.POST('/managed-runs', { body, signal, parseAs: 'text' }),
+      ),
+      (value) => isRun(value) && value.submissionId === body.submissionId,
+    );
+  },
+};
 
 async function transport<T>(response: Promise<T>): Promise<T> {
   try {

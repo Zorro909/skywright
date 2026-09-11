@@ -7,7 +7,7 @@ public final class AcceptedRunCrashFixture {
 
 	public static AcceptedRun commitWithoutDispatch(RunAcceptanceStore store, LocalRunAdmission admission,
 			LocalRunRequest request) {
-		var created = store.accept(request, LocalRunSubmissions.digest(request), admission);
+		var created = store.accept(request, ManagedRuns.digest(request), admission);
 		created.prepared().close();
 		return created.run();
 	}

@@ -30,6 +30,49 @@ class LocalRunAcceptanceIT {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
+	private static boolean demonstrationAvailable = true;
+
+	@Test
+	void managedSubmissionReplaysDuringMaintenanceAfterTheInstalledWorkloadChanges() throws Exception {
+		SOURCE.launches.set(0);
+		SOURCE.available = true;
+		SOURCE.jobs = List.of();
+		ADMISSIONS.set(0);
+		try (var backend = BackendFixture.startWith(Boundaries.class, "local-run-integration")) {
+			String request = "{\"submissionId\":\"" + UUID.randomUUID()
+					+ "\",\"workload\":\"demonstration\",\"target\":\"local/amd\"}";
+			var accepted = backend.post("/api/v1/managed-runs", request);
+			assertThat(accepted.statusCode()).as(accepted.body()).isEqualTo(202);
+			String runId = JSON.readTree(accepted.body()).path("runId").asText();
+			demonstrationAvailable = false;
+			SOURCE.available = false;
+			System.setProperty("skywright.managed-run.maintenance", "true");
+			backend.restart();
+			var form = backend.get("/api/v1/managed-run-form");
+			assertThat(form.statusCode()).isEqualTo(200);
+			assertThat(form.body()).contains("MANAGED_RUN_MAINTENANCE");
+			var fresh = backend.post("/api/v1/managed-runs", request
+				.replace(JSON.readTree(request).path("submissionId").asText(), UUID.randomUUID().toString()));
+			assertThat(fresh.statusCode()).as(fresh.body()).isEqualTo(503);
+			assertThat(fresh.body()).contains("MANAGED_RUN_MAINTENANCE");
+			var legacy = backend.post("/api/v1/runs", request(UUID.randomUUID()));
+			assertThat(legacy.statusCode()).as(legacy.body()).isEqualTo(503);
+			assertThat(legacy.body()).contains("MANAGED_RUN_MAINTENANCE");
+			var replay = backend.post("/api/v1/managed-runs", request);
+			assertThat(replay.statusCode()).as(replay.body()).isEqualTo(202);
+			assertThat(JSON.readTree(replay.body()).path("runId").asText()).isEqualTo(runId);
+			assertThat(SOURCE.launches).hasValue(1);
+			assertThat(ADMISSIONS).hasValue(1);
+			assertThat(
+					backend.post("/api/v1/managed-runs", request.replace("local/amd", "another-target")).statusCode())
+				.isEqualTo(409);
+		}
+		finally {
+			demonstrationAvailable = true;
+			System.clearProperty("skywright.managed-run.maintenance");
+		}
+	}
+
 	@Test
 	void atomicAcceptanceSurvivesLostResponsesConcurrentRequestsAndBackendRestart() throws Exception {
 		SOURCE.launches.set(0);
@@ -223,6 +266,17 @@ class LocalRunAcceptanceIT {
 	@Configuration(proxyBeanMethods = false)
 	@org.springframework.context.annotation.Profile("local-run-integration")
 	static class Boundaries {
+
+		@Bean
+		@Primary
+		de.zorro909.skywright.backend.runsubmission.DemonstrationSettings demonstration() {
+			return demonstrationAvailable
+					? new de.zorro909.skywright.backend.runsubmission.DemonstrationSettings(
+							UUID.fromString("00000000-0000-0000-0000-000000000001"), "sha256:" + "9".repeat(64),
+							UUID.fromString("00000000-0000-0000-0000-000000000002"), "Demonstration", Map.of())
+					: new de.zorro909.skywright.backend.runsubmission.DemonstrationSettings(null, null, null, null,
+							Map.of());
+		}
 
 		@Bean
 		@Primary

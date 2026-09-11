@@ -1,0 +1,77 @@
+# Local installation qualification
+
+Work for [#288](https://github.com/Zorro909/skywright/issues/288). Qualification
+is in progress. No installed package version or completed installation smoke
+is claimed by this record yet.
+
+## Host inventory
+
+Read-only inspection on 2026-09-11 found Ubuntu 24.04.4 LTS, kernel
+6.8.0-139-generic, Docker 29.7.1, about 62 GiB RAM and 612 GiB free on the root
+filesystem. SSH uses the operator's existing agent identity.
+
+The retained `skywright-onprem` kind cluster has one Ready node,
+`skywright-onprem-control-plane`, running Kubernetes 1.36.1 and containerd 2.3.1.
+The AMD device plugin advertises two `amd.com/gpu` resources and the accelerator
+label `rx7800xt`. Both PCI devices report AMD vendor `1002`, device `747e`,
+and 17,163,091,968 bytes of VRAM each.
+
+At the initial inspection, both GPUs were 96–97% busy outside Kubernetes.
+The cluster had no training Pods. Kubernetes allocatable capacity therefore
+does not establish that a GPU is idle. Existing Ollama and other host services
+have not been stopped or reconfigured.
+
+## Credential inputs
+
+The operator authorized copying the two distinct registry credentials from the
+originating development Vault. The resolver and image-pull credentials were
+read from their separate, pinned Vault entries, checked for distinctness and
+saved as mode-0600 files. Both successfully read the qualified private project
+image manifest from GHCR. This verifies registry access, not a target runtime pull.
+
+Operator-owned input locations on the destination host are:
+
+- `~/.local/share/skywright/issue288/operator-secrets/ghcr-resolver.json`
+- `~/.local/share/skywright/issue288/operator-secrets/ghcr-pull.json`
+
+The same protected input files remain on the originating host. Values were not
+printed or committed. Installation must enroll these inputs into its own Vault;
+these files do not establish that the new instance has a Credential Authority.
+
+## Application verification so far
+
+- The existing deployment contract suite passed 68 tests, with two root-only
+  custody checks skipped by that host invocation.
+- `LocalRunAssemblyIT` passed against PostgreSQL and S3 with output listing,
+  verified HTTP download, cross-Run rejection and corrupt-content rejection.
+- The browser output-viewer test passed for an Artifact download through the
+  application.
+
+Install, retained-state update, control-plane restart, GPU smoke, private
+reachability and backup/recovery qualification remain pending.
+
+## Packaged prerequisites prepared
+
+A separate `kind-skywright-local` cluster was created for this qualification.
+The earlier `skywright-onprem` cluster remains untouched. The new node uses
+Calico, advertises both AMD GPUs, and has a 12-CPU / 32-GiB Docker ceiling.
+Persistent TLS Vault and SeaweedFS are running. No backend or SkyPilot release
+has been installed and no training workload has been submitted yet.
+
+The generated operator inputs, Vault recovery material and TLS files live under
+`~/.local/share/skywright/issue288/operator-secrets/`. The dedicated state root is
+`~/.local/share/skywright/issue288/instance/`. These are protected directories;
+no secret values are recorded here.
+
+Live SeaweedFS authorization was checked after applying project-scoped roles.
+The Training Process credential could write and read its project's prefix, but
+received HTTP 403 for another project's reads, writes and listings. The
+uninstalled Metric View identity received HTTP 403 for object access. Probe
+objects were deleted afterward. Prefix permissions follow the pinned provider's
+[authorization implementation](https://github.com/seaweedfs/seaweedfs/blob/4.42/weed/s3api/auth_credentials.go).
+
+The SDK verification passed 468 unit tests and 20 installed-wheel system tests.
+The deployment suite passed 75 tests with three skips: two root-only checks and
+the opt-in signed-release AMD system qualification. The maintenance HTTP test
+passed new-submission rejection, accepted-intent replay across restart and the
+GUI form's maintenance response. The full reactor is still being verified.

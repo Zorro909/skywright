@@ -7,6 +7,7 @@ import os
 import re
 import stat
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 import uuid
@@ -58,6 +59,41 @@ class KubernetesSecrets:
         from kubernetes import client, config as kube_config
         self.api_client = kube_config.new_client_from_config_dict(config, context=context)
         self.api = client.CoreV1Api(self.api_client)
+
+    def readiness(self, namespace):
+        nodes = self.api.list_node(limit=2, _request_timeout=(2, 3)).to_dict()
+        if len(nodes.get("items", [])) != 1:
+            raise ValueError("Local qualification requires one node")
+        node = nodes["items"][0]
+        node_name = node["metadata"]["name"]
+        capacity = int(node["status"]["capacity"].get("amd.com/gpu", "0"))
+        allocatable = int(node["status"]["allocatable"].get("amd.com/gpu", "0"))
+        pods = self.api.list_pod_for_all_namespaces(limit=101, _request_timeout=(2, 3)).to_dict()
+        if len(pods.get("items", [])) > 100 or (pods.get("metadata") or {}).get("_continue"):
+            raise ValueError("Local preflight Pod budget exceeded")
+        allocated = 0
+        writer_ready = False
+        for pod in pods.get("items", []):
+            status, spec, metadata = pod.get("status") or {}, pod.get("spec") or {}, pod.get("metadata") or {}
+            if spec.get("node_name") not in (None, node_name) or status.get("phase") in ("Succeeded", "Failed"):
+                continue
+            for container in (spec.get("containers") or []) + (spec.get("init_containers") or []):
+                allocated += int(((container.get("resources") or {}).get("requests") or {}).get("amd.com/gpu", "0"))
+            if (metadata.get("namespace") == "skywright" and (metadata.get("labels") or {}).get("app") == "skywright-local-writer"
+                    and spec.get("node_name") == node_name and not metadata.get("deletion_timestamp")):
+                writer_ready = any(c.get("type") == "Ready" and c.get("status") == "True"
+                                   for c in status.get("conditions") or [])
+        free = max(0, allocatable - allocated)
+        if (node["metadata"].get("labels") or {}).get("skywright.io/host-gpu-observation") == "required":
+            annotations = node["metadata"].get("annotations") or {}
+            observed = int(annotations.get("skywright.io/host-gpu-observed-at", "0"))
+            if not 0 <= time.time() - observed <= 30 or annotations.get("skywright.io/host-gpus-idle") != "true":
+                free = 0
+        return {"node": node_name,
+                "nodeReady": not (node.get("spec") or {}).get("unschedulable", False) and any(
+                    c.get("type") == "Ready" and c.get("status") == "True" for c in node["status"].get("conditions", [])),
+                "gpuModel": (node["metadata"].get("labels") or {}).get("skypilot.co/accelerator", ""),
+                "gpuCount": capacity, "freeGpuCount": free, "writerReady": writer_ready}
 
     def read(self, namespace, name):
         from kubernetes.client.exceptions import ApiException
@@ -158,6 +194,15 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/namespace" and not install and set(query) == {"context"} and len(query["context"]) == 1:
                 _, namespace = target(query["context"][0])
                 self.respond(200, {"namespace": namespace})
+                return
+            if parsed.path == "/readiness" and not install and set(query) == {"context"} and len(query["context"]) == 1:
+                context = query["context"][0]
+                config, namespace = target(context)
+                api = self.server.secrets_factory(config, context)
+                try:
+                    self.respond(200, api.readiness(namespace))
+                finally:
+                    api.close()
                 return
             if parsed.path != "/pull":
                 self.respond(404, {})

@@ -53,6 +53,44 @@ public class TrainingProjects {
 		return id;
 	}
 
+	public UUID importPublished(UUID id, String displayName, String registryRepository, RegistryAccessMode accessMode,
+			UUID resolverCredentialBindingId, UUID executionCredentialBindingId, String manifestArtifactDigest) {
+		Objects.requireNonNull(id, "projectId");
+		String name = normalizeName(displayName);
+		String canonicalRepository = requireRepository(registryRepository);
+		requireBindingShape(accessMode, resolverCredentialBindingId, executionCredentialBindingId);
+		var existing = this.repository.findForUpdate(id);
+		if (existing.isPresent()) {
+			var current = existing.get().view();
+			var binding = current.activeBinding();
+			if (!current.displayName().equals(name) || !binding.repository().equals(canonicalRepository)
+					|| binding.accessMode() != accessMode
+					|| !Objects.equals(binding.resolverCredentialBindingId(), resolverCredentialBindingId)
+					|| !Objects.equals(binding.executionCredentialBindingId(), executionCredentialBindingId)) {
+				throw new TrainingProjectException("TRAINING_PROJECT_IMPORT_CONFLICT",
+						"The existing project enrollment differs from the requested publication binding.");
+			}
+		}
+		else {
+			if (this.repository.nameExists(name, null) || this.repository.repositoryExists(canonicalRepository)) {
+				throw new TrainingProjectException("TRAINING_PROJECT_IMPORT_CONFLICT",
+						"The publication conflicts with an existing project enrollment.");
+			}
+			var binding = new RegistryBinding(1, canonicalRepository, accessMode, resolverCredentialBindingId,
+					executionCredentialBindingId, readiness(canonicalRepository, accessMode,
+							resolverCredentialBindingId, executionCredentialBindingId),
+					"active");
+			this.repository.create(TrainingProjectEntity.create(id, name, binding));
+		}
+		// The temporary binding is visible to the resolver within this transaction.
+		// Failed verification rolls it back; no unverified identity is enrolled.
+		if (!assessVersion(id, manifestArtifactDigest).runnable()) {
+			throw new TrainingProjectException("TRAINING_PROJECT_IMPORT_INVALID",
+					"The immutable publication, embedded project identity, images and contracts must all verify.");
+		}
+		return id;
+	}
+
 	@Transactional(readOnly = true)
 	public TrainingProjectView get(UUID id) {
 		return currentView(project(id));

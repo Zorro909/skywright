@@ -9,9 +9,9 @@ data:
   10-skywright-roles.sh: |
     #!/bin/sh
     set -eu
-    psql --set=ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-      --set=migration_password="$SKYWRIGHT_MIGRATION_PASSWORD" \
-      --set=runtime_password="$SKYWRIGHT_RUNTIME_PASSWORD" <<'SQL'
+    psql --set=ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<'SQL'
+    \getenv migration_password SKYWRIGHT_MIGRATION_PASSWORD
+    \getenv runtime_password SKYWRIGHT_RUNTIME_PASSWORD
     CREATE ROLE skywright_migration LOGIN PASSWORD :'migration_password';
     CREATE ROLE skywright_runtime LOGIN PASSWORD :'runtime_password';
     CREATE SCHEMA skywright AUTHORIZATION skywright_migration;

@@ -853,6 +853,22 @@ def apply_bundle(arguments: argparse.Namespace) -> None:
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="scripts/deploy")
     commands = result.add_subparsers(required=True)
+    from . import local_package
+    install = commands.add_parser("install", help="install a retained private AMD instance")
+    install.add_argument("--configuration", required=True, type=Path)
+    install.set_defaults(function=local_package.install)
+    from . import local_service
+    maintain = commands.add_parser("maintain", help="run the installed private access and credential renewal service")
+    maintain.add_argument("--configuration", required=True, type=Path)
+    maintain.set_defaults(function=local_service.run)
+    from . import local_lifecycle
+    for action in ("update", "start", "restart", "stop", "backup"):
+        lifecycle = commands.add_parser(action, help=action + " a retained private AMD instance")
+        lifecycle.add_argument("--configuration", required=True, type=Path)
+        lifecycle.set_defaults(function=local_lifecycle.execute, lifecycle=action)
+    preflight = commands.add_parser("preflight", help="inspect bounded local installation readiness")
+    preflight.add_argument("--configuration", required=True, type=Path)
+    preflight.set_defaults(function=local_package.preflight)
     local = commands.add_parser("local", help="run the local kind development stack")
     local.add_argument("--context", required=True)
     local.set_defaults(function=local_command)
