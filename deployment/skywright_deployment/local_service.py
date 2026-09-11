@@ -74,7 +74,7 @@ def run(arguments) -> None:
     try:
         while True:
             try:
-                with installation_lock(settings):
+                with installation_lock(settings, wait_seconds=0):
                     if (directory / "stopped").exists() or (directory / "pending-update.json").exists():
                         if forward is not None:
                             forward.terminate()

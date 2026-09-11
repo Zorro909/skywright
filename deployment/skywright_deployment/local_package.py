@@ -91,7 +91,7 @@ def registry_inputs(settings: dict) -> dict:
 
 
 @contextlib.contextmanager
-def installation_lock(settings: dict):
+def installation_lock(settings: dict, wait_seconds: float = 60):
     directory = Path(settings["stateDirectory"])
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     info = directory.lstat()
@@ -99,10 +99,15 @@ def installation_lock(settings: dict):
         raise SystemExit("Installation state must be an owner-only directory")
     descriptor = os.open(directory / "installation.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, "w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise SystemExit("Another installation lifecycle command is running") from None
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise SystemExit("Another installation lifecycle command is running") from None
+                time.sleep(0.2)
         yield directory
 
 

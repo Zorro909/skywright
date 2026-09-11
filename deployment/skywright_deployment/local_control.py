@@ -25,6 +25,10 @@ def configuration(kube: Kubernetes, definitions: list[dict], application: dict) 
 
 
 def apply(kube: Kubernetes, settings: dict, metadata: dict, source: Path) -> None:
+    # Its SQL is idempotent; recreating the owned setup Job applies any revised
+    # immutable Pod template after the update's checkpoint.
+    kube.run("delete", "job", "skywright-local-skypilot-database-provisioner", "-n", "skywright",
+             "--ignore-not-found", "--wait=true", "--timeout=60s", timeout=70)
     with tempfile.TemporaryDirectory(prefix="skywright-render-") as temporary:
         root = Path(temporary)
         patches = []
