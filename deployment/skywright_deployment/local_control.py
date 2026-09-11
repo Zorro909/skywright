@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import sys
 import tempfile
 import time
@@ -39,7 +40,7 @@ def apply(kube: Kubernetes, settings: dict, metadata: dict, source: Path) -> Non
         configuration = {
             "apiVersion": "kustomize.config.k8s.io/v1beta1", "kind": "Kustomization",
             "namespace": "skywright",
-            "resources": [str(source / "deployment/overlays/local-kind")],
+            "resources": [os.path.relpath(source / "deployment/overlays/local-kind", root)],
             "patches": patches,
             "images": [{"name": name, "newName": metadata[field].split("@")[0],
                         "digest": metadata[field].split("@")[1]}
