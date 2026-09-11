@@ -148,6 +148,19 @@ state and writer custody. The installer has no implicit destructive reset.
 
 ## System qualification
 
+Use a matching repository checkout for the qualification tests and browser
+tooling below. To check a fresh installation before an update release is
+available, run this separately on the dedicated host:
+
+```sh
+SKYWRIGHT_FRESH_INSTALL_CONFIGURATION=/absolute/path/first.json \
+python3 -m unittest discover -s tests/deployment -p test_installed_amd.py
+```
+
+This test requires no completed installation record, invokes the supported
+installer and requires joined preflight readiness for both GPUs. It does not
+submit a Run. Retained lifecycle and GPU checks follow below.
+
 Run the opt-in system test on the dedicated host with two increasing signed
 release configurations and idle GPUs:
 

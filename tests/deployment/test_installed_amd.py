@@ -19,6 +19,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+@unittest.skipUnless(os.environ.get("SKYWRIGHT_FRESH_INSTALL_CONFIGURATION"), "requires fresh AMD installation")
+class FreshAmdInstallationTest(unittest.TestCase):
+    def test_install_from_uninstalled_state_reaches_joined_readiness(self):
+        configuration = os.environ["SKYWRIGHT_FRESH_INSTALL_CONFIGURATION"]
+        settings = json.loads(Path(configuration).read_text())
+        installed = Path(settings["stateDirectory"]) / "installed.json"
+        self.assertFalse(installed.exists(), "Fresh qualification requires an uninstalled state directory")
+        for action in ("install", "preflight"):
+            result = subprocess.run([str(ROOT / "scripts/deploy"), action, "--configuration", configuration],
+                                    capture_output=True, text=True, timeout=3600)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            if action == "preflight":
+                report = json.loads(result.stdout)
+                self.assertTrue(report["ready"], report)
+                self.assertEqual(report["gpuCount"], 2)
+        self.assertEqual(json.loads(installed.read_text())["release"], settings["release"])
+
+
 @unittest.skipUnless(os.environ.get("SKYWRIGHT_HOST_CONFIGURATION"), "requires idle AMD qualification host")
 class IdleAmdHostTest(unittest.TestCase):
     def test_preflight_recognizes_idle_host_including_runtime_suspended_gpus(self):
