@@ -11,7 +11,7 @@ class ManagedRunFormIT {
 	private static java.nio.file.Path slowVaultToken;
 
 	@Test
-	void slowCredentialReadsCannotHoldTheAdmissionFormIndefinitely() throws Exception {
+	void unrelatedSlowCredentialsDoNotDelayInstalledWorkloadReadiness() throws Exception {
 		var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
 		slowVaultToken = java.nio.file.Files.createTempFile("managed-form-token-", ".txt");
 		java.nio.file.Files.writeString(slowVaultToken, "fixture-token");
@@ -36,9 +36,9 @@ class ManagedRunFormIT {
 			long started = System.nanoTime();
 			var response = backend.get("/api/v1/managed-run-form");
 			assertThat(java.time.Duration.ofNanos(System.nanoTime() - started))
-				.isLessThan(java.time.Duration.ofSeconds(17));
+				.isLessThan(java.time.Duration.ofSeconds(5));
 			assertThat(response.statusCode()).isEqualTo(200);
-			assertThat(response.body()).contains("PREFLIGHT_TIMEOUT");
+			assertThat(response.body()).contains("PROJECT_VERSION_UNAVAILABLE").doesNotContain("PREFLIGHT_TIMEOUT");
 		}
 		finally {
 			server.stop(0);
