@@ -19,6 +19,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+@unittest.skipUnless(os.environ.get("SKYWRIGHT_HOST_CONFIGURATION"), "requires idle AMD qualification host")
+class IdleAmdHostTest(unittest.TestCase):
+    def test_preflight_recognizes_idle_host_including_runtime_suspended_gpus(self):
+        completed = subprocess.run(
+            [str(ROOT / "scripts/deploy"), "preflight", "--configuration",
+             os.environ["SKYWRIGHT_HOST_CONFIGURATION"]],
+            capture_output=True, text=True, timeout=60)
+        self.assertIn(completed.returncode, (0, 1), completed.stderr)
+        report = json.loads(completed.stdout)
+        self.assertEqual(report["checks"]["hostGpu"]["status"], "ready", report)
+
+
 @unittest.skipUnless(os.environ.get("SKYWRIGHT_INSTALL_CONFIGURATION") and
                      os.environ.get("SKYWRIGHT_UPDATE_CONFIGURATION"), "requires the dedicated AMD qualification host")
 class InstalledAmdTest(unittest.TestCase):

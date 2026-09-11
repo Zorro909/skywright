@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -51,11 +52,22 @@ def inventory() -> list[dict]:
         try:
             if (path / "vendor").read_text().strip() != "0x1002":
                 continue
+            # The AMD driver rejects utilization reads while runtime-suspended.
+            # Confirm suspension on both sides of EBUSY; other failures remain
+            # unavailable. Do not wake idle hardware merely to observe it.
+            suspended = (path / "power/runtime_status").read_text().strip() == "suspended"
+            try:
+                busy = int((path / "gpu_busy_percent").read_text())
+            except OSError as error:
+                if (error.errno != errno.EBUSY or not suspended
+                        or (path / "power/runtime_status").read_text().strip() != "suspended"):
+                    raise
+                busy = 0
             devices.append({
                 "device": (path / "device").read_text().strip(),
                 "memoryBytes": int((path / "mem_info_vram_total").read_text()),
                 "usedMemoryBytes": int((path / "mem_info_vram_used").read_text()),
-                "busyPercent": int((path / "gpu_busy_percent").read_text()),
+                "busyPercent": busy,
             })
         except (OSError, ValueError):
             raise SystemExit("AMD GPU inventory is unavailable from the kernel driver") from None

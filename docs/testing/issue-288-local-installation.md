@@ -75,3 +75,12 @@ The deployment suite passed 75 tests with three skips: two root-only checks and
 the opt-in signed-release AMD system qualification. The maintenance HTTP test
 passed new-submission rejection, accepted-intent replay across restart and the
 GUI form's maintenance response. The full reactor is still being verified.
+
+After the operator rebooted the host, both GPUs resumed through a brief render
+device open and settled at 0% utilization with about 175 MiB allocated each.
+Vault was unsealed using its retained recovery input. No training was launched.
+The driver's utilization counter returns `EBUSY` during normal runtime suspension.
+An opt-in deployment CLI regression failed on the suspended host before the fix
+and passed afterward. Inventory now accepts that response only when the kernel
+reports `suspended` both before and after the counter read; other errors still
+block admission. This check does not wake the GPUs or change their power policy.
