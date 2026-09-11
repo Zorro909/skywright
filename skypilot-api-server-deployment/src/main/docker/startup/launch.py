@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import json
+import resource
 import stat
 from pathlib import Path
 import sys
@@ -83,6 +84,8 @@ def validate_kubernetes_projection() -> None:
         fail("local Kubernetes Credential Projection is unavailable")
 
 
+# Descendants inherit the same per-process descriptor ceiling.
+resource.setrlimit(resource.RLIMIT_NOFILE, (1024, 1024))
 validate_kubernetes_projection()
 validate_database()
 validate_writable_paths()

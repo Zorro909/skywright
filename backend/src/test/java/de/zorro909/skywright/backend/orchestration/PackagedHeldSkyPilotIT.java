@@ -39,7 +39,9 @@ final class PackagedHeldSkyPilotIT {
 		var output = repository
 			.resolve("backend/target/service-logs/" + mode + (tls ? "-tls" : "") + "-sdk-qualification.log");
 		var certificate = tls ? SkyPilotTlsFixture.create(temporary, true) : null;
-		try (var api = SkyPilotApiServerFixture.start();
+		// Six GiB of worker sizing leaves idle persistent workers after the daemons.
+		// With four GiB, overlapping requests can start disposable CLI burst workers.
+		try (var api = SkyPilotApiServerFixture.start(6);
 				var proxy = new HeldSkyPilotProxy(api.endpoint(), certificate == null ? null : certificate.context())) {
 			var endpoint = tls && saturateControl ? URI.create("https://localhost:" + proxy.endpoint().getPort())
 					: proxy.endpoint();

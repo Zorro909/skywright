@@ -86,6 +86,27 @@ The fixture now rejects that capacity before starting the server, with an
 explicit prerequisite failure. This requirement applies to the timing fixture;
 deployment resource sizing remains a separate concern.
 
+Issue #284 bounds the standalone server fixture's worker sizing through
+SkyPilot's supported CPU and memory settings. This timing test uses two CPUs
+and a six-GiB sizing budget. At four GiB, the local CLI server selects five
+persistent short-request workers, four occupied by daemons. Overlapping status
+and cancellation requests can then use disposable burst workers. Two CI failures
+recorded slow status streams, including a 2,336-ms upstream wait and a newly
+spawned worker, before the timed cancellation could be submitted.
+
+Six GiB selects eight persistent short-request workers and retains headroom for
+the existing overlap. This is a bounded worker-sizing input for the timing
+fixture, not its measured RSS or a change to production's four-GiB container
+limit. Resource regressions and image qualification retain their four-GiB
+budgets. The startup cancellation count, held responses and all deadlines stay
+unchanged.
+
+Requalification on 2026-09-10 with the entire process tree restricted to two
+CPUs passed all four cases. Held cancellation took 517/537/697/566 ms in the
+scenario order above. Probes took 34/40/177/157 ms and shutdown took
+1,244/915/1,187/946 ms. Each phase still recorded exactly one accepted
+`POST /jobs/cancel`, and all child JVMs exited with code 0.
+
 ## Evidence and commands
 
 Each successful test prints `Packaged SDK evidence` with the platform, JVM,

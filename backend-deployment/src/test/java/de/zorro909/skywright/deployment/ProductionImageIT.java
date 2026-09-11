@@ -111,6 +111,10 @@ final class ProductionImageIT {
 	@Test
 	@Order(2)
 	void healthAndApplicationIdentityAreAvailable() throws Exception {
+		assertThat(docker("exec", runningContainer, "cat", "/proc/1/limits"))
+			.containsPattern("Max open files\\s+4096\\s+4096");
+		assertThat(docker("exec", runningContainer, "jcmd", "1", "VM.flags")).contains("-XX:MaxHeapSize=2147483648",
+				"-XX:MaxDirectMemorySize=268435456");
 		assertThat(docker("image", "inspect", "--format", "{{index .Config.Labels \"io.skywright.skypilot.version\"}}",
 				imageName())
 			.strip()).isEqualTo(skypilotVersion());
@@ -184,12 +188,14 @@ final class ProductionImageIT {
 		var container = containerName("native-sdk");
 		try (var skyPilot = SkyPilotApiServerFixture.start("0.0.0.0")) {
 			docker("run", "--detach", "--name", container, "--read-only", "--tmpfs", BackendPodBudget.temporaryMount(),
-					"--add-host", "skywright-test-host:host-gateway", "--env",
+					"--memory", "4g", "--memory-swap", "4g", "--cpus", "2", "--pids-limit", "256", "--add-host",
+					"skywright-test-host:host-gateway", "--env",
 					"SKYWRIGHT_SKYPILOT_BRIDGE_API_SERVER_ENDPOINT=http://skywright-test-host:"
 							+ skyPilot.endpoint().getPort(),
 					"--env", "NO_PROXY=skywright-test-host,127.0.0.1,localhost", "--env",
-					"no_proxy=skywright-test-host,127.0.0.1,localhost", "--entrypoint", "java", imageName(),
-					"--enable-native-access=ALL-UNNAMED", "--sun-misc-unsafe-memory-access=allow", "-Xss16m",
+					"no_proxy=skywright-test-host,127.0.0.1,localhost", "--entrypoint", "/opt/skywright/start",
+					imageName(), "--enable-native-access=ALL-UNNAMED", "--sun-misc-unsafe-memory-access=allow",
+					"-Xss16m",
 					"-Dloader.main=de.zorro909.skywright.backend.orchestration.OrchestratorQualificationMain", "-cp",
 					"/opt/skywright/application.jar", "org.springframework.boot.loader.launch.PropertiesLauncher",
 					"sdk-status");
@@ -322,7 +328,8 @@ final class ProductionImageIT {
 	private ArrayList<String> applicationContainerArguments(String container, String deploymentEnvironment) {
 		var databaseUrl = "jdbc:postgresql://" + databaseContainer
 				+ ":5432/skywright?connectTimeout=5&socketTimeout=5&tcpKeepAlive=true";
-		return new ArrayList<>(List.of("run", "--detach", "--name", container, "--network", network, "--env",
+		return new ArrayList<>(List.of("run", "--detach", "--name", container, "--network", network, "--memory", "4g",
+				"--memory-swap", "4g", "--cpus", "2", "--pids-limit", "256", "--env",
 				"SKYWRIGHT_DEPLOYMENT_ENVIRONMENT=" + deploymentEnvironment, "--env",
 				"SKYWRIGHT_DEPLOYMENT_REPORTING_CURRENCY=EUR", "--env",
 				"SKYWRIGHT_DATABASE_MIGRATION_URL=" + databaseUrl, "--env",

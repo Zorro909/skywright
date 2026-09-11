@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: skywright-skypilot-api-server
 spec:
+  strategy:
+    type: Recreate
   template:
     spec:
       initContainers:

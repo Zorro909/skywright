@@ -13,6 +13,8 @@ _SKY_MODULES = None
 _SKY_LOCK = threading.Lock()
 _REQUESTS = None
 _REQUESTS_LOCK = threading.Lock()
+_PROBE_SESSION = None
+_PROBE_LOCK = threading.Lock()
 _JOB_LIMIT = 1000
 _JOB_FIELDS = [
     "job_id", "job_name", "status", "recovery_count", "task_id", "submitted_at",
@@ -22,7 +24,7 @@ _JOB_FIELDS = [
 
 
 def _requests_module():
-    global _REQUESTS
+    global _REQUESTS, _PROBE_SESSION
     if _REQUESTS is None:
         with _REQUESTS_LOCK:
             if _REQUESTS is None:
@@ -34,6 +36,10 @@ def _requests_module():
                 urllib3_ssl.HAS_NEVER_CHECK_COMMON_NAME = False
                 import requests
 
+                # A per-probe requests.get() creates and discards a pool. Its
+                # keep-alive sockets rely on finalization under GraalPy.
+                # The control lane instead owns one reusable health session.
+                _PROBE_SESSION = requests.Session()
                 _REQUESTS = requests
     return _REQUESTS
 
@@ -177,6 +183,21 @@ def bridge_interrupt():
             pass
 
 
+def bridge_close():
+    # Java calls this only after both lanes have quiesced. shutdown() wakes
+    # blocked reads but does not release their OS descriptors; close them
+    # before dropping pools or the native context's remaining references.
+    with _SOCKET_LOCK:
+        sockets = list(_SOCKETS)
+    for connection in sockets:
+        try:
+            connection.close()
+        except OSError:
+            pass
+    if _PROBE_SESSION is not None:
+        _PROBE_SESSION.close()
+
+
 @_bridge_boundary
 def bridge_probe(token=None):
     endpoint = os.environ["SKYPILOT_API_SERVER_ENDPOINT"].rstrip("/")
@@ -185,11 +206,15 @@ def bridge_probe(token=None):
             token = os.environ.get("SKYPILOT_SERVICE_ACCOUNT_TOKEN")
         # Health carries authorization too and may redirect to HTTPS.
         headers = {"Authorization": f"Bearer {token}"} if token else {}
-        with _requests_module().get(
-            f"{endpoint}/api/health", headers=headers, timeout=5
-        ) as response:
-            response.raise_for_status()
-            info = response.json()
+        _requests_module()
+        with _PROBE_LOCK:
+            # Token rotation must not reuse a previous probe's cookies.
+            _PROBE_SESSION.cookies.clear()
+            with _PROBE_SESSION.get(
+                f"{endpoint}/api/health", headers=headers, timeout=5
+            ) as response:
+                response.raise_for_status()
+                info = response.json()
     except Exception as failure:
         return _probe_failure(failure)
     return json.dumps({"server_version": str(info["version"])})

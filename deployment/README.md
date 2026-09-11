@@ -72,6 +72,16 @@ and finishes by resetting that state.
 
 ## Operating the control plane
 
+The backend and SkyPilot server each request and limit memory to 4 GiB and CPU
+to two cores. The backend reserves half its memory for the maximum Java heap;
+its launcher limits descriptors to 4,096. SkyPilot and its sidecars have separate
+process limits and memory budgets. The local overlay replaces application pods
+without running two generations at once. See the
+[#284 resource qualification](../docs/testing/issue-284-control-plane-resources.md)
+for measurements, startup requirements, early-stop thresholds and diagnostic
+commands. Deploy the fixed images as well as the limits. An old leaking image
+with a memory limit still has the lifecycle defect.
+
 Local startup first creates or reuses the Namespace, database Secrets, and persistent volume
 claims. Skaffold applies PostgreSQL and its SkyPilot database provisioner with the two application
 Deployments. The backend init container waits for PostgreSQL. SkyPilot validates its database and

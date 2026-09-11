@@ -213,6 +213,9 @@ final class GraalPySkyPilotClient implements SkyPilotClient {
 				.allowCreateThread(true)
 				.allowEnvironmentAccess(EnvironmentAccess.INHERIT)
 				.environment("SKYPILOT_API_SERVER_ENDPOINT", this.apiServerEndpoint.toString())
+				// The SDK's per-operation HTTPS telemetry retains native sockets under
+				// GraalPy. Use its supported opt-out, as the API server already does.
+				.environment("SKYPILOT_DISABLE_USAGE_COLLECTION", "true")
 				.allowIO(IOAccess.newBuilder().allowHostFileAccess(true).allowHostSocketAccess(true).build())
 				.out(OutputStream.nullOutputStream())
 				.err(OutputStream.nullOutputStream())
@@ -312,6 +315,7 @@ final class GraalPySkyPilotClient implements SkyPilotClient {
 				Thread.currentThread().interrupt();
 				throw new IllegalStateException("SkyPilot shutdown interrupted before SDK quiescence", failure);
 			}
+			this.bindings.getMember("bridge_close").execute();
 			this.context.close(true);
 			this.context = null;
 			this.bindings = null;

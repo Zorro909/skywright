@@ -29,8 +29,10 @@ public final class SkyPilotApiServerFixture implements AutoCloseable {
 
 	private final Path home;
 
+	private final int workerMemoryGiB;
+
 	private SkyPilotApiServerFixture(Process process, URI endpoint, Path environment, Path repository, Path logs,
-			String listenAddress, Path home) {
+			String listenAddress, Path home, int workerMemoryGiB) {
 		this.process = process;
 		this.endpoint = endpoint;
 		this.environment = environment;
@@ -38,14 +40,24 @@ public final class SkyPilotApiServerFixture implements AutoCloseable {
 		this.logs = logs;
 		this.listenAddress = listenAddress;
 		this.home = home;
+		this.workerMemoryGiB = workerMemoryGiB;
 	}
 
 	static SkyPilotApiServerFixture start() throws Exception {
 		return start("127.0.0.1");
 	}
 
+	/** Bound worker sizing while allowing headroom for overlapping requests. */
+	static SkyPilotApiServerFixture start(int workerMemoryGiB) throws Exception {
+		return start("127.0.0.1", workerMemoryGiB);
+	}
+
 	/** Bind to a container-reachable interface while keeping server state isolated. */
 	public static SkyPilotApiServerFixture start(String listenAddress) throws Exception {
+		return start(listenAddress, 4);
+	}
+
+	private static SkyPilotApiServerFixture start(String listenAddress, int workerMemoryGiB) throws Exception {
 		var repository = Path.of(System.getProperty("repository.root"));
 		var environment = repository.resolve("backend/target/skypilot-api-server-venv");
 		run(repository, "uv", "venv", "--python", "3.12", environment.toString());
@@ -56,9 +68,9 @@ public final class SkyPilotApiServerFixture implements AutoCloseable {
 		var logs = repository.resolve("backend/target/service-logs/skypilot-api-" + port + ".log");
 		Files.createDirectories(logs.getParent());
 		var home = Files.createTempDirectory(repository.resolve("backend/target"), "skypilot-server-home-");
-		var process = startProcess(environment, repository, logs, port, listenAddress, home);
+		var process = startProcess(environment, repository, logs, port, listenAddress, home, workerMemoryGiB);
 		var fixture = new SkyPilotApiServerFixture(process, URI.create("http://127.0.0.1:" + port), environment,
-				repository, logs, listenAddress, home);
+				repository, logs, listenAddress, home, workerMemoryGiB);
 		try {
 			fixture.awaitHealthy(Duration.ofSeconds(30), logs);
 		}
@@ -82,7 +94,7 @@ public final class SkyPilotApiServerFixture implements AutoCloseable {
 
 	void restart() throws Exception {
 		this.process = startProcess(this.environment, this.repository, this.logs, this.endpoint.getPort(),
-				this.listenAddress, this.home);
+				this.listenAddress, this.home, this.workerMemoryGiB);
 		awaitHealthy(Duration.ofSeconds(30), this.logs);
 	}
 
@@ -114,7 +126,7 @@ public final class SkyPilotApiServerFixture implements AutoCloseable {
 	}
 
 	private static Process startProcess(Path environment, Path repository, Path logs, int port, String listenAddress,
-			Path home) throws IOException {
+			Path home, int workerMemoryGiB) throws IOException {
 		var builder = new ProcessBuilder(environment.resolve("bin/python").toString(), "-m", "sky.server.server",
 				"--host", listenAddress, "--port", Integer.toString(port))
 			.directory(repository.toFile())
@@ -122,6 +134,9 @@ public final class SkyPilotApiServerFixture implements AutoCloseable {
 			.redirectOutput(ProcessBuilder.Redirect.appendTo(logs.toFile()));
 		builder.environment().put("HOME", home.toString());
 		builder.environment().put("XDG_CACHE_HOME", home.resolve(".cache").toString());
+		builder.environment().put("SKYPILOT_POD_CPU_CORE_LIMIT", "2");
+		builder.environment().put("SKYPILOT_POD_MEMORY_GB_LIMIT", Integer.toString(workerMemoryGiB));
+		builder.environment().put("SKYPILOT_DISABLE_USAGE_COLLECTION", "true");
 		return builder.start();
 	}
 

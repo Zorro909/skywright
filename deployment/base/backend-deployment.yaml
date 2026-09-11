@@ -27,6 +27,13 @@ spec:
       containers:
         - name: backend
           image: skywright-backend
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
           ports:
             - name: http
               containerPort: 8080
@@ -81,7 +88,7 @@ spec:
             httpGet:
               path: /livez
               port: http
-            failureThreshold: 30
+            failureThreshold: 120
             periodSeconds: 2
           livenessProbe:
             httpGet:

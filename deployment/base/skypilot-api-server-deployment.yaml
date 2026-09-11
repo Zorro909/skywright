@@ -30,6 +30,9 @@ spec:
       initContainers:
         - name: prepare-skypilot-rsync-helper
           image: skywright-skypilot-api-server
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: "1", memory: 64Mi}
           command:
             - cp
             - /usr/local/lib/python3.12/site-packages/sky/utils/kubernetes/rsync_helper.sh
@@ -44,6 +47,9 @@ spec:
               mountPath: /runtime-helper
         - name: wait-for-skypilot-database
           image: skywright-skypilot-api-server
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: "1", memory: 64Mi}
           command:
             - python
             - -c
@@ -78,6 +84,13 @@ spec:
       containers:
         - name: skypilot-api-server
           image: skywright-skypilot-api-server
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
           ports:
             - name: http
               containerPort: 46580
@@ -97,7 +110,7 @@ spec:
             httpGet:
               path: /api/health
               port: http
-            failureThreshold: 30
+            failureThreshold: 120
             periodSeconds: 2
           livenessProbe:
             httpGet:
@@ -120,6 +133,13 @@ spec:
               mountPath: /var/lib/skypilot
         - name: runtime-pull
           image: skywright-skypilot-api-server
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
           command: ["python", "-I", "/opt/skywright/runtime/runtime_pull.py"]
           ports:
             - name: runtime-pull
@@ -138,6 +158,13 @@ spec:
               mountPath: /tmp
         - name: log-collector
           image: skywright-skypilot-api-server
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
           command: ["python", "-I", "/opt/skywright/runtime/log_collector.py"]
           ports:
             - name: log-collector

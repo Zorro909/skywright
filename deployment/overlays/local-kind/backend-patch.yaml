@@ -3,11 +3,16 @@ kind: Deployment
 metadata:
   name: skywright-backend
 spec:
+  strategy:
+    type: Recreate
   template:
     spec:
       initContainers:
         - name: wait-for-postgresql
           image: postgres:18.1-bookworm@sha256:cc9f4143a8d2fa8cf3749d0cb4d26ecf2d53a77a2ac807e9ebd67ae22426221a
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: "1", memory: 64Mi}
           command:
             - sh
             - -c

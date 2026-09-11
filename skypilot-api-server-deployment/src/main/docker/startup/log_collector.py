@@ -332,6 +332,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    import resource
+
+    resource.setrlimit(resource.RLIMIT_NOFILE, (256, 256))
     if sys.argv[1:] == ["--page"]:
         worker()
     else:

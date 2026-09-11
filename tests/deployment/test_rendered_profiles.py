@@ -145,7 +145,8 @@ class RenderedProfilesTest(unittest.TestCase):
                 )
                 self.assertEqual(server.count(f"name: {database_secret}"), 3)
                 self.assertNotIn("name: skywright-skypilot-database\n", server)
-                self.assertNotIn("resources:", server)
+                self.assertEqual(server.count("resources:"), 5)
+                self.assertIn("memory: 4Gi", server)
                 self.assertNotIn("hostPort:", server)
                 self.assertNotIn("nodePort:", server)
                 self.assertNotIn("--enable-basic-auth", server)
@@ -226,7 +227,7 @@ class RenderedProfilesTest(unittest.TestCase):
         self.assertIn("path: /livez", manifest)
         self.assertIn("path: /readyz", manifest)
         self.assertIn("terminationGracePeriodSeconds: 30", manifest)
-        self.assertNotIn("resources:", manifest)
+        self.assertIn("memory: 4Gi", manifest)
         self.assertIn("name: skywright-production-database", manifest)
         self.assertIn("name: skywright-production-skypilot-database", manifest)
 

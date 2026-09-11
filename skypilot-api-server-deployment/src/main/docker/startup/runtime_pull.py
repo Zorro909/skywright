@@ -224,4 +224,7 @@ class Server(ThreadingHTTPServer):
 
 
 if __name__ == "__main__":
+    import resource
+
+    resource.setrlimit(resource.RLIMIT_NOFILE, (256, 256))
     Server(("0.0.0.0", 46581)).serve_forever()
