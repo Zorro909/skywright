@@ -158,3 +158,25 @@ SDK probe using separate temporary databases reproduced mixed stdout with the
 original helper and valid credential JSON with the fix. Both processes exited
 successfully; no credential values were printed. A new signed fresh installation
 is still required to qualify this correction.
+
+Source `95bd57d` passed Repository Quality `34698764686` and published signed
+`v0.1.0-issue288.5` in run `34700647181`. Its bundle digest is
+`sha256:a5693b6b0a42ccf8552437ccc5c030aec996948fd83d01516b9d7470515de6b6`.
+A fresh attempt reached project enrollment but failed there; replaying the
+project import succeeded, so the original failure's cause remains unproven.
+That diagnostic cluster was stopped. An independent empty `kind-skywright-instance`
+installation then passed on its first attempt in 1062.5 seconds. HTTP status-only
+observations confirmed storage qualification, activation and project import.
+The private GUI reported readiness and the deployment preflight found both GPUs.
+Its state and protected operator inputs are under
+`~/.local/share/skywright/issue288/installed-instance/` and `installed-secrets/`.
+
+The signed-package GUI Run `f49a72c0-0c4e-4804-95c0-d628aa0dee44` finished all
+12 steps on exactly one GPU. Its Pod used the default service account without a
+mounted API token. The GUI check read nonempty task/controller archives and
+verified the downloaded `predictions.json` checksum. A subsequent HTTP Run also
+finished, but the retained restart exposed Kubernetes API startup failures and
+stale pre-restart Vault Pod readiness. The lifecycle now retries node readiness
+and requires a live, valid Vault status response before initialization or unseal.
+The public CLI start/restart reproduction passed with these changes. Both probes
+have a five-minute budget; the deployment suite passed 78 tests with five skips.

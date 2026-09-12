@@ -89,7 +89,18 @@ def quiesce(kube: Kubernetes) -> None:
 
 def start_node(settings: dict, kube: Kubernetes) -> None:
     command(["docker", "start", settings["node"]])
-    kube.run("wait", "node/" + settings["node"], "--for=condition=Ready", "--timeout=300s", timeout=310)
+    # A restarted API can reject connections or authorization before its caches
+    # are ready. kubectl wait exits on those errors instead of using its timeout.
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        result = kube.run("wait", "node/" + settings["node"], "--for=condition=Ready",
+                          "--timeout=5s", "--request-timeout=5s",
+                          timeout=max(0.1, min(10, deadline - time.monotonic())), allow_failure=True)
+        if result.returncode == 0:
+            break
+        time.sleep(max(0, min(2, deadline - time.monotonic())))
+    else:
+        raise SystemExit("The retained Kubernetes node did not become ready within five minutes; retry start")
     kube.rollout("skywright-vault")
     Vault(kube, Path(settings["secretDirectory"])).initialize()
 

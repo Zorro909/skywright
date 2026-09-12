@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import time
 from pathlib import Path
 
 from .local_operations import Kubernetes, command
@@ -88,7 +89,7 @@ class Vault:
         self.token = ""
 
     def run(self, *arguments: str, value: dict | None = None, authenticated: bool = True,
-            allow_failure: bool = False):
+            allow_failure: bool = False, timeout: float = 60):
         script = ('read -r VAULT_TOKEN; export VAULT_TOKEN; '
                   'export VAULT_ADDR=https://127.0.0.1:8200 VAULT_TLS_SERVER_NAME=skywright-vault.skywright.svc '
                   'VAULT_CACERT=/vault/tls/tls.crt; exec vault "$@"')
@@ -97,10 +98,25 @@ class Vault:
             data += json.dumps(value)
         return self.kube.run("exec", "-i", "deployment/skywright-vault", "-n", "skywright", "--",
                              "sh", "-c", script, "--", *arguments, data=data.encode(),
-                             allow_failure=allow_failure)
+                             allow_failure=allow_failure, timeout=timeout)
 
     def initialize(self) -> None:
-        observed = json.loads(self.run("status", "-format=json", authenticated=False, allow_failure=True).stdout)
+        # Kubernetes can briefly retain pre-restart Pod readiness. Require a live
+        # Vault response before deciding whether to initialize or unseal it.
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            response = self.run("status", "-format=json", authenticated=False, allow_failure=True,
+                                timeout=max(0.1, min(60, deadline - time.monotonic())))
+            try:
+                observed = json.loads(response.stdout)
+            except ValueError:
+                observed = None
+            if (response.returncode in (0, 2) and isinstance(observed, dict)
+                    and all(type(observed.get(key)) is bool for key in ("initialized", "sealed"))):
+                break
+            time.sleep(max(0, min(2, deadline - time.monotonic())))
+        else:
+            raise SystemExit("Vault did not answer its status probe within five minutes; retry the current operation")
         path = self.root / "vault-recovery.json"
         if not observed["initialized"]:
             if path.exists():
