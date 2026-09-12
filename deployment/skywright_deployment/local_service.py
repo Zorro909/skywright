@@ -89,6 +89,8 @@ def run(arguments) -> None:
                             forward = subprocess.Popen([*kube.prefix, "-n", "skywright", "port-forward",
                                 "--address=127.0.0.1", "service/skywright-backend", "8080:80"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        from .local_vast import reconcile
+                        reconcile(kube, settings, directory)
             except (SystemExit, OSError, ValueError, subprocess.TimeoutExpired):
                 # Stale host observation fails admission closed. Retry without writing provider data to logs.
                 pass

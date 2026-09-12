@@ -1490,7 +1490,7 @@ components:
           items: { $ref: '#/components/schemas/ManagedWorkload' }
         targets:
           type: array
-          maxItems: 1
+          maxItems: 3
           items: { $ref: '#/components/schemas/ManagedTarget' }
         checks:
           type: array
@@ -1502,14 +1502,23 @@ components:
       properties:
         id: { type: string, enum: [demonstration] }
         displayName: { type: string }
+        trainingProjectId: { $ref: '#/components/schemas/SkywrightId' }
+        manifestArtifactDigest: { type: string }
+        datasetDefinitionId: { $ref: '#/components/schemas/SkywrightId' }
     ManagedTarget:
       type: object
       additionalProperties: false
-      required: [id, gpuModel, gpuCount]
+      required: [id, displayName, purchaseMode, ready, checks]
       properties:
         id: { type: string }
-        gpuModel: { type: string }
-        gpuCount: { type: integer, minimum: 1 }
+        displayName: { type: string }
+        purchaseMode: { type: string, enum: [local, on-demand, spot] }
+        gpuModel: { type: [string, 'null'] }
+        gpuCount: { type: [integer, 'null'], minimum: 1 }
+        ready: { type: boolean }
+        checks:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedReadinessCheck' }
     ManagedReadinessCheck:
       type: object
       additionalProperties: false

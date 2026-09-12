@@ -19,13 +19,14 @@ from .local_release import fetch
 from .local_secrets import Vault, write_private
 
 
-def retained(settings: dict, directory: Path) -> dict:
+def retained(settings: dict, directory: Path, *, allow_provider_change: bool = False) -> dict:
     path = directory / "installed.json"
     if not path.exists():
         raise SystemExit("No completed installation exists; run install before using lifecycle commands")
     installed = protected_json(path)
     previous = installed["configuration"]
-    if any(previous[key] != settings[key] for key in settings if key != "release"):
+    ignored = {"release", "vastProvider"} if allow_provider_change else {"release"}
+    if any(previous.get(key) != settings.get(key) for key in set(previous) | set(settings) if key not in ignored):
         raise SystemExit("Retained installation configuration changed; restore its recorded configuration before proceeding")
     tools(directory / "tools")
     return installed
@@ -124,6 +125,8 @@ def resume_services(kube: Kubernetes) -> None:
 def resume(settings: dict, kube: Kubernetes) -> None:
     start_node(settings, kube)
     resume_services(kube)
+    from .local_vast import reconcile
+    reconcile(kube, settings, Path(settings["stateDirectory"]))
 
 
 def checkpoint(settings: dict, directory: Path, kube: Kubernetes) -> Path:
@@ -135,6 +138,8 @@ def checkpoint(settings: dict, directory: Path, kube: Kubernetes) -> Path:
     backup = directory / "backups" / timestamp
     backup.mkdir(mode=0o700, parents=True)
     quiesce(kube)
+    from .local_vast import reconcile
+    reconcile(kube, settings, directory)
     complete = False
     try:
         command(["docker", "stop", "--time=60", settings["node"]], timeout=90)
@@ -157,6 +162,8 @@ def checkpoint(settings: dict, directory: Path, kube: Kubernetes) -> Path:
                         process.kill()
                         process.wait()
         shutil.copytree(settings["secretDirectory"], backup / "operator-secrets", symlinks=True)
+        if (directory / "credential-projections").exists():
+            shutil.copytree(directory / "credential-projections", backup / "credential-projections")
         for name in ("installed.json", "target.json", "storage.json", "demonstration.json", "configuration.json"):
             if (directory / name).exists():
                 shutil.copy2(directory / name, backup / name)
@@ -181,7 +188,7 @@ def checkpoint(settings: dict, directory: Path, kube: Kubernetes) -> Path:
 def execute(arguments) -> None:
     settings = configuration(arguments.configuration)
     with installation_lock(settings) as directory:
-        installed = retained(settings, directory)
+        installed = retained(settings, directory, allow_provider_change=arguments.lifecycle == "update")
         kube = Kubernetes(settings["context"])
         action = arguments.lifecycle
         pending = directory / "pending-update.json"
@@ -191,16 +198,19 @@ def execute(arguments) -> None:
             registry = registry_inputs(settings)
             release, metadata = fetch(settings, directory, registry["resolver"])
             print("Installed " + installed["version"] + "; requested " + metadata["version"], flush=True)
-            if settings["release"] == installed["release"] and not pending.exists():
+            provider_changed = settings.get("vastProvider") != installed["configuration"].get("vastProvider")
+            if settings["release"] == installed["release"] and not provider_changed and not pending.exists():
                 print("The requested digest is already installed")
                 return
             # The package supports forward changes only. Every update retains a full checkpoint.
             from .local_release import version_key
-            if not pending.exists() and version_key(metadata["version"]) <= version_key(installed["version"]):
+            if (not pending.exists() and settings["release"] != installed["release"]
+                    and version_key(metadata["version"]) <= version_key(installed["version"])):
                 raise SystemExit("Only a newer release can be applied; use explicit checkpoint recovery for a downgrade")
             if pending.exists():
                 attempt = protected_json(pending)
-                if attempt["requestedRelease"] != settings["release"]:
+                if (attempt["requestedRelease"] != settings["release"]
+                        or attempt.get("vastProvider") != settings.get("vastProvider")):
                     raise SystemExit("Retry the pending release before selecting a different update")
                 # The complete checkpoint records terminal Runs. Admission has remained
                 # frozen since then, even when the backend itself failed to start.
@@ -212,7 +222,7 @@ def execute(arguments) -> None:
             else:
                 backup = checkpoint(settings, directory, kube)
                 record(pending, {"requestedRelease": settings["release"], "previousRelease": installed["release"],
-                                 "checkpoint": str(backup)})
+                                 "checkpoint": str(backup), "vastProvider": settings.get("vastProvider")})
             try:
                 apply_verified(settings, directory, release)
                 pending.unlink()
@@ -229,6 +239,8 @@ def execute(arguments) -> None:
             (directory / "stopped").unlink(missing_ok=True)
         elif action == "stop":
             quiesce(kube)
+            from .local_vast import reconcile
+            reconcile(kube, settings, directory)
             (directory / "stopped").touch(mode=0o600)
             command(["docker", "stop", "--time=60", settings["node"]], timeout=90)
         elif action == "restart":

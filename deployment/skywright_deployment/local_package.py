@@ -28,11 +28,11 @@ def configuration(path: Path) -> dict:
         value = json.loads(path.read_text())
     except (OSError, ValueError):
         raise SystemExit("Cannot read installation configuration") from None
-    if not isinstance(value, dict) or set(value) - CONFIGURATION_FIELDS:
+    if not isinstance(value, dict) or set(value) - CONFIGURATION_FIELDS - {"vastProvider"}:
         raise SystemExit("Unknown installation configuration fields; secrets belong in protected input files")
     if value.get("schemaVersion") != 1:
         raise SystemExit("Unsupported installation configuration version")
-    if set(value) != CONFIGURATION_FIELDS:
+    if set(value) - {"vastProvider"} != CONFIGURATION_FIELDS:
         raise SystemExit("Installation configuration is incomplete")
     if not isinstance(value["release"], str) or not re.fullmatch(
         r"ghcr\.io/zorro909/skywright-deployment@sha256:[0-9a-f]{64}", value["release"]
@@ -56,6 +56,8 @@ def configuration(path: Path) -> dict:
     secrets = Path(value["secretDirectory"]).resolve()
     if state.is_relative_to(secrets) or secrets.is_relative_to(state):
         raise SystemExit("State and operator secret directories must be separate, non-nested directories")
+    from .local_vast import selection
+    selection(value)
     return value
 
 

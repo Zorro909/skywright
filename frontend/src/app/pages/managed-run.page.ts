@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   DestroyRef,
   ErrorHandler,
   inject,
@@ -23,7 +24,7 @@ import { RequestFailure } from '../shared/request-failure';
   template: `
     <a routerLink="/">Back to overview</a>
     <h2>Create Run</h2>
-    <p>Run the installed demonstration on one local GPU.</p>
+    <p>Run the installed demonstration on a qualified target.</p>
     @if (storageFailure()) {
       <p role="alert">
         The saved submission needs attention before another Run can start.
@@ -57,13 +58,16 @@ import { RequestFailure } from '../shared/request-failure';
         >
           @for (target of form.targets; track target.id) {
             <option [value]="target.id">
-              {{ target.gpuModel }} · {{ target.gpuCount }} installed GPUs
+              {{ target.displayName }}
+              @if (target.gpuModel) {
+                · {{ target.gpuModel }}
+              }
             </option>
           }
         </select>
         <h3>Readiness</h3>
         <ul>
-          @for (check of form.checks; track check.component) {
+          @for (check of checks(); track check.component) {
             <li>
               {{ label(check.component) }}:
               {{ check.ready ? 'Ready' : check.detail }}
@@ -90,9 +94,7 @@ import { RequestFailure } from '../shared/request-failure';
         <button
           type="button"
           [disabled]="
-            busy() ||
-            storageFailure() ||
-            (!saved() && (loading() || !form()?.ready))
+            busy() || storageFailure() || (!saved() && (loading() || !ready()))
           "
           (click)="submit()"
         >
@@ -113,6 +115,16 @@ export class ManagedRunPage {
   private submissionRequest?: AbortController;
   protected readonly form = signal<ManagedRunForm | undefined>(undefined);
   protected readonly target = signal('');
+  protected readonly selectedTarget = computed(() =>
+    this.form()?.targets.find((t) => t.id === this.target()),
+  );
+  protected readonly ready = computed(
+    () => this.form()?.ready === true && this.selectedTarget()?.ready === true,
+  );
+  protected readonly checks = computed(() => [
+    ...(this.form()?.checks ?? []),
+    ...(this.selectedTarget()?.checks ?? []),
+  ]);
   protected readonly saved = signal<ManagedSubmissionJournal | undefined>(
     undefined,
   );
@@ -147,7 +159,10 @@ export class ManagedRunPage {
       );
       if (request.signal.aborted) return;
       this.form.set(form);
-      if (!this.saved()) this.target.set(form.targets[0]?.id ?? '');
+      if (!this.saved() && !form.targets.some((t) => t.id === this.target()))
+        this.target.set(
+          form.targets.find((t) => t.ready)?.id ?? form.targets[0]?.id ?? '',
+        );
     } catch (failure) {
       if (request.signal.aborted) return;
       if (failure instanceof ApiRequestFailure)
@@ -162,7 +177,7 @@ export class ManagedRunPage {
     if (
       this.busy() ||
       this.storageFailure() ||
-      (!this.saved() && !this.form()?.ready)
+      (!this.saved() && !this.ready())
     )
       return;
     this.busy.set(true);
@@ -247,6 +262,9 @@ export class ManagedRunPage {
           gpu: 'GPU capacity',
           controlPath: 'Control plane',
           preflight: 'Readiness',
+          launchPrice: 'Rental price',
+          budget: 'Available budget',
+          qualification: 'Live qualification',
         } as Record<string, string>
       )[component] ?? component
     );

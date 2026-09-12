@@ -169,6 +169,38 @@ final class GraalPySkyPilotClientIT {
 						assert 'imagePullSecrets' in str(task.to_yaml_config())
 						assert next(iter(recovered.resources)).cluster_config_overrides['kubernetes']['namespace'] == 'training'
 						assert 'ghcr.io' not in str(task.to_yaml_config())
+						vast_specification = {'name': 'vast-projection-fixture', 'run': 'true', 'environment': {},
+						    'resources': [{'infrastructure': 'vast', 'cpus': '2', 'memory': '8', 'useSpot': False,
+						        'accelerators': 'RTX_3060:1', 'imageId': 'docker:ghcr.io/example/project@sha256:' + 'a' * 64,
+						        'region': 'US', 'instanceType': '1x-RTX_3060-16384', 'diskSize': 20, 'maxHourlyCost': 0.14}]}
+						vast_secrets = dict(secrets, SKYPILOT_DOCKER_USERNAME='pull-reader',
+						    SKYPILOT_DOCKER_PASSWORD='pull-sentinel', SKYPILOT_DOCKER_SERVER='ghcr.io')
+						vast_task = _task(vast_specification, vast_secrets)
+						vast_resource = next(iter(vast_task.resources))
+						assert str(vast_resource.cloud) == 'Vast' and not vast_resource.use_spot
+						assert vast_resource.region == 'US' and vast_resource.disk_size == 20
+						assert vast_resource.instance_type == '1x-RTX_3060-16384'
+						assert vast_resource.max_hourly_cost == 0.14
+						assert vast_task.secrets['SKYPILOT_DOCKER_PASSWORD'].get_secret_value() == 'pull-sentinel'
+						assert 'pull-sentinel' not in str(vast_task.to_yaml_config(use_user_specified_yaml=True))
+						vast_specification['resources'][0].update(useSpot=True, maxBidHourlyCost=0.04, region='Ontario, CA, NA')
+						bid_task = sky.Task.from_yaml_config(_task(vast_specification, vast_secrets).to_yaml_config())
+						bid_resource = next(iter(bid_task.resources))
+						assert bid_resource.use_spot
+						assert bid_resource.region == 'Ontario, CA, NA'
+						assert bid_resource.cluster_config_overrides['vast']['create_instance_kwargs'] == {'price': 0.04, 'cancel_unavail': True}
+						for invalid_bid in (None, 0, 0.15, 1):
+						    vast_specification['resources'][0]['maxBidHourlyCost'] = invalid_bid
+						    try:
+						        _task(vast_specification, vast_secrets)
+						        raise AssertionError('Unbounded Vast bid admitted')
+						    except ValueError:
+						        pass
+						try:
+						    _task(specification, vast_secrets)
+						    raise AssertionError('Cloud registry secret delivered to Kubernetes')
+						except ValueError:
+						    pass
 						specification['name'] = 'skywright-00000000-0000-0000-0000-000000000001'
 						specification['resources'][0]['infrastructure'] = 'kubernetes/local'
 						specification['environment']['SKYWRIGHT_WRITER_AUTHORITY_SOCKET'] = '/run/skywright-writer/authority.sock'

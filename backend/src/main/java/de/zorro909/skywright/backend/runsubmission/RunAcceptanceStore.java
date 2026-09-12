@@ -134,12 +134,12 @@ public class RunAcceptanceStore
 		});
 	}
 
-	record Creation(AcceptedRun run, LocalRunAdmission.Prepared prepared) {
+	record Creation(AcceptedRun run, RunAdmission.Prepared prepared) {
 	}
 
-	Creation accept(LocalRunRequest request, String requestDigest, LocalRunAdmission admission) {
+	Creation accept(LocalRunRequest request, String requestDigest, RunAdmission admission) {
 		UUID seedRunId = request.checkpointSeed() == null ? null : seeds.reserve(request, requestDigest);
-		var holder = new LocalRunAdmission.Prepared[1];
+		var holder = new RunAdmission.Prepared[1];
 		try {
 			return transactions.execute(ignored -> {
 				UUID id = seedRunId == null ? UUID.randomUUID() : seedRunId;

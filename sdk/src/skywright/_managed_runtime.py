@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from skywright._run_definition import RunDefinition
@@ -107,6 +107,7 @@ class ManagedRuntime:
     source_target: TargetStorage | None
     image: str
     source_owned: bool = False
+    accelerator_backend: Literal["rocm", "cuda"] = "rocm"
 
     @classmethod
     def decode(
@@ -138,25 +139,30 @@ class ManagedRuntime:
         run_id = str(UUID(materials["runId"]))
         project = value["trainingProjectVersion"]
         target_request = value["targetRequest"]
-        if (
-            target_request["purchaseMode"] != "local"
-            or target_request["targetClass"]
-            not in (
-                "local-single-gpu",
-                "local-multi-gpu",
-            )
-            or "rocm" not in project["images"]
+        accelerator_backend: Literal["rocm", "cuda"]
+        if target_request["purchaseMode"] == "local" and target_request[
+            "targetClass"
+        ] in ("local-single-gpu", "local-multi-gpu"):
+            accelerator_backend = "rocm"
+        elif (
+            (target_request["purchaseMode"], target_request["targetClass"])
+            in (("on-demand", "cloud-on-demand"), ("spot", "cloud-spot"))
+            and target_request.get("target") == "vast"
+            and target_request["gpuCount"] == 1
         ):
-            raise ValueError("managed runtime supports only local AMD targets")
+            accelerator_backend = "cuda"
+        else:
+            raise ValueError("managed runtime supports local AMD and Vast only")
         image = materials["image"]
         if (
             not isinstance(image, str)
-            or not image.endswith("@" + project["images"]["rocm"])
+            or accelerator_backend not in project["images"]
+            or not image.endswith("@" + project["images"][accelerator_backend])
             or re.fullmatch(r"[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}", image)
             is None
         ):
             raise ValueError(
-                "runtime image is not the accepted digest-pinned ROCm artifact"
+                f"runtime image is not the accepted digest-pinned {accelerator_backend} artifact"
             )
         configuration_artifact = _artifact(
             materials["configurationContract"], project["configurationContract"]
@@ -288,6 +294,7 @@ class ManagedRuntime:
             source_target,
             image,
             source_owned,
+            accelerator_backend,
         )
 
     def run(
@@ -366,6 +373,6 @@ class ManagedRuntime:
                 resume_from=seed_checkpoint if self.source_run_id is not None else None,
                 source_run_id=self.source_run_id,
                 ordering_reset=value["orderingReset"],
-                accelerator=_accelerator or Accelerator("rocm", 0),
+                accelerator=_accelerator or Accelerator(self.accelerator_backend, 0),
                 _archive_marker=True,
             )
