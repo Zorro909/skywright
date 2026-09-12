@@ -120,4 +120,31 @@ references included tags before their digests, and the bundle validator still
 expected the older SkyPilot container layout. The workflow now validates and
 publishes the same canonical digest references. The local-bundle CLI test now
 uses the actual production manifests and covers their helper/sidecar layout and
-Kustomize's sequence indentation. No installation bundle has been published yet.
+Kustomize's sequence indentation.
+
+Signed prerelease `v0.1.0-issue288.1`, source `d2cc31f`, was subsequently published
+by run `34664959165` and installed on `kind-skywright-private`. Its bundle digest is
+`sha256:65072093c89fbb641029332a09c5af5e1663be43b683b8410d18aba119f4021b`.
+The first installation attempt stopped during control-plane setup. All service
+Pods became healthy, and retrying the retained setup passed the installation,
+preflight and private GUI readiness test in 919.5 seconds. The CPU-only Dataset
+job spent 13 minutes 20 seconds pulling the private image before publication.
+
+The first GUI Run, `3fc82c62-4add-4100-bf40-96c4d37d727f`, exposed missing
+provisioning permissions. Its controller log was readable through the API, and
+GUI cancellation reached the confirmed `cancelled` state. SkyPilot attempted to
+bootstrap a wildcard autoscaler Role. The local task now explicitly selects the
+default service account with token mounting disabled. The provisioner also needs
+namespace service collection deletion and read-only RuntimeClass discovery.
+
+Applying those settings to this disposable diagnostic instance allowed Run
+`27d0351d-570c-424e-b283-9a551a364fe3` to finish on exactly one GPU. The GUI
+qualification verified committed Step 12, nonempty task/controller archives and
+the checksum of its downloaded `predictions.json` Artifact. This was a diagnostic
+configuration change; fresh and retained qualification from the corrected signed
+package remains pending.
+
+Repeated release-runner SDK image checks exceeded their 120-second process wait.
+Successful runs took about 103–105 seconds; a local thread dump at 93 seconds
+showed active GraalPy execution rather than a blocked thread. The check now allows
+180 seconds inside its existing 240-second test limit and passed locally.

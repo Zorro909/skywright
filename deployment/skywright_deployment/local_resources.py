@@ -110,6 +110,7 @@ def provisioner_access() -> list[dict]:
             {"apiGroups": [""], "resources": ["pods", "pods/exec", "pods/log", "services", "secrets",
                                                "configmaps", "serviceaccounts", "events"],
              "verbs": ["get", "list", "watch", "create", "patch", "update", "delete"]},
+            {"apiGroups": [""], "resources": ["services"], "verbs": ["deletecollection"]},
             {"apiGroups": ["rbac.authorization.k8s.io"], "resources": ["roles", "rolebindings"],
              "verbs": ["get", "list", "watch", "create", "patch", "update", "delete"]}]),
         resource("RoleBinding", name, namespace="skywright-training", subjects=[subject],
@@ -117,6 +118,7 @@ def provisioner_access() -> list[dict]:
         resource("ClusterRole", name, namespace="", rules=[
             {"apiGroups": [""], "resources": ["nodes", "pods", "namespaces"],
              "verbs": ["get", "list", "watch"]},
+            {"apiGroups": ["node.k8s.io"], "resources": ["runtimeclasses"], "verbs": ["get", "list", "watch"]},
             {"apiGroups": ["storage.k8s.io"], "resources": ["storageclasses"], "verbs": ["get", "list", "watch"]}]),
         resource("ClusterRoleBinding", name, namespace="", subjects=[subject],
                  roleRef={"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": name}),

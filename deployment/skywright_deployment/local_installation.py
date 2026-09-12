@@ -67,6 +67,7 @@ def provision(settings: dict, directory: Path, release: Path, metadata: dict, re
     control.configuration(kube, catalog.bindings(storage, evidence), application)
     print("Starting PostgreSQL, SkyPilot and the backend", flush=True)
     control.apply(kube, settings, metadata, source)
+    print("Preparing backend access to SkyPilot", flush=True)
     control.skypilot_credential(kube, root, vault)
     with kube.forward("skywright-backend", 80) as endpoint:
         storage = catalog.enroll_storage(endpoint)

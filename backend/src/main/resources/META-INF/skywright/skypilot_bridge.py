@@ -520,6 +520,9 @@ def _task(specification, secrets=None):
             "hostPID": False,
             "hostIPC": False,
             "hostNetwork": False,
+            # The bounded local task needs no Kubernetes identity or autoscaler.
+            # Selecting default avoids SkyPilot's wildcard RBAC bootstrap.
+            "serviceAccountName": "default",
             "automountServiceAccountToken": False,
             "shareProcessNamespace": False,
             "volumes": [{"name": "skywright-writer", "hostPath": {"path": "/var/lib/skywright-writer/socket", "type": "Directory"}}],

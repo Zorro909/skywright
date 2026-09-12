@@ -199,7 +199,9 @@ final class ProductionImageIT {
 					"-Dloader.main=de.zorro909.skywright.backend.orchestration.OrchestratorQualificationMain", "-cp",
 					"/opt/skywright/application.jar", "org.springframework.boot.loader.launch.PropertiesLauncher",
 					"sdk-status");
-			var deadline = Instant.now().plusSeconds(120);
+			// Cold GraalPy imports under this two-CPU ceiling approach two minutes.
+			// Leave startup headroom within the enclosing four-minute test budget.
+			var deadline = Instant.now().plusSeconds(180);
 			while ("true".equals(docker("inspect", "--format", "{{.State.Running}}", container).strip())
 					&& Instant.now().isBefore(deadline)) {
 				Thread.sleep(100);
