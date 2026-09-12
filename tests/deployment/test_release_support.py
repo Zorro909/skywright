@@ -132,6 +132,14 @@ class ReleaseSupportTest(unittest.TestCase):
             f"        - image: {SKYPILOT_IMAGE}\n",
             encoding="utf-8",
         )
+        if local_package is not None:
+            # Package the actual shipped layout, including helpers and sidecars.
+            rendered = subprocess.run(
+                ["kubectl", "kustomize", str(REPOSITORY / "deployment/overlays/production")],
+                check=True, capture_output=True, text=True,
+            ).stdout
+            release.write_text(rendered.replace("image: skywright-backend\n", f"image: {IMAGE}\n")
+                               .replace("image: skywright-skypilot-api-server\n", f"image: {SKYPILOT_IMAGE}\n"))
         artifacts.write_text(
             json.dumps(
                 {

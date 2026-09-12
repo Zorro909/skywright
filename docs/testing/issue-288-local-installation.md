@@ -55,7 +55,7 @@ reachability and backup/recovery qualification remain pending.
 A separate `kind-skywright-local` cluster was created for this qualification.
 The earlier `skywright-onprem` cluster remains untouched. The new node uses
 Calico, advertises both AMD GPUs, and has a 12-CPU / 32-GiB Docker ceiling.
-Persistent TLS Vault and SeaweedFS are running. No backend or SkyPilot release
+Persistent TLS Vault and SeaweedFS were prepared there. No backend or SkyPilot release
 has been installed and no training workload has been submitted yet.
 
 The generated operator inputs, Vault recovery material and TLS files live under
@@ -103,3 +103,21 @@ A temporary CPU-only Pod exercised the packaged SkyPilot credential init sequenc
 as UID 10002. It verified a readable, mode-0400 kubeconfig and removal of the
 bootstrap token. The Pod was deleted afterward. The backend, SkyPilot service,
 Dataset and writer are still awaiting the first complete signed installation.
+
+The preparatory cluster was stopped after the credential, storage, PostgreSQL
+bootstrap and private-image pull probes. The fresh installation will use
+`kind-skywright-private`, state root
+`~/.local/share/skywright/issue288/private-instance/`, and operator input root
+`~/.local/share/skywright/issue288/private-secrets/`. At 2026-09-11 23:21 UTC,
+neither that cluster nor its state directory existed. The input directory
+contained only the two protected GHCR files, and loopback port 8080 was free.
+
+Repository Quality run `34656792170` passed for source `b030110` after one
+production-image SDK process exceeded its two-minute wait and passed on retry.
+Release run `34660304626` built and published the control-plane images, but
+bundle creation exposed two release-contract gaps. Newly built Skaffold image
+references included tags before their digests, and the bundle validator still
+expected the older SkyPilot container layout. The workflow now validates and
+publishes the same canonical digest references. The local-bundle CLI test now
+uses the actual production manifests and covers their helper/sidecar layout and
+Kustomize's sequence indentation. No installation bundle has been published yet.
