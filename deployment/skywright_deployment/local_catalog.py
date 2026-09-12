@@ -9,8 +9,8 @@ from .local_operations import api
 from .local_roles import PROJECT, ROLE_NAMES, S3_ROLES
 
 REPOSITORY = "ghcr.io/zorro909/skywright-cifar10-private-qualification"
-MANIFEST = "sha256:ce9dd756320d31cfcee5f5980e4b4d9746a8eff5831693e176f93ed0838c6ca9"
-IMAGE = REPOSITORY + "@sha256:05e92ec83c366bcb122011605d0ba32537cd7c717ba02cb3d9d0c3faf3247853"
+MANIFEST = "sha256:74e4965c0b0fd9bd8612faf02c8b1c4abc9225dfd16e1398c0e57d03eefc84c0"
+IMAGE = REPOSITORY + "@sha256:460576bcacd1ed9cf0e5e39326d0e25b86dd4b0fabd2a05103cd4305e957d3a9"
 SKYPILOT_IDENTITY = "sa-skywright-local"
 STORAGE_ENDPOINT = "http://skywright-storage.skywright.svc:8333"
 

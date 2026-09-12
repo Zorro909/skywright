@@ -27,7 +27,7 @@ final class RunLaunchDelivery {
 		this.pulls = pulls;
 	}
 
-	CompletionStage<RunJobAdapter.Submission> deliver(AcceptedRun run, LocalRunAdmission.Prepared supplied) {
+	CompletionStage<RunJobAdapter.Submission> deliver(AcceptedRun run, RunAdmission.Prepared supplied) {
 		if (commands.read(run.runId())
 			.stream()
 			.anyMatch(de.zorro909.skywright.backend.runlifecycle.RunControlDecisions.Decision::dispatchPrevented)) {
@@ -47,8 +47,9 @@ final class RunLaunchDelivery {
 				var service = broker.getIfAvailable();
 				if (service == null)
 					throw new IllegalStateException("Recorded launch credentials are unavailable");
-				prepared = new LocalRunAdmission.Prepared(run.definition(), run.task(),
-						service.restoreTraining(run.runId()));
+				prepared = new RunAdmission.Prepared(run.definition(), run.task(),
+						run.task().usesRegistrySecretChannel() ? service.restoreCloudTraining(run.runId())
+								: service.restoreTraining(run.runId()));
 			}
 			if (run.task().runtimePullSecret() != null) {
 				var helper = pulls.getIfAvailable();

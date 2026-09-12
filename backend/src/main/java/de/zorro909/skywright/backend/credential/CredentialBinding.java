@@ -11,7 +11,7 @@ public record CredentialBinding(UUID id, long revision, String path, Kind kind, 
 
 	public enum Kind {
 
-		S3, GHCR, KUBERNETES, SKYPILOT
+		S3, GHCR, KUBERNETES, SKYPILOT, VAST
 
 	}
 
@@ -35,7 +35,7 @@ public record CredentialBinding(UUID id, long revision, String path, Kind kind, 
 		return switch (kind) {
 			case S3 -> Set.of("backend", "training-process", "transfer-worker", "metric-view");
 			case GHCR -> Set.of("backend-resolver", "execution-target-pull");
-			case KUBERNETES -> Set.of("skypilot-api-server");
+			case KUBERNETES, VAST -> Set.of("skypilot-api-server");
 			case SKYPILOT -> Set.of("backend");
 		};
 	}

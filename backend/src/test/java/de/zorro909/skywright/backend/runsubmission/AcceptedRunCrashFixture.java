@@ -5,7 +5,7 @@ package de.zorro909.skywright.backend.runsubmission;
  */
 public final class AcceptedRunCrashFixture {
 
-	public static AcceptedRun commitWithoutDispatch(RunAcceptanceStore store, LocalRunAdmission admission,
+	public static AcceptedRun commitWithoutDispatch(RunAcceptanceStore store, RunAdmission admission,
 			LocalRunRequest request) {
 		var created = store.accept(request, ManagedRuns.digest(request), admission);
 		created.prepared().close();

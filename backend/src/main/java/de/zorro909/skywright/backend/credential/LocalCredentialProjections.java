@@ -52,16 +52,7 @@ public class LocalCredentialProjections {
 	@org.springframework.transaction.annotation.Transactional
 	public RuntimePullProjection runtimePull(UUID runId, Selection registry, Instant requiredUntil,
 			java.nio.file.Path temporaryDirectory) {
-		var binding = this.vault.definitions()
-			.stream()
-			.filter(b -> b.id().equals(registry.bindingId()) && b.kind() == CredentialBinding.Kind.GHCR
-					&& b.role().equals("execution-target-pull") && b.resource().equals(registry.resource())
-					&& b.accessProfile().equals("read-only") && b.accessProfile().equals(registry.accessProfile()))
-			.findFirst()
-			.orElseThrow(() -> new IllegalStateException("Runtime pull binding is unavailable"));
-		if (requiredUntil == null || binding.validUntil() != null && !binding.validUntil().isAfter(requiredUntil)) {
-			throw new IllegalStateException("Credential validity does not cover the Run recovery window");
-		}
+		var binding = runtimePullBinding(registry, requiredUntil);
 		this.facts.begin(runId, "runtime-pull", binding);
 		var material = this.vault
 			.resolve(binding.id(), binding.revision(), "execution-target-pull",
@@ -81,6 +72,60 @@ public class LocalCredentialProjections {
 				});
 		}
 		return projection;
+	}
+
+	/**
+	 * Registry authentication uses SkyPilot's secret channel on Vast, never the task DTO.
+	 */
+	@org.springframework.transaction.annotation.Transactional
+	public TrainingCredentials cloudTraining(UUID runId, Selection dataset, Selection runStore, Selection registry,
+			Instant requiredUntil) {
+		try (var storage = training(runId, dataset, runStore, requiredUntil)) {
+			if (registry == null)
+				return storage.send(TrainingCredentials::new);
+			var binding = runtimePullBinding(registry, requiredUntil);
+			this.facts.begin(runId, "runtime-pull", binding);
+			return addRegistry(storage, binding, false);
+		}
+	}
+
+	public TrainingCredentials restoreCloudTraining(UUID runId) {
+		try (var storage = restoreTraining(runId)) {
+			if (this.facts.forConsumer(runId).stream().noneMatch(f -> f.slot().equals("runtime-pull")))
+				return storage.send(TrainingCredentials::new);
+			return addRegistry(storage,
+					recorded(runId, "runtime-pull", CredentialBinding.Kind.GHCR, "execution-target-pull", "read-only"),
+					true);
+		}
+	}
+
+	private TrainingCredentials addRegistry(TrainingCredentials storage, CredentialBinding binding, boolean restore) {
+		java.util.function.Function<tools.jackson.databind.JsonNode, TrainingCredentials> consume = secret -> storage
+			.send(values -> {
+				var combined = new LinkedHashMap<>(values);
+				combined.put("SKYPILOT_DOCKER_USERNAME", secret.path("username").asText());
+				combined.put("SKYPILOT_DOCKER_PASSWORD", secret.path("token").asText());
+				combined.put("SKYPILOT_DOCKER_SERVER", "ghcr.io");
+				return new TrainingCredentials(combined);
+			});
+		return (restore ? this.vault.resolveRecorded(binding, binding.role(), consume)
+				: this.vault.resolve(binding.id(), binding.revision(), binding.role(), consume))
+			.value()
+			.orElseThrow(() -> new IllegalStateException("Runtime pull binding is unavailable"));
+	}
+
+	private CredentialBinding runtimePullBinding(Selection registry, Instant requiredUntil) {
+		var binding = this.vault.definitions()
+			.stream()
+			.filter(b -> b.id().equals(registry.bindingId()) && b.kind() == CredentialBinding.Kind.GHCR
+					&& b.role().equals("execution-target-pull") && b.resource().equals(registry.resource())
+					&& b.accessProfile().equals("read-only") && b.accessProfile().equals(registry.accessProfile()))
+			.findFirst()
+			.orElseThrow(() -> new IllegalStateException("Runtime pull binding is unavailable"));
+		if (requiredUntil == null || binding.validUntil() != null && !binding.validUntil().isAfter(requiredUntil)) {
+			throw new IllegalStateException("Credential validity does not cover the Run recovery window");
+		}
+		return binding;
 	}
 
 	/** Restore only the originally recorded revisions before an unclaimed dispatch. */

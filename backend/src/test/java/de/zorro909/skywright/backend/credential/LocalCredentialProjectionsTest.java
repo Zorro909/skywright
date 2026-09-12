@@ -28,6 +28,58 @@ class LocalCredentialProjectionsTest {
 	private static final Instant NOW = Instant.parse("2026-09-05T12:00:00Z");
 
 	@Test
+	void cloudImagePullUsesItsRecordedRegistryRevisionThroughTheSecretChannel() throws Exception {
+		var registry = new CredentialBinding(UUID.randomUUID(), 1, "registry/pull", CredentialBinding.Kind.GHCR,
+				"ghcr.io/example/project", "execution-target-pull", "pull-reader", "example/project", "read-only", NOW,
+				null, true);
+		var dataset = binding("training-process", "dataset", 1);
+		var output = binding("training-process", "run-store", 1);
+		var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		server.createContext("/", exchange -> {
+			String data = exchange.getRequestURI().getPath().contains("registry")
+					? "{\"username\":\"pull-reader\",\"token\":\"pull-sentinel\"}"
+					: "{\"accessKeyId\":\"storage-reader\",\"secretAccessKey\":\"storage-sentinel\"}";
+			byte[] body = ("{\"data\":{\"metadata\":{\"version\":1},\"data\":" + data + "}}").getBytes();
+			exchange.sendResponseHeaders(200, body.length);
+			exchange.getResponseBody().write(body);
+			exchange.close();
+		});
+		server.start();
+		try {
+			var token = directory.resolve("cloud-token");
+			Files.writeString(token, "vault-sentinel");
+			var endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+			var facts = new MemoryFacts();
+			var service = new LocalCredentialProjections(new VaultBindings(endpoint, "skywright", token,
+					List.of(dataset, output, registry), Clock.fixed(NOW, ZoneOffset.UTC)), facts);
+			var runId = UUID.randomUUID();
+			try (var projected = service.cloudTraining(runId, selection(dataset), selection(output),
+					selection(registry), NOW.plusSeconds(60))) {
+				assertThat(projected.<String>send(values -> values.get("SKYPILOT_DOCKER_PASSWORD")))
+					.isEqualTo("pull-sentinel");
+				assertThat(projected.<String>send(values -> values.get("SKYPILOT_DOCKER_SERVER"))).isEqualTo("ghcr.io");
+				assertThat(projected.toString()).doesNotContain("pull-sentinel", "storage-sentinel");
+			}
+			var rotated = new LocalCredentialProjections(new VaultBindings(endpoint, "skywright", token,
+					List.of(revision(dataset, 2), revision(output, 2), revision(registry, 2)),
+					Clock.fixed(NOW, ZoneOffset.UTC)), facts);
+			try (var restored = rotated.restoreCloudTraining(runId)) {
+				assertThat(restored.<String>send(values -> values.get("SKYPILOT_DOCKER_PASSWORD")))
+					.isEqualTo("pull-sentinel");
+			}
+			try (var local = rotated.restoreTraining(runId)) {
+				assertThat(local.<Set<String>>send(values -> values.keySet()))
+					.noneMatch(key -> key.startsWith("SKYPILOT_DOCKER_"));
+			}
+			assertThat(facts.forConsumer(runId)).extracting(LocalProjectionFacts.Fact::slot)
+				.containsExactlyInAnyOrder("dataset", "run-store", "runtime-pull");
+		}
+		finally {
+			server.stop(0);
+		}
+	}
+
+	@Test
 	void isolatesRolesPinsRevisionsAndRetainsProjectionAcrossVaultLoss() throws Exception {
 		var calls = new AtomicInteger();
 		var status = new AtomicInteger(200);
@@ -107,7 +159,7 @@ class LocalCredentialProjectionsTest {
 	@Test
 	void taskTextCannotCarryKnownCredentialEnvironmentSlots() {
 		for (var name : List.of("SKYWRIGHT_RUN_STORE_SECRET_ACCESS_KEY", "VAULT_TOKEN", "AWS_ACCESS_KEY_ID",
-				"KUBECONFIG")) {
+				"KUBECONFIG", "VAST_API_KEY", "SKYPILOT_DOCKER_PASSWORD")) {
 			assertThatThrownBy(() -> new de.zorro909.skywright.backend.orchestration.OrchestratorTaskSpecification(
 					"fixture", null, "train",
 					List.of(new de.zorro909.skywright.backend.orchestration.OrchestratorTaskSpecification.Resources(

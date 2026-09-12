@@ -213,7 +213,7 @@ class RunCommandsIT {
 				var input = new LocalRunRequest(UUID.randomUUID(), UUID.randomUUID(), VERSION, UUID.randomUUID(), null,
 						null, "local/amd", 1, Map.of(), 1);
 				var unlaunched = AcceptedRunCrashFixture.commitWithoutDispatch(backend.bean(RunAcceptanceStore.class),
-						backend.bean(LocalRunAdmission.class), input);
+						backend.bean(RunAdmission.class), input);
 				var fence = stores.accept(unlaunched.runId(), UUID.randomUUID(), RunCommand.Kind.CANCELLATION_REQUEST,
 						"{}");
 				assertThat(backend.bean(RunAcceptanceStore.class)
@@ -284,7 +284,7 @@ class RunCommandsIT {
 
 		@Bean
 		@Primary
-		LocalRunAdmission lifecycleAdmission() {
+		RunAdmission lifecycleAdmission() {
 			return (run, request) -> {
 				try {
 					var document = JSON.readTree(Files.readString(Path.of(System.getProperty("repository.root"),
@@ -304,7 +304,7 @@ class RunCommandsIT {
 							List.of(new OrchestratorTaskSpecification.Resources("kubernetes/local", "8", "32",
 									"MI300X:1", "docker:fixture", false)),
 							Map.of());
-					return new LocalRunAdmission.Prepared(RunDefinition.decode(document.toString()), task, null);
+					return new RunAdmission.Prepared(RunDefinition.decode(document.toString()), task, null);
 				}
 				catch (java.io.IOException failure) {
 					throw new java.io.UncheckedIOException(failure);

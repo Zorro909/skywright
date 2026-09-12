@@ -341,7 +341,7 @@ class RunLogArchiveIT {
 
 		@Bean
 		@Primary
-		LocalRunAdmission lifecycleAdmission() {
+		RunAdmission lifecycleAdmission() {
 			return (run, request) -> {
 				try {
 					var document = JSON.readTree(Files.readString(Path.of(System.getProperty("repository.root"),
@@ -361,7 +361,7 @@ class RunLogArchiveIT {
 							List.of(new OrchestratorTaskSpecification.Resources("kubernetes/local", "8", "32",
 									"MI300X:1", "docker:fixture", false)),
 							Map.of());
-					return new LocalRunAdmission.Prepared(RunDefinition.decode(document.toString()), task, null);
+					return new RunAdmission.Prepared(RunDefinition.decode(document.toString()), task, null);
 				}
 				catch (java.io.IOException failure) {
 					throw new java.io.UncheckedIOException(failure);

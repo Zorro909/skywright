@@ -144,9 +144,15 @@ class Vault:
         self.run("write", "skywright/data/local/" + name, "-",
                  value={"options": {"cas": 0}, "data": value})
 
-    def consumer(self, name: str, paths: list[str]) -> Path:
-        policy = "\n".join('path "skywright/data/local/' + path + '" { capabilities = ["read"] }'
-                           for path in paths)
+    def consumer(self, name: str, paths: list[str], *, provider_path: str | None = None) -> Path:
+        selected = ["local/" + path for path in paths]
+        if provider_path is not None:
+            from .local_vast import VAULT_PATH
+            if name != "skywright-skypilot" or provider_path != VAULT_PATH:
+                raise SystemExit("Provider Vault access belongs only to the SkyPilot role")
+            selected.append(provider_path)
+        policy = "\n".join('path "skywright/data/' + path + '" { capabilities = ["read"] }'
+                           for path in selected)
         # Policy text is non-secret and only grants exact KV paths.
         data = (self.token + "\n" + policy).encode()
         script = ('read -r VAULT_TOKEN; export VAULT_TOKEN; '

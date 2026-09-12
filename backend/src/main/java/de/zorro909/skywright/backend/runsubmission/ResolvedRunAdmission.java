@@ -12,16 +12,13 @@ import de.zorro909.skywright.backend.projectversion.TrainingProjectVersions;
 import de.zorro909.skywright.backend.rundefinition.CostQuoteReader;
 import de.zorro909.skywright.backend.rundefinition.DatasetDefinitionAssessment;
 import de.zorro909.skywright.backend.rundefinition.DatasetDefinitionReference;
-import de.zorro909.skywright.backend.rundefinition.EligibleTarget;
 import de.zorro909.skywright.backend.rundefinition.ReportingCurrencyReader;
 import de.zorro909.skywright.backend.rundefinition.RunDefinitionResolver;
 import de.zorro909.skywright.backend.rundefinition.RunSubmission;
 import de.zorro909.skywright.backend.rundefinition.TargetEligibilityAssessment;
 import de.zorro909.skywright.backend.rundefinition.TargetRequest;
-import de.zorro909.skywright.backend.runtimeassembly.LocalRuntimeProjection;
 import de.zorro909.skywright.backend.runtimeassembly.RuntimeMaterials;
 import de.zorro909.skywright.backend.targetstorage.RunDefinitionStorageOverrides;
-import de.zorro909.skywright.backend.targetstorage.TargetClass;
 import de.zorro909.skywright.backend.targetstorage.TargetStorageRegistry;
 import de.zorro909.skywright.backend.targetstorage.TargetStorageRunDefinitionReader;
 import de.zorro909.skywright.backend.trainingproject.TrainingProjects;
@@ -33,7 +30,7 @@ import org.springframework.stereotype.Service;
 import tools.jackson.databind.json.JsonMapper;
 
 @Service
-final class ResolvedLocalRunAdmission implements LocalRunAdmission {
+final class ResolvedRunAdmission implements RunAdmission {
 
 	private final TrainingProjects projects;
 
@@ -49,13 +46,11 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 
 	private final CostQuoteReader quotes;
 
-	private final LocalRunTargetSettings settings;
+	private final ManagedRunTargets targets;
 
 	private final ObjectProvider<LocalCredentialProjections> projections;
 
 	private final ObjectProvider<VaultBindings> vault;
-
-	private final RuntimePullDelivery pulls;
 
 	private final RunAcceptanceStore runs;
 
@@ -63,11 +58,12 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
-	ResolvedLocalRunAdmission(TrainingProjects projects, TrainingProjectVersions versions,
-			ProjectVersionRegistry registry, DatasetCatalog datasets, TargetStorageRegistry storages,
-			ReportingCurrencyReader currency, CostQuoteReader quotes, LocalRunTargetSettings settings,
-			ObjectProvider<LocalCredentialProjections> projections, ObjectProvider<VaultBindings> vault,
-			RuntimePullDelivery pulls, RunAcceptanceStore runs, LocalSeedTransfer seeds) {
+	ResolvedRunAdmission(TrainingProjects projects, TrainingProjectVersions versions, ProjectVersionRegistry registry,
+			DatasetCatalog datasets, TargetStorageRegistry storages, ReportingCurrencyReader currency,
+			CostQuoteReader quotes, ObjectProvider<LocalCredentialProjections> projections,
+			ObjectProvider<VaultBindings> vault, RunAcceptanceStore runs, LocalSeedTransfer seeds,
+			ManagedRunTargets targets) {
+		this.targets = targets;
 		this.runs = runs;
 		this.seeds = seeds;
 		this.projects = projects;
@@ -77,44 +73,33 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 		this.storages = storages;
 		this.currency = currency;
 		this.quotes = quotes;
-		this.settings = settings;
 		this.projections = projections;
 		this.vault = vault;
-		this.pulls = pulls;
+	}
+
+	@Override
+	public void requireTargetReady(LocalRunRequest request) {
+		targets.select(request.target()).requireReady(request.gpuCount());
 	}
 
 	@Override
 	public Prepared prepare(UUID runId, LocalRunRequest request) {
-		var target = settings.target(request.target());
-		if (settings.writerAuthorityEnabled()) {
-			RuntimePullDelivery.Readiness readiness;
-			try {
-				readiness = pulls.readiness(target.kubernetesContext());
-			}
-			catch (RuntimeException unavailable) {
-				throw new RunSubmissionException("WRITER_AUTHORITY_UNAVAILABLE", 503);
-			}
-			if (!readiness.available() || !readiness.nodeReady() || !readiness.writerReady())
-				throw new RunSubmissionException("WRITER_AUTHORITY_UNAVAILABLE", 503);
-			if (!readiness.gpuModel().equals(target.gpuModel()) || readiness.gpuCount() != target.maximumGpuCount())
-				throw new RunSubmissionException("LOCAL_TARGET_UNAVAILABLE", 503);
-			if (readiness.freeGpuCount() < request.gpuCount())
-				throw new RunSubmissionException("GPU_CAPACITY_UNAVAILABLE", 503);
-		}
+		var adapter = targets.select(request.target());
+		adapter.requireReady(request.gpuCount());
+		var target = adapter.eligible(request.gpuCount());
 		var project = projects.resolveForAcceptance(request.trainingProjectId());
 		var pullSelection = projects.runtimePullSelection(project.projectId());
-		String pullNamespace = pullSelection == null ? null : pulls.namespace(target.kubernetesContext());
+		adapter.pullNamespace(pullSelection != null);
 		var dataset = datasets.get(request.datasetDefinitionId()).definition();
 		var reference = new DatasetDefinitionReference(dataset.datasetId().toString(),
 				dataset.definitionId().toString(), dataset.contentFingerprint());
-		var targetClass = request.gpuCount() == 1 ? TargetClass.LOCAL_SINGLE_GPU : TargetClass.LOCAL_MULTI_GPU;
-		var targetRequest = new TargetRequest(targetClass, request.gpuCount(), null, target.identity(),
-				target.gpuModel(), null);
+		var targetClass = adapter.targetClass(request.gpuCount());
+		var targetRequest = new TargetRequest(targetClass, request.gpuCount(), null, target.target(), target.gpuModel(),
+				null);
 		var resolver = new RunDefinitionResolver(versions,
 				selected -> selected.equals(reference) ? DatasetDefinitionAssessment.accepted()
 						: new DatasetDefinitionAssessment(false, List.of()),
-				() -> new TargetEligibilityAssessment(List.of(new EligibleTarget(target.identity(), targetClass, "rocm",
-						target.gpuModel(), target.maximumGpuCount(), target.gpuMemoryBytes())), List.of()),
+				() -> new TargetEligibilityAssessment(List.of(target), List.of()),
 				new TargetStorageRunDefinitionReader(storages), currency, quotes);
 		var source = request.checkpointSeed() == null ? null
 				: runs.get(request.checkpointSeed().predecessorRunId()).definition();
@@ -151,12 +136,14 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 			throw new RunSubmissionException("DATASET_RUN_STORE_NOT_ISOLATED", 422);
 
 		var manifest = JSON.readTree(artifact(project.repository(), request.manifestArtifactDigest()));
-		var contractReferences = manifest.at("/contractArtifacts/rocm");
+		var acceleratorBackend = adapter.acceleratorBackend();
+		var contractReferences = manifest.path("contractArtifacts").path(acceleratorBackend);
 		String configuration = artifact(project.repository(), contractReferences.path("configuration").asText());
 		String metrics = artifact(project.repository(), contractReferences.path("metrics").asText());
 		var location = datasetAccess.storage();
 		var materials = new RuntimeMaterials(1, runId,
-				project.repository() + "@" + definition.value().at("/trainingProjectVersion/images/rocm").asText(),
+				project.repository() + "@"
+						+ definition.value().at("/trainingProjectVersion/images").path(acceleratorBackend).asText(),
 				configuration, metrics,
 				new RuntimeMaterials.Dataset(reference.datasetIdentity(), reference.version(),
 						reference.contentFingerprint(), dataset.manifestIdentity(),
@@ -172,9 +159,7 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 							.getOrDefault("checksumCalculation", "when-required")
 							.replace('-', '_')),
 				ownedSeed);
-		var task = new LocalRuntimeProjection().project(definition, materials, target,
-				pullSelection == null ? null : "skywright-pull-" + runId, pullNamespace,
-				settings.writerAuthorityEnabled());
+		var task = adapter.project(definition, materials, pullSelection != null);
 		var broker = projections.getIfAvailable();
 		if (broker == null || vault.getIfAvailable() == null)
 			throw new RunSubmissionException("TRAINING_CREDENTIALS_UNAVAILABLE", 503);
@@ -192,10 +177,14 @@ final class ResolvedLocalRunAdmission implements LocalRunAdmission {
 		}
 
 		try {
-			var credentials = broker.training(runId, selection(datasetAccess, "read-only"),
-					selection(outputAccess, "read-write-delete"), Instant.MAX);
+			boolean cloud = task.usesRegistrySecretChannel();
+			var credentials = cloud
+					? broker.cloudTraining(runId, selection(datasetAccess, "read-only"),
+							selection(outputAccess, "read-write-delete"), pullSelection, Instant.MAX)
+					: broker.training(runId, selection(datasetAccess, "read-only"),
+							selection(outputAccess, "read-write-delete"), Instant.MAX);
 			try {
-				var pull = pullSelection == null ? null : broker.runtimePull(runId, pullSelection, Instant.MAX,
+				var pull = cloud || pullSelection == null ? null : broker.runtimePull(runId, pullSelection, Instant.MAX,
 						java.nio.file.Path.of(System.getProperty("java.io.tmpdir")));
 				return new Prepared(definition, task, credentials, artifacts, pull);
 			}

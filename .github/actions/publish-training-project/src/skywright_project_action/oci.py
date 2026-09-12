@@ -399,7 +399,9 @@ class DockerProjectImageBuilder(ProjectImageBuilder):
         *,
         source_revision: str,
         pipeline: str,
+        cleanup_docker: bool = False,
     ):
+        self._cleanup_docker = cleanup_docker
         self._registry = registry
         self._source_revision = source_revision
         self._pipeline = pipeline
@@ -479,9 +481,15 @@ class DockerProjectImageBuilder(ProjectImageBuilder):
             "inspect.signature(skywright_project.train).bind(object())",
         )
         _run("docker", "push", staging_tag)
-        return self._registry.manifest_digest(
+        digest = self._registry.manifest_digest(
             definition.registry_repository, staging_tag.rsplit(":", 1)[1]
         )
+        if self._cleanup_docker:
+            # Explicitly enabled only on a dedicated ephemeral publication runner.
+            # Resolve the published digest before releasing its local build state.
+            _run("docker", "builder", "prune", "--all", "--force")
+            _run("docker", "image", "prune", "--all", "--force")
+        return digest
 
 
 def _run(*command: str) -> None:

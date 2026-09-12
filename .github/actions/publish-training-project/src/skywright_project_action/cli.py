@@ -49,6 +49,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 }
             )
             return 0
+        cleanup = os.environ.get("SKYWRIGHT_PROJECT_CLEANUP_DOCKER", "false")
+        if cleanup not in {"true", "false"}:
+            raise RuntimeError("Docker cleanup must be explicitly true or false")
         provenance = _ci_provenance(definition.root)
         from skywright_project_action.oci import (
             DockerProjectImageBuilder,
@@ -62,6 +65,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 registry,
                 source_revision=provenance["sourceRevision"],
                 pipeline=provenance["pipeline"],
+                cleanup_docker=cleanup == "true",
             ),
             registry,
         )

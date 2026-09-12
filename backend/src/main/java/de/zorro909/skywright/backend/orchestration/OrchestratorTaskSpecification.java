@@ -50,8 +50,13 @@ public record OrchestratorTaskSpecification(String name, String setup, String ru
 				|| java.util.Set
 					.of("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE",
 							"AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
-							"KUBECONFIG", "DOCKER_CONFIG")
+							"KUBECONFIG", "DOCKER_CONFIG", "VAST_API_KEY", "VASTAI_API_KEY")
 					.contains(key);
+	}
+
+	/** Vast receives its image-pull authentication in SkyPilot's secret channel. */
+	public boolean usesRegistrySecretChannel() {
+		return resources.size() == 1 && resources.getFirst().infrastructure().equals("vast");
 	}
 
 	private static void requireText(String value, String name) {
@@ -61,7 +66,20 @@ public record OrchestratorTaskSpecification(String name, String setup, String ru
 	}
 
 	public record Resources(String infrastructure, String cpus, String memory, String accelerators, String imageId,
-			boolean useSpot, JobRecovery jobRecovery) {
+			boolean useSpot, JobRecovery jobRecovery, String region, String instanceType, Integer diskSize,
+			java.math.BigDecimal maxHourlyCost, java.math.BigDecimal maxBidHourlyCost) {
+
+		public Resources(String infrastructure, String cpus, String memory, String accelerators, String imageId,
+				boolean useSpot, JobRecovery jobRecovery, String region, String instanceType, Integer diskSize,
+				java.math.BigDecimal maxHourlyCost) {
+			this(infrastructure, cpus, memory, accelerators, imageId, useSpot, jobRecovery, region, instanceType,
+					diskSize, maxHourlyCost, null);
+		}
+
+		public Resources(String infrastructure, String cpus, String memory, String accelerators, String imageId,
+				boolean useSpot, JobRecovery jobRecovery) {
+			this(infrastructure, cpus, memory, accelerators, imageId, useSpot, jobRecovery, null, null, null, null);
+		}
 
 		public Resources(String infrastructure, String cpus, String memory, String accelerators, String imageId,
 				boolean useSpot) {
@@ -72,6 +90,19 @@ public record OrchestratorTaskSpecification(String name, String setup, String ru
 			requireText(infrastructure, "infrastructure");
 			requireText(cpus, "cpus");
 			requireText(memory, "memory");
+			if (region != null || instanceType != null || diskSize != null || maxHourlyCost != null
+					|| maxBidHourlyCost != null || (infrastructure.equals("vast") && useSpot)) {
+				if (!infrastructure.equals("vast") || region == null || region.isBlank() || region.length() > 160
+						|| region.contains("/") || region.codePoints().anyMatch(Character::isISOControl)
+						|| instanceType == null || !instanceType.matches("[A-Za-z0-9_-]+") || diskSize == null
+						|| diskSize < 1 || maxHourlyCost == null || maxHourlyCost.signum() <= 0
+						|| maxHourlyCost.compareTo(new java.math.BigDecimal("0.15")) >= 0)
+					throw new IllegalArgumentException("Invalid Vast resource constraints");
+				if (useSpot != (maxBidHourlyCost != null)
+						|| (maxBidHourlyCost != null && (maxBidHourlyCost.signum() <= 0
+								|| maxBidHourlyCost.compareTo(new java.math.BigDecimal("0.15")) >= 0)))
+					throw new IllegalArgumentException("Vast interruptible requires an explicit bounded bid");
+			}
 		}
 
 	}

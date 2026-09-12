@@ -27,6 +27,8 @@ def record(path: Path, value: dict) -> None:
 
 def provision(settings: dict, directory: Path, release: Path, metadata: dict, registry: dict) -> None:
     source = release / "code"
+    from . import local_vast
+    vast = local_vast.selection(settings)
     root = Path(settings["secretDirectory"])
     print("Verifying the dedicated AMD target", flush=True)
     kube = target(settings, directory)
@@ -51,7 +53,8 @@ def provision(settings: dict, directory: Path, release: Path, metadata: dict, re
     backend_paths = [name for name in inputs["s3"] if name != "operator"]
     backend_paths += ["ghcr-resolver", "ghcr-pull", "skypilot-backend"]
     for consumer, paths in (("backend", backend_paths), ("skypilot", ["skypilot-kubernetes"])):
-        token = vault.consumer("skywright-" + consumer, paths)
+        token = vault.consumer("skywright-" + consumer, paths,
+                               provider_path=local_vast.VAULT_PATH if consumer == "skypilot" and vast else None)
         kube.secret("skywright", "skywright-" + consumer + "-vault", {"token": token})
     pull = root / "control-image-pull.json"
     if not pull.exists():
@@ -64,15 +67,18 @@ def provision(settings: dict, directory: Path, release: Path, metadata: dict, re
     storage = protected_json(storage_path) if storage_path.exists() else {}
     demonstration_path = directory / "demonstration.json"
     application = catalog.demonstration(protected_json(demonstration_path)["definitionId"]) if demonstration_path.exists() else {}
-    control.configuration(kube, catalog.bindings(storage, evidence), application)
+    control.configuration(kube, catalog.bindings(storage, evidence), application, settings)
     print("Starting PostgreSQL, SkyPilot and the backend", flush=True)
     control.apply(kube, settings, metadata, source)
+    control.verify_controller(kube, settings)
+    provider_projection = local_vast.verify(kube, settings, directory)
+    provider_bindings = [provider_projection["binding"]] if provider_projection else []
     print("Preparing backend access to SkyPilot", flush=True)
     control.skypilot_credential(kube, root, vault)
     with kube.forward("skywright-backend", 80) as endpoint:
         storage = catalog.enroll_storage(endpoint)
     record(storage_path, storage)
-    control.configuration(kube, catalog.bindings(storage, evidence), application)
+    control.configuration(kube, catalog.bindings(storage, evidence) + provider_bindings, application, settings)
     kube.run("rollout", "restart", "deployment/skywright-backend", "-n", "skywright")
     kube.rollout("skywright-backend")
     print("Qualifying storage and enrolling the supplied project and Dataset", flush=True)
@@ -80,7 +86,7 @@ def provision(settings: dict, directory: Path, release: Path, metadata: dict, re
         catalog.activate_storage(endpoint, storage)
         catalog.enroll_project(endpoint)
         definition = publish(kube, endpoint, source, directory, root, settings, inputs, storage["dataset"])
-    control.configuration(kube, catalog.bindings(storage, evidence), catalog.demonstration(definition))
+    control.configuration(kube, catalog.bindings(storage, evidence) + provider_bindings, catalog.demonstration(definition), settings)
     control.writer(kube, settings, metadata, source)
     kube.run("rollout", "restart", "deployment/skywright-backend", "-n", "skywright")
     kube.rollout("skywright-backend")

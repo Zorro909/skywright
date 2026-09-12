@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import de.zorro909.skywright.backend.trainingproject.TrainingProjects;
+import de.zorro909.skywright.backend.projectversion.ProjectVersionAssessment;
 import de.zorro909.skywright.backend.datasetcatalog.DatasetCatalog;
 import de.zorro909.skywright.backend.datasetcatalog.DatasetCopyAvailability;
 import de.zorro909.skywright.backend.datasetcatalog.DatasetCopyRole;
@@ -23,6 +24,8 @@ final class ManagedRunForms {
 	private final DemonstrationSettings demonstration;
 
 	private final LocalRunTargetSettings target;
+
+	private final ManagedRunTargets adapters;
 
 	private final TrainingProjects projects;
 
@@ -42,7 +45,8 @@ final class ManagedRunForms {
 
 	ManagedRunForms(DemonstrationSettings demonstration, LocalRunTargetSettings target, TrainingProjects projects,
 			DatasetCatalog datasets, TargetStorageRegistry storages, ObjectProvider<VaultBindings> vault,
-			RuntimePullDelivery pulls, Orchestrator orchestrator) {
+			RuntimePullDelivery pulls, Orchestrator orchestrator, ManagedRunTargets adapters) {
+		this.adapters = adapters;
 		this.demonstration = demonstration;
 		this.target = target;
 		this.projects = projects;
@@ -56,10 +60,12 @@ final class ManagedRunForms {
 	record Check(String component, boolean ready, String code, String detail) {
 	}
 
-	record Workload(String id, String displayName) {
+	record Workload(String id, String displayName, java.util.UUID trainingProjectId, String manifestArtifactDigest,
+			java.util.UUID datasetDefinitionId) {
 	}
 
-	record Target(String id, String gpuModel, int gpuCount) {
+	record Target(String id, String displayName, String purchaseMode, String gpuModel, Integer gpuCount, boolean ready,
+			List<Check> checks) {
 	}
 
 	record Form(boolean ready, Instant observedAt, List<Workload> workloads, List<Target> targets, List<Check> checks) {
@@ -94,7 +100,9 @@ final class ManagedRunForms {
 	}
 
 	private Form unavailable(String code, String detail) {
-		return new Form(false, Instant.now(), List.of(new Workload("demonstration", demonstration.displayName())),
+		return new Form(false, Instant.now(),
+				List.of(new Workload("demonstration", demonstration.displayName(), demonstration.trainingProjectId(),
+						demonstration.manifestArtifactDigest(), demonstration.datasetDefinitionId())),
 				List.of(), List.of(new Check("preflight", false, code, detail)));
 	}
 
@@ -105,23 +113,35 @@ final class ManagedRunForms {
 
 	private Form inspect() {
 		var checks = new ArrayList<Check>();
-		var workloads = demonstration.installed() ? List.of(new Workload("demonstration", demonstration.displayName()))
+		var workloads = demonstration.installed()
+				? List.of(new Workload("demonstration", demonstration.displayName(), demonstration.trainingProjectId(),
+						demonstration.manifestArtifactDigest(), demonstration.datasetDefinitionId()))
 				: List.<Workload>of();
 		var targets = new ArrayList<Target>();
 		checks.add(check("target", "TARGET_UNAVAILABLE", "Check the installed AMD target configuration.", () -> {
 			var configured = target.target(target.identity());
-			targets.add(new Target(configured.identity(), configured.gpuModel(), configured.maximumGpuCount()));
+			targets.add(new Target(configured.identity(), "Local AMD", "local", configured.gpuModel(),
+					configured.maximumGpuCount(), false, List.of()));
 			return true;
 		}));
 		if (!demonstration.installed()) {
 			checks.add(new Check("workload", false, "WORKLOAD_NOT_INSTALLED",
 					"Install the supplied demonstration Training Project Version and Dataset."));
-			return new Form(false, Instant.now(), workloads, targets, checks);
+			return joined(workloads, targets, checks, null);
 		}
-		checks.add(check("projectVersion", "PROJECT_VERSION_UNAVAILABLE",
-				"Check the pinned project image, configuration contract and metric contract in the registry.",
-				() -> projects.assessVersion(demonstration.trainingProjectId(), demonstration.manifestArtifactDigest())
-					.runnable()));
+		ProjectVersionAssessment version = null;
+		try {
+			version = projects.assessVersion(demonstration.trainingProjectId(), demonstration.manifestArtifactDigest());
+		}
+		catch (RuntimeException unavailable) {
+			/*
+			 * Preserve other readiness evidence when this immutable version is
+			 * unavailable.
+			 */
+		}
+		boolean versionReady = version != null && version.runnable();
+		checks.add(new Check("projectVersion", versionReady, versionReady ? "READY" : "PROJECT_VERSION_UNAVAILABLE",
+				"Check the pinned project image, configuration contract and metric contract in the registry."));
 		checks.add(check("dataset", "DATASET_UNAVAILABLE",
 				"Publish and verify the installed Dataset on eligible storage.", () -> {
 					var dataset = datasets.get(demonstration.datasetDefinitionId());
@@ -187,23 +207,7 @@ final class ManagedRunForms {
 					projects.runtimePullSelection(demonstration.trainingProjectId());
 					return !pulls.namespace(target.kubernetesContext()).isBlank();
 				}));
-		RuntimePullDelivery.Readiness observedTarget;
-		try {
-			observedTarget = pulls.readiness(target.kubernetesContext());
-		}
-		catch (RuntimeException unavailable) {
-			observedTarget = new RuntimePullDelivery.Readiness(false, false, "", 0, 0, false);
-		}
-		var targetReadiness = observedTarget;
-		checks.add(check("gpu", "GPU_CAPACITY_UNAVAILABLE",
-				"Check the AMD device plugin, finish external GPU work and wait for fresh host readiness.",
-				() -> targetReadiness.available() && targetReadiness.nodeReady()
-						&& targetReadiness.gpuModel().equals(target.gpuModel())
-						&& targetReadiness.gpuCount() == target.maximumGpuCount()
-						&& targetReadiness.freeGpuCount() >= 1));
-		checks.add(check("writerAuthority", "WRITER_AUTHORITY_UNAVAILABLE",
-				"Check the local writer authority's readiness and retained custody.",
-				() -> target.writerAuthorityEnabled() && targetReadiness.writerReady()));
+		checks.addAll(adapters.local().checks());
 		checks.add(check("controlPath", "CONTROL_PATH_UNAVAILABLE",
 				"Check the SkyPilot service, its backend authorization and Kubernetes access.", () -> {
 					try {
@@ -220,7 +224,36 @@ final class ManagedRunForms {
 						return false;
 					}
 				}));
-		return new Form(checks.stream().allMatch(Check::ready), Instant.now(), workloads, targets, checks);
+		return joined(workloads, targets, checks, version);
+	}
+
+	private Form joined(List<Workload> workloads, List<Target> localTargets, List<Check> checks,
+			ProjectVersionAssessment version) {
+		var commonComponents = java.util.Set.of("workload", "projectVersion", "dataset", "controlPath");
+		var common = checks.stream().filter(c -> commonComponents.contains(c.component())).toList();
+		var localChecks = new ArrayList<>(
+				checks.stream().filter(c -> !commonComponents.contains(c.component())).toList());
+		localChecks.add(imageCheck(version, "rocm"));
+		boolean commonReady = !workloads.isEmpty() && common.stream().allMatch(Check::ready);
+		var targets = new ArrayList<Target>();
+		for (var local : localTargets)
+			targets.add(new Target(local.id(), local.displayName(), local.purchaseMode(), local.gpuModel(),
+					local.gpuCount(), commonReady && localChecks.stream().allMatch(Check::ready), localChecks));
+		for (var vast : adapters.vastModes()) {
+			var cloudChecks = new ArrayList<>(vast.checks());
+			cloudChecks.add(imageCheck(version, "cuda"));
+			targets.add(new Target(vast.identity(), vast.displayName(), vast.purchaseMode(), null, null, false,
+					cloudChecks));
+		}
+		return new Form(targets.stream().anyMatch(Target::ready), Instant.now(), workloads, targets, common);
+	}
+
+	private static Check imageCheck(ProjectVersionAssessment version, String backend) {
+		boolean ready = version != null && version.runnable() && version.version() != null
+				&& version.version().images().containsKey(backend);
+		return new Check("image", ready, ready ? "READY" : "TARGET_IMAGE_UNAVAILABLE",
+				"The selected Training Project Version must contain a verified "
+						+ backend.toUpperCase(java.util.Locale.ROOT) + " image.");
 	}
 
 	private static Check check(String component, String code, String detail, BooleanSupplier action) {

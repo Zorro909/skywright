@@ -199,6 +199,13 @@ def control_patches(settings: dict, skypilot_binding: str) -> list[dict]:
                       "limits": {"cpu": "1", "memory": "128Mi"}},
         "volumeMounts": mounts,
     }
+    if settings.get("vastProvider") is not None:
+        from .local_vast import DESTINATION
+        volumes.append({"name": "vast-provider", "emptyDir": {"medium": "Memory", "sizeLimit": "64Ki"}})
+        provider_mount = {"name": "vast-provider", "mountPath": "/run/skywright-vast"}
+        prepare["volumeMounts"].append(provider_mount)
+        prepare["command"][2] += "; chown 10002:10002 /run/skywright-vast; chmod 0700 /run/skywright-vast"
+        agent["volumeMounts"] = [*mounts, provider_mount]
     remove = {
         "name": "remove-agent-token", "image": VAULT,
         "command": ["rm", "/run/skywright/agent-token"], "volumeMounts": mounts,
@@ -211,8 +218,13 @@ def control_patches(settings: dict, skypilot_binding: str) -> list[dict]:
         env = [{"name": "SKYWRIGHT_KUBECONFIG", "value": "/run/skywright/kubeconfig"}]
         if name == "skypilot-api-server":
             env += [{"name": "ENABLE_BASIC_AUTH", "value": "true"},
-                    {"name": "ENABLE_SERVICE_ACCOUNTS", "value": "true"}]
-        containers.append({"name": name, "volumeMounts": mounts, "env": env})
+                    {"name": "ENABLE_SERVICE_ACCOUNTS", "value": "true"},
+                    {"name": "SKYPILOT_GLOBAL_CONFIG", "value": "/etc/skywright/skypilot.yaml"}]
+        selected_mounts = mounts
+        if name == "skypilot-api-server" and settings.get("vastProvider") is not None:
+            selected_mounts = [*mounts, {"name": "vast-provider", "mountPath": DESTINATION,
+                                       "subPath": "vast_api_key", "readOnly": True}]
+        containers.append({"name": name, "volumeMounts": selected_mounts, "env": env})
     skypilot = resource("Deployment", "skywright-skypilot-api-server", spec={"template": {"spec": {
         "imagePullSecrets": [{"name": "skywright-control-pull"}],
         "initContainers": [prepare, agent, remove], "volumes": volumes, "containers": containers}}})

@@ -181,6 +181,7 @@ public final class VaultBindings {
 			case GHCR -> List.of("username", "token");
 			case KUBERNETES -> List.of("kubeconfig");
 			case SKYPILOT -> List.of("token");
+			case VAST -> List.of("apiKey");
 		};
 		boolean session = kind == CredentialBinding.Kind.S3 && value.has("sessionToken");
 		if (!value.isObject() || value.size() != fields.size() + (session ? 1 : 0) || !fields.stream()

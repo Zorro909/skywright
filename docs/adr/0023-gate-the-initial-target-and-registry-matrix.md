@@ -15,7 +15,7 @@ Skywright initially supports a deliberately finite deployment matrix rather than
 | Target | Prototype mode |
 |---|---|
 | Local AMD on-prem Kubernetes | Local capacity |
-| Vast.ai | On-demand |
+| Vast.ai | On-demand; interruptible when required for enforceable launch pricing |
 
 This table defines the accepted prototype support scope. Entry in the table is not evidence
 that a mode has passed its gates; admission requires its applicable qualification
@@ -23,8 +23,12 @@ evidence. Unqualified modes remain unavailable, and a failed gate demotes the
 affected mode under the policy below.
 
 On 2026-09-11, the owner narrowed the prototype from the original multi-provider
-matrix to local AMD and one Vast.ai on-demand path. Nebius, RunPod, Vast.ai spot,
-Verda, Lambda Cloud and every other provider or purchase mode are future
+matrix to local AMD and one Vast.ai on-demand path. On 2026-09-12, the owner
+extended that scope to Vast.ai interruptible when price enforcement requires it.
+The explicit numeric bid must enforce the actual compute price; disk, traffic,
+controller costs, runtime, recovery and cleanup still need separate affordability
+and qualification evidence. A bid cap alone never enables admission.
+Nebius, RunPod, Verda, Lambda Cloud and every other provider remain future
 candidates. They are not prototype acceptance criteria and admission rejects them.
 This removes the cost and recovery work of qualifying several providers before the
 owner can use Skywright. A future matrix expansion requires a new owner decision
@@ -37,8 +41,8 @@ demotion during review. The owner then corrected that rule in ADR 0025: official
 SkyPilot adapters may deliver provider credentials wherever their supported path
 requires them. That correction supersedes the credential-copy-only demotion;
 it does not establish that Vast has passed its live qualification gates.
-[#283](https://github.com/Zorro909/skywright/issues/283) owns the Vast.ai on-demand
-implementation and qualification. Its launch must enforce the owner's price limit
+[#283](https://github.com/Zorro909/skywright/issues/283) owns implementation and qualification
+of the selected Vast.ai mode. Its launch must enforce the owner's price limit
 against the resource that will actually be rented. A catalog Cost Quote does not
 authorize a paid launch when the adapter may select a different offer. The
 [preflight evidence](../research/issue-281-vast-interruptible-preflight.md)

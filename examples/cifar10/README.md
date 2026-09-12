@@ -74,9 +74,10 @@ Dataset Cache have separate storage budgets.
 
 Use `skywright_project.py`, `configuration.json`, `metrics.json` and
 `requirements.lock` as a Training Project source directory. The lock supplies the
-Dataset dependencies from the pinned SDK lock; the ROCm Environment Profile owns
-PyTorch and torchvision. Publish with the repository's
-`publish-training-project` action and an exact ROCm profile digest. Its smoke
+Dataset dependencies from the pinned SDK lock; each Environment Profile owns
+PyTorch and torchvision. The definition pins both ROCm and CUDA profile digests
+for local AMD and Vast NVIDIA targets. Publish with the repository's
+`publish-training-project` action. Its smoke
 command is `python -m skywright_project`, which imports the MDS reader and performs
 a CPU forward pass without requiring a GPU on the publication worker.
 
