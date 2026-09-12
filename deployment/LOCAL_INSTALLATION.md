@@ -21,7 +21,8 @@ Copy `deployment/local-instance.example.json` to an operator-owned location.
 Replace the digest with a published deployment bundle digest and replace the
 paths with absolute paths on the host. State and secret directories must be
 separate, non-nested directories. The JSON file is the single versioned
-non-secret installation input. Updates change its release digest only.
+non-secret installation input. Updates change its release digest and may
+select an explicitly enrolled Vast provider revision as described below.
 
 Supply these two distinct mode-0600 JSON files inside the mode-0700
 `secretDirectory`. Each contains `username` and `token` fields:
@@ -146,7 +147,10 @@ do not receive it. The operator records each Pod projection before external
 validation, appends validation observations, and records release once that Pod
 is absent. Release of a projection does not revoke the provider key. Enrollment
 evidence has a conservative 24-hour deployment validity window; this is not a
-claim about provider expiry. Provider read access alone never enables paid
+claim about provider expiry. Verification uses bounded read-only provider API
+calls from the consuming role. The optional Vast SDK is omitted while its
+published dependency pins fail the image security gate. Provider read access
+alone never enables paid
 admission or establishes provisioning, storage or cleanup qualification.
 The deployment pins separate Managed Jobs controller resources to local
 Kubernetes and preserves SkyPilot's existing controller-mode behavior. It does

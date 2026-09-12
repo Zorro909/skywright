@@ -54,8 +54,11 @@ final class VastRunTarget implements ManagedRunTarget {
 	}
 
 	public List<ManagedRunForms.Check> checks() {
-		return List.of(new ManagedRunForms.Check("resourceSelection", false, "VAST_OFFER_FILTERS_UNSUPPORTED",
-				"The pinned provider integration does not preserve the requested resource filters. A matching, affordable rental cannot be selected reliably."),
+		return List.of(
+				new ManagedRunForms.Check("providerAdapter", false, "VAST_ADAPTER_UNAVAILABLE",
+						"A compatible Vast SDK that passes the dependency security checks is not installed."),
+				new ManagedRunForms.Check("resourceSelection", false, "VAST_OFFER_FILTERS_UNSUPPORTED",
+						"The pinned provider integration does not preserve the requested resource filters. A matching, affordable rental cannot be selected reliably."),
 				new ManagedRunForms.Check("costQuote", false, "VAST_COST_QUOTE_UNAVAILABLE",
 						"No current Cost Quote is joined to this workload and an enforceable rental limit."),
 				new ManagedRunForms.Check("credentials", false, "VAST_PROVIDER_PROJECTION_UNAVAILABLE",

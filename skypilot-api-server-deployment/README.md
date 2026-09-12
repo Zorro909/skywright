@@ -8,8 +8,8 @@ supported server entry point as its child on port 46580. Tini reaps adopted chil
 
 The root Maven property `skypilot.version` is the only SkyPilot version pin. The image installs the
 shared dependencies from `graalpy-environment/graalpy.lock`. The CPython server
-uses `src/main/docker/server-requirements.lock` for its runtime overrides and
-official Vast SDK; the backend retains its GraalPy dependency environment. Maven validation stops the build if the lock does not contain the
+adds the controller dependencies in `src/main/docker/server-requirements.lock`;
+the backend retains its GraalPy dependency environment. Maven validation stops the build if the lock does not contain the
 root pin exactly. The shared environment also pins Kubernetes client 35.0.0, within
 SkyPilot 0.13.0's supported range, for the target-side pull helper.
 
@@ -18,11 +18,12 @@ The runtime is CPython 3.12.11 on the immutable
 base. The build accepts binary distributions only, so a locked native dependency without a wheel
 for that runtime fails packaging instead of compiling against an unqualified toolchain.
 
-The installed `vastai==1.7.0` distribution provides the `vastai_sdk` import used
-by SkyPilot. Its read-only account operations are usable for provider-projection
-verification. Its offer parser does not preserve the pinned adapter's resource
-filters. Both Vast modes therefore remain unavailable for paid admission; see
-[the selection evidence](../docs/research/issue-283-vast-catalog-selection.md).
+The optional Vast SDK is omitted. Its compatible published releases hard-pin
+vulnerable dependencies and discard the adapter's offer filters. Provider
+credential verification uses read-only API calls from the API-server role; it
+does not establish adapter availability. Both Vast modes remain unavailable
+for paid admission until a compatible official release passes these checks.
+See [the selection evidence](../docs/research/issue-283-vast-catalog-selection.md).
 
 ## Runtime pull helper
 

@@ -6,6 +6,10 @@ from pathlib import Path
 import subprocess
 import tempfile
 import datetime
+import contextlib
+import hashlib
+import io
+import stat
 import sys
 import threading
 import unittest
@@ -20,6 +24,76 @@ PULL = ROOT / "deployment/scripts/local-runtime-pull"
 
 
 class LocalCredentialsTest(unittest.TestCase):
+    def test_provider_validation_uses_only_bounded_reads_and_redacts_rejected_responses(self):
+        from skywright_deployment import local_vast
+
+        secret = "provider-secret-sentinel"
+        value = {"identity": "sha256:" + hashlib.sha256(secret.encode()).hexdigest(),
+                 "providerKeyId": "1", "enrolledAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                 "requestedPermissions": {"api": {name: {} for name in (
+                     "misc", "user_read", "instance_read", "instance_write")}}}
+        expected_rights = {"api": {**value["requestedPermissions"]["api"], "*": local_vast.BASELINE_RIGHTS}}
+        for scenario in ("accepted", "redirect", "oversized", "wrong-key", "wrong-rights", "failed-status"):
+            with self.subTest(scenario=scenario):
+                calls, output, errors = [], io.StringIO(), io.StringIO()
+                account = {"key_id": "1", "rights": expected_rights, "credit": "1.25", "extra": secret}
+                if scenario == "wrong-key":
+                    account["key_id"] = "another-key"
+                if scenario == "wrong-rights":
+                    account["rights"] = {"billing": {}}
+
+                class Response(io.BytesIO):
+                    status = 200
+
+                def build_opener(handler):
+                    def open_request(request, timeout):
+                        calls.append(request.full_url)
+                        self.assertEqual(request.get_method(), "GET")
+                        self.assertEqual(request.get_header("Authorization"), "Bearer " + secret)
+                        self.assertEqual(timeout, 10)
+                        if scenario == "redirect":
+                            handler.redirect_request(request, None, 302, "redirect", {}, "https://other.invalid")
+                            self.fail("Credential validation followed a redirect")
+                        body = account if len(calls) == 1 else {"instances": [{"extra": secret}]}
+                        response = Response(b"x" * (1024 * 1024 + 1) if scenario == "oversized"
+                                            else json.dumps(body).encode())
+                        if scenario == "failed-status":
+                            response.status = 503
+                        return response
+                    return SimpleNamespace(open=open_request)
+
+                def execute(*args, data, **kwargs):
+                    self.assertEqual(args[2], "pod/server-1")
+                    self.assertEqual(kwargs["timeout"], 45)
+                    argv = list(args[args.index("python") + 1:])
+                    metadata = SimpleNamespace(st_mode=stat.S_IFREG | 0o400, st_uid=os.getuid())
+                    code = 0
+                    with patch.object(sys, "argv", argv), patch.object(Path, "stat", return_value=metadata), \
+                            patch.object(Path, "read_text", return_value=secret), patch("logging.disable"), \
+                            patch("urllib.request.build_opener", side_effect=build_opener), \
+                            contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                        try:
+                            exec(compile(data, "provider-validation", "exec"), {})
+                        except SystemExit as failure:
+                            code = failure.code
+                    return subprocess.CompletedProcess(args, code, output.getvalue().encode(), errors.getvalue().encode())
+
+                kube = Mock()
+                kube.run.side_effect = execute
+                observed = local_vast.validation_result(kube, value, "server-1")
+                self.assertNotIn(secret, output.getvalue() + errors.getvalue())
+                if scenario == "accepted":
+                    self.assertFalse(observed["adapterAvailable"])
+                    self.assertFalse(observed["provisioningQualified"])
+                    self.assertEqual(observed["instanceCount"], 1)
+                    self.assertEqual(observed["effectivePermissions"], expected_rights)
+                    self.assertEqual(calls, ["https://console.vast.ai/api/v0/users/current/",
+                                             "https://console.vast.ai/api/v0/instances/?owner=me"])
+                else:
+                    self.assertIsNone(observed)
+                    self.assertEqual(output.getvalue(), "")
+                    self.assertEqual(errors.getvalue(), "Provider projection verification failed; provider values suppressed.\n")
+
     def test_optional_provider_validation_does_not_block_host_observation_or_lifecycle_lock(self):
         from skywright_deployment import local_service, local_vast
         from skywright_deployment.local_package import installation_lock

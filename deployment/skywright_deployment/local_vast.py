@@ -113,7 +113,7 @@ def validate(kube, value: dict, consumer_name: str) -> dict:
             <= datetime.datetime.now(datetime.timezone.utc)):
         raise SystemExit("Vast enrollment evidence requires renewal before provider validation")
     script = '''
-import datetime, hashlib, json, logging, os, stat, sys
+import datetime, hashlib, json, logging, os, stat, sys, urllib.request
 from pathlib import Path
 logging.disable(logging.CRITICAL)
 try:
@@ -121,12 +121,22 @@ try:
     metadata = path.stat()
     if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o400 or metadata.st_uid != os.getuid():
         raise ValueError()
-    fingerprint = "sha256:" + hashlib.sha256(path.read_text().strip().encode()).hexdigest()
+    key = path.read_text().strip()
+    fingerprint = "sha256:" + hashlib.sha256(key.encode()).hexdigest()
     if fingerprint != sys.argv[1]: raise ValueError()
-    from sky.adaptors import vast
-    provider = vast.vast()
-    account = provider.show_user()
-    instances = provider.show_instances()
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs): raise ValueError()
+    opener = urllib.request.build_opener(NoRedirect())
+    def read(route):
+        request = urllib.request.Request("https://console.vast.ai/api/v0/" + route,
+            headers={"Authorization": "Bearer " + key, "Accept": "application/json"}, method="GET")
+        with opener.open(request, timeout=10) as response:
+            if response.status != 200: raise ValueError()
+            body = response.read(1024 * 1024 + 1)
+            if len(body) > 1024 * 1024: raise ValueError()
+            return json.loads(body)
+    account = read("users/current/")
+    instances = read("instances/?owner=me")["instances"]
     if not isinstance(account, dict) or "credit" not in account or not isinstance(instances, list): raise ValueError()
     if str(account.get("key_id")) != sys.argv[2]: raise ValueError()
     expected_rights = json.loads(sys.argv[3])
@@ -138,7 +148,8 @@ try:
                       "observedCreditUsd": str(credit), "instanceCount": len(instances),
                       "observedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                       "providerKeyId": str(account["key_id"]), "effectivePermissions": expected_rights,
-                      "scopeEvidence": "provider-current-user-rights", "provisioningQualified": False}))
+                      "scopeEvidence": "provider-current-user-rights", "provisioningQualified": False,
+                      "adapterAvailable": False}))
 except BaseException:
     print("Provider projection verification failed; provider values suppressed.", file=sys.stderr)
     sys.exit(1)

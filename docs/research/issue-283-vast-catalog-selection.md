@@ -166,3 +166,20 @@ also requires the GPU architecture to be supported by the runtime: a provider
 `cuda_max_good >= 13` flag alone does not qualify the GTX TITAN X in the cheap
 offer list, because CUDA 13 removed Maxwell compilation and library support.
 [NVIDIA CUDA 13 architecture support](https://docs.nvidia.com/cuda/archive/13.0.3/pdf/CUDA_Toolkit_Release_Notes.pdf)
+
+## Runtime dependency security
+
+The production-image gate for commit `0fc7777` found 11 high-severity findings
+in the optional SDK dependency graph. `vastai==1.7.0` hard-pins
+`cryptography==49.0.0` and `pillow==12.2.0`; the gate requires fixed versions
+50.0.0 and 12.3.0. Earlier compatible modern SDK releases also pin older
+versions. Overriding those pins breaks their declared dependency constraints.
+[Image job](https://github.com/Zorro909/skywright/actions/runs/34722431306/job/103634816629),
+[official distribution metadata](https://pypi.org/pypi/vastai/1.7.0/json)
+
+The shipped server therefore omits this optional SDK. Its provider credential
+projection can still be verified with bounded read-only calls in the SkyPilot
+role, without loading the SDK or enabling a replacement launch path. Retained
+metadata explicitly distinguishes this verification from adapter availability.
+The offline reproducer above remains evidence about the upstream integration,
+not a claim that the vulnerable SDK is included in the deployment.

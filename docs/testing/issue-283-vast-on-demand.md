@@ -259,3 +259,35 @@ CUDA succeeded. An explicit `cleanup-docker` option releases unused Docker
 images and build cache after each resolved published image, before the next
 backend. It defaults off and is enabled only on the dedicated ephemeral
 qualification runner. Both backend builds and smoke tests remain required.
+
+## Private dual-backend publication
+
+[Workflow 34723741584](https://github.com/Zorro909/skywright-private-qualification/actions/runs/34723741584)
+published a complete private version after both backend smoke tests passed.
+The deployment now selects its immutable artifact.
+
+| Material | SHA-256 digest |
+| --- | --- |
+| Version artifact | `74e4965c0b0fd9bd8612faf02c8b1c4abc9225dfd16e1398c0e57d03eefc84c0` |
+| CUDA project image | `99cfac73ff7764f3d667a637da6c1ce41c730256d2f6f16e91762b55852aae58` |
+| ROCm project image | `460576bcacd1ed9cf0e5e39326d0e25b86dd4b0fabd2a05103cd4305e957d3a9` |
+| CUDA profile | `daa271e952c837deef9ee82eed00b78faeabb682b2df7927f7250b4ffc78c4b2` |
+
+Source is private qualification commit
+`864817f01f4f98f74f28f1d50513ff1fcae79f2f`, using the publisher from
+`60d0fefa645a1046edbaa02d1b845121082960c3`. This is publication evidence;
+NVIDIA rental execution and target-side private pulls remain unqualified.
+
+The existing backend imported and assessed this exact dual-backend artifact as
+runnable at 23:11 UTC, with no assessment failures. Its configured demonstration
+still changes only with the verified deployment update.
+
+The earlier provider image passed functional tests but failed its CI security
+gate on Vast SDK dependency pins. The shipped image now omits that SDK;
+read-only projection verification is separate from adapter availability.
+Both Vast modes remain blocked.
+
+The revised image passes all nine image acceptance tests and `pip check`. A
+fresh Trivy 0.70 scan reports zero fixable HIGH/CRITICAL findings. All 88
+deployment tests pass, with seven environment-dependent skips. The final
+Managed Run form and projection checks pass with the missing-adapter gate.

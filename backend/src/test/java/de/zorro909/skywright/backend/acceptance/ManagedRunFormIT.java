@@ -13,13 +13,13 @@ class ManagedRunFormIT {
 			assertThat(form.at("/targets/1/id").asText()).isEqualTo("vast/on-demand");
 			assertThat(form.at("/targets/1/ready").asBoolean()).isFalse();
 			assertThat(form.at("/targets/1/checks").toString()).contains("VAST_LAUNCH_PRICE_UNPROVEN",
-					"VAST_BUDGET_UNVERIFIED", "VAST_OFFER_FILTERS_UNSUPPORTED");
+					"VAST_BUDGET_UNVERIFIED", "VAST_OFFER_FILTERS_UNSUPPORTED", "VAST_ADAPTER_UNAVAILABLE");
 			assertThat(form.path("targets")).hasSize(3);
 			assertThat(form.at("/targets/2/id").asText()).isEqualTo("vast/spot");
 			assertThat(form.at("/targets/2/purchaseMode").asText()).isEqualTo("spot");
 			assertThat(form.at("/targets/2/ready").asBoolean()).isFalse();
 			assertThat(form.at("/targets/2/checks").toString()).contains("VAST_INTERRUPTIBLE_UNQUALIFIED",
-					"VAST_OFFER_FILTERS_UNSUPPORTED");
+					"VAST_OFFER_FILTERS_UNSUPPORTED", "VAST_ADAPTER_UNAVAILABLE");
 			String before = backend.get("/api/v1/runs").body();
 			String request = "{\"submissionId\":\"" + java.util.UUID.randomUUID()
 					+ "\",\"workload\":\"demonstration\",\"target\":\"vast/on-demand\"}";
