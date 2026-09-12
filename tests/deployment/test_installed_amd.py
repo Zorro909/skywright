@@ -12,6 +12,7 @@ import os
 import subprocess
 import time
 import unittest
+import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
@@ -68,11 +69,11 @@ class InstalledAmdTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         return completed.stdout
 
-    def api(self, path, value=None):
+    def api(self, path, value=None, timeout=30):
         request = urllib.request.Request("http://127.0.0.1:8080" + path,
             data=None if value is None else json.dumps(value).encode(),
             headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.load(response)
 
     def wait_ready(self, configuration):
@@ -87,9 +88,36 @@ class InstalledAmdTest(unittest.TestCase):
             time.sleep(5)
         self.fail("Installed admission did not become ready within two minutes")
 
+    def preflight(self, configuration):
+        deadline = time.monotonic() + 120
+        while True:
+            result = subprocess.run([str(ROOT / "scripts/deploy"), "preflight", "--configuration", configuration],
+                                    capture_output=True, text=True,
+                                    timeout=max(0.1, min(60, deadline - time.monotonic())))
+            self.assertIn(result.returncode, (0, 1), result.stderr)
+            report = json.loads(result.stdout)
+            if report["ready"]:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return report
+            self.assertLess(time.monotonic(), deadline, report)
+            print("Waiting for installed preflight readiness", flush=True)
+            time.sleep(max(0, min(5, deadline - time.monotonic())))
+
     def smoke(self):
         intent = {"submissionId": str(uuid.uuid4()), "workload": "demonstration", "target": "local/amd"}
-        accepted = self.api("/api/v1/managed-runs", intent)
+        admission_deadline = time.monotonic() + 120
+        while True:
+            try:
+                accepted = self.api("/api/v1/managed-runs", intent,
+                                    timeout=max(0.1, min(30, admission_deadline - time.monotonic())))
+                break
+            except urllib.error.HTTPError as error:
+                problem = json.load(error)
+                if (error.code != 503 or problem.get("errorCode") != "SKYWRIGHT_RUN_ADMISSION_UNAVAILABLE"
+                        or problem.get("retryable") is not True or time.monotonic() >= admission_deadline):
+                    raise
+                print("Retrying the same Managed Run submission after retryable admission unavailability", flush=True)
+                time.sleep(max(0, min(5, admission_deadline - time.monotonic())))
         identity = accepted["runId"]
         self.assertEqual(self.api("/api/v1/managed-runs", intent)["runId"], identity)
         terminal = False
@@ -122,7 +150,7 @@ class InstalledAmdTest(unittest.TestCase):
         update = os.environ["SKYWRIGHT_UPDATE_CONFIGURATION"]
         self.command("install", fresh)
         self.wait_ready(fresh)
-        preflight = json.loads(self.command("preflight", fresh))
+        preflight = self.preflight(fresh)
         self.assertEqual(preflight["gpuCount"], 2)
         self.assertTrue(preflight["ready"])
         first = self.smoke()
@@ -137,4 +165,4 @@ class InstalledAmdTest(unittest.TestCase):
         self.command("start", update)
         self.wait_ready(update)
         self.assertEqual(self.api("/api/v1/runs/" + second)["lifecycle"]["state"], "finished")
-        self.assertTrue(json.loads(self.command("preflight", update))["ready"])
+        self.assertTrue(self.preflight(update)["ready"])

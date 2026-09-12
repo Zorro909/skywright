@@ -57,8 +57,8 @@ Initial downloads and image pulls can take 15–30 minutes. Individual setup
 steps have deadlines; failures report the current step without provider
 output or secret values. Retry the same command after correcting the cause.
 
-The operator's `kind-skywright-local.service` user service renews the two Vault
-consumer tokens and exposes the GUI at `http://127.0.0.1:8080`. To reach it from
+The operator's user service is named after the configured context, for example
+`kind-skywright-local.service`. It renews the two Vault consumer tokens and exposes the GUI at `http://127.0.0.1:8080`. To reach it from
 another machine:
 
 ```sh
@@ -136,8 +136,8 @@ replace their protected projections before restarting consumers. Keep the
 Vault recovery inputs under operator custody; applications never receive the
 root token or unseal key.
 
-Inspect `installed.json`, `systemctl --user status kind-skywright-local.service`
-and the preflight command for health. Operator inputs remain in
+Inspect `installed.json`, the preflight command and `systemctl --user status`
+with your configured context followed by `.service` for health. Operator inputs remain in
 `secretDirectory`, including `vault-recovery.json`, generated database/S3
 inputs, TLS files and consumer token projections. Backups also contain these
 inputs. Do not publish their contents.
