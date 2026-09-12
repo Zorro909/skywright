@@ -10,11 +10,19 @@ The SDK requires Python 3.10 or later. Linux is the initial supported runtime pl
 managed and direct execution. The universal wheel does not artificially prevent installation on
 other operating systems, but those environments are not yet qualified as supported runtimes.
 
-The SDK's only runtime dependency is the JSON Schema engine used by Training Project CI to compile
-Project Configuration Contracts. It does not install PyTorch or select a CPU, CUDA, or ROCm build.
-Environment Profiles supply the compatible PyTorch stack for managed
-execution. Direct-execution developers own that choice in their project environment and should use
-PyTorch's installation guidance for their accelerator backend.
+The runtime dependencies declared in [pyproject.toml](pyproject.toml) are boto3, brotli,
+jsonschema with format validation, numpy, pillow, protobuf, python-snappy, safetensors,
+tensorboard, xxhash, and zstandard. They provide storage, contract validation, numeric and
+image handling, checkpoint serialization, metrics, and compression. The SDK itself is
+pure Python; several dependencies include native components.
+
+The base installation does not install PyTorch or select a CPU, CUDA, or ROCm build.
+The optional `dataset` extra adds mosaicml-streaming, transformers, and torchvision,
+whose dependency resolution can bring in PyTorch. Environment Profiles supply the
+compatible PyTorch stack for managed execution. Direct-execution developers own that
+choice in their project environment and should use PyTorch's installation guidance
+for their accelerator backend. Use the pinned dependency constraints in
+[pyproject.toml](pyproject.toml) and the lockfile when preparing these environments.
 
 ## Public API and compatibility
 
