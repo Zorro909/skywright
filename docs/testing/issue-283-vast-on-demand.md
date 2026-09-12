@@ -7,9 +7,10 @@ qualification has taken place. The issue must remain open.
 ## Implemented behavior
 
 The Managed Run form lists local AMD and Vast.ai on-demand separately. Readiness
-belongs to the selected target. Unknown Vast pricing, account budget, provider
-projection, portable storage and private CUDA pull evidence cannot enable Create
-Run or disable an otherwise ready local target. The form identifies the exact
+belongs to the selected target. Vast lists separate unknown Cost Quote, credential
+projection, storage, registry, price, budget and qualification gates. These are
+explicit unavailable assessments; the form does not yet validate live cloud
+evidence. They cannot enable Create Run or disable an otherwise ready local target. The form identifies the exact
 installed Training Project, version manifest and Dataset Definition.
 
 Two internal target adapters share Run Definition resolution, Dataset leases,
@@ -22,13 +23,17 @@ no fallback or configuration switch that bypasses this guard.
 The CUDA projection checks the pinned image, project contracts and Dataset using
 the same runtime-material validation as AMD. The finite resource DTO carries
 Vast region, instance type, allocated disk and the catalogue hourly ceiling.
-It pins `vast` with `use_spot=false`. These are projection capabilities, not proof
+It pins `vast` with `use_spot=false`; the bridge combines provider and region into
+SkyPilot’s `infra` field. The SDK consumes the same definition and selects CUDA
+for the finite Vast on-demand target. These are projection capabilities, not proof
 that the actual rental will satisfy the ceiling. Cloud storage selection uses the
 existing `cloud-on-demand` Target Storage defaults.
 
 Cloud GHCR authentication travels through SkyPilot's secret channel. The Run
 Definition, task DTO and durable records contain no registry values. The original
-runtime-pull binding revision is retained for pre-dispatch restoration. Local
+runtime-pull binding revision is retained for pre-dispatch restoration. The cloud
+delivery shell removes all three Docker credential variables before its first
+Python child, preserving the separate Dataset and Run Store credentials. Local
 Kubernetes keeps its existing image-pull-secret delivery. Provider keys use the
 new Vault `VAST` binding kind with the `skypilot-api-server` role and an `apiKey`
 secret field; no provider binding or projection is activated by this change.
@@ -55,19 +60,48 @@ rates has been proved here. Do not rent until that proof exists.
 
 ## Credential setup and trust
 
-The owner confirmed that no Vast credential exists yet. The one-off setup wizard
-is session-local under `.scratch/issue283/`. It accepts a temporary console key
-through hidden input, requests a scoped key with `misc`, `user_read`,
-`instance_read` and `instance_write`, and stores the result directly in the
-existing private instance's Vault at `skywright/provider/vast/on-demand` using
-compare-and-set version zero. It never overwrites an existing value. It then
-asks the owner to revoke the temporary key. No billing, key administration,
+The owner completed the approved one-off setup wizard on 2026-09-12. The wizard
+is session-local under `.scratch/issue283/`. It accepted a temporary console key
+through hidden input, requested a scoped key with `misc`, `user_read`,
+`instance_read` and `instance_write`, and stored the result directly in the
+existing private instance’s Vault at `skywright/provider/vast/on-demand` using
+compare-and-set version zero. It verified the stored value by reading it back. No billing, key administration,
 machine or team permission is requested. `misc` is a provider category with
 broader operations than offer search, not a claimed per-endpoint restriction.
 
-The wizard records only key identity, requested scope, verified account-read
-access, observed credit, Vault revision and the absence of a runtime projection.
-That enrollment evidence is not provisioning qualification. The actual binding
+The secret-free enrollment record reports:
+
+| Field | Observed value |
+| --- | --- |
+| Observed at | `2026-09-12T21:06:48.201200+00:00` |
+| Vault path and revision | `skywright/provider/vast/on-demand`, revision `1` |
+| Key name / provider key ID | `skywright-issue283-vast-on-demand` / `27864309` |
+| Credential fingerprint | `sha256:fc77d9912abf9f05acbc1410b0f8355e440119036cd127aac3cffa7f6a4fcdcb` |
+| Intended kind / resource / consumer | `VAST` / `vast` / `skypilot-api-server` |
+| Intended access profile | `provision-and-cleanup` |
+| Vault readback / scoped account read | verified / verified |
+| Observed credit | USD `2.3402639111259873` |
+| Runtime projection / paid launch | not created / none |
+
+The owner attested that automatic billing was disabled at `21:05:32Z` and the
+temporary bootstrap key was revoked at `21:07:07Z`. Those are operator
+attestations, not independent API verification of billing or revocation.
+A read-only probe at `21:14:25Z` retrieved revision 1 within the existing instance,
+matched its fingerprint and successfully read the account and searched offers
+using the scoped identity. The key was not returned to the agent or written to
+another file. Credit was unchanged.
+
+The [offer search API](https://docs.vast.ai/api-reference/search/search-offers)
+returned five candidate offers using `type=ondemand`, verified and rentable,
+not rented, one GPU, `dph_total < 0.15`, at least 20 GB available disk, sorted by
+`dph_total`. For example, offer `36328625` reported RTX 3060 / 12 GiB in China,
+`dph_base=0.04` and `dph_total=0.042222222222222223` USD/hour. This was a candidate
+search: the query did not allocate disk or verify CUDA, image, network, project,
+or Dataset compatibility. The returned storage and traffic rates were captured
+in the session-local `provider-readiness.json`; no total affordability or actual
+rental price proof is inferred from those values.
+
+That enrollment and read-access evidence is not provisioning qualification. The actual binding
 UUID, validation profile and Credential Projection Record remain to be established
 before activating the provider role. Existing Dataset, Run Store, backend and
 GHCR role credentials stay separate.
@@ -108,7 +142,31 @@ pnpm --dir frontend run verify
 
 The focused backend run passed nine unit tests and four HTTP system tests.
 Frontend verification passed formatting, lint, typechecking, unit/browser tests
-and the production build. The HTTP test verifies that blocked Vast submission
+and the production build. SDK verification passed formatting, lint, strict
+typechecking, generated-contract checks and 469 unit tests. The HTTP test verifies that blocked Vast submission
 creates no Run and makes no launch call. The GUI test selects unavailable Vast
-while local is ready, then switches back to local. The full backend suite excluding `real-service` also passed. Selected real-service
-checks are still in progress.
+while local is ready, then switches back to local. The full backend suite excluding `real-service` also passed (287 unit tests and
+43 integration tests). The local assembly and local acceptance real-service
+checks passed. The final focused backend verification passed nine unit tests,
+four HTTP tests and the real SkyPilot API-server integration test, including
+Vast resource construction with pinned SkyPilot 0.13.0 and transient registry
+secrets. The delivery test executes the generated shell with a child-process
+probe: registry variables are absent and Dataset access remains present.
+
+The installed SDK system test passed both the local and cloud CUDA definitions
+through the existing CLI, real S3-compatible storage and a private CPU test seam.
+It verifies Dataset reads, committed outputs and terminal/recovery behavior; it
+does not qualify NVIDIA hardware or a cloud rental.
+
+```sh
+mvn -DskipFrontendTests=true -DskipFrontendInstall=true -Dtest=LocalRuntimeProjectionTest,LocalCredentialProjectionsTest -Dsurefire.failIfNoSpecifiedTests=false -Dit.test=GraalPySkyPilotClientIT,ManagedRunFormIT -Dfailsafe.failIfNoSpecifiedTests=false -pl backend -am verify
+sdk/scripts/check
+uv run --project sdk --locked --extra dataset --group ml-test pytest sdk/tests/integration/dataset/test_managed_runtime_system.py -q
+```
+
+Standards review found no documented-standard violations. Its two design
+concerns were addressed by using a shared registry-delivery predicate and an
+explicit local adapter accessor. Specification review found and prompted the
+registry environment fix, then confirmed it on follow-up. It still identifies
+incomplete runtime provider projection, live joined readiness and live
+qualification; these remain explicit gaps rather than completed criteria.

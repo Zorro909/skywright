@@ -51,8 +51,17 @@ final class VastOnDemandRunTarget implements ManagedRunTarget {
 	}
 
 	public List<ManagedRunForms.Check> checks() {
-		return List.of(new ManagedRunForms.Check("launchPrice", false, "VAST_LAUNCH_PRICE_UNPROVEN",
-				"The actual rental is not proven below USD 0.15/hour. SkyPilot searches again at launch; a catalog quote is insufficient."),
+		return List.of(
+				new ManagedRunForms.Check("costQuote", false, "VAST_COST_QUOTE_UNAVAILABLE",
+						"No current Cost Quote is joined to this workload and an enforceable rental limit."),
+				new ManagedRunForms.Check("credentials", false, "VAST_PROVIDER_PROJECTION_UNAVAILABLE",
+						"A Vault enrollment alone does not establish a validated SkyPilot provider binding and projection."),
+				new ManagedRunForms.Check("storage", false, "VAST_STORAGE_UNQUALIFIED",
+						"Cloud Dataset and Run Store access still need qualification from the selected rental."),
+				new ManagedRunForms.Check("registry", false, "VAST_REGISTRY_PULL_UNQUALIFIED",
+						"The pinned private CUDA image still needs a target-side pull with the recorded registry binding."),
+				new ManagedRunForms.Check("launchPrice", false, "VAST_LAUNCH_PRICE_UNPROVEN",
+						"The actual rental is not proven below USD 0.15/hour. SkyPilot searches again at launch; a catalog quote is insufficient."),
 				new ManagedRunForms.Check("budget", false, "VAST_BUDGET_UNVERIFIED",
 						"Verify current credit, disabled automatic top-up, disk and traffic allowances, and bounded runtime and cleanup before renting."),
 				new ManagedRunForms.Check("qualification", false, "VAST_ON_DEMAND_UNQUALIFIED",

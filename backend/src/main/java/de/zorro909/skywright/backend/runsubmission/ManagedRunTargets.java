@@ -1,6 +1,5 @@
 package de.zorro909.skywright.backend.runsubmission;
 
-import java.util.List;
 import org.springframework.stereotype.Component;
 
 /** Finite prototype selection. A pinned target never selects another adapter. */
@@ -24,8 +23,8 @@ final class ManagedRunTargets {
 		throw new RunSubmissionException("TARGET_INELIGIBLE", 422);
 	}
 
-	List<ManagedRunTarget> all() {
-		return List.of(local, vast);
+	LocalAmdRunTarget local() {
+		return local;
 	}
 
 }

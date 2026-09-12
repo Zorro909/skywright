@@ -172,7 +172,7 @@ final class ResolvedRunAdmission implements RunAdmission {
 		}
 
 		try {
-			boolean cloud = targetClass == de.zorro909.skywright.backend.targetstorage.TargetClass.CLOUD_ON_DEMAND;
+			boolean cloud = task.usesRegistrySecretChannel();
 			var credentials = cloud
 					? broker.cloudTraining(runId, selection(datasetAccess, "read-only"),
 							selection(outputAccess, "read-write-delete"), pullSelection, Instant.MAX)

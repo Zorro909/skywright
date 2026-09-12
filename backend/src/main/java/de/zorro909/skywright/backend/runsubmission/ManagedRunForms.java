@@ -197,7 +197,7 @@ final class ManagedRunForms {
 					projects.runtimePullSelection(demonstration.trainingProjectId());
 					return !pulls.namespace(target.kubernetesContext()).isBlank();
 				}));
-		checks.addAll(adapters.all().getFirst().checks());
+		checks.addAll(adapters.local().checks());
 		checks.add(check("controlPath", "CONTROL_PATH_UNAVAILABLE",
 				"Check the SkyPilot service, its backend authorization and Kubernetes access.", () -> {
 					try {

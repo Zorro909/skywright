@@ -27,7 +27,8 @@ public final class VastRuntimeProjection {
 				|| !request.path("gpuModel").asText().equals(target.gpuModel())
 				|| request.path("minimumGpuMemoryBytes").asLong() > target.gpuMemoryBytes())
 			throw new IllegalArgumentException("Unsupported Vast on-demand capabilities or pinned target");
-		String command = RuntimeDelivery.command(definition, materials, "cuda");
+		String command = "unset SKYPILOT_DOCKER_USERNAME SKYPILOT_DOCKER_PASSWORD SKYPILOT_DOCKER_SERVER\n"
+				+ RuntimeDelivery.command(definition, materials, "cuda");
 		var resources = new OrchestratorTaskSpecification.Resources("vast", target.cpus(), target.memory(),
 				target.gpuModel() + ":1", "docker:" + materials.image(), false,
 				new OrchestratorTaskSpecification.JobRecovery(0, List.of(75)), target.region(), target.instanceType(),

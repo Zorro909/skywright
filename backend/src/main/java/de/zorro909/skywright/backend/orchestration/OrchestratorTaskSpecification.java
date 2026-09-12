@@ -54,6 +54,12 @@ public record OrchestratorTaskSpecification(String name, String setup, String ru
 					.contains(key);
 	}
 
+	/** Vast receives its image-pull authentication in SkyPilot's secret channel. */
+	public boolean usesRegistrySecretChannel() {
+		return resources.size() == 1 && resources.getFirst().infrastructure().equals("vast")
+				&& !resources.getFirst().useSpot();
+	}
+
 	private static void requireText(String value, String name) {
 		if (value == null || value.isBlank()) {
 			throw new IllegalArgumentException(name + " must not be blank");

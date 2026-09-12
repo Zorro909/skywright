@@ -538,7 +538,8 @@ def _task(specification, secrets=None):
         })
     resources = [
         sky.Resources(
-            infra=requested["infrastructure"],
+            infra=(requested["infrastructure"] + "/" + requested["region"]
+                   if requested.get("region") is not None else requested["infrastructure"]),
             cpus=requested["cpus"],
             memory=requested["memory"],
             accelerators=requested.get("accelerators"),
@@ -547,7 +548,6 @@ def _task(specification, secrets=None):
             **{
                 field: requested[key]
                 for key, field in (
-                    ("region", "region"),
                     ("instanceType", "instance_type"),
                     ("diskSize", "disk_size"),
                     ("maxHourlyCost", "max_hourly_cost"),

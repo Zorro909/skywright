@@ -48,8 +48,8 @@ final class RunLaunchDelivery {
 				if (service == null)
 					throw new IllegalStateException("Recorded launch credentials are unavailable");
 				prepared = new RunAdmission.Prepared(run.definition(), run.task(),
-						run.task().resources().getFirst().infrastructure().equals("vast")
-								? service.restoreCloudTraining(run.runId()) : service.restoreTraining(run.runId()));
+						run.task().usesRegistrySecretChannel() ? service.restoreCloudTraining(run.runId())
+								: service.restoreTraining(run.runId()));
 			}
 			if (run.task().runtimePullSecret() != null) {
 				var helper = pulls.getIfAvailable();

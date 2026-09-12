@@ -79,12 +79,26 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
             changed=False,
             expected=0,
             stop=None,
+            cuda=False,
         ):
             nonlocal counter
             directory = tmp_path / str(counter)
             counter += 1
             directory.mkdir()
             d, m = deepcopy(definition), deepcopy(materials)
+            if cuda:
+                d["targetRequest"].update(
+                    targetClass="cloud-on-demand",
+                    purchaseMode="on-demand",
+                    target="vast",
+                    gpuModel="RTX_3060",
+                )
+                corpus = SDK / "src/skywright/_run_definition_resources/corpus.json"
+                d["costQuote"] = json.loads(corpus.read_text())["valid"][0]["costQuote"]
+                m["image"] = (
+                    "ghcr.io/example/project@"
+                    + d["trainingProjectVersion"]["images"]["cuda"]
+                )
             if stop:
                 # Isolate forced-final-checkpoint behavior from scheduled checkpoints.
                 d["configuration"]["checkpoint"]["cadence"] = 100
@@ -196,6 +210,13 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
             for item in baseline_keys
         ] == [12]
         expected_ordinals = json.loads((baseline_dir / "committed.json").read_text())
+        # The same installed CLI and storage path accepts the cloud CUDA definition.
+        # This uses the private CPU seam; it is not a live NVIDIA qualification.
+        cuda_dir, cuda_result = execute(str(uuid4()), cuda=True)
+        assert cuda_result["step"] == baseline["step"]
+        assert (
+            json.loads((cuda_dir / "committed.json").read_text()) == expected_ordinals
+        )
         resumed_id = str(uuid4())
         _, seed = execute(resumed_id, interrupt=5, expected=75)
         resumed_dir, resumed = execute(resumed_id)

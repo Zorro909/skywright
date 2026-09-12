@@ -63,6 +63,33 @@ class LocalRuntimeProjectionTest {
 		assertThat(resource.maxHourlyCost()).isEqualByComparingTo("0.14");
 		assertThat(task.runtimePullSecret()).isNull();
 		assertThat(task.environment()).isEmpty();
+		// Execute the real delivery shell against a child-process probe: registry secrets
+		// must be gone before even the first Python child, while Dataset credentials
+		// survive.
+		var probe = Files.createTempDirectory("skywright-registry-isolation-");
+		try {
+			var executable = probe.resolve("python");
+			Files.writeString(executable, "#!/bin/sh\n" + "test -z \"${SKYPILOT_DOCKER_USERNAME+x}\" && "
+					+ "test -z \"${SKYPILOT_DOCKER_PASSWORD+x}\" && " + "test -z \"${SKYPILOT_DOCKER_SERVER+x}\" && "
+					+ "test \"$SKYWRIGHT_DATASET_ACCESS_KEY_ID\" = dataset-test && " + "printf isolated\nexit 73\n");
+			Files.setPosixFilePermissions(executable,
+					java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+			var process = new ProcessBuilder("/bin/sh", "-c", task.run()).redirectErrorStream(true);
+			process.environment().put("PATH", probe.toString());
+			process.environment().put("SKYPILOT_DOCKER_USERNAME", "registry-test");
+			process.environment().put("SKYPILOT_DOCKER_PASSWORD", "registry-test-secret");
+			process.environment().put("SKYPILOT_DOCKER_SERVER", "ghcr.io");
+			process.environment().put("SKYWRIGHT_DATASET_ACCESS_KEY_ID", "dataset-test");
+			var child = process.start();
+			assertThat(child.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+			assertThat(child.exitValue()).isEqualTo(73);
+			assertThat(new String(child.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8))
+				.isEqualTo("isolated");
+		}
+		finally {
+			Files.deleteIfExists(probe.resolve("python"));
+			Files.deleteIfExists(probe);
+		}
 		var payload = Pattern.compile("b64decode\\('([^']+)'\\)").matcher(task.run());
 		assertThat(payload.find()).isTrue();
 		assertThat(new String(Base64.getDecoder().decode(payload.group(1)), java.nio.charset.StandardCharsets.UTF_8))

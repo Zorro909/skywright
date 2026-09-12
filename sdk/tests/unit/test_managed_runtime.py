@@ -56,6 +56,43 @@ def test_consumes_exact_backend_resolved_definition():
     )
 
 
+def test_consumes_vast_on_demand_with_the_pinned_cuda_image():
+    definition, materials = documents()
+    definition["targetRequest"] = {
+        "targetClass": "cloud-on-demand",
+        "purchaseMode": "on-demand",
+        "gpuCount": 1,
+        "target": "vast",
+        "gpuModel": "RTX_3060",
+    }
+    corpus = (
+        Path(__file__).parents[2]
+        / "src/skywright/_run_definition_resources/corpus.json"
+    )
+    definition["costQuote"] = json.loads(corpus.read_text())["valid"][0]["costQuote"]
+    materials["image"] = (
+        "ghcr.io/example/project@"
+        + definition["trainingProjectVersion"]["images"]["cuda"]
+    )
+    runtime = ManagedRuntime.decode(json.dumps(definition), json.dumps(materials))
+    assert runtime.definition.value()["targetRequest"] == definition["targetRequest"]
+    assert runtime.accelerator_backend == "cuda"
+    materials["image"] = (
+        "ghcr.io/example/project@"
+        + definition["trainingProjectVersion"]["images"]["rocm"]
+    )
+    with pytest.raises(ValueError, match="accepted digest-pinned cuda artifact"):
+        ManagedRuntime.decode(json.dumps(definition), json.dumps(materials))
+    for target, mode in (("vast", "spot"), ("runpod", "on-demand")):
+        definition["targetRequest"]["target"] = target
+        definition["targetRequest"]["purchaseMode"] = mode
+        definition["targetRequest"]["targetClass"] = (
+            "cloud-spot" if mode == "spot" else "cloud-on-demand"
+        )
+        with pytest.raises(ValueError):
+            ManagedRuntime.decode(json.dumps(definition), json.dumps(materials))
+
+
 @pytest.mark.parametrize(
     "case",
     [
