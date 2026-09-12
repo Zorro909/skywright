@@ -44,7 +44,7 @@ RUN apt-get update \
         --disable-pip-version-check --no-cache-dir --no-deps \
         --only-binary=:all: --require-hashes \
         --requirement /tmp/server-requirements.lock \
-    && python -c "import sky; assert sky.__version__ == '@skypilot.version@'" \
+    && python -c "import sky, vastai_sdk; assert sky.__version__ == '@skypilot.version@'" \
     && rm --force /tmp/graalpy.lock /tmp/server-requirements.lock \
     && groupadd --gid 10002 skypilot \
     && useradd --uid 10002 --gid 10002 --home-dir /var/lib/skypilot \

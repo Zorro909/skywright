@@ -97,13 +97,16 @@ check fails, admission resumes so the operator can finish or cancel the Run.
 Stop preserves the node, volumes and operator files. Start unseals retained
 Vault and resumes the same control plane.
 
-Update prints installed and requested versions, verifies the new signed
-release, and permits only a newer SemVer release using local state schema 1.
+Update prints installed and requested versions and verifies the signed release.
+Application changes require a newer SemVer release using local state schema 1.
+An explicit change to the optional `vastProvider` selection can use the same
+release and follows the same checkpoint procedure.
 Before starting new application images or migrations, it quiesces the control
 plane and stops its kind node for a consistent checkpoint. At least 80 GiB
 free space is required. Checkpoints live under `stateDirectory/backups/` and
 contain PostgreSQL, object storage, Vault, SkyPilot, writer state, etcd,
-Kubernetes PKI, configuration, catalog identities and operator secret inputs.
+Kubernetes PKI, configuration, catalog identities, provider credential projection
+receipts and operator secret inputs.
 Treat the entire backup as secret material. Copy a completed checkpoint to
 protected independent storage before relying on it for host-loss recovery.
 No automatic backup deletion occurs; monitor disk usage.
@@ -116,7 +119,8 @@ change the release to an older version against a migrated database.
 Checkpoint recovery is an explicit offline operation on the same retained
 node. Stop the user service and Docker node. Preserve the failed state for
 diagnosis. Restore all checkpoint components together, including the original
-operator inputs and installed configuration, then run the recorded release.
+operator inputs, installed configuration and the `credential-projections`
+directory when present, then run the recorded release.
 The tar files preserve the original directory metadata and must be restored
 by an operator with permission to preserve their numeric owners. Never mix a
 restored database with newer S3, SkyPilot or writer state. Replacing the kind
@@ -125,6 +129,28 @@ this command does not claim portable writer-custody restoration. An
 incompatible database downgrade is never automatic.
 
 ## Continuous operation and limits
+
+The optional `vastProvider` object in the installation configuration selects an
+existing Vault revision. Copy `revision`, `identity`, `providerKeyId` and
+`requestedPermissions` from the credential enrollment receipt, and copy its
+`observedAt` as `enrolledAt`. These fields contain no key values. The current
+enrollment requests `misc`, `user_read`, `instance_read` and `instance_write`.
+Vast also supplies baseline operations, including SSH-key access and team
+creation. Validation checks the complete effective permissions returned by
+`users/current`, records them in the binding, and rejects unexpected grants.
+Billing and API-key administration writes are absent from the accepted scope.
+
+Only the SkyPilot API server receives the selected key, in a read-only memory
+volume at its standard Vast credential path. The backend and helper containers
+do not receive it. The operator records each Pod projection before external
+validation, appends validation observations, and records release once that Pod
+is absent. Release of a projection does not revoke the provider key. Enrollment
+evidence has a conservative 24-hour deployment validity window; this is not a
+claim about provider expiry. Provider read access alone never enables paid
+admission or establishes provisioning, storage or cleanup qualification.
+The deployment pins the SkyPilot Managed Jobs controller to the existing local
+Kubernetes context. A previously created controller still requires inspection
+before the first cloud Run; the configuration does not move an existing one.
 
 The node has a 12-CPU, 32-GiB Docker ceiling with swap disabled beyond that
 memory limit. The backend is limited to 2 CPUs and 4 GiB; PostgreSQL to 1 CPU

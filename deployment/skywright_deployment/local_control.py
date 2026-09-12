@@ -17,11 +17,15 @@ from .local_secrets import Vault, write_private
 from .local_package import protected_json
 
 
-def configuration(kube: Kubernetes, definitions: list[dict], application: dict) -> None:
+def configuration(kube: Kubernetes, definitions: list[dict], application: dict, settings: dict | None = None) -> None:
+    from .local_vast import template
+    controller = {"jobs": {"controller": {"resources": {
+        "infra": "kubernetes/" + settings["context"], "cpus": "2", "memory": "4"}}}} if settings else {}
     kube.apply(resource("ConfigMap", "skywright-local-configuration", data={
         "credential-bindings.json": json.dumps(definitions),
         "application.json": json.dumps(application),
-        "agent.hcl": AGENT_CONFIGURATION,
+        "agent.hcl": AGENT_CONFIGURATION + template(settings or {}),
+        "skypilot.yaml": json.dumps(controller),
     }))
 
 
@@ -54,6 +58,27 @@ def apply(kube: Kubernetes, settings: dict, metadata: dict, source: Path) -> Non
              "--for=condition=Complete", "--timeout=300s", timeout=310)
     kube.rollout("skywright-skypilot-api-server")
     kube.rollout("skywright-backend")
+
+
+def verify_controller(kube: Kubernetes, settings: dict) -> None:
+    """Read the server's effective config, including any retained database override."""
+    script = '''
+import json, logging, sys
+logging.disable(logging.CRITICAL)
+try:
+    from sky import skypilot_config
+    actual = skypilot_config.get_nested(("jobs", "controller", "resources"), {})
+    expected = {"infra": "kubernetes/" + sys.argv[1], "cpus": "2", "memory": "4"}
+    if actual != expected: raise ValueError()
+except BaseException:
+    print("The effective Managed Jobs controller configuration differs from the local installation.", file=sys.stderr)
+    sys.exit(1)
+'''
+    result = kube.run("exec", "-i", "deployment/skywright-skypilot-api-server", "-n", "skywright",
+                      "-c", "skypilot-api-server", "--", "python", "-", settings["context"],
+                      data=script.encode(), allow_failure=True)
+    if result.returncode:
+        raise SystemExit("Verify the retained SkyPilot controller configuration before resuming admission")
 
 
 def kubernetes_credential(kube: Kubernetes, settings: dict, vault: Vault) -> None:
