@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import io
+import tarfile
 import os
 import subprocess
 import tempfile
@@ -115,7 +117,7 @@ def rewrite_as_schema_v2(bundle: Path) -> None:
 
 
 class ReleaseSupportTest(unittest.TestCase):
-    def build_bundle(self, directory: Path, version: str = "v1.2.3") -> Path:
+    def build_bundle(self, directory: Path, version: str = "v1.2.3", local_package: Path | None = None) -> Path:
         release = directory / "release.yaml"
         artifacts = directory / "build-artifacts.json"
         output = directory / "bundle"
@@ -130,6 +132,14 @@ class ReleaseSupportTest(unittest.TestCase):
             f"        - image: {SKYPILOT_IMAGE}\n",
             encoding="utf-8",
         )
+        if local_package is not None:
+            # Package the actual shipped layout, including helpers and sidecars.
+            rendered = subprocess.run(
+                ["kubectl", "kustomize", str(REPOSITORY / "deployment/overlays/production")],
+                check=True, capture_output=True, text=True,
+            ).stdout
+            release.write_text(rendered.replace("image: skywright-backend\n", f"image: {IMAGE}\n")
+                               .replace("image: skywright-skypilot-api-server\n", f"image: {SKYPILOT_IMAGE}\n"))
         artifacts.write_text(
             json.dumps(
                 {
@@ -171,11 +181,50 @@ class ReleaseSupportTest(unittest.TestCase):
                 "deployment-release.yml",
                 "--run-id",
                 "1234",
+                *(["--local-package", str(local_package), "--writer-image",
+                   "ghcr.io/zorro909/skywright-local-writer@sha256:" + "d" * 64] if local_package else []),
             ],
             cwd=REPOSITORY,
             check=True,
         )
         return output
+
+    def test_local_release_covers_the_installer_and_rejects_changed_or_unsafe_archives(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "local-package.tar.gz"
+            with tarfile.open(archive, "w:gz") as output:
+                for name in ("scripts/deploy", "deployment/skywright_deployment/local_package.py"):
+                    body = b"# fixture source\n"
+                    member = tarfile.TarInfo(name)
+                    member.size = len(body)
+                    output.addfile(member, io.BytesIO(body))
+            bundle = self.build_bundle(root, local_package=archive)
+            verify = [str(SUPPORT), "verify-bundle", "--directory", str(bundle)]
+            result = subprocess.run(verify, capture_output=True, text=True, check=True)
+            metadata = json.loads(result.stdout)
+            self.assertEqual(metadata["schemaVersion"], 4)
+            self.assertEqual(metadata["localStateSchema"], 1)
+            with (bundle / "local-package.tar.gz").open("ab") as target:
+                target.write(b"changed")
+            changed = subprocess.run(verify, capture_output=True, text=True, check=False)
+            self.assertNotEqual(changed.returncode, 0)
+            self.assertIn("checksum mismatch", changed.stderr)
+            # A checksummed archive still cannot escape the package extraction root.
+            with tarfile.open(bundle / "local-package.tar.gz", "w:gz") as output:
+                member = tarfile.TarInfo("../operator-secrets/token")
+                member.size = 1
+                output.addfile(member, io.BytesIO(b"x"))
+            import hashlib
+            checksum = bundle / "SHA256SUMS"
+            lines = checksum.read_text().splitlines()
+            checksum.write_text("\n".join(
+                hashlib.sha256((bundle / "local-package.tar.gz").read_bytes()).hexdigest()
+                + "  local-package.tar.gz" if line.endswith("  local-package.tar.gz") else line
+                for line in lines) + "\n")
+            unsafe = subprocess.run(verify, capture_output=True, text=True, check=False)
+            self.assertNotEqual(unsafe.returncode, 0)
+            self.assertIn("invalid member", unsafe.stderr)
 
     def test_builds_the_exact_versioned_bundle_layout_and_checksums(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

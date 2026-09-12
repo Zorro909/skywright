@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tarfile
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from typing import NoReturn
@@ -28,6 +29,7 @@ VERSION_PATTERN = re.compile(
 BACKEND_IMAGE_PATTERN = re.compile(
     r"^ghcr\.io/zorro909/skywright-backend@sha256:[0-9a-f]{64}$"
 )
+WRITER_IMAGE_PATTERN = re.compile(r"^ghcr\.io/zorro909/skywright-local-writer@sha256:[0-9a-f]{64}$")
 SKYPILOT_IMAGE_PATTERN = re.compile(
     r"^ghcr\.io/zorro909/skywright-skypilot-api-server@sha256:[0-9a-f]{64}$"
 )
@@ -102,7 +104,8 @@ def deployment_container_images(document: str) -> dict[str, list[str]]:
         if active_role is None or not line.strip() or line.lstrip().startswith("#"):
             continue
         indent = len(line) - len(line.lstrip())
-        if indent <= role_indent:
+        # Kustomize emits sequence entries at the same indent as their key.
+        if indent < role_indent or (indent == role_indent and not line.lstrip().startswith("- ")):
             active_role = None
             continue
         image = re.match(r"^\s*(?:-\s*)?image:\s*([^\s#]+)\s*(?:#.*)?$", line)
@@ -145,26 +148,57 @@ def finalize_build_artifacts(arguments: argparse.Namespace) -> None:
     )
 
 
+def validate_local_archive(path: Path) -> None:
+    if path.stat().st_size > 32 * 1024 * 1024:
+        abort("local package archive exceeds its size limit")
+    try:
+        with tarfile.open(path, "r:gz") as archive:
+            total = 0
+            names = set()
+            for member in archive:
+                name = member.name.rstrip("/")
+                if (len(names) >= 10000 or name in names or name.startswith("/")
+                        or ".." in name.split("/") or not (member.isfile() or member.isdir())
+                        or not (name in {"deployment", "scripts", "scripts/deploy", "examples", "examples/cifar10", "sdk", "sdk/src"}
+                                or name.startswith(("deployment/", "examples/cifar10/", "sdk/src/")))):
+                    abort("local package archive has an invalid member")
+                names.add(name)
+                total += member.size
+                if total > 128 * 1024 * 1024:
+                    abort("local package expands beyond its size limit")
+            if not {"scripts/deploy", "deployment/skywright_deployment/local_package.py"} <= names:
+                abort("local package is missing its installation entry point")
+    except (OSError, tarfile.TarError):
+        abort("cannot read the local package archive")
+
+
 def validate_payload(directory: Path, allow_prerelease: bool) -> dict[str, object]:
-    actual = {path.name for path in directory.iterdir() if path.is_file()}
-    expected = {*FILES, "SHA256SUMS"}
+    metadata = read_json(directory / "release-metadata.json")
+    if not isinstance(metadata, dict) or metadata.get("schemaVersion") not in {1, 2, 3, 4}:
+        abort("release metadata schema is unsupported")
+    files = (*FILES, "local-package.tar.gz") if metadata["schemaVersion"] == 4 else FILES
+    actual = {path.name for path in directory.iterdir()}
+    expected = {*files, "SHA256SUMS"}
     if actual != expected:
         abort(f"bundle layout mismatch: expected {sorted(expected)}, got {sorted(actual)}")
     expected_checksums: dict[str, str] = {}
     for line in (directory / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
         parts = line.split("  ", 1)
-        if len(parts) != 2 or parts[1] not in FILES:
+        if len(parts) != 2 or parts[1] not in files:
             abort("bundle checksum manifest has an invalid entry")
         expected_checksums[parts[1]] = parts[0]
-    if set(expected_checksums) != set(FILES):
+    if set(expected_checksums) != set(files):
         abort("bundle checksum manifest does not cover every payload file")
     for filename, expected_digest in expected_checksums.items():
         if digest(directory / filename) != expected_digest:
             abort(f"checksum mismatch for {filename}")
 
-    metadata = read_json(directory / "release-metadata.json")
-    if not isinstance(metadata, dict) or metadata.get("schemaVersion") not in {1, 2, 3}:
-        abort("release metadata schema is unsupported")
+    if metadata["schemaVersion"] == 4:
+        if not isinstance(metadata.get("writerImage"), str) or not WRITER_IMAGE_PATTERN.fullmatch(metadata["writerImage"]):
+            abort("local writer image must use the release repository and a digest")
+        if metadata.get("localStateSchema") != 1:
+            abort("unsupported local state schema")
+        validate_local_archive(directory / "local-package.tar.gz")
     schema_version = metadata["schemaVersion"]
     version = metadata.get("version")
     if not isinstance(version, str):
@@ -223,7 +257,7 @@ def validate_payload(directory: Path, allow_prerelease: bool) -> dict[str, objec
         expected_artifacts: dict[str, object] = {
             "builds": image_records(backend_image, skypilot_image)
         }
-        if schema_version == 3:
+        if schema_version >= 3:
             skypilot_version = validate_skypilot_version(metadata.get("skypilotVersion"))
             expected_artifacts |= {
                 "schemaVersion": 3,
@@ -232,18 +266,17 @@ def validate_payload(directory: Path, allow_prerelease: bool) -> dict[str, objec
             }
         if artifacts != expected_artifacts:
             abort("build artifacts do not identify the release control-plane images exactly")
-        # Retained schema-v2 bundles have one server reference. The current
-        # schema-v3 layout uses the paired image in both the database-wait init
-        # container and the server container.
+        # Retained schemas keep their original layouts. Schema 4 also ships the
+        # rsync helper init container and runtime-pull/log-collector sidecars.
         skypilot_references = manifest_images.count(skypilot_image)
-        expected_skypilot_references = 2 if schema_version == 3 else 1
+        expected_skypilot_references = {2: 1, 3: 2, 4: 5}[schema_version]
         if (
             manifest_images.count(backend_image) != 1
             or skypilot_references != expected_skypilot_references
             or len(manifest_images) != 1 + skypilot_references
         ):
             abort("release manifest does not identify exactly the release control-plane images")
-        if schema_version == 3:
+        if schema_version >= 3:
             deployment_images: dict[str, dict[str, list[str]]] = {}
             for document in re.split(r"(?m)^---\s*$", manifest):
                 if re.search(r"(?m)^kind:\s*Deployment\s*$", document) is None:
@@ -257,11 +290,11 @@ def validate_payload(directory: Path, allow_prerelease: bool) -> dict[str, objec
                 "initContainers": [],
                 "containers": [backend_image],
             } or deployment_images.get("skywright-skypilot-api-server") != {
-                "initContainers": [skypilot_image],
-                "containers": [skypilot_image],
+                "initContainers": [skypilot_image] * (2 if schema_version == 4 else 1),
+                "containers": [skypilot_image] * (3 if schema_version == 4 else 1),
             }:
                 abort(
-                    "schema-v3 manifest does not contain the exact paired "
+                    f"schema-v{schema_version} manifest does not contain the exact paired "
                     "Deployment image layout"
                 )
     return metadata
@@ -298,11 +331,21 @@ def build_bundle(arguments: argparse.Namespace) -> None:
         "workflow": arguments.workflow,
         "runId": arguments.run_id,
     }
+    files = FILES
+    if arguments.local_package is not None or arguments.writer_image is not None:
+        if arguments.local_package is None or arguments.writer_image is None:
+            abort("local releases require both the package archive and writer image")
+        if not WRITER_IMAGE_PATTERN.fullmatch(arguments.writer_image):
+            abort("local writer image must use the release repository and a digest")
+        validate_local_archive(arguments.local_package)
+        shutil.copyfile(arguments.local_package, output / "local-package.tar.gz")
+        metadata |= {"schemaVersion": 4, "localStateSchema": 1, "writerImage": arguments.writer_image}
+        files = (*FILES, "local-package.tar.gz")
     (output / "release-metadata.json").write_text(
         json.dumps(metadata, sort_keys=True, indent=2) + "\n", encoding="utf-8"
     )
     (output / "SHA256SUMS").write_text(
-        "".join(f"{digest(output / filename)}  {filename}\n" for filename in FILES),
+        "".join(f"{digest(output / filename)}  {filename}\n" for filename in files),
         encoding="utf-8",
     )
     validate_payload(output, allow_prerelease=True)
@@ -342,6 +385,7 @@ def publish_bundle(arguments: argparse.Namespace) -> None:
                 "build-artifacts.json:application/vnd.skywright.skaffold.build-artifacts.v3+json",
                 "release-metadata.json:application/vnd.skywright.deployment.metadata.v3+json",
                 "SHA256SUMS:text/plain",
+                *(["local-package.tar.gz:application/gzip"] if metadata["schemaVersion"] == 4 else []),
             ],
             directory=arguments.directory,
         )
@@ -411,6 +455,8 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--skypilot-version", required=True)
     build.add_argument("--workflow", required=True)
     build.add_argument("--run-id", required=True)
+    build.add_argument("--local-package", type=Path)
+    build.add_argument("--writer-image")
     build.set_defaults(function=build_bundle)
     pin = commands.add_parser("shared-skypilot-version")
     pin.add_argument("--pom", type=Path, required=True)

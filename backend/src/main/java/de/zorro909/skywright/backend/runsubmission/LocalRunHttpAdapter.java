@@ -18,26 +18,63 @@ import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.json.JsonMapper;
 
 @RestController
-public class LocalRunHttpAdapter implements RunsApi {
+public class LocalRunHttpAdapter
+		implements RunsApi, de.zorro909.skywright.backend.boundary.generated.api.ManagedRunsApi {
 
-	private final LocalRunSubmissions submissions;
+	private final ManagedRuns submissions;
 
 	private final RunCommands commands;
 
 	private final RunAcceptanceStore runs;
 
+	private final de.zorro909.skywright.backend.runstore.RunOutputReads outputs;
+
 	private final de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle;
 
 	private final de.zorro909.skywright.backend.runlifecycle.RunProgressReads progress;
 
-	LocalRunHttpAdapter(LocalRunSubmissions submissions, RunCommands commands,
+	LocalRunHttpAdapter(ManagedRuns submissions, RunCommands commands,
 			de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle,
-			de.zorro909.skywright.backend.runlifecycle.RunProgressReads progress, RunAcceptanceStore runs) {
+			de.zorro909.skywright.backend.runlifecycle.RunProgressReads progress, RunAcceptanceStore runs,
+			de.zorro909.skywright.backend.runstore.RunOutputReads outputs) {
+		this.outputs = outputs;
 		this.runs = runs;
 		this.progress = progress;
 		this.submissions = submissions;
 		this.commands = commands;
 		this.lifecycle = lifecycle;
+	}
+
+	@Override
+	public ResponseEntity<de.zorro909.skywright.backend.boundary.generated.model.RunOutputPage> listRunOutputs(
+			String kind, UUID runId, String cursor) {
+		var page = outputs.list(runId, kind, cursor);
+		var items = page.outputs()
+			.stream()
+			.map(output -> new de.zorro909.skywright.backend.boundary.generated.model.RunOutputItem()
+				.kind(de.zorro909.skywright.backend.boundary.generated.model.RunOutputItem.KindEnum
+					.fromValue(output.kind().metadataValue()))
+				.step(output.step())
+				.name(output.name())
+				.sizeBytes(output.size())
+				.sha256(output.digest())
+				.downloadUrl("/api/v1/runs/" + runId + "/output-content?key="
+						+ java.net.URLEncoder.encode(output.key(), java.nio.charset.StandardCharsets.UTF_8)))
+			.toList();
+		return ResponseEntity.ok(new de.zorro909.skywright.backend.boundary.generated.model.RunOutputPage(items)
+			.nextCursor(page.continuation()));
+	}
+
+	@Override
+	public ResponseEntity<org.springframework.core.io.Resource> downloadRunOutput(String key, UUID runId) {
+		byte[] bytes = outputs.download(runId, key);
+		return ResponseEntity.ok()
+			.contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)
+			.contentLength(bytes.length)
+			.header("Content-Disposition", "attachment; filename=skywright-output")
+			.header("X-Content-Type-Options", "nosniff")
+			.header("Cache-Control", "no-store")
+			.body(new org.springframework.core.io.ByteArrayResource(bytes));
 	}
 
 	@Override
@@ -64,6 +101,16 @@ public class LocalRunHttpAdapter implements RunsApi {
 				request.getCheckpointSeed() == null ? null
 						: new LocalRunRequest.CheckpointSeed(request.getCheckpointSeed().getPredecessorRunId(),
 								request.getCheckpointSeed().getCheckpointReference())));
+		return ResponseEntity.accepted()
+			.location(URI.create("/api/v1/runs/" + result.run().runId()))
+			.body(response(result));
+	}
+
+	@Override
+	public ResponseEntity<AcceptedLocalRun> createManagedRun(
+			de.zorro909.skywright.backend.boundary.generated.model.CreateManagedRun request) {
+		var result = submissions.createManaged(new ManagedRunRequest(request.getSubmissionId(),
+				request.getWorkload().getValue(), request.getTarget()));
 		return ResponseEntity.accepted()
 			.location(URI.create("/api/v1/runs/" + result.run().runId()))
 			.body(response(result));
@@ -99,7 +146,7 @@ public class LocalRunHttpAdapter implements RunsApi {
 			Integer limit) {
 		var page = lifecycle.page(after, limit == null ? 20 : limit);
 		return ResponseEntity.ok(new de.zorro909.skywright.backend.boundary.generated.model.RunPage(
-				page.items().stream().map(LocalRunSubmissions::observed).map(this::response).toList())
+				page.items().stream().map(ManagedRuns::observed).map(this::response).toList())
 			.nextCursor(page.nextCursor()));
 	}
 
@@ -132,7 +179,7 @@ public class LocalRunHttpAdapter implements RunsApi {
 					command.stopAttemptedAt() == null ? null : command.stopAttemptedAt().atOffset(ZoneOffset.UTC));
 	}
 
-	private AcceptedLocalRun response(LocalRunSubmissions.Result result) {
+	private AcceptedLocalRun response(ManagedRuns.Result result) {
 		var run = result.run();
 		java.util.Map<String, Object> definition = JsonMapper.builder()
 			.build()

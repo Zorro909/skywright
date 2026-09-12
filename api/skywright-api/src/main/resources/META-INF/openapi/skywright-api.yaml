@@ -17,6 +17,73 @@ servers:
   - url: /api/v1
     description: Version 1 product API
 paths:
+  /managed-run-form:
+    get:
+      operationId: getManagedRunForm
+      summary: Read the installed workload, qualified target and joined admission readiness.
+      responses:
+        '200':
+          description: Read-only evidence, never a capacity reservation. Submission rechecks prerequisites.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRunForm' }
+        '429': { $ref: '#/components/responses/Problem' }
+  /managed-runs:
+    post:
+      operationId: createManagedRun
+      summary: Accept an installed workload on a qualified target through shared durable Run admission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateManagedRun' }
+      responses:
+        '202':
+          description: Durable intent accepted. Replay the same submission identity after uncertain delivery.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AcceptedLocalRun' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /runs/{runId}/outputs:
+    parameters:
+      - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      tags: [RunOutputs]
+      operationId: listRunOutputs
+      summary: List a bounded page of produced Artifacts or Samples.
+      parameters:
+        - { name: kind, in: query, required: true, schema: { type: string, enum: [artifact, sample] } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 4096 } }
+      responses:
+        '200':
+          description: Immutable output metadata, with downloads verified by the backend.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunOutputPage' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /runs/{runId}/output-content:
+    parameters:
+      - { name: runId, in: path, required: true, schema: { $ref: '#/components/schemas/SkywrightId' } }
+    get:
+      tags: [RunOutputs]
+      operationId: downloadRunOutput
+      summary: Download one checksum-verified Artifact or Sample of at most 8 MiB.
+      parameters:
+        - { name: key, in: query, required: true, schema: { type: string, maxLength: 4096 } }
+      responses:
+        '200':
+          description: Verified bytes served as an attachment.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /local-run-target:
     get:
       operationId: getLocalRunTarget
@@ -729,6 +796,23 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/TrainingProject' }
         '409': { $ref: '#/components/responses/Problem' }
+  /training-projects/import:
+    post:
+      operationId: importTrainingProject
+      summary: Enroll an existing project identity after verifying its immutable CI publication.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportTrainingProject' }
+      responses:
+        '200':
+          description: Verified Training Project enrolled, or matching enrollment retained.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainingProject' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /training-projects/{projectId}:
     parameters:
       - name: projectId
@@ -1385,6 +1469,77 @@ components:
         forceAfter: { type: [string, 'null'], format: date-time }
         stopAttemptedAt: { type: [string, 'null'], format: date-time }
         lifecycle: { $ref: '#/components/schemas/RunLifecycleObservation' }
+    CreateManagedRun:
+      type: object
+      additionalProperties: false
+      required: [submissionId, workload, target]
+      properties:
+        submissionId: { $ref: '#/components/schemas/SkywrightId' }
+        workload: { type: string, enum: [demonstration] }
+        target: { type: string, minLength: 1, maxLength: 128 }
+    ManagedRunForm:
+      type: object
+      additionalProperties: false
+      required: [ready, observedAt, workloads, targets, checks]
+      properties:
+        ready: { type: boolean }
+        observedAt: { type: string, format: date-time }
+        workloads:
+          type: array
+          maxItems: 1
+          items: { $ref: '#/components/schemas/ManagedWorkload' }
+        targets:
+          type: array
+          maxItems: 1
+          items: { $ref: '#/components/schemas/ManagedTarget' }
+        checks:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedReadinessCheck' }
+    ManagedWorkload:
+      type: object
+      additionalProperties: false
+      required: [id, displayName]
+      properties:
+        id: { type: string, enum: [demonstration] }
+        displayName: { type: string }
+    ManagedTarget:
+      type: object
+      additionalProperties: false
+      required: [id, gpuModel, gpuCount]
+      properties:
+        id: { type: string }
+        gpuModel: { type: string }
+        gpuCount: { type: integer, minimum: 1 }
+    ManagedReadinessCheck:
+      type: object
+      additionalProperties: false
+      required: [component, ready, code, detail]
+      properties:
+        component: { type: string }
+        ready: { type: boolean }
+        code: { type: string }
+        detail: { type: string }
+    RunOutputPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/RunOutputItem' }
+        nextCursor: { type: string }
+    RunOutputItem:
+      type: object
+      additionalProperties: false
+      required: [kind, step, name, sizeBytes, sha256, downloadUrl]
+      properties:
+        kind: { type: string, enum: [artifact, sample] }
+        step: { type: integer, format: int64, minimum: 0 }
+        name: { type: string }
+        sizeBytes: { type: integer, format: int64, minimum: 0 }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        downloadUrl: { type: string }
     RunPage:
       type: object
       additionalProperties: false
@@ -2259,6 +2414,15 @@ components:
       properties:
         displayName: { type: string, minLength: 1, maxLength: 255 }
         registry: { $ref: '#/components/schemas/RegistryBindingInput' }
+    ImportTrainingProject:
+      type: object
+      additionalProperties: false
+      required: [projectId, displayName, registry, manifestArtifactDigest]
+      properties:
+        projectId: { $ref: '#/components/schemas/SkywrightId' }
+        displayName: { type: string, minLength: 1, maxLength: 255 }
+        registry: { $ref: '#/components/schemas/RegistryBindingInput' }
+        manifestArtifactDigest: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
     RenameTrainingProject:
       type: object
       additionalProperties: false

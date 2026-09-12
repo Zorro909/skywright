@@ -54,6 +54,11 @@ class PullTest(unittest.TestCase):
             def read(self, *_):
                 return owner.secret
 
+            def readiness(self, namespace):
+                owner.assertEqual(namespace, "training")
+                return {"node": "local-node", "nodeReady": True, "gpuModel": "rx7800xt",
+                        "gpuCount": 2, "freeGpuCount": 1, "writerReady": True}
+
             def close(self):
                 pass
 
@@ -69,6 +74,17 @@ class PullTest(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(2)
+
+    def test_readiness_checks_the_qualified_context_without_creating_a_pull_secret(self):
+        status, value = self.call(path="readiness", values={"context": "local"})
+        self.assertEqual(status, 200)
+        self.assertEqual(value["gpuCount"], 2)
+        self.assertEqual(value["freeGpuCount"], 1)
+        self.assertTrue(value["writerReady"])
+        self.assertEqual(self.creates, 0)
+        self.assertEqual(self.call(path="readiness", values={"context": "foreign"})[0], 503)
+        self.offline = True
+        self.assertEqual(self.call(path="readiness", values={"context": "local"})[0], 503)
 
     def call(self, path="pull", body=None, values=None):
         url = f"http://127.0.0.1:{self.server.server_port}/{path}?" + urllib.parse.urlencode(values or self.values)

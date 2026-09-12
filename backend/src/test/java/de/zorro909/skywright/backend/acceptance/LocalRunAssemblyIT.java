@@ -53,6 +53,8 @@ class LocalRunAssemblyIT {
 
 	private static volatile long credentialRevision = 1;
 
+	private static boolean writerRequired;
+
 	@Test
 	void productionAdmissionResolvesContractsLeasesStorageAndSeparateCredentialChannels() throws Exception {
 		var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
@@ -100,11 +102,24 @@ class LocalRunAssemblyIT {
 								+ "\",\"repatriationEnabled\":false,\"repatriationStorageId\":\"" + outputStorage
 								+ "\"}");
 				assertThat(defaults.statusCode()).as(defaults.body()).isEqualTo(200);
-				var project = backend.post("/api/v1/training-projects",
-						"{\"displayName\":\"Local project\",\"registry\":{\"repository\":\"ghcr.io/example/local\",\"accessMode\":\"public\"}}");
-				assertThat(project.statusCode()).as(project.body()).isEqualTo(201);
-				String projectId = JSON.readTree(project.body()).path("id").asText();
+				String projectId = UUID.randomUUID().toString();
 				backend.bean(Registry.class).projectId = projectId;
+				String imported = JSON.writeValueAsString(Map.of("projectId", projectId, "displayName", "Local project",
+						"manifestArtifactDigest", "sha256:" + "9".repeat(64), "registry",
+						Map.of("repository", "ghcr.io/example/local", "accessMode", "public")));
+				String wrongId = UUID.randomUUID().toString();
+				var invalidImport = backend.post("/api/v1/training-projects/import",
+						imported.replace(projectId, wrongId));
+				assertThat(invalidImport.statusCode()).as(invalidImport.body()).isEqualTo(422);
+				assertThat(backend.get("/api/v1/training-projects/" + wrongId).statusCode()).isEqualTo(404);
+				var project = backend.post("/api/v1/training-projects/import", imported);
+				assertThat(project.statusCode()).as(project.body()).isEqualTo(200);
+				assertThat(JSON.readTree(project.body()).path("id").asText()).isEqualTo(projectId);
+				assertThat(backend.post("/api/v1/training-projects/import", imported).statusCode()).isEqualTo(200);
+				assertThat(
+						backend.post("/api/v1/training-projects/import", imported.replace("Local project", "Different"))
+							.statusCode())
+					.isEqualTo(409);
 				var data = JSON.readTree(fixture("dataset.json"));
 				UUID datasetId = UUID.randomUUID(), definitionId = UUID.randomUUID(), copyId = UUID.randomUUID();
 				var entries = new java.util.ArrayList<DatasetManifestEntry>();
@@ -157,6 +172,41 @@ class LocalRunAssemblyIT {
 				assertThat(accepted.body()).contains("\"handoff\":\"source-accepted\"")
 					.doesNotContain("reader-secret", "writer-secret", "fixture-token");
 				UUID run = UUID.fromString(JSON.readTree(accepted.body()).path("runId").asText());
+				String outputKey = projectId + "/" + run + "/v1/artifacts/" + UUID.randomUUID()
+						+ "/0000000000000000001/prediction.json";
+				byte[] outputBytes = "{\"prediction\":7}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+				String outputDigest = HexFormat.of()
+					.formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(outputBytes));
+				admin
+					.putObject(b -> b.bucket(outputBucket)
+						.key(outputKey)
+						.contentType("application/json")
+						.metadata(Map.of("skywright-schema", "v1", "skywright-kind", "artifact", "skywright-size",
+								Integer.toString(outputBytes.length), "skywright-sha256", outputDigest)),
+							software.amazon.awssdk.core.async.AsyncRequestBody.fromBytes(outputBytes))
+					.join();
+				var outputs = backend.get("/api/v1/runs/" + run + "/outputs?kind=artifact");
+				assertThat(outputs.statusCode()).as(outputs.body()).isEqualTo(200);
+				var listedOutput = JSON.readTree(outputs.body()).path("items").get(0);
+				assertThat(listedOutput.path("name").asText()).isEqualTo("prediction.json");
+				var download = backend.get(listedOutput.path("downloadUrl").asText());
+				assertThat(download.statusCode()).as(download.body()).isEqualTo(200);
+				assertThat(download.body()).isEqualTo("{\"prediction\":7}");
+				assertThat(backend.get("/api/v1/runs/" + run + "/output-content?key="
+						+ java.net.URLEncoder.encode(outputKey.replace(run.toString(), UUID.randomUUID().toString()),
+								java.nio.charset.StandardCharsets.UTF_8))
+					.statusCode()).isEqualTo(400);
+				admin
+					.putObject(b -> b.bucket(outputBucket)
+						.key(outputKey)
+						.contentType("application/json")
+						.metadata(Map.of("skywright-schema", "v1", "skywright-kind", "artifact", "skywright-size",
+								Integer.toString(outputBytes.length), "skywright-sha256", "0".repeat(64))),
+							software.amazon.awssdk.core.async.AsyncRequestBody.fromBytes(outputBytes))
+					.join();
+				var corruptDownload = backend.get(listedOutput.path("downloadUrl").asText());
+				assertThat(corruptDownload.statusCode()).isEqualTo(503);
+				assertThat(corruptDownload.body()).doesNotContain("prediction");
 				assertThat(backend.bean(DatasetCatalog.class).get(definitionId).leases()).singleElement()
 					.satisfies(lease -> assertThat(lease.runRecordId()).isEqualTo(run));
 				assertThat(backend.bean(LocalProjectionFacts.class).forConsumer(run)).hasSize(2);
@@ -231,10 +281,17 @@ class LocalRunAssemblyIT {
 					.startsWith("docker:ghcr.io/example/local-replacement@");
 				seededAcceptance(backend, admin, storage.endpoint(), outputBucket, request, projectId, run);
 				privateDelivery(backend, request, projectId);
+				writerRequired = true;
+				backend.restart();
+				var missingWriter = backend.post("/api/v1/runs",
+						request.replace(submission.toString(), UUID.randomUUID().toString()));
+				assertThat(missingWriter.statusCode()).isEqualTo(503);
+				assertThat(missingWriter.body()).contains("WRITER_AUTHORITY_UNAVAILABLE");
 
 			}
 		}
 		finally {
+			writerRequired = false;
 			server.stop(0);
 			Files.deleteIfExists(tokenFile);
 		}
@@ -472,7 +529,7 @@ class LocalRunAssemblyIT {
 		@Primary
 		LocalRunTargetSettings qualifiedLocalTarget() {
 			return new LocalRunTargetSettings("local/amd", "local", "MI300X", 1, 192L * 1024 * 1024 * 1024, "8", "32",
-					false);
+					writerRequired);
 		}
 
 		@Bean

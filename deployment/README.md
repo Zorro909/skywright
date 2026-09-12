@@ -213,6 +213,17 @@ uses collision-checked version aliases in all three GHCR repositories. An interr
 can fill a missing alias on retry, but it cannot replace different content already recorded for
 that release version.
 
+Stable releases require a commit on `main` and its successful push quality gate.
+A manually dispatched prerelease can qualify an unmerged installation change.
+Its PR head must include current `main` and have a successful Repository Quality
+run for that exact head. It receives the same image builds, checksums and
+attestations as a main release.
+
+Schema v4 also carries a checksummed local installer archive, the writer image
+digest and the supported local state format. The installer rejects archives
+containing traversal paths, links or oversized members before extraction.
+The writer image is built and attested by the same release workflow.
+
 Apply or roll back by passing an immutable bundle digest through the same command:
 
 ```bash
@@ -240,3 +251,6 @@ artifacts. Failed, untagged intermediates may be removed after 30 days only afte
 published bundle references them.
 
 Operator-prepopulated managed credentials use the [local Vault binding guide](../docs/local-vault-bindings.md), including persistent storage, unseal and recovery.
+
+For the complete private AMD install, retained update, backup and smoke commands,
+see [Private AMD installation](LOCAL_INSTALLATION.md).

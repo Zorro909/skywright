@@ -14,6 +14,14 @@ export const routes: Routes = [
   {
     path: 'runs/new',
     loadComponent: () =>
+      import('./pages/managed-run.page').then(
+        (module) => module.ManagedRunPage,
+      ),
+    title: 'Create Run · Skywright',
+  },
+  {
+    path: 'runs/new/advanced',
+    loadComponent: () =>
       import('./pages/new-run.page').then((module) => module.NewRunPage),
     title: 'Create Run · Skywright',
   },

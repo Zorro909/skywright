@@ -10,6 +10,14 @@ A Run Definition references the code it executes as an immutable container image
 
 A Training Project has a Skywright-owned identity; its registry repository is an attribute of that identity, so a change of registry does not create a new project. A Training Project Version is identified by that project plus a `<commit-sha>-<pipeline>` label and resolves to one Training Project Image digest per accelerator backend it declares. The label is provenance and the digest identifies — a tag can be repointed, a digest cannot. Because a project commits the base image reference it builds against, changing the base is itself a source change; the pipeline number therefore only distinguishes rebuilds of one commit. The base image digest is recorded as provenance on the version, so two builds of one commit can be told apart without archaeology.
 
+An installation can enroll a supplied project's existing Skywright identity from a
+digest-pinned CI publication. Enrollment verifies the embedded identity, images
+and contracts through the same resolver used for Run admission before committing
+the registry binding. A repeated enrollment must match the existing identity,
+name and credential bindings. It cannot replace a binding or create an identity
+whose publication fails verification. This lets the packaged demonstration run
+on another installation without rebuilding its Training Project Image.
+
 ## Build and publication
 
 CI is the only permitted builder. There is no local build path, so every Run traces to a commit and an uncommitted working tree cannot reach the Run system at all — running the training script directly (`B3`) stays outside it and never acquires a run identity. The base image is library-owned and shared, which keeps the multi-gigabyte layers cached and the per-commit layer small; the project's lock file may not replace the Skywright library that base carries, and the CI build fails if it would. The Project Configuration Contract and Project Metric Contract are published as content-addressed OCI artifacts in the same registry, addressed deterministically from the image digests they describe. Per [ADR 0012](0012-compose-one-owned-configuration-tree.md) and [ADR 0015](0015-compose-version-pinned-metric-contracts.md), CI composes them against the schemas supplied by that Skywright library release, rejects invalid declarations or ownership collisions, and records the library version and schema digests for the backend to verify independently. A version is runnable only when every backend image it declares and both valid contracts resolve; anything less is reported as not-runnable with the missing or invalid piece named.

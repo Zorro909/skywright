@@ -1,9 +1,15 @@
 import { InjectionToken } from '@angular/core';
-import { object, type CreateRun } from '../api/run.api';
+import { object, type CreateRun, type CreateManagedRun } from '../api/run.api';
 
 export interface SubmissionJournal {
   readonly version: 1;
   readonly request: CreateRun;
+  readonly acceptedRunId?: string;
+  readonly rejected?: true;
+}
+export interface ManagedSubmissionJournal {
+  readonly version: 2;
+  readonly request: CreateManagedRun;
   readonly acceptedRunId?: string;
   readonly rejected?: true;
 }
@@ -19,14 +25,29 @@ export class RunRequestJournal {
   }
 
   read(): SubmissionJournal | undefined {
+    const saved = this.readAny();
+    if (saved && saved.version !== 1)
+      throw new Error('A managed submission is saved');
+    return saved;
+  }
+
+  readManaged(): ManagedSubmissionJournal | undefined {
+    const saved = this.readAny();
+    if (saved && saved.version !== 2)
+      throw new Error('An earlier submission is saved');
+    return saved;
+  }
+
+  private readAny(): SubmissionJournal | ManagedSubmissionJournal | undefined {
     const raw = this.storage.getItem(key);
     if (raw === null) return undefined;
     const value: unknown = JSON.parse(raw);
     if (
       !object(value) ||
       !onlyKeys(value, ['version', 'request', 'acceptedRunId', 'rejected']) ||
-      value['version'] !== 1 ||
-      !savedRequest(value['request'])
+      !(value['version'] === 1
+        ? savedRequest(value['request'])
+        : value['version'] === 2 && savedManagedRequest(value['request']))
     )
       throw new Error('Unreadable saved submission');
     if (
@@ -37,7 +58,17 @@ export class RunRequestJournal {
       (value['acceptedRunId'] !== undefined && value['rejected'] !== undefined)
     )
       throw new Error('Unreadable saved submission');
-    return value as unknown as SubmissionJournal;
+    return value as unknown as SubmissionJournal | ManagedSubmissionJournal;
+  }
+
+  freezeManaged(request: CreateManagedRun): Promise<ManagedSubmissionJournal> {
+    return this.lock(() => {
+      const previous = this.readManaged();
+      if (previous) return previous;
+      const saved: ManagedSubmissionJournal = { version: 2, request };
+      this.write(saved);
+      return saved;
+    });
   }
 
   freeze(request: CreateRun): Promise<SubmissionJournal> {
@@ -55,7 +86,7 @@ export class RunRequestJournal {
     result: { acceptedRunId: string } | { rejected: true },
   ): Promise<void> {
     return this.lock(() => {
-      const saved = this.read();
+      const saved = this.readAny();
       if (saved?.request.submissionId === submissionId)
         this.write({ ...saved, ...result });
     });
@@ -63,7 +94,7 @@ export class RunRequestJournal {
 
   clearSettled(): Promise<void> {
     return this.lock(() => {
-      const saved = this.read();
+      const saved = this.readAny();
       if (saved && !saved.acceptedRunId && !saved.rejected)
         throw new Error('Submission acceptance is still uncertain');
       this.storage.removeItem(key);
@@ -96,7 +127,7 @@ export class RunRequestJournal {
     });
   }
 
-  private write(value: SubmissionJournal) {
+  private write(value: SubmissionJournal | ManagedSubmissionJournal) {
     const encoded = JSON.stringify(value);
     if (new TextEncoder().encode(encoded).length > 1024 * 1024)
       throw new Error('Saved request exceeds 1 MiB');
@@ -116,6 +147,18 @@ export class RunRequestJournal {
 
 function onlyKeys(value: Record<string, unknown>, keys: readonly string[]) {
   return Object.keys(value).every((field) => keys.includes(field));
+}
+
+function savedManagedRequest(value: unknown): value is CreateManagedRun {
+  return (
+    object(value) &&
+    onlyKeys(value, ['submissionId', 'workload', 'target']) &&
+    typeof value['submissionId'] === 'string' &&
+    uuid.test(value['submissionId']) &&
+    value['workload'] === 'demonstration' &&
+    typeof value['target'] === 'string' &&
+    !!value['target']
+  );
 }
 
 /** Validate stored request structure; the backend owns input constraints. */
