@@ -10,6 +10,9 @@ import de.zorro909.skywright.backend.rundefinition.RunDefinition;
 /** Resolution and Run-owned lease/projection writes join the acceptance transaction. */
 public interface RunAdmission {
 
+	default void requireTargetReady(LocalRunRequest request) {
+	}
+
 	Prepared prepare(UUID runId, LocalRunRequest request);
 
 	record Prepared(RunDefinition definition, OrchestratorTaskSpecification task, TrainingCredentials credentials,

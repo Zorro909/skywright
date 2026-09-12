@@ -78,6 +78,11 @@ final class ResolvedRunAdmission implements RunAdmission {
 	}
 
 	@Override
+	public void requireTargetReady(LocalRunRequest request) {
+		targets.select(request.target()).requireReady(request.gpuCount());
+	}
+
+	@Override
 	public Prepared prepare(UUID runId, LocalRunRequest request) {
 		var adapter = targets.select(request.target());
 		adapter.requireReady(request.gpuCount());

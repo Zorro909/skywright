@@ -22,6 +22,10 @@ class ManagedRunFormIT {
 			assertThat(rejected.body()).contains("VAST_LAUNCH_PRICE_UNPROVEN");
 			assertThat(backend.get("/api/v1/runs").body()).isEqualTo(before);
 			assertThat(backend.bean(LocalRunAcceptanceIT.Source.class).launches).hasValue(0);
+			backend.bean(LocalRunAcceptanceIT.Source.class).available = false;
+			var offline = backend.post("/api/v1/managed-runs", request);
+			assertThat(offline.statusCode()).as(offline.body()).isEqualTo(503);
+			assertThat(offline.body()).contains("VAST_LAUNCH_PRICE_UNPROVEN");
 			var deferred = backend.post("/api/v1/managed-runs", request.replace("vast/on-demand", "vast/spot"));
 			assertThat(deferred.statusCode()).as(deferred.body()).isEqualTo(422);
 			assertThat(deferred.body()).contains("TARGET_INELIGIBLE");

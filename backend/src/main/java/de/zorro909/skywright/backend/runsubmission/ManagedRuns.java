@@ -86,6 +86,7 @@ public class ManagedRuns {
 		if (previous.isPresent())
 			return replay(previous.get(), digest);
 		requireAdmissionEnabled();
+		admission.requireTargetReady(request);
 		try {
 			if (!orchestrator.refreshAvailability().toCompletableFuture().get(5, TimeUnit.SECONDS).available())
 				throw new RunSubmissionException("RUN_ADMISSION_UNAVAILABLE", 503);
