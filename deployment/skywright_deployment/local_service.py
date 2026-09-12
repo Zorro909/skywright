@@ -71,6 +71,8 @@ def run(arguments) -> None:
     kube = Kubernetes(settings["context"])
     forward = None
     next_renewal = 0
+    from .local_vast import ProviderValidation
+    provider_validation = ProviderValidation()
     try:
         while True:
             try:
@@ -89,13 +91,13 @@ def run(arguments) -> None:
                             forward = subprocess.Popen([*kube.prefix, "-n", "skywright", "port-forward",
                                 "--address=127.0.0.1", "service/skywright-backend", "8080:80"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        from .local_vast import reconcile
-                        reconcile(kube, settings, directory)
+                        provider_validation.poll(kube, settings, directory)
             except (SystemExit, OSError, ValueError, subprocess.TimeoutExpired):
                 # Stale host observation fails admission closed. Retry without writing provider data to logs.
                 pass
             time.sleep(10)
     finally:
+        provider_validation.close()
         if forward is not None:
             forward.terminate()
             try:

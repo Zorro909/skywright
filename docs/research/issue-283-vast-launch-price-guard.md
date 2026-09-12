@@ -10,6 +10,13 @@ bounded runtime with independent cleanup. The owner did not require atomic
 provider-enforced ceilings on every charge component. On-demand still has no
 proved actual-rental cap through the unchanged pinned adapter.
 
+Later full-adapter testing found a separate selection failure: the released
+Vast SDK drops SkyPilot's search filters, then the adapter selects a globally
+ranked offer above this budget. Preserving an explicit bid does not establish
+that the requested GPU can be rented. See the
+[catalog and SDK compatibility findings](issue-283-vast-catalog-selection.md)
+before treating the price findings as launch readiness.
+
 ## On-demand alternatives examined
 
 | Mechanism | Finding |
@@ -287,6 +294,15 @@ interval as a guaranteed maximum cleanup latency.
 [Managed job timings](https://github.com/skypilot-org/skypilot/blob/v0.13.0/sky/jobs/utils.py)
 
 ## Exact-ask constrained key, pending provider validation
+
+The provisioning-method inventory also needs the authentication stage:
+`setup_vast_authentication` calls `show_ssh_keys` and, when the generated public
+key is missing, `create_ssh_key`. The later onstart public-key injection does
+not remove this prerequisite. A statement that first launch never registers an
+account SSH key was incorrect. The scoped policy must retain the required
+account SSH-key permission, including provider-added baseline rights when
+present, without granting billing or API-key administration.
+[Pinned Vast authentication](https://github.com/skypilot-org/skypilot/blob/v0.13.0/sky/authentication.py)
 
 The public permissions documentation demonstrates exact-ID constraints for
 showing, rebooting and destroying existing instances. It does not name the

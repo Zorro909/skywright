@@ -8,7 +8,8 @@ qualification has taken place. The issue must remain open.
 
 The Managed Run form lists local AMD, Vast.ai on-demand and Vast.ai interruptible separately. Readiness
 belongs to the selected target. Vast lists separate unknown Cost Quote, credential
-projection, storage, registry, price, budget and qualification gates. These are
+projection, storage, registry, price, budget and qualification gates. A separate
+resource-selection check records the confirmed offer-filter incompatibility. These are
 explicit unavailable assessments; the form does not yet validate live cloud
 evidence. Its image check reads the exact assessed version and requires CUDA
 for Vast or ROCm for local AMD. They cannot enable Create Run or disable an otherwise ready local target. The form identifies the exact
@@ -68,6 +69,13 @@ the explicit interruptible bid and describes fresh fee assessment, conservative
 reserves and independent cleanup. These do not require an atomic cap on every
 storage or traffic charge. Do not rent until the actual resource and complete
 budget assessment are established.
+
+A further no-spend check on 2026-09-12 at 22:34 UTC reproduced the SDK's
+actual unfiltered offer query against the enrolled account. The first offer
+surviving its CPU/RAM postprocessing was a B200 with a USD 5.00 minimum bid,
+above the owner's limit. Credit remained USD 2.3402639111259873. The GUI now
+reports `VAST_OFFER_FILTERS_UNSUPPORTED` for both modes. The cheaper separately
+queried RTX 3060 offers do not establish what this adapter would rent.
 
 ## Credential setup and trust
 
@@ -216,5 +224,38 @@ format/lint/type/contract checks; and the installed SDK test through real S3 for
 local, on-demand CUDA and interruptible CUDA definitions using its private CPU
 seam. Deployment tests passed 24 cases with two existing skips. The provider
 server image built and passed its image integration check with the official
-Vast SDK installed. Live NVIDIA, provider projection and rental cleanup remain
-unverified.
+Vast SDK installed. The full backend suite excluding `real-service` passed again after the
+interruptible extension, with 288 unit tests and 43 integration tests. Full catalog
+region names also passed the projection and native SkyPilot boundary checks.
+Live NVIDIA, provider projection and rental cleanup remain unverified.
+
+The installed instance already uses SkyPilot consolidated Managed Jobs. The
+deployment preserves its current mode and checks both the startup marker
+and the effective mode after rollout when the Vast provider is selected. The proposed private storage transport and
+its remaining runtime checks are recorded in
+[the transport research](../research/issue-283-private-storage-transport.md).
+
+
+## Corrected credential-policy diagnostic
+
+Two corrected attempts at 22:35 and 22:36 UTC verified the temporary read-only
+key's identity before and after the provider denied a create request with HTTP
+401. Both then stopped while creating the first exact-ID constrained key,
+with `diagnostic_key_creation_failed`. Neither performed the allow/deny
+differential or proved an exact-offer restriction. Both receipts confirm
+diagnostic-key cleanup, no positive offer requests and no change to the Vault
+key. A separate authenticated read-only metadata check at 22:40 UTC found
+zero active diagnostic keys and zero policy bootstrap keys. The available receipt omits the failed creation response status, so it
+does not distinguish unsupported policy syntax from another creation failure.
+
+The maintenance fix keeps slow provider reads outside local GPU observations.
+Read-only inspection confirmed the installed controller already uses consolidation. The final Managed
+Run HTTP checks passed with both modes reporting the offer-filter incompatibility.
+
+The final deployment suite passed 87 tests with seven environment-dependent
+skips. The project publisher's 36 tests and format/lint/type checks also passed.
+The combined CUDA/ROCm publication exposed insufficient CI disk space after
+CUDA succeeded. An explicit `cleanup-docker` option releases unused Docker
+images and build cache after each resolved published image, before the next
+backend. It defaults off and is enabled only on the dedicated ephemeral
+qualification runner. Both backend builds and smoke tests remain required.

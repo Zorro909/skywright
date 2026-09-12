@@ -148,9 +148,14 @@ is absent. Release of a projection does not revoke the provider key. Enrollment
 evidence has a conservative 24-hour deployment validity window; this is not a
 claim about provider expiry. Provider read access alone never enables paid
 admission or establishes provisioning, storage or cleanup qualification.
-The deployment pins the SkyPilot Managed Jobs controller to the existing local
-Kubernetes context. A previously created controller still requires inspection
-before the first cloud Run; the configuration does not move an existing one.
+The deployment pins separate Managed Jobs controller resources to local
+Kubernetes and preserves SkyPilot's existing controller-mode behavior. It does
+not switch an installation between separate and consolidated controllers. When
+a Vast provider is selected, post-rollout verification requires effective
+consolidation and its startup marker. The existing qualification instance
+already uses consolidation. Optional provider API validation runs outside the
+maintenance heartbeat and cannot delay local GPU observations; its result is
+retained only for the same Pod and enrollment revision.
 
 The node has a 12-CPU, 32-GiB Docker ceiling with swap disabled beyond that
 memory limit. The backend is limited to 2 CPUs and 4 GiB; PostgreSQL to 1 CPU

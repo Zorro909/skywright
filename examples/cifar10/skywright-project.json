@@ -13,6 +13,9 @@
   "backends": {
     "rocm": {
       "environmentProfile": "ghcr.io/zorro909/skywright-ui-qualification-profile@sha256:3dff7998855d200717bec9b6d1257a936b6c30d7c9423f99df39b09fe1954ab6"
+    },
+    "cuda": {
+      "environmentProfile": "ghcr.io/zorro909/skywright-ui-qualification-profile@sha256:daa271e952c837deef9ee82eed00b78faeabb682b2df7927f7250b4ffc78c4b2"
     }
   }
 }

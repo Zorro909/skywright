@@ -23,3 +23,10 @@ own pinned Skywright revision. Each image build checks that the Skywright librar
 Environment Profile exposes those exact configuration and metric schema identities before the
 image can be published. Docker/OCI publication code remains private to this Action and is not
 installed with the `skywright` runtime SDK.
+
+On a dedicated ephemeral runner, set `cleanup-docker: 'true'` when the CUDA
+and ROCm images cannot fit together. After each successful image push and
+registry digest resolution, the action removes unused Docker build cache and
+images before building the next backend. This deletes unrelated unused Docker
+state too, so leave the default `false` on shared or retained Docker hosts.
+Cleanup does not delete published images or skip either backend's smoke test.

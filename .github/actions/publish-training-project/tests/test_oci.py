@@ -406,8 +406,9 @@ def test_oci_adapter_detects_a_manifest_replaced_during_publication(
         )
 
 
+@pytest.mark.parametrize("cleanup", [False, True])
 def test_docker_adapter_builds_from_the_profile_and_checks_sdk_authority(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cleanup: bool
 ) -> None:
     configuration = tmp_path / "configuration.json"
     configuration.write_text(
@@ -460,7 +461,11 @@ def test_docker_adapter_builds_from_the_profile_and_checks_sdk_authority(
     )
     registry = OciArtifactRegistry("registry.test", "owner/project")
 
+    resolved = False
+
     def manifest_digest(repository: str, reference: str) -> str:
+        nonlocal resolved
+        resolved = True
         return "sha256:" + "b" * 64
 
     monkeypatch.setattr(registry, "manifest_digest", manifest_digest)
@@ -470,17 +475,29 @@ def test_docker_adapter_builds_from_the_profile_and_checks_sdk_authority(
     def run(*command: str) -> None:
         nonlocal containerfile
         commands.append(command)
+        if command[1] in {"builder", "image"}:
+            assert resolved
         if command[1] == "build":
             containerfile = Path(command[command.index("--file") + 1]).read_text()
 
     monkeypatch.setattr("skywright_project_action.oci._run", run)
 
     digest = DockerProjectImageBuilder(
-        registry, source_revision="1" * 40, pipeline="github-123-1"
+        registry,
+        source_revision="1" * 40,
+        pipeline="github-123-1",
+        cleanup_docker=cleanup,
     ).build_smoke_and_push(definition, "cuda", "registry.test/owner/project:staging")
 
     assert digest == "sha256:" + "b" * 64
-    assert [command[1] for command in commands] == ["build", "run", "run", "push"]
+    assert [command[1] for command in commands] == ["build", "run", "run", "push"] + (
+        ["builder", "image"] if cleanup else []
+    )
+    if cleanup:
+        assert commands[-2:] == [
+            ("docker", "builder", "prune", "--all", "--force"),
+            ("docker", "image", "prune", "--all", "--force"),
+        ]
     assert "skywright_project.train" in commands[2][-1]
     assert "inspect.signature" in commands[2][-1]
     assert "FROM registry.test/profile@sha256:" in containerfile

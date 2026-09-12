@@ -11,6 +11,10 @@ inputs:
   registry-password:
     description: Password or short-lived token used to push the configured OCI repository
     required: true
+  cleanup-docker:
+    description: Delete unused Docker images and build cache after each backend; use only on a dedicated ephemeral runner
+    required: false
+    default: 'false'
 outputs:
   version-label:
     description: Commit-and-pipeline provenance label
@@ -40,6 +44,7 @@ runs:
       env:
         ACTION_PATH: ${{ github.action_path }}
         DEFINITION: ${{ inputs.definition }}
+        SKYWRIGHT_PROJECT_CLEANUP_DOCKER: ${{ inputs.cleanup-docker }}
         SKYWRIGHT_REGISTRY_USERNAME: ${{ inputs.registry-username }}
         SKYWRIGHT_REGISTRY_PASSWORD: ${{ inputs.registry-password }}
       run: |

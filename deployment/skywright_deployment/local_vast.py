@@ -7,6 +7,7 @@ import json
 import re
 import subprocess
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .local_catalog import binding_id
@@ -80,23 +81,33 @@ def verify(kube, settings: dict, directory: Path) -> dict | None:
     if value is None:
         return None
     projected = observe_projection(kube, settings, directory)
+    observed = validation_result(kube, value, projected["consumerName"])
+    record_validation(directory, projected, observed)
+    return None if observed is None else {**projected, "binding": binding(settings, observed), "validation": observed}
+
+
+def validation_result(kube, value: dict, consumer_name: str) -> dict | None:
+    try:
+        return validate(kube, value, consumer_name)
+    except (SystemExit, OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+def record_validation(directory: Path, projected: dict, observed: dict | None) -> None:
     from .local_installation import record
     records = directory / "credential-projections"
-    try:
-        observed = validate(kube, value)
-    except (SystemExit, OSError, ValueError, subprocess.TimeoutExpired):
+    if observed is None:
         failed = records / (projected["id"] + ".validation-failed.json")
         if not failed.exists():
             record(failed, {"projectionId": projected["id"], "status": "unavailable",
                            "observedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                            "code": "VAST_PROVIDER_VALIDATION_UNAVAILABLE"})
-        return None
+        return
     # Every validation is a separate observation. Never replace earlier evidence.
     record(records / (projected["id"] + "." + str(uuid.uuid4()) + ".validation.json"), observed)
-    return {**projected, "binding": binding(settings, observed), "validation": observed}
 
 
-def validate(kube, value: dict) -> dict:
+def validate(kube, value: dict, consumer_name: str) -> dict:
     """Failure leaves only the optional provider binding unavailable."""
     if (datetime.datetime.fromisoformat(value["enrolledAt"]) + datetime.timedelta(hours=24)
             <= datetime.datetime.now(datetime.timezone.utc)):
@@ -133,7 +144,7 @@ except BaseException:
     sys.exit(1)
 '''
     expected = {"api": {**value["requestedPermissions"]["api"], "*": BASELINE_RIGHTS}}
-    response = kube.run("exec", "-i", "deployment/skywright-skypilot-api-server", "-n", "skywright",
+    response = kube.run("exec", "-i", "pod/" + consumer_name, "-n", "skywright",
                         "-c", "skypilot-api-server", "--", "python", "-", value["identity"],
                         str(value["providerKeyId"]), json.dumps(expected),
                         data=script.encode(), allow_failure=True, timeout=45)
@@ -161,7 +172,7 @@ def observe_projection(kube, settings: dict, directory: Path) -> dict:
         if previous["consumerId"] == pod["metadata"]["uid"]:
             if previous["selection"] != selected:
                 raise SystemExit("The provider consumer still holds a different selected revision")
-            return previous
+            return {**previous, "consumerName": pod["metadata"]["name"]}
     projected_at = next((item["state"]["terminated"]["finishedAt"]
         for item in pod.get("status", {}).get("initContainerStatuses", [])
         if item["name"] == "project-kubernetes-credential"
@@ -170,14 +181,14 @@ def observe_projection(kube, settings: dict, directory: Path) -> dict:
         raise SystemExit("Vault projection completion is unobserved")
     projected = {"id": str(uuid.uuid4()), "bindingId": binding_id("vast-provider"),
                  "selection": selected, "consumerRole": "skypilot-api-server",
-                 "consumerId": pod["metadata"]["uid"], "destination": DESTINATION,
+                 "consumerId": pod["metadata"]["uid"], "consumerName": pod["metadata"]["name"], "destination": DESTINATION,
                  "projectedAt": projected_at, "paidLaunch": False}
     from .local_installation import record
     record(records / (projected["id"] + ".projection.json"), projected)
     return projected
 
 
-def reconcile(kube, settings: dict, directory: Path) -> None:
+def reconcile(kube, settings: dict, directory: Path, *, validate_new: bool = True) -> dict | None:
     """Append observed releases and verify newly observed Pod consumers."""
     records = directory / "credential-projections"
     if selection(settings) is None and not records.exists():
@@ -196,4 +207,36 @@ def reconcile(kube, settings: dict, directory: Path) -> None:
                                               and not pod["metadata"].get("deletionTimestamp") for pod in pods["items"]):
         observed = observe_projection(kube, settings, directory)
         if not any(records.glob(observed["id"] + ".*.validation.json")):
-            verify(kube, settings, directory)
+            if validate_new:
+                verify(kube, settings, directory)
+            return observed
+    return None
+
+
+class ProviderValidation:
+    """Read provider APIs outside the heartbeat; publish results under its lifecycle lock."""
+
+    def __init__(self):
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vast-validation")
+        self.pending = None
+
+    def poll(self, kube, settings: dict, directory: Path) -> None:
+        # The maintenance caller holds the installation lock. The worker only reads
+        # its exact Pod; updates may replace that Pod while a request is in flight.
+        current = reconcile(kube, settings, directory, validate_new=False)
+        if self.pending is not None:
+            projected, future = self.pending
+            if not future.done():
+                return
+            self.pending = None
+            observed = future.result()
+            if (current is not None and current["consumerId"] == projected["consumerId"]
+                    and current["selection"] == projected["selection"]):
+                record_validation(directory, projected, observed)
+                return
+        if current is not None:
+            self.pending = (current, self.executor.submit(
+                validation_result, kube, current["selection"], current["consumerName"]))
+
+    def close(self) -> None:
+        self.executor.shutdown(wait=True, cancel_futures=True)

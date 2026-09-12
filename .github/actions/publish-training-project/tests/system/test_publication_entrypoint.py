@@ -134,9 +134,14 @@ def test_action_publication_entrypoint_runs_the_complete_application_flow(
         return registry
 
     def image_builder(
-        registry_adapter: object, *, source_revision: str, pipeline: str
+        registry_adapter: object,
+        *,
+        source_revision: str,
+        pipeline: str,
+        cleanup_docker: bool,
     ) -> SystemImages:
         assert registry_adapter is registry
+        assert cleanup_docker is False
         assert source_revision == revision
         assert pipeline == "system-1"
         return images
