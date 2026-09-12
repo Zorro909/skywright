@@ -148,3 +148,13 @@ Repeated release-runner SDK image checks exceeded their 120-second process wait.
 Successful runs took about 103–105 seconds; a local thread dump at 93 seconds
 showed active GraalPy execution rather than a blocked thread. The check now allows
 180 seconds inside its existing 240-second test limit and passed locally.
+
+Source `1aa036c` passed Repository Quality `34694938638` and signed release
+`v0.1.0-issue288.3` passed publication on its first attempt. Installing it into
+another empty instance exposed the first-use credential failure: SkyPilot logs
+JWT signing-key initialization to stdout before the credential JSON. The helper
+now disables logging inside its own process before importing SkyPilot. An actual
+SDK probe using separate temporary databases reproduced mixed stdout with the
+original helper and valid credential JSON with the fix. Both processes exited
+successfully; no credential values were printed. A new signed fresh installation
+is still required to qualify this correction.

@@ -87,7 +87,10 @@ def skypilot_credential(kube: Kubernetes, root: Path, vault: Vault) -> None:
         # Use the pinned server's own credential persistence implementation.
         # stdout goes directly into a protected operator input, never the console.
         script = """
-import json
+import json, logging
+# SkyPilot logs first-use JWT key creation to stdout. Reserve that channel for
+# the credential JSON consumed into the protected operator file.
+logging.disable(logging.CRITICAL)
 from sky import global_user_state, models
 from sky.users import token_service, permission
 identity = "sa-skywright-local"
