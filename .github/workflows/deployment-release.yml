@@ -253,6 +253,10 @@ jobs:
               exit 1
             fi
           done
+          # Skaffold may return repository:tag@digest for newly pushed images.
+          # The bundle and rendered manifest use one canonical digest-only form.
+          backend_image="ghcr.io/zorro909/skywright-backend@$(oras resolve "$BACKEND_TAG")"
+          skypilot_image="ghcr.io/zorro909/skywright-skypilot-api-server@$(oras resolve "$SKYPILOT_TAG")"
           jq --null-input \
             --arg backend "$backend_image" \
             --arg skypilot "$skypilot_image" \
