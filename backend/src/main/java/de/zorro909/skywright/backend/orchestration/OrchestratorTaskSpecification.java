@@ -92,7 +92,8 @@ public record OrchestratorTaskSpecification(String name, String setup, String ru
 			requireText(memory, "memory");
 			if (region != null || instanceType != null || diskSize != null || maxHourlyCost != null
 					|| maxBidHourlyCost != null || (infrastructure.equals("vast") && useSpot)) {
-				if (!infrastructure.equals("vast") || region == null || !region.matches("[A-Z]{2}")
+				if (!infrastructure.equals("vast") || region == null || region.isBlank() || region.length() > 160
+						|| region.contains("/") || region.codePoints().anyMatch(Character::isISOControl)
 						|| instanceType == null || !instanceType.matches("[A-Za-z0-9_-]+") || diskSize == null
 						|| diskSize < 1 || maxHourlyCost == null || maxHourlyCost.signum() <= 0
 						|| maxHourlyCost.compareTo(new java.math.BigDecimal("0.15")) >= 0)

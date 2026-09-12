@@ -52,8 +52,9 @@ class LocalRuntimeProjectionTest {
 		var cuda = new RuntimeMaterials(local.materialsVersion(), local.runId(),
 				"ghcr.io/example/project@sha256:" + "a".repeat(64), local.configurationContract(),
 				local.metricContract(), local.dataset(), local.datasetLocation(), local.sourceCheckpoint());
-		var target = new VastRuntimeProjection.Target("US", "1x-RTX_3060-16384", "RTX_3060", 12L * 1024 * 1024 * 1024,
-				"2", "8", 20, new java.math.BigDecimal("0.14"), spot ? new java.math.BigDecimal("0.04") : null);
+		var target = new VastRuntimeProjection.Target("Ontario, CA, NA", "1x-RTX_3060-16384", "RTX_3060",
+				12L * 1024 * 1024 * 1024, "2", "8", 20, new java.math.BigDecimal("0.14"),
+				spot ? new java.math.BigDecimal("0.04") : null);
 		var task = new VastRuntimeProjection().project(definition, cuda, target);
 		assertThat(task.resources()).hasSize(1);
 		var resource = task.resources().getFirst();
@@ -61,7 +62,7 @@ class LocalRuntimeProjectionTest {
 		assertThat(resource.useSpot()).isEqualTo(spot);
 		assertThat(resource.maxBidHourlyCost()).isEqualTo(spot ? new java.math.BigDecimal("0.04") : null);
 		assertThat(resource.imageId()).isEqualTo("docker:ghcr.io/example/project@sha256:" + "a".repeat(64));
-		assertThat(resource.region()).isEqualTo("US");
+		assertThat(resource.region()).isEqualTo("Ontario, CA, NA");
 		assertThat(resource.instanceType()).isEqualTo("1x-RTX_3060-16384");
 		assertThat(resource.diskSize()).isEqualTo(20);
 		assertThat(resource.maxHourlyCost()).isEqualByComparingTo("0.14");

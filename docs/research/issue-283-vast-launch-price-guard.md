@@ -325,6 +325,76 @@ A bootstrap wizard can validate the syntax without renting:
    Preserve separate cleanup access and revoke the temporary bootstrap key.
 
 Use IDs verified absent from the marketplace, never a real unapproved offer for
-a rejection test. This research has not performed any of these key mutations or
-create requests. A key bound to a real ask does not limit how often that same
+a rejection test. A key bound to a real ask does not limit how often that same
 ask can be rented, so the watchdog and replacement allowance remain necessary.
+
+### No-spend diagnostic observations
+
+The owner ran the temporary-key wizard on September 12, 2026. Its read-only key
+received HTTP 401 when submitting the complete create payload to ask 0. The
+first helper classified only HTTP 403 as a permission denial and did not retain
+sanitized error details, so that result cannot establish the operation name or
+the constraint behavior. Cleanup was verified and the temporary keys were
+removed at 22:00:15 UTC. The original Vault key was unchanged. The local evidence
+is `.scratch/issue283/skywright-283-policy-probe-6bb1e65d51d0.json`.
+
+The official authentication documentation explicitly allows either HTTP 401 or
+403 for insufficient scope and recommends checking a key through
+`GET /users/current/`. A status alone cannot distinguish insufficient scope from
+an invalid or expired credential.
+[Vast authentication](https://docs.vast.ai/api-reference/authentication)
+
+A separate protected check with the enrolled instance-management key verified
+the current-user response and matching key ID, then sent the same complete
+payload to ask 0. It returned HTTP 404 with the exact error code
+`ask_not_found`. This establishes that ask 0 reaches the lookup with an allowed
+key and this body. It did not rent an instance or change the enrolled key.
+The local evidence is `.scratch/issue283/enrolled-policy-zero.json`. That live
+error spelling supplements the documented `no_such_ask` spelling; generic 400
+validation failures still do not establish that the create permission passed.
+
+The revised helper verifies each temporary key through current-user reads with
+matching key IDs before a probe and after any HTTP 401/403. It records known
+error enums, permission and invalid-key indicators, and `api.*` operation
+identifiers from error fields even when classification fails. Nested error
+objects are inspected, unknown strings are discarded, and known key values are
+redacted before extracting identifiers. HTTP 401/403 counts as scope denial
+only with successful identity checks and an explicit denial indicator. Initial
+HTTP 401 authentication failures permit at most three current-user attempts.
+This tolerates possible creation delay without asserting a documented provider
+propagation guarantee. A mismatched identity, HTTP 403, or a failed identity
+check after a probe is not retried.
+
+The public permission reference, SDK sources and current frontend do not expose
+a create-operation discovery endpoint. A protected denied read of the host
+machines endpoint with the existing key returned HTTP 401 and an explicit
+permission-denial message, but no operation identifier or error enum. The local
+evidence is `.scratch/issue283/denial-shape.json`. Another run that required a
+route name from the denial would risk wasting a human credential setup step.
+[Permission categories and constraints](https://docs.vast.ai/api-reference/permissions)
+
+The revised no-spend experiment therefore uses a finite fallback if the create
+denial supplies no single operation identifier. These are explicitly hypotheses,
+not asserted provider API names:
+
+| Hypothesis | Basis in primary sources |
+| --- | --- |
+| `api.instance.create` | Documented `api.instance.show`, `destroy` and `reboot` operation naming |
+| `api.instance.create_instance` | That documented namespace and the official SDK's `create_instance` method |
+| `api.asks` | Documented `PUT /asks/{id}/` path and the frontend's `api.instances` and `api.machines` route names |
+
+Each candidate gets an ID-only key. It must allow ask 0 to reach the missing-ask
+lookup, deny ask -1 by authorization, and then allow ask 0 again. Matching
+effective rights are required first. Only a successful differential establishes
+the route and exact-ID constraint. A key that denies both IDs proves neither.
+If all three candidates fail, the result stays inconclusive. The experiment
+never expands its candidate list or submits to a positive ask.
+
+For a proven route, one further key tests the combined ID, bid and disk
+constraints. Those extra constraints are optional findings. Failure does not
+invalidate an independently proven ID constraint; the explicit numeric bid
+already travels through the unchanged SDK. The evidence reports the ID-only
+proof separately from the combined result and retains only the policy actually
+verified. There are at most five diagnostic keys, including the initial
+read-only key, and all are removed by the cleanup block. The enrolled Vault key
+is not replaced by this experiment.

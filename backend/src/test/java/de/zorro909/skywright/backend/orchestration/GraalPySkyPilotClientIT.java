@@ -183,10 +183,11 @@ final class GraalPySkyPilotClientIT {
 						assert vast_resource.max_hourly_cost == 0.14
 						assert vast_task.secrets['SKYPILOT_DOCKER_PASSWORD'].get_secret_value() == 'pull-sentinel'
 						assert 'pull-sentinel' not in str(vast_task.to_yaml_config(use_user_specified_yaml=True))
-						vast_specification['resources'][0].update(useSpot=True, maxBidHourlyCost=0.04)
+						vast_specification['resources'][0].update(useSpot=True, maxBidHourlyCost=0.04, region='Ontario, CA, NA')
 						bid_task = sky.Task.from_yaml_config(_task(vast_specification, vast_secrets).to_yaml_config())
 						bid_resource = next(iter(bid_task.resources))
 						assert bid_resource.use_spot
+						assert bid_resource.region == 'Ontario, CA, NA'
 						assert bid_resource.cluster_config_overrides['vast']['create_instance_kwargs'] == {'price': 0.04, 'cancel_unavail': True}
 						for invalid_bid in (None, 0, 0.15, 1):
 						    vast_specification['resources'][0]['maxBidHourlyCost'] = invalid_bid
