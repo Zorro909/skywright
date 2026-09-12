@@ -6,6 +6,43 @@ import tools.jackson.databind.json.JsonMapper;
 
 class ManagedRunFormIT {
 
+	@Test
+	void unprovenVastRentalIsVisibleAndRejectedBeforeDurableAcceptanceOrDispatch() throws Exception {
+		try (var backend = BackendFixture.startWith(VastPreflight.class, "managed-form", "vast-preflight")) {
+			var form = JsonMapper.builder().build().readTree(backend.get("/api/v1/managed-run-form").body());
+			assertThat(form.at("/targets/1/id").asText()).isEqualTo("vast/on-demand");
+			assertThat(form.at("/targets/1/ready").asBoolean()).isFalse();
+			assertThat(form.at("/targets/1/checks").toString()).contains("VAST_LAUNCH_PRICE_UNPROVEN",
+					"VAST_BUDGET_UNVERIFIED");
+			String before = backend.get("/api/v1/runs").body();
+			String request = "{\"submissionId\":\"" + java.util.UUID.randomUUID()
+					+ "\",\"workload\":\"demonstration\",\"target\":\"vast/on-demand\"}";
+			var rejected = backend.post("/api/v1/managed-runs", request);
+			assertThat(rejected.statusCode()).as(rejected.body()).isEqualTo(503);
+			assertThat(rejected.body()).contains("VAST_LAUNCH_PRICE_UNPROVEN");
+			assertThat(backend.get("/api/v1/runs").body()).isEqualTo(before);
+			assertThat(backend.bean(LocalRunAcceptanceIT.Source.class).launches).hasValue(0);
+			var deferred = backend.post("/api/v1/managed-runs", request.replace("vast/on-demand", "vast/spot"));
+			assertThat(deferred.statusCode()).as(deferred.body()).isEqualTo(422);
+			assertThat(deferred.body()).contains("TARGET_INELIGIBLE");
+		}
+	}
+
+	@org.springframework.context.annotation.Configuration(proxyBeanMethods = false)
+	@org.springframework.context.annotation.Profile("vast-preflight")
+	@org.springframework.context.annotation.Import(Installed.class)
+	static class VastPreflight {
+
+		@org.springframework.context.annotation.Bean
+		@org.springframework.context.annotation.Primary
+		LocalRunAcceptanceIT.Source source() {
+			var source = new LocalRunAcceptanceIT.Source();
+			source.available = true;
+			return source;
+		}
+
+	}
+
 	private static java.net.URI slowVaultEndpoint;
 
 	private static java.nio.file.Path slowVaultToken;

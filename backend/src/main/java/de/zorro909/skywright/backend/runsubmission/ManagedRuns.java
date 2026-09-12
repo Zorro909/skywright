@@ -25,7 +25,7 @@ public class ManagedRuns {
 
 	private final DemonstrationSettings demonstration;
 
-	private final LocalRunAdmission admission;
+	private final RunAdmission admission;
 
 	private final Orchestrator orchestrator;
 
@@ -33,7 +33,7 @@ public class ManagedRuns {
 
 	private final de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle;
 
-	ManagedRuns(RunAcceptanceStore store, LocalRunAdmission admission, Orchestrator orchestrator,
+	ManagedRuns(RunAcceptanceStore store, RunAdmission admission, Orchestrator orchestrator,
 			RunCommandDelivery delivery, de.zorro909.skywright.backend.runlifecycle.RunLifecycleReads lifecycle,
 			ManagedRunForms forms, DemonstrationSettings demonstration,
 			@Value("${skywright.managed-run.maintenance:false}") boolean maintenance) {

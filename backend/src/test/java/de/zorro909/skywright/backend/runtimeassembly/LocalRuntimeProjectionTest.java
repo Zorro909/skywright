@@ -33,6 +33,61 @@ class LocalRuntimeProjectionTest {
 	}
 
 	@Test
+	void vastProjectionPinsCudaOnDemandAndPreservesTheAcceptedWorkload() throws Exception {
+		var value = RunDefinition.decode(Files.readString(ROOT.resolve("definition.json"))).value();
+		value.withObject("/targetRequest")
+			.put("targetClass", "cloud-on-demand")
+			.put("purchaseMode", "on-demand")
+			.put("target", "vast")
+			.put("gpuModel", "RTX_3060");
+		var quote = JSON
+			.readTree(Files.readString(Path.of("../sdk/src/skywright/_run_definition_resources/corpus.json")))
+			.at("/valid/0/costQuote");
+		value.set("costQuote", quote);
+		var definition = RunDefinition.from(value);
+		var local = materials();
+		var cuda = new RuntimeMaterials(local.materialsVersion(), local.runId(),
+				"ghcr.io/example/project@sha256:" + "a".repeat(64), local.configurationContract(),
+				local.metricContract(), local.dataset(), local.datasetLocation(), local.sourceCheckpoint());
+		var target = new VastRuntimeProjection.Target("US", "1x-RTX_3060-16384", "RTX_3060", 12L * 1024 * 1024 * 1024,
+				"2", "8", 20, new java.math.BigDecimal("0.14"));
+		var task = new VastRuntimeProjection().project(definition, cuda, target);
+		assertThat(task.resources()).hasSize(1);
+		var resource = task.resources().getFirst();
+		assertThat(resource.infrastructure()).isEqualTo("vast");
+		assertThat(resource.useSpot()).isFalse();
+		assertThat(resource.imageId()).isEqualTo("docker:ghcr.io/example/project@sha256:" + "a".repeat(64));
+		assertThat(resource.region()).isEqualTo("US");
+		assertThat(resource.instanceType()).isEqualTo("1x-RTX_3060-16384");
+		assertThat(resource.diskSize()).isEqualTo(20);
+		assertThat(resource.maxHourlyCost()).isEqualByComparingTo("0.14");
+		assertThat(task.runtimePullSecret()).isNull();
+		assertThat(task.environment()).isEmpty();
+		var payload = Pattern.compile("b64decode\\('([^']+)'\\)").matcher(task.run());
+		assertThat(payload.find()).isTrue();
+		assertThat(new String(Base64.getDecoder().decode(payload.group(1)), java.nio.charset.StandardCharsets.UTF_8))
+			.isEqualTo(definition.encode());
+		assertThatThrownBy(() -> new VastRuntimeProjection().project(definition, local, target))
+			.hasMessage("Missing digest-pinned target image");
+		value.withObject("/targetRequest").put("target", "runpod");
+		assertThatThrownBy(() -> new VastRuntimeProjection().project(RunDefinition.from(value), cuda, target))
+			.hasMessage("Unsupported Vast on-demand capabilities or pinned target");
+	}
+
+	@Test
+	void vastCatalogConstraintsRejectSpotAndTheOwnersExclusiveHourlyLimit() {
+		for (var amount : java.util.List.of("0", "0.15", "0.20"))
+			assertThatThrownBy(() -> new VastRuntimeProjection.Target("US", "1x-RTX_3060-16384", "RTX_3060", 12L << 30,
+					"2", "8", 20, new java.math.BigDecimal(amount)))
+				.hasMessage("Invalid Vast on-demand resource constraints");
+		assertThatThrownBy(
+				() -> new de.zorro909.skywright.backend.orchestration.OrchestratorTaskSpecification.Resources("vast",
+						"2", "8", "RTX_3060:1", null, true, null, "US", "1x-RTX_3060-16384", 20,
+						new java.math.BigDecimal("0.14")))
+			.hasMessage("Invalid Vast on-demand resource constraints");
+	}
+
+	@Test
 	void mapsEveryFieldAndDeliversTheUnchangedAcceptedDefinition() throws Exception {
 		var definition = RunDefinition.decode(Files.readString(ROOT.resolve("definition.json")));
 		var materials = materials();
@@ -63,7 +118,8 @@ class LocalRuntimeProjectionTest {
 		assertThat(task.run()).contains("exec python -m skywright._runtime --definition", "--materials")
 			.doesNotContain("_factory", "ACCESS_KEY", "SECRET_KEY");
 		assertThat(Stream.of(resource.getClass().getRecordComponents()).map(java.lang.reflect.RecordComponent::getName))
-			.containsExactly("infrastructure", "cpus", "memory", "accelerators", "imageId", "useSpot", "jobRecovery");
+			.containsExactly("infrastructure", "cpus", "memory", "accelerators", "imageId", "useSpot", "jobRecovery",
+					"region", "instanceType", "diskSize", "maxHourlyCost");
 	}
 
 	@Test

@@ -50,7 +50,7 @@ public record OrchestratorTaskSpecification(String name, String setup, String ru
 				|| java.util.Set
 					.of("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE",
 							"AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
-							"KUBECONFIG", "DOCKER_CONFIG")
+							"KUBECONFIG", "DOCKER_CONFIG", "VAST_API_KEY", "VASTAI_API_KEY")
 					.contains(key);
 	}
 
@@ -61,7 +61,13 @@ public record OrchestratorTaskSpecification(String name, String setup, String ru
 	}
 
 	public record Resources(String infrastructure, String cpus, String memory, String accelerators, String imageId,
-			boolean useSpot, JobRecovery jobRecovery) {
+			boolean useSpot, JobRecovery jobRecovery, String region, String instanceType, Integer diskSize,
+			java.math.BigDecimal maxHourlyCost) {
+
+		public Resources(String infrastructure, String cpus, String memory, String accelerators, String imageId,
+				boolean useSpot, JobRecovery jobRecovery) {
+			this(infrastructure, cpus, memory, accelerators, imageId, useSpot, jobRecovery, null, null, null, null);
+		}
 
 		public Resources(String infrastructure, String cpus, String memory, String accelerators, String imageId,
 				boolean useSpot) {
@@ -72,6 +78,13 @@ public record OrchestratorTaskSpecification(String name, String setup, String ru
 			requireText(infrastructure, "infrastructure");
 			requireText(cpus, "cpus");
 			requireText(memory, "memory");
+			if (region != null || instanceType != null || diskSize != null || maxHourlyCost != null) {
+				if (!infrastructure.equals("vast") || useSpot || region == null || !region.matches("[A-Z]{2}")
+						|| instanceType == null || !instanceType.matches("[A-Za-z0-9_-]+") || diskSize == null
+						|| diskSize < 1 || maxHourlyCost == null || maxHourlyCost.signum() <= 0
+						|| maxHourlyCost.compareTo(new java.math.BigDecimal("0.15")) >= 0)
+					throw new IllegalArgumentException("Invalid Vast on-demand resource constraints");
+			}
 		}
 
 	}

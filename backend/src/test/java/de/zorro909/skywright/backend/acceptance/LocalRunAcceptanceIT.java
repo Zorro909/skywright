@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import de.zorro909.skywright.backend.orchestration.*;
 import de.zorro909.skywright.backend.rundefinition.RunDefinition;
-import de.zorro909.skywright.backend.runsubmission.LocalRunAdmission;
+import de.zorro909.skywright.backend.runsubmission.RunAdmission;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -226,7 +226,7 @@ class LocalRunAcceptanceIT {
 					null);
 			var accepted = de.zorro909.skywright.backend.runsubmission.AcceptedRunCrashFixture.commitWithoutDispatch(
 					backend.bean(de.zorro909.skywright.backend.runsubmission.RunAcceptanceStore.class),
-					backend.bean(LocalRunAdmission.class), input);
+					backend.bean(RunAdmission.class), input);
 			backend.restart();
 			assertThat(backend.post("/api/v1/runs", request(submission)).body()).contains(accepted.runId().toString(),
 					"\"handoff\":\"uncertain\"");
@@ -286,7 +286,7 @@ class LocalRunAcceptanceIT {
 
 		@Bean
 		@Primary
-		LocalRunAdmission fixtureAdmission(de.zorro909.skywright.backend.credential.LocalProjectionFacts facts,
+		RunAdmission fixtureAdmission(de.zorro909.skywright.backend.credential.LocalProjectionFacts facts,
 				de.zorro909.skywright.backend.targetstorage.TargetStorageRegistry storages) {
 			return (run, request) -> {
 				ADMISSIONS.incrementAndGet();
@@ -310,7 +310,7 @@ class LocalRunAcceptanceIT {
 							List.of(new OrchestratorTaskSpecification.Resources("kubernetes/local", "8", "32",
 									"MI300X:1", "docker:fixture", false)),
 							Map.of());
-					return new LocalRunAdmission.Prepared(definition, task, null);
+					return new RunAdmission.Prepared(definition, task, null);
 				}
 				catch (java.io.IOException error) {
 					throw new IllegalStateException(error);

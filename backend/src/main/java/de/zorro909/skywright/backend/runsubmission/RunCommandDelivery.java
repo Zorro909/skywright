@@ -49,7 +49,7 @@ public final class RunCommandDelivery {
 		this.executor = executor;
 	}
 
-	CompletionStage<RunJobAdapter.Submission> submit(AcceptedRun run, LocalRunAdmission.Prepared prepared) {
+	CompletionStage<RunJobAdapter.Submission> submit(AcceptedRun run, RunAdmission.Prepared prepared) {
 		var completion = new CompletableFuture<RunJobAdapter.Submission>();
 		try {
 			executor.execute(() -> {
@@ -165,7 +165,7 @@ public final class RunCommandDelivery {
 	}
 
 	private CompletionStage<RunJobAdapter.Submission> launch(RunCommand command, AcceptedRun run,
-			LocalRunAdmission.Prepared prepared) {
+			RunAdmission.Prepared prepared) {
 		try {
 			return launches.deliver(run, prepared).whenComplete((result, failure) -> {
 				if (failure != null) {

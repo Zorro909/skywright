@@ -8,7 +8,7 @@ import de.zorro909.skywright.backend.orchestration.OrchestratorTaskSpecification
 import de.zorro909.skywright.backend.rundefinition.RunDefinition;
 
 /** Resolution and Run-owned lease/projection writes join the acceptance transaction. */
-public interface LocalRunAdmission {
+public interface RunAdmission {
 
 	Prepared prepare(UUID runId, LocalRunRequest request);
 

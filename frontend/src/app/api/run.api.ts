@@ -29,6 +29,18 @@ const api = createClient<paths>({
   fetch: (request) => globalThis.fetch(request),
 });
 
+function readinessChecks(value: unknown): value is Record<string, unknown>[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (c) =>
+        object(c) &&
+        typeof c['ready'] === 'boolean' &&
+        ['component', 'code', 'detail'].every((k) => typeof c[k] === 'string'),
+    )
+  );
+}
+
 export const managedRunApi = {
   async form(signal: AbortSignal): Promise<ManagedRunForm> {
     return read(
@@ -48,27 +60,28 @@ export const managedRunApi = {
             typeof w['displayName'] === 'string',
         ) &&
         Array.isArray(value['targets']) &&
-        value['targets'].length <= 1 &&
+        value['targets'].length <= 2 &&
         value['targets'].every(
           (t) =>
             object(t) &&
             typeof t['id'] === 'string' &&
-            typeof t['gpuModel'] === 'string' &&
-            Number.isSafeInteger(t['gpuCount']) &&
-            Number(t['gpuCount']) > 0,
+            typeof t['displayName'] === 'string' &&
+            ['local', 'on-demand'].includes(String(t['purchaseMode'])) &&
+            (t['gpuModel'] == null || typeof t['gpuModel'] === 'string') &&
+            (t['gpuCount'] == null ||
+              (Number.isSafeInteger(t['gpuCount']) &&
+                Number(t['gpuCount']) > 0)) &&
+            typeof t['ready'] === 'boolean' &&
+            readinessChecks(t['checks']) &&
+            (!t['ready'] ||
+              t['checks'].every((c) => object(c) && c['ready'] === true)),
         ) &&
-        Array.isArray(value['checks']) &&
-        value['checks'].every(
-          (c) =>
-            object(c) &&
-            typeof c['ready'] === 'boolean' &&
-            ['component', 'code', 'detail'].every(
-              (k) => typeof c[k] === 'string',
-            ),
-        ) &&
+        new Set(value['targets'].map((t) => (object(t) ? t['id'] : undefined)))
+          .size === value['targets'].length &&
+        readinessChecks(value['checks']) &&
         (!value['ready'] ||
           (value['workloads'].length === 1 &&
-            value['targets'].length === 1 &&
+            value['targets'].some((t) => object(t) && t['ready'] === true) &&
             value['checks'].every((c) => object(c) && c['ready'] === true))),
     );
   },

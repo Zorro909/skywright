@@ -486,6 +486,14 @@ def _task(specification, secrets=None):
         for slot in ("DATASET", "RUN_STORE")
         for field in ("ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN")
     }
+    registry_secrets = {"SKYPILOT_DOCKER_USERNAME", "SKYPILOT_DOCKER_PASSWORD", "SKYPILOT_DOCKER_SERVER"}
+    if registry_secrets & set(secrets):
+        if not registry_secrets <= set(secrets) or any(
+            resource["infrastructure"] != "vast" or resource["useSpot"]
+            for resource in specification["resources"]
+        ) or secrets["SKYPILOT_DOCKER_SERVER"] != "ghcr.io":
+            raise ValueError("Invalid Vast registry secret channel")
+        allowed |= registry_secrets
     if not set(secrets) <= allowed or set(secrets) & set(specification.get("environment", {})):
         raise ValueError("Invalid Training Process secret channel")
     if set(specification.get("environment", {})) & allowed:
@@ -536,6 +544,16 @@ def _task(specification, secrets=None):
             accelerators=requested.get("accelerators"),
             image_id=requested.get("imageId"),
             use_spot=requested["useSpot"],
+            **{
+                field: requested[key]
+                for key, field in (
+                    ("region", "region"),
+                    ("instanceType", "instance_type"),
+                    ("diskSize", "disk_size"),
+                    ("maxHourlyCost", "max_hourly_cost"),
+                )
+                if requested.get(key) is not None
+            },
             job_recovery=(
                 {
                     "max_restarts_on_errors": requested["jobRecovery"]["maxRestartsOnErrors"],

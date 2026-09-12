@@ -78,6 +78,7 @@ def run_case(overrides, *, preemptible=True):
     return {
         "search_arguments": provider.queries,
         "selected_offer": creation["id"],
+        "selected_offer_hourly_usd": next(offer["dph_total"] for offer in provider.offers if offer["id"] == creation["id"]),
         "submitted_bid_usd_per_hour": creation.get("price"),
         "requested_disk_gb": creation["disk"],
         "provider_key_in_startup_command": provider.client.api_key in command,
@@ -94,6 +95,7 @@ def require(condition, message):
 default = run_case(None)
 configured = run_case({"id": 202, "price": 0.04, "onstart_cmd": "true"})
 on_demand = run_case(None, preemptible=False)
+on_demand_pinned = run_case({"id": 202, "cancel_unavail": True}, preemptible=False)
 mounts = Vast().get_credential_file_mounts()
 
 require(default["provider_key_in_startup_command"], "Key interpolation did not reproduce")
@@ -107,6 +109,9 @@ require(configured["custom_startup_appended"], "Custom startup was not appended"
 require(on_demand["provider_key_in_startup_command"], "On-demand key interpolation did not reproduce")
 require(on_demand["writes_remote_provider_key"], "On-demand remote key command did not reproduce")
 require(on_demand["submitted_bid_usd_per_hour"] is None, "On-demand unexpectedly specified a bid")
+require(on_demand_pinned["selected_offer"] == 101, "On-demand offer override was not replaced")
+require(on_demand_pinned["selected_offer_hourly_usd"] == 0.40, "Expensive on-demand offer did not reproduce")
+require(on_demand_pinned["submitted_bid_usd_per_hour"] is None, "Pinned on-demand unexpectedly specified a bid")
 require("~/.config/vastai/vast_api_key" in mounts, "Credential-file projection did not reproduce")
 
 source = Path(inspect.getfile(utils))
@@ -118,6 +123,7 @@ print(json.dumps({
     "default_interruptible": default,
     "explicit_bid_and_offer_override": configured,
     "on_demand": on_demand,
+    "on_demand_offer_override": on_demand_pinned,
     "remote_credential_mounts": mounts,
     "result": "credential delivery and default-price behavior reproduced",
 }, indent=2))
