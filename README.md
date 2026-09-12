@@ -9,6 +9,61 @@ packages the separate, version-paired SkyPilot server OCI artifact. The sibling
 [`sdk`](sdk/README.md) project-part is the independently buildable pure-Python runtime SDK for
 Training Projects.
 
+## Run the qualified local workflow
+
+For the retained private AMD instance, start with the
+[private AMD installation guide](deployment/LOCAL_INSTALLATION.md). It specifies the
+qualified host, Docker kind cluster, registry credentials, signed Deployment Bundle
+and operator configuration. From the unpacked release source, after preparing those
+inputs, run:
+
+```sh
+scripts/deploy install --configuration /absolute/path/instance.json
+scripts/deploy preflight --configuration /absolute/path/instance.json
+```
+
+Open `http://127.0.0.1:8080/runs/new` on the host, or through the guide's SSH tunnel.
+Choose the installed CIFAR demonstration and local target, wait for readiness, and
+submit. The Run page shows lifecycle, committed progress, logs, cancellation and
+verified output downloads. The supplied demonstration requests one GPU and twelve
+Steps. Finish or cancel the Run, then use preflight to confirm the GPUs are idle.
+The installer retains its services and data across stop/start; use the guide's
+backup and update commands for subsequent releases.
+
+The [executable CIFAR-10 example](examples/cifar10/README.md) explains Dataset
+preparation, project publication, submission and automated example checks.
+[Local AMD workflow qualification](docs/testing/issue-235-local-amd-workflow.md)
+records GPU execution and recovery evidence; the
+[private installation qualification](docs/testing/issue-288-local-installation.md)
+records retained installation and update evidence. These records describe specific
+targets and versions, not qualification of every SkyPilot provider.
+
+Contributors should follow [toolchain setup](#required-toolchain),
+[build and test](#build-and-test), and the [SDK guide](sdk/README.md).
+[Deployment and release setup](deployment/README.md#production) explains signed
+bundle publication and apply; the private installation guide covers the complete
+AMD installation. `scripts/deploy local` below is the contributor deployment into
+an existing rootless-Podman kind cluster.
+
+## Architecture and decision authority
+
+[CONTEXT.md](CONTEXT.md) defines domain terminology. Accepted ADRs remain the
+authority for architectural decisions, including
+[run-state provenance and lifecycle](docs/adr/0005-keep-run-state-provenance-partitioned.md),
+[the two-lane SkyPilot SDK bridge](docs/adr/0009-drive-skypilot-through-its-python-sdk.md),
+[the target and registry matrix](docs/adr/0023-gate-the-initial-target-and-registry-matrix.md),
+and [the always-on control plane](docs/adr/0023-keep-the-control-plane-always-on.md).
+The last two retain their historical number 0023 and are distinguished by filename
+and title. This summary does not replace their decisions.
+
+ADR 0005 links the later cancellation, recovery and policy-stop decisions. The local
+task projection configures only finalized-interruption outcome 75 for recovery;
+ordinary user-error restarts remain disabled. [Recovery #52](https://github.com/Zorro909/skywright/issues/52)
+and [orchestration #56](https://github.com/Zorro909/skywright/issues/56) supply the
+runtime and adapter contracts. Remaining target projection and exit-mapping work
+belongs to [#55](https://github.com/Zorro909/skywright/issues/55); local recovery
+evidence does not establish qualification for another target.
+
 ## Required toolchain
 
 The repository pins every build tool in a file consumed by its native version manager:

@@ -2,7 +2,12 @@
 
 Checked 2026-09-10 for [#281](https://github.com/Zorro909/skywright/issues/281), before any paid call or real credential projection. The owner selected Vast.ai interruptible first, instances strictly below USD 0.15/hour, preferably cheaper, using approximately USD 2.30 existing credit. No top-up is authorized.
 
-The unchanged SkyPilot 0.13.0 adapter sends its provider credential to the remote instance. After reviewing this finding, the owner corrected the earlier API-server-only rule: official SkyPilot adapters may receive and deliver provider credentials wherever their supported path requires them. [ADR 0025](../adr/0025-centralize-managed-credentials-in-vault.md) now records that boundary and the resulting trust in co-located project code. The observed credential delivery is accepted; actual launch-budget enforcement and live qualification remain outstanding under [ADR 0023](../adr/0023-gate-the-initial-target-and-registry-matrix.md).
+The unchanged SkyPilot 0.13.0 adapter sends its provider credential to the remote instance. After reviewing this finding, the owner corrected the earlier API-server-only rule: official SkyPilot adapters may receive and deliver provider credentials wherever their supported path requires them. [ADR 0025](../adr/0025-centralize-managed-credentials-in-vault.md) now records that boundary and the resulting trust in co-located project code. The observed credential delivery is accepted; actual launch-budget enforcement and live qualification remain outstanding under [Gate the initial target and registry matrix by evidence](../adr/0023-gate-the-initial-target-and-registry-matrix.md).
+
+The scope below records the 2026-09-10 investigation. On 2026-09-11, the owner
+narrowed the prototype to local AMD and Vast.ai on-demand in
+[Gate the initial target and registry matrix by evidence](../adr/0023-gate-the-initial-target-and-registry-matrix.md).
+That accepted decision supersedes this record's interruptible-first next steps.
 
 ## Pinned implementation and current upstream
 
@@ -62,8 +67,8 @@ Vast's [search API](https://docs.vast.ai/api-reference/search/search-offers) dis
 
 ## Next dependency
 
-The owner-approved SkyPilot credential boundary now permits the observed delivery in both modes. ADR 0023 restores the original intended on-demand/spot scope and distinguishes scope from passed qualification gates. The owner selected interruptible first; #283 now owns its implementation and live qualification rather than an upstream credential-suppression fix. It must record actual credential projections and remote copies, and verify interruption, previous-writer proof, recovery, pricing and cleanup. Interruptible launch and recovery must preserve an explicit bid and validate the actual offer's disk and traffic rates before spending. This decision does not authorize local SDK patches or a different provider.
+The owner-approved SkyPilot credential boundary now permits the observed delivery in both modes. [Gate the initial target and registry matrix by evidence](../adr/0023-gate-the-initial-target-and-registry-matrix.md) restores the original intended on-demand/spot scope and distinguishes scope from passed qualification gates. The owner selected interruptible first; #283 now owns its implementation and live qualification rather than an upstream credential-suppression fix. It must record actual credential projections and remote copies, and verify interruption, previous-writer proof, recovery, pricing and cleanup. Interruptible launch and recovery must preserve an explicit bid and validate the actual offer's disk and traffic rates before spending. This decision does not authorize local SDK patches or a different provider.
 
 Later account work also needs the provider SDK dependencies, a Vault-backed provider binding, verified available credit and billing settings, fresh suitable offers, private-image pull credentials, reachable Dataset/Run Store endpoints, and an NVIDIA-compatible qualification image. No real account, offer or storage access was tested. No account secret is needed to complete this investigation.
 
-Real private-image execution, GPU work, interruption, writer proof, Managed Jobs recovery, usage capture and terminal cleanup remain required by #57 and ADR 0023. Synthetic launch arguments cannot satisfy those gates or demonstrate that a GPU below the requested price is currently available.
+Real private-image execution, GPU work, interruption, writer proof, Managed Jobs recovery, usage capture and terminal cleanup remain required by #57 and [Gate the initial target and registry matrix by evidence](../adr/0023-gate-the-initial-target-and-registry-matrix.md). Synthetic launch arguments cannot satisfy those gates or demonstrate that a GPU below the requested price is currently available.

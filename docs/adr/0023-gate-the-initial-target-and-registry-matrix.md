@@ -4,6 +4,10 @@ status: accepted
 
 # Gate the initial target and registry matrix by evidence
 
+This decision retains its historical filename, `0023-gate-the-initial-target-and-registry-matrix.md`.
+It shares the number 0023 with [Keep the control plane always on](0023-keep-the-control-plane-always-on.md).
+Cite these decisions by full filename or linked descriptive title to distinguish them.
+
 Skywright initially supports a deliberately finite deployment matrix rather than inheriting every adapter present in SkyPilot. Support attaches to one target and purchase-mode pairing, so a broken spot path can be demoted without making a working on-demand path unavailable.
 
 ## Prototype target matrix

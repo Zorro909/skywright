@@ -4,6 +4,10 @@ status: accepted
 
 # Keep the control plane always on, initially beside the AMD target
 
+This decision retains its historical filename, `0023-keep-the-control-plane-always-on.md`.
+It shares the number 0023 with [Gate the initial target and registry matrix by evidence](0023-gate-the-initial-target-and-registry-matrix.md).
+Cite these decisions by full filename or linked descriptive title to distinguish them.
+
 Skywright's control responsibilities outlive every browser session. The Spring backend and the version-paired SkyPilot API server therefore form one continuously operating control-plane deployment while remaining separate services: SkyPilot must stay alive for Managed Jobs provisioning, monitoring, and preemption recovery, while the backend must stay alive for retained-fact reconciliation, Run Log Archive capture, Runtime and Cost Ceiling evaluation, and delivery of durable control decisions. They are upgraded as a pinned pair, but either process may restart independently and reconstruct its work from durable sources. An on-demand backend was rejected because it would silently suspend those guarantees whenever nobody had the UI open.
 
 The first deployment co-locates both services on the AMD training host and is deliberately non-HA. Losing or starving that host can therefore remove local execution and every control-plane capability together, and can leave existing cloud compute running without SkyPilot management, recovery, observation, or ceiling enforcement. This coupling is accepted for the first version. No CPU or memory reservation protects the control plane from training workloads yet; numerical sizing, resource isolation, backups, and HA remain operational work rather than architecture fixed here.
