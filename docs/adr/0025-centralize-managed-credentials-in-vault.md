@@ -14,6 +14,34 @@ Where Vault and the provider support dynamic issuance, the backend requests a cr
 
 Operator-supplied credentials are staged as candidate Vault versions. The backend validates their shape and required operations against the external system before promoting them. A failed candidate never replaces the active version. Enrollment requests and validation errors are structurally secret-free, and Skywright persists no submitted value. The initial deployment's private reachability boundary remains the authority to perform this full-control action; Vault records the secret-management audit under that deployment's identity.
 
+## Operator bootstrap and recovery custody
+
+For the private AMD installation in #288, the owner approved a narrow exception
+on 2026-09-12: the operator may retain protected bootstrap and recovery copies
+outside Vault. These include the two supplied GHCR inputs, generated provider
+and service bootstrap credentials, Vault recovery material, and the files needed
+to recreate their deployment projections. They live in a separate operator-owned
+mode-0700 directory with owner-only files and in protected checkpoints. They are
+not application records, Run Definitions, database values or public diagnostics.
+
+Vault remains authoritative for managed runtime credentials. Backend and SkyPilot
+consumers obtain their configured role projections from Vault; operator copies
+are not a fallback when a Vault read, version or authorization fails. External
+services and target-side delivery may retain their authorized projections as
+already described below. The operator's bootstrap copies do not select a new
+active binding revision, authorize overwriting a changed Vault entry, or provide
+an automatic rotation path.
+
+The #288 installer supports repeat setup of its enrolled version-one bindings.
+It rejects changed operator inputs or a different existing Vault value/version
+rather than resetting a binding or silently rotating it. Rotation and emergency
+revocation retain the semantics below. After an operator changes those bindings,
+this installer must refuse incompatible reuse until the installation's inputs,
+projections and selected revisions have been reconciled through an explicit
+operator procedure. A package update is not that procedure. Checkpoint recovery
+restores all components together under operator control; it does not make a stale
+copy an automatic runtime credential source.
+
 ## Projection boundary
 
 A Credential Projection is a role-scoped runtime copy of a binding's secret material. Vault projects provider credentials directly into the SkyPilot API server and projects the backend's SkyPilot service-account token and backend-owned credentials into the backend. For processes that the backend launches — Training Processes, Transfer Workers, and Metric Views — the backend is the projection broker: it may transiently retrieve the exact consumer credential and inject it, but never persists or uses it as its own credential. A separate broker would add another privileged service without isolating a backend that already controls every such launch.

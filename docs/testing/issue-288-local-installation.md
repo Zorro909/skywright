@@ -45,7 +45,10 @@ The mode-0700 operator input directory is:
 `/home/zorro/.local/share/skywright/issue288/installed-secrets/`.
 It contains the separate mode-0600 `ghcr-resolver.json` and `ghcr-pull.json`
 inputs, `generated-inputs.json`, `vault-recovery.json`, TLS material and consumer
-projections. The two distinct read-only GHCR credentials were copied with the
+projections. Their retention is the owner-approved
+[bootstrap/recovery exception in ADR 0025](../adr/0025-centralize-managed-credentials-in-vault.md#operator-bootstrap-and-recovery-custody).
+Vault remains authoritative for runtime use; copies cannot overwrite changed
+bindings or provide a fallback after revocation. The two distinct read-only GHCR credentials were copied with the
 operator's authorization from the originating development Vault. Their source
 references were `skywright/local/issue235-ghcr-resolver` and
 `skywright/local/issue235-ghcr-pull`. No values are recorded here.
@@ -149,10 +152,40 @@ Stopped preparatory/diagnostic clusters remain separate from the retained
 instance. The pre-existing `skywright-onprem` cluster and unrelated host services
 were not stopped or reconfigured.
 
-Local verification passed 78 deployment tests with five skips, 468 SDK unit tests,
+Local verification passed 80 deployment tests with seven skips, 468 SDK unit tests,
 20 installed-wheel tests, the frontend/backend reactor and all 20 container-image
 tests. Targeted HTTP tests covered durable replay, maintenance rejection,
 verified project import, output listing/downloads and cross-Run/checksum rejection.
 Live storage probes allowed own-project access and denied foreign-project
 read/write/list and unenrolled Metric View access. Probe objects were removed.
 The accepted test boundaries were the deployment CLI, Managed Run HTTP API and GUI.
+
+## Review recovery qualification
+
+Review found that a failed checkpoint copy could leave backend and SkyPilot
+replicas at zero. A second failure path existed when scale-down completed but
+waiting for Pod deletion failed. The operator CLI now restores service replicas
+and admission on both paths. Quiescence recovery does not restart the node.
+A failed copy retains an incomplete checkpoint and leaves the installed release
+unchanged. If recovery itself fails, the CLI gives the explicit `start` action.
+
+These operator CLI changes were tested from the qualification checkout against
+the same installed `.8` application images. They are newer than the signed `.8`
+installer source; no additional prerelease was published for these checks.
+
+The fault tests invoke the public deployment CLI and check readiness through the
+Managed Run HTTP API. One rejects the external Docker copy operation after the
+node stops. The other holds a backend Pod finalizer so deletion times out after
+scale-down. Both old-code reproductions failed the readiness assertion, in
+317.7 and 304.8 seconds respectively, and their cleanup restored the instance.
+Both tests passed together after the fix in 403.3 seconds. The interrupted
+quiescence check also verified that the Docker node start timestamp did not
+change. Post-test inspection confirmed the original node UID and operator-input
+hashes, no active GPU Pods, no remaining injected finalizers and no pending update.
+
+Run these checks only on the idle retained instance:
+
+```sh
+SKYWRIGHT_CHECKPOINT_FAILURE_CONFIGURATION=/home/zorro/.local/share/skywright/issue288/installed-update.json \
+python3 -m unittest discover -s tests/deployment -p test_installed_amd.py -k CheckpointFailureTest -v
+```

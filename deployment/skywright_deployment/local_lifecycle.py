@@ -75,18 +75,23 @@ def gpu_idle(kube: Kubernetes) -> None:
 
 
 def quiesce(kube: Kubernetes) -> None:
-    maintenance(kube, True)
     try:
+        maintenance(kube, True)
         idle(kube)
+        kube.run("scale", "deployment/skywright-backend", "deployment/skywright-skypilot-api-server",
+                 "-n", "skywright", "--replicas=0")
+        kube.run("wait", "pods", "-n", "skywright", "-l", "app.kubernetes.io/name=skywright-backend",
+                 "--for=delete", "--timeout=120s", timeout=130)
+        kube.run("wait", "pods", "-n", "skywright", "-l", "app.kubernetes.io/name=skywright-skypilot-api-server",
+                 "--for=delete", "--timeout=120s", timeout=130)
     except BaseException:
-        maintenance(kube, False)
+        try:
+            resume_services(kube)
+        except BaseException:
+            print("Maintenance failed and service recovery could not complete; "
+                  "run start with the installed configuration.", flush=True)
+            raise
         raise
-    kube.run("scale", "deployment/skywright-backend", "deployment/skywright-skypilot-api-server",
-             "-n", "skywright", "--replicas=0")
-    kube.run("wait", "pods", "-n", "skywright", "-l", "app.kubernetes.io/name=skywright-backend",
-             "--for=delete", "--timeout=120s", timeout=130)
-    kube.run("wait", "pods", "-n", "skywright", "-l", "app.kubernetes.io/name=skywright-skypilot-api-server",
-             "--for=delete", "--timeout=120s", timeout=130)
 
 
 def start_node(settings: dict, kube: Kubernetes) -> None:
@@ -107,14 +112,18 @@ def start_node(settings: dict, kube: Kubernetes) -> None:
     Vault(kube, Path(settings["secretDirectory"])).initialize()
 
 
-def resume(settings: dict, kube: Kubernetes) -> None:
-    start_node(settings, kube)
+def resume_services(kube: Kubernetes) -> None:
     kube.run("scale", "deployment/skywright-skypilot-api-server", "deployment/skywright-backend",
              "-n", "skywright", "--replicas=1")
     kube.rollout("skywright-skypilot-api-server")
     maintenance(kube, False)
     with kube.forward("skywright-backend", 80) as endpoint:
         api(endpoint, "/actuator/health")
+
+
+def resume(settings: dict, kube: Kubernetes) -> None:
+    start_node(settings, kube)
+    resume_services(kube)
 
 
 def checkpoint(settings: dict, directory: Path, kube: Kubernetes) -> Path:
@@ -126,8 +135,9 @@ def checkpoint(settings: dict, directory: Path, kube: Kubernetes) -> Path:
     backup = directory / "backups" / timestamp
     backup.mkdir(mode=0o700, parents=True)
     quiesce(kube)
-    command(["docker", "stop", "--time=60", settings["node"]], timeout=90)
+    complete = False
     try:
+        command(["docker", "stop", "--time=60", settings["node"]], timeout=90)
         for name, path in (("volumes", "/var/local-path-provisioner"),
                            ("writer", "/var/lib/skywright-writer"), ("etcd", "/var/lib/etcd"),
                            ("kubernetes", "/etc/kubernetes")):
@@ -153,8 +163,18 @@ def checkpoint(settings: dict, directory: Path, kube: Kubernetes) -> Path:
         record(backup / "checkpoint.json", {"complete": True, "node": settings["node"],
                "release": protected_json(directory / "installed.json")["release"],
                "recovery": "Same retained node only. Stop services, restore all checkpoint components together, then start the recorded release."})
+        complete = True
     finally:
-        start_node(settings, kube)
+        if complete:
+            start_node(settings, kube)
+        else:
+            try:
+                resume(settings, kube)
+            except BaseException:
+                print("Checkpoint failed and automatic service recovery could not complete; "
+                      "run start with the installed configuration. Retain the incomplete checkpoint: "
+                      + str(backup), flush=True)
+                raise
     return backup
 
 

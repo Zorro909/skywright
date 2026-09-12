@@ -37,6 +37,12 @@ bindings. It generates database and S3 credentials once and retains them.
 Registry rotation is deliberately rejected by this workflow; changing a file
 does not silently replace a retained binding revision.
 
+The operator retains protected bootstrap/recovery copies under the
+[#288 exception in ADR 0025](../docs/adr/0025-centralize-managed-credentials-in-vault.md#operator-bootstrap-and-recovery-custody).
+Runtime consumers still use Vault projections. These copies are not a fallback
+for unavailable or revoked Vault credentials, and updates refuse changed Vault
+values or versions. Reconcile rotation explicitly before reusing the installer.
+
 From the unpacked release source, run:
 
 ```sh

@@ -166,3 +166,74 @@ class InstalledAmdTest(unittest.TestCase):
         self.wait_ready(update)
         self.assertEqual(self.api("/api/v1/runs/" + second)["lifecycle"]["state"], "finished")
         self.assertTrue(self.preflight(update)["ready"])
+
+
+@unittest.skipUnless(os.environ.get("SKYWRIGHT_CHECKPOINT_FAILURE_CONFIGURATION"),
+                     "requires retained checkpoint failure qualification")
+class CheckpointFailureTest(unittest.TestCase):
+    def test_failed_checkpoint_restores_the_retained_control_plane(self):
+        import shutil
+        import tempfile
+
+        configuration = os.environ["SKYWRIGHT_CHECKPOINT_FAILURE_CONFIGURATION"]
+        settings = json.loads(Path(configuration).read_text())
+        state = Path(settings["stateDirectory"])
+        installed = (state / "installed.json").read_bytes()
+        previous_backups = set((state / "backups").glob("*"))
+        docker = shutil.which("docker")
+        self.assertIsNotNone(docker)
+        case = InstalledAmdTest()
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                wrapper = Path(temporary) / "docker"
+                wrapper.write_text("#!/usr/bin/env python3\nimport os,sys\n"
+                                   "if sys.argv[1:2] == ['cp']: raise SystemExit(73)\n"
+                                   "os.execv(" + repr(docker) + ", [" + repr(docker) + ", *sys.argv[1:]])\n")
+                wrapper.chmod(0o700)
+                result = subprocess.run([str(ROOT / "scripts/deploy"), "backup", "--configuration", configuration],
+                                        env=os.environ | {"PATH": temporary + os.pathsep + os.environ["PATH"]},
+                                        capture_output=True, text=True, timeout=900)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Checkpoint copy failed", result.stdout + result.stderr)
+            self.assertEqual((state / "installed.json").read_bytes(), installed)
+            created = set((state / "backups").glob("*")) - previous_backups
+            self.assertEqual(len(created), 1)
+            self.assertFalse((created.pop() / "checkpoint.json").exists())
+            self.assertFalse((state / "pending-update.json").exists())
+            case.wait_ready(configuration)
+            self.assertTrue(case.preflight(configuration)["ready"])
+        finally:
+            case.command("start", configuration)
+
+    def test_interrupted_quiescence_restores_services_without_restarting_node(self):
+        configuration = os.environ["SKYWRIGHT_CHECKPOINT_FAILURE_CONFIGURATION"]
+        settings = json.loads(Path(configuration).read_text())
+        state = Path(settings["stateDirectory"])
+        kubectl = [str(state / "tools/kubectl"), "--context", settings["context"], "--request-timeout=10s"]
+        pods = json.loads(subprocess.check_output(kubectl + ["get", "pods", "-n", "skywright", "-l",
+            "app.kubernetes.io/name=skywright-backend", "-o", "json"]))["items"]
+        self.assertEqual(len(pods), 1)
+        pod = pods[0]["metadata"]["name"]
+        finalizer = "qualification.skywright.io/checkpoint-pause"
+        finalizers = pods[0]["metadata"].get("finalizers", [])
+        started = subprocess.check_output(["docker", "inspect", settings["node"], "--format", "{{.State.StartedAt}}"])
+        case = InstalledAmdTest()
+        try:
+            subprocess.run(kubectl + ["patch", "pod", pod, "-n", "skywright", "--type=merge", "-p",
+                json.dumps({"metadata": {"finalizers": finalizers + [finalizer]}})], check=True, capture_output=True)
+            result = subprocess.run([str(ROOT / "scripts/deploy"), "backup", "--configuration", configuration],
+                                    capture_output=True, text=True, timeout=600)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(subprocess.check_output(["docker", "inspect", settings["node"], "--format",
+                                                     "{{.State.StartedAt}}"]), started)
+            case.wait_ready(configuration)
+            self.assertTrue(case.preflight(configuration)["ready"])
+        finally:
+            observed = subprocess.run(kubectl + ["get", "pod", pod, "-n", "skywright", "-o", "json"],
+                                      capture_output=True, text=True)
+            if observed.returncode == 0:
+                retained = [value for value in json.loads(observed.stdout)["metadata"].get("finalizers", [])
+                            if value != finalizer]
+                subprocess.run(kubectl + ["patch", "pod", pod, "-n", "skywright", "--type=merge", "-p",
+                    json.dumps({"metadata": {"finalizers": retained}})], check=True, capture_output=True)
+            case.command("start", configuration)
