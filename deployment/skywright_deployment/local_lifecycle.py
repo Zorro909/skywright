@@ -46,7 +46,9 @@ def idle(kube: Kubernetes) -> None:
                 raise SystemExit("Run inspection exceeded one minute; retry once the instance is idle")
             page = api(endpoint, "/api/v1/runs?limit=50" + (
                 "&after=" + urllib.parse.quote(cursor, safe="") if cursor else ""),
-                timeout=min(20, deadline - time.monotonic()))
+                # Run pages have a 30-second server budget. Let a page use the
+                # remaining inspection budget instead of abandoning it at 20s.
+                timeout=max(0.1, deadline - time.monotonic()))
             for run in page["items"]:
                 lifecycle = run.get("lifecycle") or {}
                 if not lifecycle.get("terminalLatched") or lifecycle.get("state") not in {"finished", "failed", "cancelled"}:

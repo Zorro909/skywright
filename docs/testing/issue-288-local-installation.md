@@ -180,3 +180,18 @@ stale pre-restart Vault Pod readiness. The lifecycle now retries node readiness
 and requires a live, valid Vault status response before initialization or unseal.
 The public CLI start/restart reproduction passed with these changes. Both probes
 have a five-minute budget; the deployment suite passed 78 tests with five skips.
+
+The retained update to `v0.1.0-issue288.6` completed with a full checkpoint and
+preserved completed Runs. Its immediate smoke submission returned HTTP 503;
+a subsequent HTTP smoke finished and verified its Artifact checksum. Stop/start
+then passed with all preflight checks ready and no training Pods remaining.
+Source `d21f1fa` passed Repository Quality `34703851977` and published signed
+`v0.1.0-issue288.7` in run `34705708685`.
+
+With five completed Runs, the next maintenance inspection exposed another budget
+mismatch: the Run-list API permits a 30-second page, but the installer abandoned
+it after 20 seconds. The installer now gives each page the remaining portion of
+its existing one-minute inspection budget. The same public update command then
+passed from `.6` to `.7`, including a checkpoint, retained setup and health checks.
+The deployment suite passed 78 tests with five skips. Final full-suite retained
+qualification from the signed correction remains pending.
