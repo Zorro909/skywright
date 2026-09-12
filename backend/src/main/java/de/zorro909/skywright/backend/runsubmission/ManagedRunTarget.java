@@ -8,7 +8,7 @@ import de.zorro909.skywright.backend.targetstorage.TargetClass;
 import java.util.List;
 
 /** The two prototype targets share resolution, acceptance and dispatch. */
-sealed interface ManagedRunTarget permits LocalAmdRunTarget, VastOnDemandRunTarget {
+sealed interface ManagedRunTarget permits LocalAmdRunTarget, VastRunTarget {
 
 	String identity();
 

@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import de.zorro909.skywright.backend.trainingproject.TrainingProjects;
+import de.zorro909.skywright.backend.projectversion.ProjectVersionAssessment;
 import de.zorro909.skywright.backend.datasetcatalog.DatasetCatalog;
 import de.zorro909.skywright.backend.datasetcatalog.DatasetCopyAvailability;
 import de.zorro909.skywright.backend.datasetcatalog.DatasetCopyRole;
@@ -126,12 +127,21 @@ final class ManagedRunForms {
 		if (!demonstration.installed()) {
 			checks.add(new Check("workload", false, "WORKLOAD_NOT_INSTALLED",
 					"Install the supplied demonstration Training Project Version and Dataset."));
-			return joined(workloads, targets, checks);
+			return joined(workloads, targets, checks, null);
 		}
-		checks.add(check("projectVersion", "PROJECT_VERSION_UNAVAILABLE",
-				"Check the pinned project image, configuration contract and metric contract in the registry.",
-				() -> projects.assessVersion(demonstration.trainingProjectId(), demonstration.manifestArtifactDigest())
-					.runnable()));
+		ProjectVersionAssessment version = null;
+		try {
+			version = projects.assessVersion(demonstration.trainingProjectId(), demonstration.manifestArtifactDigest());
+		}
+		catch (RuntimeException unavailable) {
+			/*
+			 * Preserve other readiness evidence when this immutable version is
+			 * unavailable.
+			 */
+		}
+		boolean versionReady = version != null && version.runnable();
+		checks.add(new Check("projectVersion", versionReady, versionReady ? "READY" : "PROJECT_VERSION_UNAVAILABLE",
+				"Check the pinned project image, configuration contract and metric contract in the registry."));
 		checks.add(check("dataset", "DATASET_UNAVAILABLE",
 				"Publish and verify the installed Dataset on eligible storage.", () -> {
 					var dataset = datasets.get(demonstration.datasetDefinitionId());
@@ -214,21 +224,36 @@ final class ManagedRunForms {
 						return false;
 					}
 				}));
-		return joined(workloads, targets, checks);
+		return joined(workloads, targets, checks, version);
 	}
 
-	private Form joined(List<Workload> workloads, List<Target> localTargets, List<Check> checks) {
+	private Form joined(List<Workload> workloads, List<Target> localTargets, List<Check> checks,
+			ProjectVersionAssessment version) {
 		var commonComponents = java.util.Set.of("workload", "projectVersion", "dataset", "controlPath");
 		var common = checks.stream().filter(c -> commonComponents.contains(c.component())).toList();
-		var localChecks = checks.stream().filter(c -> !commonComponents.contains(c.component())).toList();
+		var localChecks = new ArrayList<>(
+				checks.stream().filter(c -> !commonComponents.contains(c.component())).toList());
+		localChecks.add(imageCheck(version, "rocm"));
 		boolean commonReady = !workloads.isEmpty() && common.stream().allMatch(Check::ready);
 		var targets = new ArrayList<Target>();
 		for (var local : localTargets)
 			targets.add(new Target(local.id(), local.displayName(), local.purchaseMode(), local.gpuModel(),
 					local.gpuCount(), commonReady && localChecks.stream().allMatch(Check::ready), localChecks));
-		var vast = adapters.select(VastOnDemandRunTarget.ID);
-		targets.add(new Target(vast.identity(), "Vast.ai on-demand", "on-demand", null, null, false, vast.checks()));
+		for (var vast : adapters.vastModes()) {
+			var cloudChecks = new ArrayList<>(vast.checks());
+			cloudChecks.add(imageCheck(version, "cuda"));
+			targets.add(new Target(vast.identity(), vast.displayName(), vast.purchaseMode(), null, null, false,
+					cloudChecks));
+		}
 		return new Form(targets.stream().anyMatch(Target::ready), Instant.now(), workloads, targets, common);
+	}
+
+	private static Check imageCheck(ProjectVersionAssessment version, String backend) {
+		boolean ready = version != null && version.runnable() && version.version() != null
+				&& version.version().images().containsKey(backend);
+		return new Check("image", ready, ready ? "READY" : "TARGET_IMAGE_UNAVAILABLE",
+				"The selected Training Project Version must contain a verified "
+						+ backend.toUpperCase(java.util.Locale.ROOT) + " image.");
 	}
 
 	private static Check check(String component, String code, String detail, BooleanSupplier action) {

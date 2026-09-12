@@ -9,6 +9,8 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import de.zorro909.skywright.backend.rundefinition.RunDefinition;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -32,12 +34,13 @@ class LocalRuntimeProjectionTest {
 				null);
 	}
 
-	@Test
-	void vastProjectionPinsCudaOnDemandAndPreservesTheAcceptedWorkload() throws Exception {
+	@ParameterizedTest
+	@ValueSource(booleans = { false, true })
+	void vastProjectionPinsCudaPurchaseModeAndPreservesTheAcceptedWorkload(boolean spot) throws Exception {
 		var value = RunDefinition.decode(Files.readString(ROOT.resolve("definition.json"))).value();
 		value.withObject("/targetRequest")
-			.put("targetClass", "cloud-on-demand")
-			.put("purchaseMode", "on-demand")
+			.put("targetClass", spot ? "cloud-spot" : "cloud-on-demand")
+			.put("purchaseMode", spot ? "spot" : "on-demand")
 			.put("target", "vast")
 			.put("gpuModel", "RTX_3060");
 		var quote = JSON
@@ -50,12 +53,13 @@ class LocalRuntimeProjectionTest {
 				"ghcr.io/example/project@sha256:" + "a".repeat(64), local.configurationContract(),
 				local.metricContract(), local.dataset(), local.datasetLocation(), local.sourceCheckpoint());
 		var target = new VastRuntimeProjection.Target("US", "1x-RTX_3060-16384", "RTX_3060", 12L * 1024 * 1024 * 1024,
-				"2", "8", 20, new java.math.BigDecimal("0.14"));
+				"2", "8", 20, new java.math.BigDecimal("0.14"), spot ? new java.math.BigDecimal("0.04") : null);
 		var task = new VastRuntimeProjection().project(definition, cuda, target);
 		assertThat(task.resources()).hasSize(1);
 		var resource = task.resources().getFirst();
 		assertThat(resource.infrastructure()).isEqualTo("vast");
-		assertThat(resource.useSpot()).isFalse();
+		assertThat(resource.useSpot()).isEqualTo(spot);
+		assertThat(resource.maxBidHourlyCost()).isEqualTo(spot ? new java.math.BigDecimal("0.04") : null);
 		assertThat(resource.imageId()).isEqualTo("docker:ghcr.io/example/project@sha256:" + "a".repeat(64));
 		assertThat(resource.region()).isEqualTo("US");
 		assertThat(resource.instanceType()).isEqualTo("1x-RTX_3060-16384");
@@ -98,20 +102,20 @@ class LocalRuntimeProjectionTest {
 			.hasMessage("Missing digest-pinned target image");
 		value.withObject("/targetRequest").put("target", "runpod");
 		assertThatThrownBy(() -> new VastRuntimeProjection().project(RunDefinition.from(value), cuda, target))
-			.hasMessage("Unsupported Vast on-demand capabilities or pinned target");
+			.hasMessage("Unsupported Vast capabilities or pinned target");
 	}
 
 	@Test
-	void vastCatalogConstraintsRejectSpotAndTheOwnersExclusiveHourlyLimit() {
+	void vastCatalogConstraintsRequireAnExplicitSpotBidBelowTheOwnersExclusiveHourlyLimit() {
 		for (var amount : java.util.List.of("0", "0.15", "0.20"))
 			assertThatThrownBy(() -> new VastRuntimeProjection.Target("US", "1x-RTX_3060-16384", "RTX_3060", 12L << 30,
 					"2", "8", 20, new java.math.BigDecimal(amount)))
-				.hasMessage("Invalid Vast on-demand resource constraints");
+				.hasMessage("Invalid Vast resource constraints");
 		assertThatThrownBy(
 				() -> new de.zorro909.skywright.backend.orchestration.OrchestratorTaskSpecification.Resources("vast",
 						"2", "8", "RTX_3060:1", null, true, null, "US", "1x-RTX_3060-16384", 20,
 						new java.math.BigDecimal("0.14")))
-			.hasMessage("Invalid Vast on-demand resource constraints");
+			.hasMessage("Vast interruptible requires an explicit bounded bid");
 	}
 
 	@Test
@@ -146,7 +150,7 @@ class LocalRuntimeProjectionTest {
 			.doesNotContain("_factory", "ACCESS_KEY", "SECRET_KEY");
 		assertThat(Stream.of(resource.getClass().getRecordComponents()).map(java.lang.reflect.RecordComponent::getName))
 			.containsExactly("infrastructure", "cpus", "memory", "accelerators", "imageId", "useSpot", "jobRecovery",
-					"region", "instanceType", "diskSize", "maxHourlyCost");
+					"region", "instanceType", "diskSize", "maxHourlyCost", "maxBidHourlyCost");
 	}
 
 	@Test

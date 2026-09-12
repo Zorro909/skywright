@@ -145,16 +145,14 @@ class ManagedRuntime:
         ] in ("local-single-gpu", "local-multi-gpu"):
             accelerator_backend = "rocm"
         elif (
-            target_request["purchaseMode"] == "on-demand"
-            and target_request["targetClass"] == "cloud-on-demand"
+            (target_request["purchaseMode"], target_request["targetClass"])
+            in (("on-demand", "cloud-on-demand"), ("spot", "cloud-spot"))
             and target_request.get("target") == "vast"
             and target_request["gpuCount"] == 1
         ):
             accelerator_backend = "cuda"
         else:
-            raise ValueError(
-                "managed runtime supports local AMD and Vast on-demand only"
-            )
+            raise ValueError("managed runtime supports local AMD and Vast only")
         image = materials["image"]
         if (
             not isinstance(image, str)

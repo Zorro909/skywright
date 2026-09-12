@@ -56,11 +56,12 @@ def test_consumes_exact_backend_resolved_definition():
     )
 
 
-def test_consumes_vast_on_demand_with_the_pinned_cuda_image():
+@pytest.mark.parametrize("mode", ["on-demand", "spot"])
+def test_consumes_vast_with_the_pinned_cuda_image(mode):
     definition, materials = documents()
     definition["targetRequest"] = {
-        "targetClass": "cloud-on-demand",
-        "purchaseMode": "on-demand",
+        "targetClass": "cloud-spot" if mode == "spot" else "cloud-on-demand",
+        "purchaseMode": mode,
         "gpuCount": 1,
         "target": "vast",
         "gpuModel": "RTX_3060",
@@ -83,7 +84,7 @@ def test_consumes_vast_on_demand_with_the_pinned_cuda_image():
     )
     with pytest.raises(ValueError, match="accepted digest-pinned cuda artifact"):
         ManagedRuntime.decode(json.dumps(definition), json.dumps(materials))
-    for target, mode in (("vast", "spot"), ("runpod", "on-demand")):
+    for target, mode in (("runpod", "spot"), ("runpod", "on-demand")):
         definition["targetRequest"]["target"] = target
         definition["targetRequest"]["purchaseMode"] = mode
         definition["targetRequest"]["targetClass"] = (

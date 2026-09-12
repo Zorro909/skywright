@@ -60,13 +60,15 @@ export const managedRunApi = {
             typeof w['displayName'] === 'string',
         ) &&
         Array.isArray(value['targets']) &&
-        value['targets'].length <= 2 &&
+        value['targets'].length <= 3 &&
         value['targets'].every(
           (t) =>
             object(t) &&
             typeof t['id'] === 'string' &&
             typeof t['displayName'] === 'string' &&
-            ['local', 'on-demand'].includes(String(t['purchaseMode'])) &&
+            ['local', 'on-demand', 'spot'].includes(
+              String(t['purchaseMode']),
+            ) &&
             (t['gpuModel'] == null || typeof t['gpuModel'] === 'string') &&
             (t['gpuCount'] == null ||
               (Number.isSafeInteger(t['gpuCount']) &&

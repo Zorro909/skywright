@@ -80,6 +80,7 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
             expected=0,
             stop=None,
             cuda=False,
+            spot=False,
         ):
             nonlocal counter
             directory = tmp_path / str(counter)
@@ -88,8 +89,8 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
             d, m = deepcopy(definition), deepcopy(materials)
             if cuda:
                 d["targetRequest"].update(
-                    targetClass="cloud-on-demand",
-                    purchaseMode="on-demand",
+                    targetClass="cloud-spot" if spot else "cloud-on-demand",
+                    purchaseMode="spot" if spot else "on-demand",
                     target="vast",
                     gpuModel="RTX_3060",
                 )
@@ -212,11 +213,13 @@ def test_installed_sdk_assembles_exact_continuation_clone_and_reset(
         expected_ordinals = json.loads((baseline_dir / "committed.json").read_text())
         # The same installed CLI and storage path accepts the cloud CUDA definition.
         # This uses the private CPU seam; it is not a live NVIDIA qualification.
-        cuda_dir, cuda_result = execute(str(uuid4()), cuda=True)
-        assert cuda_result["step"] == baseline["step"]
-        assert (
-            json.loads((cuda_dir / "committed.json").read_text()) == expected_ordinals
-        )
+        for spot in (False, True):
+            cuda_dir, cuda_result = execute(str(uuid4()), cuda=True, spot=spot)
+            assert cuda_result["step"] == baseline["step"]
+            assert (
+                json.loads((cuda_dir / "committed.json").read_text())
+                == expected_ordinals
+            )
         resumed_id = str(uuid4())
         _, seed = execute(resumed_id, interrupt=5, expected=75)
         resumed_dir, resumed = execute(resumed_id)

@@ -14,6 +14,11 @@ class ManagedRunFormIT {
 			assertThat(form.at("/targets/1/ready").asBoolean()).isFalse();
 			assertThat(form.at("/targets/1/checks").toString()).contains("VAST_LAUNCH_PRICE_UNPROVEN",
 					"VAST_BUDGET_UNVERIFIED");
+			assertThat(form.path("targets")).hasSize(3);
+			assertThat(form.at("/targets/2/id").asText()).isEqualTo("vast/spot");
+			assertThat(form.at("/targets/2/purchaseMode").asText()).isEqualTo("spot");
+			assertThat(form.at("/targets/2/ready").asBoolean()).isFalse();
+			assertThat(form.at("/targets/2/checks").toString()).contains("VAST_INTERRUPTIBLE_UNQUALIFIED");
 			String before = backend.get("/api/v1/runs").body();
 			String request = "{\"submissionId\":\"" + java.util.UUID.randomUUID()
 					+ "\",\"workload\":\"demonstration\",\"target\":\"vast/on-demand\"}";
@@ -26,7 +31,12 @@ class ManagedRunFormIT {
 			var offline = backend.post("/api/v1/managed-runs", request);
 			assertThat(offline.statusCode()).as(offline.body()).isEqualTo(503);
 			assertThat(offline.body()).contains("VAST_LAUNCH_PRICE_UNPROVEN");
-			var deferred = backend.post("/api/v1/managed-runs", request.replace("vast/on-demand", "vast/spot"));
+			var spot = backend.post("/api/v1/managed-runs", request.replace("vast/on-demand", "vast/spot"));
+			assertThat(spot.statusCode()).as(spot.body()).isEqualTo(503);
+			assertThat(spot.body()).contains("VAST_BUDGET_UNVERIFIED");
+			assertThat(backend.get("/api/v1/runs").body()).isEqualTo(before);
+			assertThat(backend.bean(LocalRunAcceptanceIT.Source.class).launches).hasValue(0);
+			var deferred = backend.post("/api/v1/managed-runs", request.replace("vast/on-demand", "runpod"));
 			assertThat(deferred.statusCode()).as(deferred.body()).isEqualTo(422);
 			assertThat(deferred.body()).contains("TARGET_INELIGIBLE");
 		}

@@ -1,33 +1,37 @@
-# Vast.ai on-demand admission and qualification
+# Vast.ai admission and qualification
 
 Work for [#283](https://github.com/Zorro909/skywright/issues/283), checked on
-2026-09-12. Vast.ai on-demand remains unavailable. No paid launch or live GPU
+2026-09-12. Both Vast.ai purchase modes remain unavailable. No paid launch or live GPU
 qualification has taken place. The issue must remain open.
 
 ## Implemented behavior
 
-The Managed Run form lists local AMD and Vast.ai on-demand separately. Readiness
+The Managed Run form lists local AMD, Vast.ai on-demand and Vast.ai interruptible separately. Readiness
 belongs to the selected target. Vast lists separate unknown Cost Quote, credential
 projection, storage, registry, price, budget and qualification gates. These are
 explicit unavailable assessments; the form does not yet validate live cloud
-evidence. They cannot enable Create Run or disable an otherwise ready local target. The form identifies the exact
+evidence. Its image check reads the exact assessed version and requires CUDA
+for Vast or ROCm for local AMD. They cannot enable Create Run or disable an otherwise ready local target. The form identifies the exact
 installed Training Project, version manifest and Dataset Definition.
 
 Two internal target adapters share Run Definition resolution, Dataset leases,
 role credentials, storage selection, durable acceptance, idempotency and first
 dispatch. The existing advanced endpoint uses the same admission implementation.
-A Vast selection fails with `VAST_LAUNCH_PRICE_UNPROVEN` before acceptance and
-provisioning. Other providers and Vast interruptible remain ineligible; there is
-no fallback or configuration switch that bypasses this guard.
+On-demand fails with `VAST_LAUNCH_PRICE_UNPROVEN`; interruptible fails with
+`VAST_BUDGET_UNVERIFIED`. Both checks precede acceptance and the orchestrator
+availability probe. Other providers remain ineligible. No configuration switch
+bypasses these guards.
 
 The CUDA projection checks the pinned image, project contracts and Dataset using
 the same runtime-material validation as AMD. The finite resource DTO carries
 Vast region, instance type, allocated disk and the catalogue hourly ceiling.
-It pins `vast` with `use_spot=false`; the bridge combines provider and region into
-SkyPilot’s `infra` field. The SDK consumes the same definition and selects CUDA
-for the finite Vast on-demand target. These are projection capabilities, not proof
-that the actual rental will satisfy the ceiling. Cloud storage selection uses the
-existing `cloud-on-demand` Target Storage defaults.
+The selected mode determines `use_spot`. Interruptible requires a finite numeric
+`maxBidHourlyCost`, strictly between zero and USD 0.15. The official Task config
+receives this number as `vast.create_instance_kwargs.price`, together with
+`cancel_unavail=true`; on-demand cannot carry a bid. The bridge combines provider
+and region into SkyPilot’s `infra` field. The SDK selects CUDA for either Vast
+mode and storage resolution uses that mode’s existing Target Storage defaults.
+A compute bid does not establish total affordability or actual-offer identity.
 
 Cloud GHCR authentication travels through SkyPilot's secret channel. The Run
 Definition, task DTO and durable records contain no registry values. The original
@@ -36,7 +40,10 @@ delivery shell removes all three Docker credential variables before its first
 Python child, preserving the separate Dataset and Run Store credentials. Local
 Kubernetes keeps its existing image-pull-secret delivery. Provider keys use the
 new Vault `VAST` binding kind with the `skypilot-api-server` role and an `apiKey`
-secret field; no provider binding or projection is activated by this change.
+secret field. The deployment package can project an explicitly selected enrollment
+into only the API-server container and append non-secret Pod projection,
+validation and release receipts. This path has not yet been activated on the
+existing instance. See [installation configuration](../../deployment/LOCAL_INSTALLATION.md).
 
 ## Launch-price evidence
 
@@ -55,8 +62,12 @@ uses `max_hourly_cost` for catalogue filtering. That does not bound the later
 creation request. The provider's [creation API](https://docs.vast.ai/api-reference/instances/create-instance)
 documents `price` as an interruptible bid, not an on-demand ceiling.
 [Permission constraints](https://docs.vast.ai/api-reference/permissions) can restrict
-parameters, but no provider-enforced policy binding the eventual rental and its
-rates has been proved here. Do not rent until that proof exists.
+parameters, but the exact-offer constraint has not been proved here. The
+[follow-up investigation](../research/issue-283-vast-launch-price-guard.md) verifies
+the explicit interruptible bid and describes fresh fee assessment, conservative
+reserves and independent cleanup. These do not require an atomic cap on every
+storage or traffic charge. Do not rent until the actual resource and complete
+budget assessment are established.
 
 ## Credential setup and trust
 
@@ -68,6 +79,10 @@ existing private instance’s Vault at `skywright/provider/vast/on-demand` using
 compare-and-set version zero. It verified the stored value by reading it back. No billing, key administration,
 machine or team permission is requested. `misc` is a provider category with
 broader operations than offer search, not a claimed per-endpoint restriction.
+A later read of effective rights showed provider-added baseline operations,
+including SSH-key access and team creation. Deployment validation now records
+and compares those effective rights rather than treating requested categories
+as the complete resulting scope.
 
 The secret-free enrollment record reports:
 
@@ -101,9 +116,12 @@ or Dataset compatibility. The returned storage and traffic rates were captured
 in the session-local `provider-readiness.json`; no total affordability or actual
 rental price proof is inferred from those values.
 
-That enrollment and read-access evidence is not provisioning qualification. The actual binding
-UUID, validation profile and Credential Projection Record remain to be established
-before activating the provider role. Existing Dataset, Run Store, backend and
+That enrollment and read-access evidence is not provisioning qualification. The
+deployment now defines the binding and append-only projection observations,
+checks the fingerprint, provider key ID and complete effective permissions, and
+omits the provider binding when validation fails. It records projection before
+external validation and preserves local service access on provider failure.
+The actual API-server projection still requires live verification. Existing Dataset, Run Store, backend and
 GHCR role credentials stay separate.
 
 As recorded in [ADR 0025](../adr/0025-centralize-managed-credentials-in-vault.md),
@@ -112,6 +130,17 @@ the official adapter both mounts `~/.config/vastai/vast_api_key` and writes
 the rental host must be trusted with this provider identity. Those copies must be
 accounted for during cleanup and revocation. No real remote copies have been
 created by this work.
+
+A no-spend policy experiment at `2026-09-12T21:59:42Z` created a temporary
+read-only key and requested nonexistent ask `0`. Vast returned HTTP 401, so the
+helper could not identify a creation permission or prove any constraints. The
+helper verified diagnostic-key deletion; the owner confirmed temporary-key
+cleanup at `22:00:15Z`. The enrolled Vault key was unchanged. A subsequent
+nonexistent-ask request using the enrolled key reached lookup and returned HTTP
+404 with `error=ask_not_found`. Neither probe attempted a real rental.
+
+The installed demonstration manifest currently contains only a ROCm image.
+A CUDA publication is required before its Vast image readiness can pass.
 
 ## Remaining qualification
 
@@ -170,3 +199,22 @@ explicit local adapter accessor. Specification review found and prompted the
 registry environment fix, then confirmed it on follow-up. It still identifies
 incomplete runtime provider projection, live joined readiness and live
 qualification; these remain explicit gaps rather than completed criteria.
+
+
+## Interruptible extension verification
+
+The extended Run Definition projection tests exercise both modes, preserve the
+accepted definition, check the numeric bid and execute registry-secret isolation.
+The HTTP form exposes three choices and rejects both unqualified Vast modes
+without a Run or launch, including when SkyPilot is offline. The GUI test selects
+each blocked Vast mode and returns to a ready local target. The native SkyPilot
+0.13.0 test verifies the bid survives Task YAML serialization.
+
+These checks passed: six projection tests, four HTTP tests and the native
+SkyPilot integration test; full frontend verification; 470 SDK unit tests,
+format/lint/type/contract checks; and the installed SDK test through real S3 for
+local, on-demand CUDA and interruptible CUDA definitions using its private CPU
+seam. Deployment tests passed 24 cases with two existing skips. The provider
+server image built and passed its image integration check with the official
+Vast SDK installed. Live NVIDIA, provider projection and rental cleanup remain
+unverified.

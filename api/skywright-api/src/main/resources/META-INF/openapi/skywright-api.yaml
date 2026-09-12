@@ -1490,7 +1490,7 @@ components:
           items: { $ref: '#/components/schemas/ManagedWorkload' }
         targets:
           type: array
-          maxItems: 2
+          maxItems: 3
           items: { $ref: '#/components/schemas/ManagedTarget' }
         checks:
           type: array
@@ -1512,7 +1512,7 @@ components:
       properties:
         id: { type: string }
         displayName: { type: string }
-        purchaseMode: { type: string, enum: [local, on-demand] }
+        purchaseMode: { type: string, enum: [local, on-demand, spot] }
         gpuModel: { type: [string, 'null'] }
         gpuCount: { type: [integer, 'null'], minimum: 1 }
         ready: { type: boolean }

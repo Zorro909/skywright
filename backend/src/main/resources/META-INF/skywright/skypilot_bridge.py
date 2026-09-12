@@ -489,7 +489,7 @@ def _task(specification, secrets=None):
     registry_secrets = {"SKYPILOT_DOCKER_USERNAME", "SKYPILOT_DOCKER_PASSWORD", "SKYPILOT_DOCKER_SERVER"}
     if registry_secrets & set(secrets):
         if not registry_secrets <= set(secrets) or any(
-            resource["infrastructure"] != "vast" or resource["useSpot"]
+            resource["infrastructure"] != "vast"
             for resource in specification["resources"]
         ) or secrets["SKYPILOT_DOCKER_SERVER"] != "ghcr.io":
             raise ValueError("Invalid Vast registry secret channel")
@@ -536,6 +536,22 @@ def _task(specification, secrets=None):
             "volumes": [{"name": "skywright-writer", "hostPath": {"path": "/var/lib/skywright-writer/socket", "type": "Directory"}}],
             "containers": [{"name": "ray-node", "volumeMounts": [{"name": "skywright-writer", "mountPath": "/run/skywright-writer", "readOnly": True}]}],
         })
+    def provider_options(requested):
+        bid = requested.get("maxBidHourlyCost")
+        if requested["infrastructure"] != "vast":
+            if bid is not None:
+                raise ValueError("Vast bid requires a Vast target")
+            return runtime_options
+        if requested["useSpot"]:
+            if not isinstance(bid, (int, float)) or isinstance(bid, bool) or not 0 < bid < 0.15:
+                raise ValueError("Vast interruptible requires an explicit bounded bid")
+            return {"_cluster_config_overrides": {"vast": {"create_instance_kwargs": {
+                "price": bid, "cancel_unavail": True,
+            }}}}
+        if bid is not None:
+            raise ValueError("Vast on-demand cannot use an interruptible bid")
+        return runtime_options
+
     resources = [
         sky.Resources(
             infra=(requested["infrastructure"] + "/" + requested["region"]
@@ -563,7 +579,7 @@ def _task(specification, secrets=None):
                 if requested.get("jobRecovery") is not None
                 else None
             ),
-            **runtime_options,
+            **provider_options(requested),
         )
         for requested in specification["resources"]
     ]

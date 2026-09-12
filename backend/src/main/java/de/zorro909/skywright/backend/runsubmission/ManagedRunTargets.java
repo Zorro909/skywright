@@ -8,19 +8,28 @@ final class ManagedRunTargets {
 
 	private final LocalAmdRunTarget local;
 
-	private final VastOnDemandRunTarget vast;
+	private final VastRunTarget onDemand;
 
-	ManagedRunTargets(LocalAmdRunTarget local, VastOnDemandRunTarget vast) {
+	private final VastRunTarget interruptible;
+
+	ManagedRunTargets(LocalAmdRunTarget local, VastRunTargetSettings settings) {
 		this.local = local;
-		this.vast = vast;
+		this.onDemand = new VastRunTarget(settings, false);
+		this.interruptible = new VastRunTarget(settings, true);
 	}
 
 	ManagedRunTarget select(String identity) {
-		if (VastOnDemandRunTarget.ID.equals(identity))
-			return vast;
+		if (VastRunTarget.ON_DEMAND_ID.equals(identity))
+			return onDemand;
+		if (VastRunTarget.INTERRUPTIBLE_ID.equals(identity))
+			return interruptible;
 		if (identity != null && identity.equals(local.identity()))
 			return local;
 		throw new RunSubmissionException("TARGET_INELIGIBLE", 422);
+	}
+
+	java.util.List<VastRunTarget> vastModes() {
+		return java.util.List.of(onDemand, interruptible);
 	}
 
 	LocalAmdRunTarget local() {

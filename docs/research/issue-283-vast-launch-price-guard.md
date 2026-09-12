@@ -5,9 +5,10 @@ interruptible instances when on-demand cannot enforce the required price.
 No provider credentials were read and no paid API was called for this research.
 
 The supported interruptible bid field solves the per-machine active-rental price
-problem. It does not yet prove the complete budget gate. Storage, traffic, and
-replacement rentals remain separate obligations. On-demand still has no proved
-actual-rental cap through the unchanged pinned adapter.
+problem. Total affordability needs fresh storage and traffic allowances and a
+bounded runtime with independent cleanup. The owner did not require atomic
+provider-enforced ceilings on every charge component. On-demand still has no
+proved actual-rental cap through the unchanged pinned adapter.
 
 ## On-demand alternatives examined
 
@@ -162,8 +163,9 @@ as a provider-enforced spend ceiling.
 Fresh offer evidence needs the exact requested disk allocation, storage rate,
 input/output traffic rates, and bounded transfer amounts, including image pulls
 and setup. Search supports cost fields, but that alone does not constrain the
-later unfiltered SkyPilot search. A cheap observed offer and a bounded bid leave
-storage and traffic of the actual selected offer unproved.
+later unfiltered SkyPilot search. An offer constraint can bind the actual rental to the assessed resource. Without
+that constraint, the preflight must account for the other resources that the
+unchanged search can select; assessing an unrelated cheap offer is insufficient.
 [Offer search schema](https://docs.vast.ai/api-reference/search/search-offers)
 
 The controller can run on the existing Kubernetes instance using the installed
@@ -211,9 +213,118 @@ path that binds an immutable priced offer. None of the examined documentation
 proves that path today.
 
 For interruptible, retain the proved numeric bid projection and local controller
-placement. Before spending, establish actual selected-offer storage and traffic
-bounds, an independent cleanup deadline, and a replacement policy that cannot
-create unbudgeted rentals. A fresh quote alone does not discharge those gates.
-If provider constraints or an upstream change supply these guarantees, verify
-that rejected requests cannot create a contract before attempting a paid run.
-The target must remain unavailable while any gate is unproved.
+placement. Fresh assessed fees, conservative allowances and an independent
+watchdog can support qualification without an atomic cap on every charge. The
+remaining concrete work is to bind or otherwise assess the actual selected
+resource, verify the watchdog and cleanup behavior, and reserve enough credit
+for plausible recovery and teardown. Ordinary residual network failure risk does
+not make every cloud launch impossible. Readiness should describe the evidence
+actually missing, rather than claim that total provider spending must have a
+mathematically absolute ceiling.
+
+
+## Reassessment against the owner's actual budget requirement
+
+The hard pricing condition is a configured bid below USD 0.15 for the actual
+machine. For an hourly display that includes allocated storage, also require
+`bid + assessed_disk_hourly < 0.15`, with enough headroom for the fresh fee quote.
+The separate affordability condition can use a conservative estimate. Requiring
+atomic storage and traffic caps would be stronger than the owner's wording.
+This distinction is a technical interpretation of issue #283, not a new scope
+decision.
+
+A practical demonstration preflight should do the following:
+
+1. Read the current credit and billing settings, and record only the required
+   non-secret evidence. Confirm the account's no-top-up settings before dispatch.
+2. Resolve the exact CUDA image digest and its compressed layers, Dataset size,
+   output allowance, requested disk allocation and runtime needs. Include setup
+   downloads and a complete extra image/Dataset transfer allowance for recovery.
+3. Search with the actual pinned adapter's resource query and identify the ask,
+   country, GPU count/model/memory, CUDA capability, available disk and separate
+   fee rates. The proposed KR/RTX 3060/40 GB choice still needs workload and live
+   offer verification. No particular ask is selected by this research.
+4. Bind a constrained key to that assessed ask when the provider's constraint
+   syntax has been verified. Re-read the offer immediately before dispatch. A
+   changed ask or missing quote makes admission unavailable; an ordinary small
+   fee change is handled by re-estimation and headroom.
+5. Persist watchdog ownership and the deadline before sending the Managed Job.
+   A local supervisor should survive the interactive agent, use short polling,
+   and cancel on deadline, budget threshold, unexpected resource, or recovery
+   beyond the demonstration's allowance. Confirm the watchdog is running.
+6. Reserve cleanup time and credit. After cancellation or completion, verify
+   provider-side destruction of every demonstration rental and chargeable
+   storage item, then record usage and the resulting balance. Keep polling if
+   the provider has not yet confirmed deletion.
+
+For one active GPU, a useful admission calculation is:
+
+```text
+planned_cost = bid * allowed_active_hours
+             + allocated_disk_hourly * allowed_rental_hours
+             + inbound_allowance_gb * inbound_price_per_gb
+             + outbound_allowance_gb * outbound_price_per_gb
+             + replacement_transfer_allowance
+             + cleanup_and_uncertainty_reserve
+
+require planned_cost <= current_available_credit - untouched_credit_reserve
+```
+
+Runtime begins at dispatch, including image pulls and provisioning. The runtime
+command's timeout alone cannot cover those phases. A 15-minute demonstration
+and a separate 10-minute cleanup allowance are plausible starting values, not
+approved measurements. Determine transfer allowances from the actual image and
+Dataset before accepting them. Leave a substantial fraction of the roughly
+USD 2.34 untouched instead of planning to exhaust the balance.
+
+The pinned implementation polls job status every 15 seconds and task startup
+every 5 seconds. Transient status-fetch handling has a 60-second timeout. These
+are implementation timings, not a supported maximum-rental-count setting.
+Recovery launch loops remain unbounded until cancelled. A short local watchdog
+can still enforce a practical elapsed-time policy, with credit reserved for a
+replacement that wins the cancellation race. Avoid presenting the normal polling
+interval as a guaranteed maximum cleanup latency.
+[Managed job timings](https://github.com/skypilot-org/skypilot/blob/v0.13.0/sky/jobs/utils.py)
+
+## Exact-ask constrained key, pending provider validation
+
+The public permissions documentation demonstrates exact-ID constraints for
+showing, rebooting and destroying existing instances. It does not name the
+create-instance route identifier. The current official frontend uses route
+identifiers such as `api.machines` and method-specific rights, and its advanced
+key editor accepts a JSON policy. Neither source verifies
+`api.instance.create_instance` as the create operation. Do not install that guess
+as though it were proven.
+[SDK permissions examples](https://docs.vast.ai/sdk/python/permissions),
+[official frontend bundle](https://cloud.vast.ai/assets/index-DIZgi27Q.js)
+
+The finite policy candidate is the existing `misc`, `user_read` and
+`instance_read` access, plus a verified create operation constrained by the ask
+ID, disk allocation and explicit numeric bid; `api.instance.destroy` must remain
+available for cleanup. This is not yet an executable policy because the create
+operation identifier is unresolved. Do not constrain destroy to an ask ID: its
+ID is the subsequently allocated rental contract. Resume/start/stop operations
+need their own verified permissions if the selected lifecycle invokes them.
+
+A bootstrap wizard can validate the syntax without renting:
+
+1. Create a temporary diagnostic key with read-only rights. Submit a complete
+   create body to a confirmed nonexistent ask and retain only the sanitized
+   permission-denial details. The response may identify the route name. Delete
+   this diagnostic key after the probe.
+2. Create another diagnostic key that permits only a confirmed nonexistent ask
+   ID for the candidate create operation. Use the same complete valid body for
+   the allowed nonexistent ID and a disallowed nonexistent ID.
+3. Require different outcomes: the permitted ID reaches the endpoint and reports
+   `no_such_ask`; the disallowed ID reports permission or constraint denial.
+   Identical permission failures show only that the key denies everything.
+   An invalid-body error does not prove that the allowlist works either.
+4. Verify the effective rights through the current-user response, including any
+   provider-added baseline rights. Then create the actual ask-bound key through
+   the approved hidden-input Vault flow and repeat the disallowed-ID probe.
+   Preserve separate cleanup access and revoke the temporary bootstrap key.
+
+Use IDs verified absent from the marketplace, never a real unapproved offer for
+a rejection test. This research has not performed any of these key mutations or
+create requests. A key bound to a real ask does not limit how often that same
+ask can be rented, so the watchdog and replacement allowance remain necessary.

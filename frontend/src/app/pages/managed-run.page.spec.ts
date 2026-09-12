@@ -117,6 +117,20 @@ describe('Managed Run workflow', () => {
               },
             ],
           },
+          {
+            id: 'vast/spot',
+            displayName: 'Vast.ai interruptible',
+            purchaseMode: 'spot',
+            ready: false,
+            checks: [
+              {
+                component: 'budget',
+                ready: false,
+                code: 'VAST_BUDGET_UNVERIFIED',
+                detail: 'The interruptible budget is unverified.',
+              },
+            ],
+          },
         ],
         checks: [],
       });
@@ -143,10 +157,22 @@ describe('Managed Run workflow', () => {
     expect(create.disabled).toBe(true);
     create.click();
     expect(submitted).toHaveLength(0);
+    target.value = 'vast/spot';
+    target.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    expect(root.textContent).toContain(
+      'The interruptible budget is unverified.',
+    );
+    expect(create.disabled).toBe(true);
+    create.click();
+    expect(submitted).toHaveLength(0);
     target.value = 'local-amd';
     target.dispatchEvent(new Event('change'));
     fixture.detectChanges();
     expect(create.disabled).toBe(false);
+    expect(root.textContent).not.toContain(
+      'The interruptible budget is unverified.',
+    );
     expect(root.textContent).not.toContain(
       'The actual rental price is unproven.',
     );
